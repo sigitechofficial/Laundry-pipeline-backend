@@ -1,0 +1,68 @@
+const express=require('express')
+const router =express()
+const customerAuthControllers=require('../controllers/Customer/customerAuth')
+const customerOtherController=require('../controllers/Customer/customerOrders')
+const asyncMiddleware=require('../middlewares/asyncHandler')
+const multer=require('multer')
+const path=require('path')
+const validateAccessToken=require('../middlewares/accessToken')
+const { route } = require('./driver')
+
+//!Multer Middlewares
+const uploadProfilePic=multer.diskStorage({
+    destination:(req,file,cb)=>{
+        cb(null,'./Public/Profile')
+
+    },
+    filename:(req,file,cb)=>{
+        cb(null,'profile- '+ req?.user?.id + "- "+ Date.now() + path.extname(file.originalname))
+    }
+})
+
+const uploadProfile=multer({
+    storage:uploadProfilePic
+})
+
+
+
+
+
+//!---------------------------------Modeule Authentication and Authorization----------------------------//
+//otp for register user
+router.post('/registerCustomerOTP',asyncMiddleware(customerAuthControllers.registerCustomerOTP))
+//verify otp for registration
+router.post('/verifyOTpSignUp',asyncMiddleware(customerAuthControllers.verifyOTpSignUp))
+//complete registration of customer
+router.post('/registerCustomer',uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.registerCustomer))
+//User login
+router.post('/loginUser',asyncMiddleware(customerAuthControllers.loginUser))
+//forgot password request through otp send to mail
+router.post('/forgetPasswordRequest',asyncMiddleware(customerAuthControllers.forgetPasswordRequest))
+//Verify OTP to change password
+router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.verifyOTPforPassword))
+//Change Password
+router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
+//logout user and destroy the Token in redis
+router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
+
+//!------------------------------------Drawer-------------------------------//
+//get Profile
+router.get('/getUserProfile',validateAccessToken,asyncMiddleware(customerAuthControllers.getUserProfile));
+//Update Customer Profile
+router.patch("/updateUserProfile",validateAccessToken,uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.updateUserProfile))
+//!------------------------------Customer Booking--------------------------//
+//create Booking
+router.post('/createBooking',validateAccessToken,asyncMiddleware(customerOtherController.createBooking))
+//Customer All Bookings
+router.get('/allBookings',validateAccessToken,asyncMiddleware(customerOtherController.allBookings))
+//Customer Specific Booking
+router.get('/bookingDetailsById',validateAccessToken,asyncMiddleware(customerOtherController.bookingDetailsById))
+//Custome Response Update and Evemt Sent To Agent
+router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(customerOtherController.customerResponseUpdate))
+
+//!------------------------------ Customer OnHold Show--------------------------//
+//on Hold Customer Reason Show
+router.get('/onHoldCustomerShow',validateAccessToken,asyncMiddleware(customerOtherController.onHoldCustomerShow))
+//on Hold Customer Update
+router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(customerOtherController.customerUpdateResponse))
+module.exports=router

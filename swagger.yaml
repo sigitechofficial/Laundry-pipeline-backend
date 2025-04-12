@@ -1,0 +1,2929 @@
+openapi: 3.0.0
+info:
+  title: Laundary Service App
+  version: 1.0.0
+servers:
+  - url: http://localhost:3010
+tags:
+  - name: Customer
+  - name: Customer > Auth
+  - name: Customer > User Profile
+    description: Here are user get profile and update profile routes.
+  - name: Customer > Booking Management
+  - name: Admin
+  - name: Admin > Create Services, Categories && SubCategories
+  - name: Admin > Vehicle Types
+  - name: Admin > Cities & Countries
+  - name: Admin > zones
+  - name: Admin > Admin Login
+  - name: Admin > Get Laundary Shops
+  - name: Admin > Cancel Booking
+  - name: Admin > Machinery
+  - name: Admin > Account Preferences
+  - name: Admin > On Hold
+  - name: Driver
+  - name: Driver > Driver Auth
+  - name: Agent
+  - name: Agent > Auth
+  - name: Agent > Agent Shop Address
+  - name: Agent > Agent Handle Booking
+  - name: Agent > Agent Drivers
+  - name: Agent > Add Roles,Permissions && ClassifiedAs
+  - name: Agent > Add Employee
+  - name: Agent > Services
+  - name: Agent > Agent Put Booking On Hold
+paths:
+  /customer/registerCustomerOTP:
+    post:
+      tags:
+        - Customer > Auth
+      summary: Register OTP
+      description: >-
+        This returns a `token` that you can use to retrieve information later
+        on.
+
+
+        We have included a test to confirm if a token is returned. We have also
+        added test scripts to copy the token to the `token` collection variable.
+        This makes it easy for us to reuse this token in other requests in the
+        collection.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: fasiih1@gmail.com
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/registerCustomer:
+    post:
+      tags:
+        - Customer > Auth
+      summary: User Registration
+      description: "This request uses the saved `token` collection variable to access a secret 'name' stored against that token.\n\nIn this request, we used the\_`token`\_collection variable as a query param to fetch the name generated for that token. We have added a test to check that a name is correctly returned."
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  example: Fasih
+                lastName:
+                  type: string
+                  example: Shahbaz
+                password:
+                  type: integer
+                  example: '123456'
+                dvToken:
+                  type: string
+                  example: dfdfdfdfdfd
+                phoneNum:
+                  type: string
+                  example: +44 7712 345678
+                userId:
+                  type: integer
+                  example: '3'
+                confirmPassword:
+                  type: integer
+                  example: '123456'
+                countryId:
+                  type: integer
+                  example: '1'
+                cityId:
+                  type: integer
+                  example: '1'
+                profileImage:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/verifyOTpSignUp:
+    post:
+      tags:
+        - Agent > Auth
+      summary: verify OTP for SignUp
+      description: >-
+        This request un-registers a token by using the token collection variable
+        in the POST body.
+
+
+        We also added a test to ensure the response has a 200 OK status code.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                otpId: '1'
+                OTP: '5678'
+                userId: '2'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/loginUser:
+    post:
+      tags:
+        - Customer > Auth
+      summary: Login User
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: azhar@gmail.com
+                password: '123456'
+                signedFrom: ''
+                dvToken: gfgfdgbgfhg
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/forgetPasswordRequest:
+    post:
+      tags:
+        - Customer > Auth
+      summary: Password Reset Request
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: arbab1@gmail.com
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/verifyOTPforPassword:
+    post:
+      tags:
+        - Customer > Auth
+      summary: Verify OTP For Password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                OTP: '#142'
+                otpId: '4'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/changePasswordOTP:
+    post:
+      tags:
+        - Customer > Auth
+      summary: Change Password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                password: '123456789'
+                otpId: ' 4'
+                userId: 4
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/logout:
+    get:
+      tags:
+        - Customer > Auth
+      summary: User Logout
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/getUserProfile:
+    get:
+      tags:
+        - Customer > User Profile
+      summary: get User Profile
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/updateUserProfile:
+    patch:
+      tags:
+        - Customer > User Profile
+      summary: Update User Profile
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                email:
+                  type: string
+                isProfileImgChanged:
+                  type: boolean
+                  example: 'true'
+                phoneNum:
+                  type: string
+                profileImage:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/createBooking:
+    post:
+      tags:
+        - Customer > Booking Management
+      summary: Customer Generate Booking
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                collectionDate: '2025-01-30'
+                collectionTimeTo: '10:00'
+                collectionTimeFrom: '11:00'
+                driverInstruction: Please call upon arrival.
+                frequency: Just Once
+                deliveryDate: '2025-01-24'
+                deliveryTimeTo: '13:00'
+                deliveryTimeFrom: '16:00'
+                addressId: ''
+                driverInstructionOptions: Collect from me in person
+                pickUpAddress:
+                  title: Home
+                  hotelName: null
+                  apartmentNumber: null
+                  floor: null
+                  streetAddress: 100 Oxford Street
+                  district: Westminster
+                  city: Lahore
+                  province: Greater London
+                  country: United Kingdom
+                  postalCode: '54000'
+                  lat: 51.5145
+                  lng: -0.1445
+                  radius: 10
+                  addressType: pickUp
+                  save: true
+                dropOffAddress:
+                  title: Office
+                  hotelName: null
+                  apartmentNumber: null
+                  floor: null
+                  streetAddress: 456 Business Road
+                  district: DHA
+                  city: Lahore
+                  province: Punjab
+                  country: Pakistan
+                  postalCode: '54001'
+                  lat: 31.5404
+                  lng: 74.3687
+                  radius: null
+                  addressType: dropOff
+                driverInstructionOptions1: Deliver to me in person
+                addNewAddress: true
+                addNewDropOffAddress: false
+                dropOffSamePickUp: true
+                dropOffAddressId: null
+                pickUpAddressId: null
+                services:
+                  - categoryId: 1
+                    serviceId: 1
+                    subCategoryId: 1
+                    categoryCharge: 10.5
+                  - categoryId: 1
+                    serviceId: 3
+                    subCategoryId: 2
+                    serviceCharge: 30.67
+                    categoryCharge: 20
+                totalItems: 5
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/onHoldCustomerShow:
+    get:
+      tags:
+        - Customer > Booking Management
+      summary: Customer on Hold Options Show
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/customerUpdateResponse:
+    patch:
+      tags:
+        - Customer > Booking Management
+      summary: Update On Hold Response
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/allBookings:
+    get:
+      tags:
+        - Customer > Booking Management
+      summary: Customer All Bookings
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /customer/bookingDetailsById:
+    get:
+      tags:
+        - Customer > Booking Management
+      summary: Specific Order Detail
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      parameters:
+        - name: bookingId
+          in: query
+          schema:
+            type: integer
+          example: '22'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/AddServices:
+    post:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Add Services
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                - name: Ironing
+                  description: provides ironing
+                - name: Washing
+                  description: Washing Clothes, Mixed Wash
+                - name: Washing && Ironing
+                  description: Washing && Ironing on temperature 45 C
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addCategory:
+    post:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Category Add
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Bottoms
+                CategoryImg:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addSubCategories:
+    post:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Add SubCategories
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                - name: Slik Shirt
+                  price: 23.45
+                  status: true
+                  categoryId: 2
+                - name: Jeans
+                  price: 10.45
+                  status: true
+                  categoryId: 3
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getcategories:
+    get:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Get Categories
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getServices:
+    get:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Get All Services
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getSubcategories:
+    get:
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      summary: Get Subcategories
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addvehicle:
+    post:
+      tags:
+        - Admin > Vehicle Types
+      summary: Add VehicleType
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: abc
+                baseRate:
+                  type: integer
+                  example: '12'
+                perUnitRate:
+                  type: integer
+                  example: '12'
+                weightCapacity:
+                  type: integer
+                  example: '32'
+                volumeCapacity:
+                  type: integer
+                  example: '221'
+                image:
+                  type: string
+                  format: binary
+      parameters:
+        - name: accessToken
+          in: header
+          schema:
+            type: string
+          example: '{{adminToken}}'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getallvehicle:
+    get:
+      tags:
+        - Admin > Vehicle Types
+      summary: Get VehicleType
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      parameters:
+        - name: accessToken
+          in: header
+          schema:
+            type: string
+          example: '{{adminToken}}'
+      responses:
+        '200':
+          description: OK
+          headers:
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '757'
+            ETag:
+              schema:
+                type: string
+                example: W/"2f5-+U67onL75a2dIZnV30rIKPWIwZY"
+            Date:
+              schema:
+                type: string
+                example: Fri, 28 Jun 2024 12:14:32 GMT
+            Connection:
+              schema:
+                type: string
+                example: keep-alive
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: All Vehicles Types
+                data:
+                  vehicleData:
+                    - id: 12
+                      title: Car
+                      image: >-
+                        Public/Images/VehicleTypes/vehicleImage-Car-1709116160071.png
+                      status: true
+                      baseRate: 10
+                      perUnitRate: 5
+                      perRideCharge: 0
+                      weightCapacity: 100000
+                      volumeCapacity: 100000
+                      createdAt: '2024-02-28T10:29:20.000Z'
+                      updatedAt: '2024-02-28T10:29:20.000Z'
+                      appUnitId: null
+                    - id: 13
+                      title: Truck
+                      image: >-
+                        Public/Images/VehicleTypes/vehicleImage-Truck-1709116250211.png
+                      status: true
+                      baseRate: 50
+                      perUnitRate: 30
+                      perRideCharge: 0
+                      weightCapacity: 100000
+                      volumeCapacity: 100000
+                      createdAt: '2024-02-28T10:30:50.000Z'
+                      updatedAt: '2024-02-28T10:30:50.000Z'
+                      appUnitId: null
+                  unit:
+                    weight: lbs
+                    length: in
+                    distance: km
+                    currency: $
+                error: ''
+  /admin/updatevehicle:
+    put:
+      tags:
+        - Admin > Vehicle Types
+      summary: Update VehicleType
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: SUVs
+                baseRate:
+                  type: integer
+                  example: '12'
+                perUnitRate:
+                  type: integer
+                  example: '12'
+                weightCapacity:
+                  type: integer
+                  example: '32'
+                volumeCapacity:
+                  type: integer
+                  example: '221'
+                image:
+                  type: string
+                  format: binary
+                updateImage:
+                  type: boolean
+                  example: 'true'
+                vehicleId:
+                  type: integer
+                  example: '4'
+      parameters:
+        - name: accessToken
+          in: header
+          schema:
+            type: string
+          example: '{{adminToken}}'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/vehiclestatus:
+    put:
+      tags:
+        - Admin > Vehicle Types
+      summary: Update Status
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                status: true
+                vehicleId: 4
+      parameters:
+        - name: accessToken
+          in: header
+          schema:
+            type: string
+          example: '{{adminToken}}'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addCountries:
+    post:
+      tags:
+        - Admin > Cities & Countries
+      summary: Add Countries
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: United Kingdom
+                shortName:
+                  type: string
+                  example: UK
+                flagImg:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addCities:
+    post:
+      tags:
+        - Admin > Cities & Countries
+      summary: Add Cities
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: London
+                lat: '51.5074'
+                lng: '-0.1278'
+                countryId: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getCities:
+    get:
+      tags:
+        - Admin > Cities & Countries
+      summary: get Cities
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getCountries:
+    get:
+      tags:
+        - Admin > Cities & Countries
+      summary: Get Countries
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addZone:
+    post:
+      tags:
+        - Admin > zones
+      summary: Add Zone
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: London Zone
+                coordinates:
+                - 
+                  - [-0.5103, 51.2868]  # Southwest
+                  - [0.3340, 51.2868]   # Southeast
+                  - [0.3340, 51.6919]   # Northeast
+                  - [-0.5103, 51.6919]  # Northwest
+                  - [-0.5103, 51.2868]  # Closing the polygon
+                cityId: 1
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getZones:
+    get:
+      tags:
+        - Admin > zones
+      summary: Get Zones
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/adminSignIn:
+    post:
+      tags:
+        - Admin > Admin Login
+      summary: Admin Login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: admin@gmail.com
+                password: '123456'
+                dvToken: dsfsdfsdf
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getLaundaryShops/:
+    get:
+      tags:
+        - Admin > Get Laundary Shops
+      summary: Get Laundary Shops
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/cancelBooking:
+    post:
+      tags:
+        - Admin > Cancel Booking
+      summary: Add Cancel Booking Reasons
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                cancelReason: Address is incorrect/unreachable
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getCancelReasons:
+    get:
+      tags:
+        - Admin > Cancel Booking
+      summary: Get Cancel Booking Reasons
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/addMachines:
+    post:
+      tags:
+        - Admin > Machinery
+      summary: Add Machinery
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: Dry Cleaning Machines
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/AddServicePreferences:
+    post:
+      tags:
+        - Admin > Account Preferences
+      summary: Create Account preferences Names
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                title: Dry Service
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getAccountPreferences:
+    get:
+      tags:
+        - Admin > Account Preferences
+      summary: Get Account Preferences
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/onHoldOptions:
+    post:
+      tags:
+        - Admin > On Hold
+      summary: Add on Hold Options
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                option:
+                  - option: >-
+                      Missing or Damaged Items .Items lost or damaged, requiring
+                      customer verification.
+                  - option: >-
+                      Special Instructions Pending. Waiting for customer
+                      confirmation on delicate fabrics, stains, or specific
+                      washing preferences
+                  - option: >-
+                      Damaged or Shrinking Risk . Items that may shrink, bleed
+                      color, or have pre-existing damage, requiring approval
+                      before proceeding.
+                  - option: >-
+                      Incorrect Tagging or Sorting. Mislabeling or mixing up
+                      orders requiring manual sorting.
+                  - option: >-
+                      Damage Liability Waiver Needed.sDelicate or high-risk
+                      items need the customer to sign a waiver before cleaning.
+                  - option: Other
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/customerOnHoldOptions:
+    post:
+      tags:
+        - Admin > On Hold
+      summary: On Hold Customer Options
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                option:
+                  - title: >-
+                      We have encountered an issue with one or more of the items
+                      in your order. Please review the details below and confirm
+                      how you would like to proceed.
+                    option: >-
+                      Missing or Damaged Items – Some items are missing or
+                      damaged, requiring customer verification.
+                    confirmationText: >-
+                      Your order will proceed with the missing/damaged items as
+                      acknowledged. Thank you for your confirmation!
+                    notConfirmText: >-
+                      We will recheck your items. Please wait while our team
+                      verifies your order.
+                    onHoldOptionId: 1
+                  - title: >-
+                      We are waiting for your confirmation regarding special
+                      washing instructions for some of the items in your order.
+                      Please review the details below and confirm how you would
+                      like to proceed.
+                    option: >-
+                      Special Instructions Pending Waiting for customer
+                      confirmation on delicate fabrics, stains, or special
+                      washing preferences.
+                    confirmationText: >-
+                      Your special instructions have been received. Your laundry
+                      will be processed accordingly!
+                    notConfirmText: >-
+                      Proceeding without special instructions may result in
+                      standard washing treatment.
+                    onHoldOptionId: 2
+                  - title: >-
+                      Your item has been flagged for possible risks (shrinking,
+                      color bleeding, or pre-existing damage). Please review and
+                      confirm how you would like us to proceed.
+                    option: >-
+                      Some items may shrink, bleed color, or have pre-existing
+                      damage. Please confirm how you would like us to proceed.
+                    confirmationText: >-
+                      Your items will be processed with the risks acknowledged.
+                      Thank you for confirming!
+                    notConfirmText: >-
+                      Your order contains items at risk of shrinking or damage.
+                      Please approve or remove items to proceed
+                    onHoldOptionId: 3
+                  - title: >-
+                      There is an issue with the tagging or sorting of your
+                      items. Please review the details below and confirm how you
+                      would like us to proceed.
+                    option: >-
+                      Some of your items are incorrectly tagged or mixed up.
+                      Please confirm how you would like us to proceed.
+                    confirmationText: >-
+                      Your items have been sorted correctly. Your laundry is now
+                      being processed!
+                    notConfirmText: >-
+                      We will manually verify and sort your items before
+                      processing. Please wait for an update.
+                    onHoldOptionId: 4
+                  - title: >-
+                      A damage liability waiver is required for high-risk items
+                      before cleaning. Please review the details below and
+                      confirm how you would like to proceed.
+                    option: >-
+                      Your items are flagged as high-risk, and a waiver is
+                      required before cleaning. Please confirm your decision to
+                      proceed.
+                    confirmationText: >-
+                      You have signed the waiver. Your items will now be
+                      processed!
+                    notConfirmText: >-
+                      This item has been excluded from cleaning as per your
+                      request.
+                    onHoldOptionId: 5
+                  - title: >-
+                      There is an issue with your order. Please review the
+                      details below and confirm how you would like to proceed
+                    option: >-
+                      Your order has been placed on hold for a custom reason.
+                      Please review and confirm how you would like to proceed.
+                    confirmationText: You have confirmed the issue. Your order will proceed.
+                    notConfirmText: Would you like to clarify the issue with our support team?
+                    onHoldOptionId: 6
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getOnHoldCustomerOptions:
+    get:
+      tags:
+        - Admin > On Hold
+      summary: Get Customer On Hold Options
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getOnHoldOptions:
+    get:
+      tags:
+        - Admin > On Hold
+      summary: Get On Hold Options
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /driver/driverRegisterStep1:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Registration step 1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  example: ali
+                lastName:
+                  type: integer
+                  example: '12'
+                email:
+                  type: string
+                  example: azhar2@gmail.com
+                countryCode:
+                  type: number
+                  example: '+92'
+                phoneNum:
+                  type: integer
+                  example: '3071234589'
+                password:
+                  type: integer
+                  example: '123456'
+                countryId:
+                  type: integer
+                  example: '1'
+                cityId:
+                  type: integer
+                  example: '1'
+                driverType:
+                  type: string
+                  example: laundary Shop Driver
+                zoneId:
+                  type: integer
+                  example: '6'
+                laundaryShopId:
+                  type: integer
+                  example: '2'
+                profileImage:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:44:21 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '230'
+            ETag:
+              schema:
+                type: string
+                example: W/"e6-kk6xZoIGSpAtUwVEHai6+91ILmU"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: 'Registration Step 1: Completed'
+                data:
+                  userId: '103'
+                  image: ''
+                  firstName: wajeeh
+                  lastName: hassan
+                  email: xyyz@gmail.com
+                  phoneNum: +92 3071234589
+                  accessToken: ''
+                  joinOn: '2022'
+                error: ''
+  /driver/driverRegisterStep2:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Registration step 2
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                vehicleTypeId:
+                  type: integer
+                  example: '1'
+                vehicleName:
+                  type: string
+                  example: Civic
+                vehicleModel:
+                  type: integer
+                  example: '1'
+                vehicleYear:
+                  type: integer
+                  example: '1999'
+                vehicleColour:
+                  type: string
+                  example: black
+                userId:
+                  type: integer
+                  example: '6'
+                vehImages:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:45:35 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '107'
+            ETag:
+              schema:
+                type: string
+                example: W/"6b-3EWMDRqsOxqabfM/+j9fcxCMKHk"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: 'Registration step 2: Completed'
+                data:
+                  detailsId: 20
+                  userId: '103'
+                error: ''
+  /driver/driverRegisterStep3:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Registration step 3
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                licIssueDate:
+                  type: integer
+                  example: '2022'
+                licExpiryDate:
+                  type: integer
+                  example: '2025'
+                dvToken:
+                  type: string
+                  example: hdhdjhehjhsjhuehejjh
+                userId:
+                  type: integer
+                  example: '6'
+                frontImage:
+                  type: string
+                  format: binary
+                backImage:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:46:28 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '468'
+            ETag:
+              schema:
+                type: string
+                example: W/"1d4-2HxWXoWGKxlbmL+7KWVT9R61XF4"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Login successful
+                data:
+                  userId: '103'
+                  firstName: wajeeh
+                  lastName: hassan
+                  image: ''
+                  email: xyyz@gmail.com
+                  phoneNum: +92 3071234589
+                  accessToken: '{{vault:json-web-token}}'
+                  online_status: false
+                  joinedOn: '2023'
+                  dvToken: hdhdjhehjhsjhuehejjh
+                error: ''
+  /driver/verifyotp:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: OTP Verification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                userId: 6
+                OTP: '5678'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 11:00:49 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '85'
+            ETag:
+              schema:
+                type: string
+                example: W/"55-Rwh2CD90LJSpI9LL97VEXoRMpYw"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: OTP verified successfully
+                data:
+                  userId: 103
+                error: ''
+  /driver/resendotp:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: ReSend OTP
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                userId: 3
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 11:00:49 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '85'
+            ETag:
+              schema:
+                type: string
+                example: W/"55-Rwh2CD90LJSpI9LL97VEXoRMpYw"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: OTP verified successfully
+                data:
+                  userId: 103
+                error: ''
+  /driver/forgetpasswordrequest:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: forget password request
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: xyyz@gmail.com
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 11:06:02 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '110'
+            ETag:
+              schema:
+                type: string
+                example: W/"6e-DmL2/PLCrbjwlJW69mwcMH29yyc"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: OTP sent successfully to xyyz@gmail.com
+                data:
+                  otpId: 58
+                  userId: 103
+                error: ''
+  /driver/uploadVehImages:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Upload Vehicle Images
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                vehImages:
+                  type: string
+                  format: binary
+                userId:
+                  type: integer
+                  example: '4'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:48:18 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '71'
+            ETag:
+              schema:
+                type: string
+                example: W/"47-bX5nRZjunrJQIeqm2/XxHEZ2A/o"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Vehicle Images Uploaded
+                data: ''
+                error: ''
+  /driver/allvehicletypes:
+    get:
+      tags:
+        - Driver > Driver Auth
+      summary: VeicleTypes
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:48:29 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '389'
+            ETag:
+              schema:
+                type: string
+                example: W/"185-AJaqNSbtuRZuhU+l3PMg+xKPeq8"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: All available vehicle types
+                data:
+                  - id: 1
+                    title: xyz
+                    image: >-
+                      Public/Images/VehicleTypes/vehicleImage-xyz-1696248794084.png
+                  - id: 2
+                    title: Vehicle 1
+                    image: >-
+                      Public/Images/VehicleTypes/vehicleImage-Vehicle
+                      1-1696248940123.jpg
+                  - id: 7
+                    title: Test Vehicle
+                    image: >-
+                      Public/Images/VehicleTypes/vehicleImage-Test
+                      Vehicle-1698750258872.jpg
+                error: ''
+  /driver/uploadLicenseImages:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Upload Driver License
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                frontImage:
+                  type: string
+                  format: binary
+                backImage:
+                  type: string
+                  format: binary
+                licIssueDate:
+                  type: string
+                  example: '2020-08-07'
+                licExpiryDate:
+                  type: string
+                  example: '2025-08-07'
+                userId:
+                  type: integer
+                  example: '3'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:51:21 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '71'
+            ETag:
+              schema:
+                type: string
+                example: W/"47-hoLHaX/DUW/h0bkQgDi5L/ZR7LU"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Licence Images Uploaded
+                data: ''
+                error: ''
+  /driver/driverLogin:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: azhar2@gmail.com
+                password: '123456'
+                dvToken: 2179be7w9sk19
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 11:01:03 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '451'
+            ETag:
+              schema:
+                type: string
+                example: W/"1c3-fDCgFGf7Bc9hrQJy253djKRqUNQ"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Login successful
+                data:
+                  userId: '103'
+                  firstName: wajeeh
+                  lastName: hassan
+                  image: ''
+                  email: xyyz@gmail.com
+                  phoneNum: +92 3071234589
+                  accessToken: '{{vault:json-web-token}}'
+                  online_status: false
+                  joinedOn: '2023'
+                  dvToken: 2179be7w9sk19
+                error: ''
+  /driver/verifyotpforpass:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: verify OTP forgetpassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                otpId: 58
+                OTP: '09936'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 11:08:02 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '83'
+            ETag:
+              schema:
+                type: string
+                example: W/"53-dGQHO9Fj2t1aCVjybLTATvqBEF8"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: OTP verified
+                data:
+                  otpId: 58
+                  userId: 103
+                error: ''
+  /driver/changepassword:
+    post:
+      tags:
+        - Driver > Driver Auth
+      summary: Reset Password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                password: '123456'
+      parameters:
+        - name: accesstoken
+          in: header
+          schema:
+            type: string
+          example: '{{vault:json-web-token}}'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Wed, 08 Nov 2023 05:20:49 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '78'
+            ETag:
+              schema:
+                type: string
+                example: W/"4e-Q1CybikUaUgQzhAXTWLjbvAmU2I"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Password updated successfully.
+                data: {}
+                error: ''
+  /driver/session:
+    get:
+      tags:
+        - Driver > Driver Auth
+      summary: Session API
+      parameters:
+        - name: accessToken
+          in: header
+          schema:
+            type: string
+          example: '{{vault:json-web-token}}'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Date:
+              schema:
+                type: string
+                example: Tue, 07 Nov 2023 10:58:01 GMT
+            Server:
+              schema:
+                type: string
+                example: Apache
+            X-Powered-By:
+              schema:
+                type: string
+                example: Express
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: '*'
+            Content-Type:
+              schema:
+                type: string
+                example: application/json; charset=utf-8
+            Content-Length:
+              schema:
+                type: integer
+                example: '448'
+            ETag:
+              schema:
+                type: string
+                example: W/"1c0-P498V+eeLdO2kASIFjkGN37ZEg4"
+            Keep-Alive:
+              schema:
+                type: string
+                example: timeout=5, max=100
+            Connection:
+              schema:
+                type: string
+                example: Keep-Alive
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                status: '1'
+                message: Login successful
+                data:
+                  userId: '103'
+                  firstName: wajeeh
+                  lastName: hassan
+                  image: ''
+                  email: xyyz@gmail.com
+                  phoneNum: +92 3071234589
+                  accessToken: '{{vault:json-web-token}}'
+                  online_status: false
+                  joinedOn: '2023'
+                  dvToken: ''
+                error: ''
+  /agent/registerCustomerOTP:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Register OTP
+      description: >-
+        This returns a `token` that you can use to retrieve information later
+        on.
+
+
+        We have included a test to confirm if a token is returned. We have also
+        added test scripts to copy the token to the `token` collection variable.
+        This makes it easy for us to reuse this token in other requests in the
+        collection.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: agent1@gmail.com
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/registerAgent:
+    post:
+      tags:
+        - Agent > Auth
+      summary: User Registration
+      description: "This request uses the saved `token` collection variable to access a secret 'name' stored against that token.\n\nIn this request, we used the\_`token`\_collection variable as a query param to fetch the name generated for that token. We have added a test to check that a name is correctly returned."
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  example: Agent
+                lastName:
+                  type: string
+                  example: New
+                password:
+                  type: integer
+                  example: '123456'
+                dvToken:
+                  type: string
+                  example: dfdfdfdfdfd
+                phoneNum:
+                  type: string
+                  example: +44 7712 345678
+                userId:
+                  type: integer
+                  example: '2'
+                confirmPassword:
+                  type: integer
+                  example: '123456'
+                laundaryShopName:
+                  type: string
+                  example: Love2Laundry
+                profileImage:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/addBusinessInfor:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Agent Business Register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                shopName: Love2Laundry
+                matchProfileOptions: ALL IN HOUSE- Washing, Ironing and Dry cleaning all done by us
+                userId: 2
+                services:
+                  - serviceId: 1
+                  - serviceId: 2
+                bussinessWorkingDays:
+                  - dayOfWeek: Monday
+                    opentime: '07:00:00'
+                    closeTime: '19:00:00'
+                  - dayOfWeek: Tuesday
+                    opentime: '07:00:00'
+                    closeTime: '19:00:00'
+                  - dayOfWeek: Wednesday
+                    opentime: '07:00:00'
+                    closeTime: '19:00:00'
+                  - dayOfWeek: Thursday
+                    opentime: '07:00:00'
+                    closeTime: '19:00:00'
+                  - dayOfWeek: Friday
+                    opentime: '07:00:00'
+                    closeTime: '19:00:00'
+                machineryCount:
+                  - total: 1-2
+                    machineId: 1
+                  - total: 3-5
+                    machineId: 2
+                serviceTimes:
+                  - serviceId: 1
+                    serviceTimeRequired: 24 Hours
+                  - serviceId: 2
+                    serviceTimeRequired: 48 Hours
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/loginUser:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Login User
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: agent1@gmail.com
+                password: '123456'
+                signedFrom: ''
+                dvToken: gfgfdgbgfhg
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/forgetPasswordRequest:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Password Reset Request
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                email: arbab1@gmail.com
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/verifyOTPforPassword:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Verify OTP For Password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                OTP: '#142'
+                otpId: '4'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/changePasswordOTP:
+    post:
+      tags:
+        - Agent > Auth
+      summary: Change Password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                password: '123456789'
+                otpId: ' 4'
+                userId: 4
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/logout:
+    get:
+      tags:
+        - Agent > Auth
+      summary: User Logout
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentAddressAdd:
+    post:
+      tags:
+        - Agent > Agent Shop Address
+      summary: Register Shop Address
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                streetAddress: 123 Oxford Street
+                district: Westminster
+                cityId: 1
+                province: London
+                countryId: 1
+                postalCode: W1D 2LB
+                lat: 51.5145
+                lng: -0.1447
+                coordinates:
+                        - 
+                          - [-0.1447, 51.5145]
+                          - [-0.1450, 51.5146]
+                          - [-0.1445, 51.5143]
+                          - [-0.1448, 51.5142]
+                          - [-0.1447, 51.5145]
+                addressType: LaundaryShopAddress
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getShopAddress:
+    get:
+      tags:
+        - Agent > Agent Shop Address
+      summary: Get Laundary Shop
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getAgentOrder:
+    get:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Get Order for Agent
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentCancelBooking:
+    post:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Cancel Incoming Booking
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                bookingId: 12
+                reasonId: 2
+                reasonText: Not Available this time
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/AgentAddSerivces:
+    post:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Driver Added Details
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                bookingId: 22
+                services:
+                  - categoryId: 2
+                    serviceId: 1
+                    subCategoryId: 1
+                    categoryCharge: 10.5
+                    items: 2
+                  - categoryId: 1
+                    serviceId: 3
+                    subCategoryId: 2
+                    categoryCharge: 20
+                    items: 2
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/AddPickupDeliveryProof:
+    post:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: driver add pickup and delivery images
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                noOfItems:
+                  type: integer
+                  example: '5'
+                note:
+                  type: string
+                  example: 'These are the items of pickup order '
+                bookingId:
+                  type: integer
+                  example: '22'
+                Images:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/invoiceCreation/22:
+    get:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Agent Invoice Create Details
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentBookingStatusOnTheWay/22:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Agent Booking Status Mark on the way
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/orderDetailsById/:
+    get:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Get Specific Booking
+      description: Get specific booking id on the basis of ID && orderTrackId
+      parameters:
+        - name: orderTrackId
+          in: query
+          schema:
+            type: string
+          example: 22-372561
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/driverStatusArrived/22:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Driver Mark Status Arrived
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentInspectionStatus/22:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Agent Picking Up and Inspection Booking
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/reachedAtDeliveryShopStatus/22:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Driver deliver Booking to Laundry Shop
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/laundryWashCompleted/22:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Laundry Washed At Laundry Shop
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/laundryDeliverToCustomer:
+    patch:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Driver goes out to deliver laundry to customer
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentBookingFilters:
+    get:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Booking on the basis of filters
+      parameters:
+        - name: filterType
+          in: query
+          schema:
+            type: string
+          example: All
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/customerServices:
+    get:
+      tags:
+        - Agent > Agent Handle Booking
+      summary: Customer Selected Services
+      parameters:
+        - name: bookingId
+          in: query
+          schema:
+            type: integer
+          example: '22'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agnetDrivers:
+    get:
+      tags:
+        - Agent > Agent Drivers
+      summary: Agent Get Drivers
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentAssignBookingToLaundryDriver:
+    patch:
+      tags:
+        - Agent > Agent Drivers
+      summary: Agent Assign Order To Laundry Driver
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                bookingId: 2
+                driverId: 4
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/agentPickupOrderBySelf:
+    patch:
+      tags:
+        - Agent > Agent Drivers
+      summary: Agent PickOrder By Self
+      requestBody:
+        content: {}
+      parameters:
+        - name: bookingId
+          in: query
+          schema:
+            type: integer
+          example: '2'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/AddLaundryRoles:
+    post:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Add Laundry Roles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: Laundry Shop Driver
+                permissionRole:
+                  - id: 2
+                    permissions:
+                      create: true
+                      read: true
+                      update: true
+                      delete: true
+                  - id: 3
+                    permissions:
+                      create: true
+                      read: true
+                      update: true
+                      delete: true
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/addClassifiedAs:
+    post:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Add Classified As
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                name: Laundry Shop Employee
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/addfeatures:
+    post:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Add Features
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                title: invoiceAdded
+                status: true
+                featureOf: Agent Employee
+                key: invoiceAdded
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/updateRoles:
+    put:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Update Role
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                roleId: 6
+                name: Laundry Shop Driver
+                permissionRole:
+                  - id: 2
+                    permissions:
+                      create: true
+                      read: true
+                      update: true
+                      delete: false
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getClassifiedAs:
+    get:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Get All Classified As
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getAllRoles:
+    get:
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      summary: Get All Roles
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/addEmployee:
+    post:
+      tags:
+        - Agent > Add Employee
+      summary: Add Employee
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                firstName: azhar
+                lastName: lateef
+                email: azhar1@gmail.com
+                password: '123456'
+                phoneNum: '34567123'
+                roleId: 6
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/updateEmployee:
+    patch:
+      tags:
+        - Agent > Add Employee
+      summary: Update Employee
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                employeeId: 9
+                firstName: Ahsan
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/updateEmployeeStatus:
+    patch:
+      tags:
+        - Agent > Add Employee
+      summary: Update Employee Status
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                emplId: 6
+                status: true
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getAllServices:
+    get:
+      tags:
+        - Agent > Services
+      summary: Get All Services
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/getAgentServices:
+    get:
+      tags:
+        - Agent > Services
+      summary: Get Agent Services
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/onHoldConformation:
+    patch:
+      tags:
+        - Agent > Agent Put Booking On Hold
+      summary: Booking Status To On Hold
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                serviceId:
+                  type: integer
+                  example: '1'
+                subCategoryId:
+                  type: integer
+                  example: '1'
+                bookingId:
+                  type: integer
+                  example: '22'
+                noOfItems:
+                  type: integer
+                  example: '1'
+                description:
+                  type: string
+                  example: There is issue of missing
+                onHoldImg:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
