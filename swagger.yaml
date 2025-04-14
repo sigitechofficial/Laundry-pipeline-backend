@@ -21,6 +21,8 @@ tags:
   - name: Admin > Machinery
   - name: Admin > Account Preferences
   - name: Admin > On Hold
+  - name: Admin > Customer Management
+  - name: Admin > Driver Management
   - name: Driver
   - name: Driver > Driver Auth
   - name: Agent
@@ -109,13 +111,11 @@ paths:
   /customer/verifyOTpSignUp:
     post:
       tags:
-        - Agent > Auth
+        - Customer > Auth
       summary: verify OTP for SignUp
       description: >-
         This request un-registers a token by using the token collection variable
         in the POST body.
-
-
         We also added a test to ensure the response has a 200 OK status code.
       requestBody:
         content:
@@ -210,6 +210,13 @@ paths:
       tags:
         - Customer > Auth
       summary: User Logout
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -415,12 +422,20 @@ paths:
           required: true
           schema:
             type: string
-      parameters:
         - name: bookingId
           in: query
+          description: The booking ID for the order
+          required: false  # Optional
           schema:
             type: integer
-          example: '22'
+          example: 22
+        - name: orderTrackId
+          in: query
+          description: The tracking ID for the order
+          required: false  # Optional
+          schema:
+            type: string
+          example: "abc123"
       responses:
         '200':
           description: Successful response
@@ -1246,6 +1261,152 @@ paths:
       tags:
         - Admin > On Hold
       summary: Get On Hold Options
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/getAllCustomers:
+    get:
+      tags:
+        - Admin > Customer Management
+      summary: Get All Customers
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/customerCount:
+    get:
+      tags:
+        - Admin > Customer Management
+      summary: Get Customer Count
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/specificCustomerDetails/{customerId}:
+    get:
+      tags:
+        - Admin > Customer Management
+      summary: Get Specific Customer Details And Booking Details
+      parameters:
+        - name: customerId
+          in: path
+          required: true
+          description: The ID of the customer
+          schema:
+            type: integer
+        - name: accessToken
+          in: cookie
+          required: true
+          description: Access token for authentication
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/countTotalDrivers:
+    get:
+      tags:
+        - Admin > Driver Management
+      summary: Get Count of Drivers,ShopAgents Driver, Active Drivers
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/allDriverMiniDetails:
+    get:
+      tags:
+        - Admin > Driver Management
+      summary: All Driver Details
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/driverStatusChange/{driverId}:
+    patch:
+      tags:
+        - Admin > Driver Management
+      summary: Driver Status Change
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: driverId
+          in: path
+          required: true
+          description: The ID of the driver
+          schema:
+            type: integer
+      requestBody:
+        content: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /admin/specificdriverDetail/{driverId}:
+    get:
+      tags:
+        - Admin > Driver Management
+      summary: Specific Driver Details
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: driverId
+          in: path
+          required: true
+          description: The ID of the driver
+          schema:
+            type: integer
       responses:
         '200':
           description: Successful response
@@ -2404,6 +2565,13 @@ paths:
       tags:
         - Agent > Agent Shop Address
       summary: Register Shop Address
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2436,6 +2604,13 @@ paths:
       tags:
         - Agent > Agent Shop Address
       summary: Get Laundary Shop
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2446,6 +2621,13 @@ paths:
       tags:
         - Agent > Agent Handle Booking
       summary: Get Order for Agent
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2456,6 +2638,13 @@ paths:
       tags:
         - Agent > Agent Handle Booking
       summary: Cancel Incoming Booking
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2475,6 +2664,13 @@ paths:
       tags:
         - Agent > Agent Handle Booking
       summary: Driver Added Details
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2503,6 +2699,13 @@ paths:
       tags:
         - Agent > Agent Handle Booking
       summary: driver add pickup and delivery images
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           multipart/form-data:
@@ -2526,21 +2729,45 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/invoiceCreation/22:
+  /agent/invoiceCreation/{bookingId}:
     get:
       tags:
         - Agent > Agent Handle Booking
       summary: Agent Invoice Create Details
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       responses:
         '200':
           description: Successful response
           content:
             application/json: {}
-  /agent/agentBookingStatusOnTheWay/22:
+  /agent/agentBookingStatusOnTheWay/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Agent Booking Status Mark on the way
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2549,27 +2776,55 @@ paths:
           content:
             application/json: {}
   /agent/orderDetailsById/:
-    get:
-      tags:
-        - Agent > Agent Handle Booking
-      summary: Get Specific Booking
-      description: Get specific booking id on the basis of ID && orderTrackId
-      parameters:
-        - name: orderTrackId
-          in: query
-          schema:
-            type: string
-          example: 22-372561
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
-  /agent/driverStatusArrived/22:
+   get:
+    tags:
+      - Agent > Agent Handle Booking
+    summary: Get Specific Booking
+    description: Get specific booking id on the basis of ID && orderTrackId. Only one can be provided at a time.
+    parameters:
+      - name: orderTrackId
+        in: query
+        description: The order tracking ID of the booking
+        required: false  # Optional
+        schema:
+          type: string
+        example: 22-372561
+      - name: bookingId
+        in: query
+        description: The booking ID of the order
+        required: false  # Optional
+        schema:
+          type: integer
+        example: 12345
+      - name: accessToken
+        in: cookie
+        description: The authentication cookie
+        required: true
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Successful response
+        content:
+          application/json: {}
+
+  /agent/driverStatusArrived/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Driver Mark Status Arrived
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2577,11 +2832,23 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/agentInspectionStatus/22:
+  /agent/agentInspectionStatus/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Agent Picking Up and Inspection Booking
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2589,11 +2856,23 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/reachedAtDeliveryShopStatus/22:
+  /agent/reachedAtDeliveryShopStatus/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Driver deliver Booking to Laundry Shop
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2601,11 +2880,23 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/laundryWashCompleted/22:
+  /agent/laundryWashCompleted/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Laundry Washed At Laundry Shop
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2613,11 +2904,23 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/laundryDeliverToCustomer:
+  /agent/laundryDeliverToCustomer/{bookingId}:
     patch:
       tags:
         - Agent > Agent Handle Booking
       summary: Driver goes out to deliver laundry to customer
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
+        - name: bookingId
+          in: path
+          schema:
+            type: integer
+          example: Give booking Id like 23,12
       requestBody:
         content: {}
       responses:
@@ -2626,21 +2929,34 @@ paths:
           content:
             application/json: {}
   /agent/agentBookingFilters:
-    get:
-      tags:
-        - Agent > Agent Handle Booking
-      summary: Booking on the basis of filters
-      parameters:
-        - name: filterType
-          in: query
-          schema:
-            type: string
-          example: All
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
+   get:
+    tags:
+      - Agent > Agent Handle Booking
+    summary: Booking on the basis of filters
+    parameters:
+      - name: accessToken
+        in: cookie
+        description: The authentication cookie
+        required: true
+        schema:
+          type: string
+      - name: filterType
+        in: query
+        description: The type of filter to apply for booking
+        required: true
+        schema:
+          type: string
+          enum:
+            - All
+            - maps
+            - slots.pick
+            - drop
+        example: All
+    responses:
+      '200':
+        description: Successful response
+        content:
+          application/json: {}
   /agent/customerServices:
     get:
       tags:
@@ -2652,6 +2968,12 @@ paths:
           schema:
             type: integer
           example: '22'
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2662,6 +2984,13 @@ paths:
       tags:
         - Agent > Agent Drivers
       summary: Agent Get Drivers
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2672,6 +3001,13 @@ paths:
       tags:
         - Agent > Agent Drivers
       summary: Agent Assign Order To Laundry Driver
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2690,6 +3026,13 @@ paths:
       tags:
         - Agent > Agent Drivers
       summary: Agent PickOrder By Self
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content: {}
       parameters:
@@ -2708,6 +3051,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Add Laundry Roles
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2738,6 +3088,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Add Classified As
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2755,6 +3112,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Add Features
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2775,6 +3139,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Update Role
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2800,6 +3171,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Get All Classified As
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2810,6 +3188,13 @@ paths:
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       summary: Get All Roles
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2820,6 +3205,13 @@ paths:
       tags:
         - Agent > Add Employee
       summary: Add Employee
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2842,6 +3234,13 @@ paths:
       tags:
         - Agent > Add Employee
       summary: Update Employee
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2860,6 +3259,13 @@ paths:
       tags:
         - Agent > Add Employee
       summary: Update Employee Status
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           application/json:
@@ -2878,6 +3284,13 @@ paths:
       tags:
         - Agent > Services
       summary: Get All Services
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2888,6 +3301,13 @@ paths:
       tags:
         - Agent > Services
       summary: Get Agent Services
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -2898,6 +3318,13 @@ paths:
       tags:
         - Agent > Agent Put Booking On Hold
       summary: Booking Status To On Hold
+      parameters:
+        - name: accessToken
+          in: cookie
+          description: The authentication cookie
+          required: true
+          schema:
+            type: string
       requestBody:
         content:
           multipart/form-data:

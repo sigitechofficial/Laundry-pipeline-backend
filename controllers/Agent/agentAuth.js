@@ -430,7 +430,10 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("🚀 ~ loginUser ~ userFind:", userFind.deviceToken)
+    console.log("🚀 ~ loginUser ~ userFind:", userFind)
+    if(!userFind){
+        throw new customError("User not Exists with this credentials")
+    }
     if (userFind.classifiedAsId === 2) {
         const passwordMatch = await bcrypt.compare(password, userFind.password)
         if (!passwordMatch) {

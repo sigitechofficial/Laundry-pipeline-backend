@@ -23,7 +23,7 @@ module.exports = (sequelize, DataTypes) => {
     allowNull:true
   },
   numberOfBags:{
-    type:DataTypes.NUMBER,
+    type:DataTypes.INTEGER,
     allowNull:false,
   }
   }, {

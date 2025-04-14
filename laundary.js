@@ -27,6 +27,8 @@ app.use(express.urlencoded({extended:true}))
 const swaggerDocument = YAML.load('./swagger.yaml');
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
+console.log(`Swagger URL---> http://localhost:${process.env.PORT}/api-docs`)
+
 app.use('/customer',customerRouter);
 app.use('/admin',adminRouter);
 app.use('/driver',driverRouter);

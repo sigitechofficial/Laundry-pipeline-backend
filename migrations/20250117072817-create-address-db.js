@@ -14,7 +14,7 @@ module.exports = {
         allowNull:false,
       },
       customAddressTitle:{
-        type:DataTypes.STRING(40),
+        type:Sequelize.STRING(40),
         allowNull:true,
       },
       hotelName:{
@@ -58,11 +58,11 @@ module.exports = {
         defaultValue:1
       },
       addressType:{
-        type:DataTypes.ENUM('dropOff','pickUp','LaundaryShopAddress'),
+        type:Sequelize.ENUM('dropOff','pickUp','LaundaryShopAddress'),
         allowNull:true
       },
       coordinates:{
-        type:DataTypes.GEOMETRY('POLYGON'),
+        type:Sequelize.GEOMETRY('POLYGON'),
         allowNull:true
       },
       radius:{

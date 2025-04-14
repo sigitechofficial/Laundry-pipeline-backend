@@ -18,7 +18,7 @@ module.exports = {
         allowNull:false,
       },
       email: {
-        type: DataTypes.STRING,
+        type: Sequelize.STRING,
         allowNull:true,
         unique:true,
         validate:{
@@ -67,7 +67,7 @@ module.exports = {
         allowNull:true
       },
       driverType:{
-        type:DataTypes.ENUM('Freelance Driver','laundary Shop Driver'),
+        type:Sequelize.ENUM('Freelance Driver','laundary Shop Driver'),
         allowNull:true
       },
       createdAt: {

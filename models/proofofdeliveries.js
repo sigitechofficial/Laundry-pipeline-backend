@@ -19,7 +19,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     noOfItems: {
-      type: DataTypes.NUMBER,
+      type: DataTypes.INTEGER,
       allowNull: true
     },
     note: {

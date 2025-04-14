@@ -335,7 +335,11 @@ async function loginUser(req, res) {
         ]
     })
     //console.log("🚀 ~ loginUser ~ userFind:", userFind)
-    console.log("🚀 ~ loginUser ~ userFind:", userFind.deviceTokens)
+    console.log("🚀 ~ loginUser ~ userFind:", userFind)
+
+    if(!userFind){
+        throw new customError('User Not Exists with this email')
+    }
 
     if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
 

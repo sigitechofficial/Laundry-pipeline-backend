@@ -75,9 +75,9 @@ module.exports = (sequelize, DataTypes) => {
       users.hasOne(models.bussinessInformation,{as:'businessInfo',foreignKey:'agentId'})
       models.bussinessInformation.belongsTo(users,{as:'businessInfo',foreignKey:'agentId'})
 
-      //Relation with users for employeOff
-      users.hasMany(models.users,{as:'shopEmployee',foreignKey:'employeeOff'})
-      models.users.belongsTo(users)
+      // //Relation with users for employeOff
+      // users.hasMany(models.users,{as:'shopEmployee',foreignKey:'employeeOff'})
+      // models.users.belongsTo(users)
       
 
     }

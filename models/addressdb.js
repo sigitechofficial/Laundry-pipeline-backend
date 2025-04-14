@@ -28,7 +28,7 @@ module.exports = (sequelize, DataTypes) => {
   addressDb.init({
     title: {
       type: DataTypes.ENUM('Office','Home','Other','Hotel'),
-      allowNull:true,
+      allowNull:false,
     },
     customAddressTitle:{
       type:DataTypes.STRING(40),
