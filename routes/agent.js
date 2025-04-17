@@ -69,7 +69,7 @@ router.post('/registerAgentOTP',asyncMiddleware(agentAuthController.registerAgen
 //verify otp for registration
 router.post('/verifyOTpSignUp',asyncMiddleware(agentAuthController.verifyOTpSignUp))
 //complete registration of Agent
-router.post('/registerAgent',uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.registerAgent))
+router.post('/registerAgent',uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.registerAgentWithOTP))
 //User login
 router.post('/loginUser',asyncMiddleware(agentAuthController.loginUser))
 //forgot password request through otp send to mail
@@ -162,4 +162,8 @@ router.patch('/updateEmployeeStatus',validateAccessToken,checkPermissions,asyncM
 router.get('/getAgentServices',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getAgentServices))
 //!--------------------------------------Customer Selected Services--------------------------------------------------//
 router.get('/customerServices',validateAccessToken,checkPermissions,asyncMiddleware(agentController.customerServices))
+//!==============================Get countries && cities=============================//
+router.get('/getCountries',asyncMiddleware(agentController.getCountries))
+router.get('/getCities',asyncMiddleware(agentController.getCities))
 module.exports=router
+

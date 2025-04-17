@@ -1393,6 +1393,18 @@ async function addEmployee(req, res) {
 
     const agentId=req.user.id
 
+
+    const userFind=await users.findOne({
+        where:{
+            classifiedAsId:1,
+            roleId:roleId
+        }
+    })
+
+    if(userFind){
+        throw new customError("Employee Already Exists")
+    }
+
     let hashpassword = await bcrypt.hash(password, 10)
 
     const user = await users.create({
@@ -1535,12 +1547,37 @@ async function getAgentServices(req, res) {
     return res.json(responsefunc("1", "Services Found", findServices, ""))
 }
 
+//!------------------Get Countries && Cities------------------//
+async function getCountries(req,res) {
+
+    const countriesFind=await countries.findAll()
+
+    let outObj={
+        allCountries:countriesFind
+    }
+
+    return res.json(responsefunc("1","Countries Fetched",outObj,""))
+    
+}
+
+async function getCities(req,res) {
+
+    const getAllCities=await cities.findAll()
+
+    let outObj={
+        allCountries:getAllCities
+    }
+
+    return res.json(responsefunc("1","Fetched All Cities",outObj,""))
+    
+}
+
 //!---------------Recurring Functions-------------------------//
 
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
-        messsage: `${message}`,
+        message: `${message}`,
         data: data,
         error: `${error}`,
     };
@@ -1663,6 +1700,9 @@ module.exports = {
     //-----------Booking OnHold--------------//
     onHoldConformation,
     agentIssueResolved,
+    //--------------Gte coutries && cities----------//
+    getCountries,
+    getCities
 
 
 

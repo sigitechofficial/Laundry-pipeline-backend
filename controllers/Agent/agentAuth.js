@@ -44,6 +44,8 @@ async function registerAgentOTP(req, res) {
         }
     })
 
+
+
     if (userExists && userExists.userTypeId === 3) {
         throw new customError('Driver Already Exits')
     }
@@ -174,6 +176,62 @@ async function verifyOTpSignUp(req, res) {
 
 }
 
+
+
+/* 
+   * Resend OTP
+*/
+async function resendOTP(req, res) {
+    const { userId } = req.body;
+    const userExist = await user.findByPk(userId);
+
+    if (!userExist) {
+        throw new CustomException(
+            "Sorry, we could not fetch the associated data",
+            "Please try sending again"
+        );
+    }
+
+    let otpData = await otpVerification.findOne({ where: { userId } });
+    let OTP = otpGenerator.generate(4, {
+        lowerCaseAlphabets: false,
+        upperCaseAlphabets: false,
+        specialChars: false,
+    });
+
+    // Send OTP email using otpMail
+    otpMail({
+        type: 'RegisterOTP',
+        email: userExist.email,
+        OTP: OTP,
+    });
+
+    let DT = new Date();
+
+    if (!otpData) {
+        await otpVerification.create({
+            OTP,
+            reqAt: DT,
+            verifiedInForgetCase: false,
+            userId,
+        });
+        res.json(returnFunction("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+    } else {
+        await otpVerification.update(
+            {
+                OTP,
+                reqAt: DT,
+                verifiedInForgetCase: false,
+            },
+            { where: { userId } }
+        );
+        res.json(returnFunction("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+    }
+
+}
+
+
+
 /*
  * Register Agent 
 */
@@ -281,6 +339,119 @@ async function registerAgent(req, res) {
 
     return res.json(outputObj)
 
+}
+
+/*
+  *  OTP && Registration
+*/
+async function registerAgentWithOTP(req, res) {
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email } = req.body;
+    console.log("🚀 ~ registerAgentWithOTP ~ req.body:", req.body);
+
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    // Step 1: Check if the user exists based on email
+    const userfind = await users.findOne({
+        where: {
+            email: email,
+            deletedAt: {
+                [Op.is]: null
+            }
+        },
+        include: [{
+            model: otpVerification,
+            required: false,
+            attributes: ['OTP']
+        }, {
+            model: deviceToken,
+            required: false,
+            attributes: ['tokenId']
+        }],
+        attributes: [
+            "id",
+            "firstName",
+            "lastName",
+            "email",
+            "phoneNum",
+            "userTypeId",
+            "verifiedAt",
+            [
+                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+                "joinedOn",
+            ],
+        ],
+    });
+
+    console.log("🚀 ~ registerAgentWithOTP ~ userfind:", userfind);
+
+    if (userfind.email === email && userfind.userTypeId === 4) {
+        throw new customError('User Already Exists')
+    } else {
+
+        let userTypeId = 4;
+        const hashedPassword = await bcrypt.hash(password, 8)
+        const userCreate = await users.create({
+            email,
+            firstName,
+            lastName,
+            phoneNum,
+            userTypeId,
+            password: hashedPassword,
+            status: true
+        });
+
+
+        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
+        console.log("🚀 ~ registerAgentWithOTP ~ stripeCustomer:", stripeCustomer);
+
+        // Generate OTP
+        const otp = otpGenerator.generate(4, {
+            lowerCaseAlphabets: false,
+            upperCaseAlphabets: false,
+            specialChars: false
+        });
+
+        // Send OTP email
+        otpMail({
+            type: 'RegisterOTP',
+            email: email,
+            OTP: otp
+        });
+
+        let dt = new Date();
+
+        // Save OTP verification data
+        const otpCreation = await otpVerification.create({
+            OTP: otp,
+            reqAt: dt,
+            userId: userCreate.id
+        });
+
+
+        await deviceToken.create({
+            tokenId: dvToken,
+            status: true,
+            userId: userCreate.id
+        });
+
+
+        await users.update({
+            stripeCustomerId: stripeCustomer,
+            image: profileImg,
+            countryId,
+            cityId
+        }, {
+            where: { id: userCreate.id }
+        });
+
+        console.log("🚀 ~ registerAgentWithOTP ~ otpCreation:", otpCreation);
+
+        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id }));
+    }
 }
 
 
@@ -431,7 +602,7 @@ async function loginUser(req, res) {
         ]
     })
     console.log("🚀 ~ loginUser ~ userFind:", userFind)
-    if(!userFind){
+    if (!userFind) {
         throw new customError("User not Exists with this credentials")
     }
     if (userFind.classifiedAsId === 2) {
@@ -464,7 +635,7 @@ async function loginUser(req, res) {
 
     if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
         return res.json(
-            returnFunction(
+            responsefunc(
                 "4",
                 "Social Login Required",
                 {},
@@ -556,10 +727,10 @@ async function loginUser(req, res) {
 
     if (!userFind.verifiedAt) {
         return res.json(
-            returnFunction(
+            responsefunc(
                 2,
                 "Pending email verification",
-                { userId: userData.id, otpId, email: userData.email },
+                { userId: userFind.id, otpId, email: userFind.email },
                 "Please verify your email to continue"
             )
         );
@@ -568,10 +739,10 @@ async function loginUser(req, res) {
     if (userFind.userTypeId === 4) {
         if (userFind.firstName === null || !userFind.phoneNum) {
             return res.json(
-                returnFunction(
+                responsefunc(
                     3,
                     "Pending User Data",
-                    { userId: userData.id },
+                    { userId: userFind.id },
                     "Your first Name or Phone Number is Missing"
                 )
             );
@@ -581,10 +752,10 @@ async function loginUser(req, res) {
     if (userFind.userTypeId === 4) {
         if (userFind.firstName === null) {
             return res.json(
-                returnFunction(
+                responsefunc(
                     3,
                     "Pending User Data",
-                    { userId: userData.id },
+                    { userId: userFind.id },
                     "Your first Name is Missing"
                 )
             );
@@ -884,7 +1055,7 @@ async function updateUserProfile(req, res) {
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
-        messsage: `${message}`,
+        message: `${message}`,
         data: data,
         error: `${error}`
 
@@ -949,6 +1120,8 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     changePasswordOTP,
-    agentBusinessInfo
+    agentBusinessInfo,
+    registerAgentWithOTP,
+    resendOTP
 
 }

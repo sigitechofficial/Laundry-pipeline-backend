@@ -24,7 +24,9 @@ const { users,
     OnHoldConfirmation,
     bookingStatus,
     driverInZones,
-    bussinessInformation } = require('../../models')
+    bussinessInformation,
+    proofOfDeliveries,
+    features } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -344,7 +346,7 @@ async function specificdriverDetail(req,res) {
                     model:addressDb,
                     attributes:['streetAddress','province','district','addressType']
                 }]
-            }
+            },
         ],
         attributes:['laundaryShopId']
     })
@@ -356,12 +358,57 @@ async function specificdriverDetail(req,res) {
                 {driverId:driverId},
                 {deliveryDriverId:driverId}
             ]
+        },
+        include:[
+            {
+                model:proofOfDeliveries,
+                attributes:['id','imgUpload','noOfItems','bookingId','userId']
+            },
+            {
+                model:addressDb,
+                as:'pickupAddress',
+                attributes:['title','streetAddress','district','province','addressType']
+            },
+            {
+                model:addressDb,
+                as:'dropOffAddress',
+                attributes:['title','streetAddress','district','province','addressType']
+            }
+        ],
+        attributes:{
+            exclude:['createdAt','updatedAt','onHoldReason','categoryId','serviceId','subCategoryId','vehicleTypeId','OnHoldOtherReasons']
+        }
+    })
+
+    const driverTotalOrders=await booking.count({
+        where:{
+            driverId:driverId,
+            [Op.or]:[
+                {driverId:driverId},
+                {deliveryDriverId:driverId}
+            ]
+        }
+    })
+
+    const pendingOrder=await booking.count({
+        where:{
+            bookingStatusId:{
+                [Op.ne]:12
+            },
+            [Op.or]:[
+                {driverId:driverId},
+                {deliveryDriverId:driverId}
+            ]
+            
         }
     })
 
     let outObj={
         userInformation:userInfo,
-        driverBookings:findBooking
+        driverBookings:findBooking,
+        totalOrders:driverTotalOrders,
+        pendingOrders:pendingOrder
+
     }
 
 
@@ -369,6 +416,622 @@ async function specificdriverDetail(req,res) {
     
 }
 
+//!----------------------------------------------------Orders Management-------------------------------------------------------------->>
+
+/* 
+ *  All Orders Counts
+*/
+async function ordersCount(req,res) {
+    
+
+    const allOrderCount=await booking.count()
+
+    const completedOrder=await booking.count({
+        where:{
+            bookingStatusId:12
+        }
+    })
+
+    const onHoldOrders=await booking.count({
+        where:{
+            bookingStatusId:{
+                [Op.or]:[7,22]
+            }
+        }
+    })
+    console.log("🚀 ~ ordersCount ~ onHoldOrders:", onHoldOrders)
+
+    let outObj={
+        allOrderCount:allOrderCount,
+        completedOrders:completedOrder,
+        onHoldOrders:onHoldOrders
+        
+    }
+
+    return res.json(responsefunc("1","All Order Count",outObj,""))
+}
+
+
+/*
+  * All Order Details 
+*/
+async function allOrderDetails(req,res) {
+    
+    const bookingsFind = await booking.findAll({
+        include:[
+            {
+                model:customerSelectedService,
+                attributes:['id','date','time','items','serviceId','categoryPrice'],
+                include:[
+                    {
+                        model:service,
+                        attributes:['id','name','status']
+                    },
+                    {
+                        model:categories,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model:OnHoldConfirmation,
+                required:false,
+                attributes:['onHoldImg','noOfItems','description','bookingId']
+            },
+            {
+                model:addressDb,
+                as:'laundryShop',
+                include:{
+                    model:bussinessInformation,
+                    attributes:['shopName']
+                },
+                attributes:['id']
+            },
+            {
+                model:bookingStatus,
+                attributes:['title','description']
+            }
+        ],
+        order:[['id','ASC']],
+        attributes: {
+            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+        }
+    })
+
+    let outObj={
+        orerDetails:bookingsFind
+    }
+
+
+
+    return res.json(responsefunc("1","All booking Details Fetched",outObj,""))
+}
+
+
+
+/*
+  * Pending Orders
+*/
+async function pendingOrders(req,res) {
+    const bookingsFind = await booking.findAll({
+        where:{
+            bookingStatusId:{
+                [Op.ne]:[7,22]
+            }
+        },
+        include:[
+            {
+                model:customerSelectedService,
+                attributes:['id','date','time','items','serviceId','categoryPrice'],
+                include:[
+                    {
+                        model:service,
+                        attributes:['id','name','status']
+                    },
+                    {
+                        model:categories,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model:OnHoldConfirmation,
+                required:false,
+                attributes:['onHoldImg','noOfItems','description','bookingId']
+            },
+            {
+                model:addressDb,
+                as:'laundryShop',
+                include:{
+                    model:bussinessInformation,
+                    attributes:['shopName']
+                },
+                attributes:['id']
+            },
+            {
+                model:bookingStatus,
+                attributes:['title','description']
+            }
+        ],
+        order:[['id','ASC']],
+        attributes: {
+            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+        }
+    })
+
+    const pendingOrdersCount=await booking.count({
+        where:{
+            bookingStatusId:{
+                [Op.ne]:[7,22]
+            }
+        }
+    })
+
+    let outObj={
+        orerDetails:bookingsFind,
+        pendingOrdersCount:pendingOrdersCount
+    }
+
+
+    return res.json(responsefunc("1","All Pending Orders",outObj,""))
+    
+}
+
+
+
+
+/*
+  * Cancel Orders
+*/
+async function allCancelOrders(req,res) {
+    
+    const bookingsFind = await booking.findAll({
+        where:{
+            bookingStatusId:{
+                [Op.eq]:[3]
+            }
+        },
+        include:[
+            {
+                model:customerSelectedService,
+                attributes:['id','date','time','items','serviceId','categoryPrice'],
+                include:[
+                    {
+                        model:service,
+                        attributes:['id','name','status']
+                    },
+                    {
+                        model:categories,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model:OnHoldConfirmation,
+                required:false,
+                attributes:['onHoldImg','noOfItems','description','bookingId']
+            },
+            {
+                model:addressDb,
+                as:'laundryShop',
+                include:{
+                    model:bussinessInformation,
+                    attributes:['shopName']
+                },
+                attributes:['id']
+            },
+            {
+                model:bookingStatus,
+                attributes:['title','description']
+            }
+        ],
+        order:[['id','ASC']],
+        attributes: {
+            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+        }
+    })
+
+    const cancelOrdersCount=await booking.count({
+        where:{
+            bookingStatusId:{
+                [Op.eq]:[3]
+            }
+        }
+    })
+
+    let outObj={
+        cancelOrers:bookingsFind,
+        cancelBookingCount:cancelOrdersCount
+    }
+
+
+    return res.json(responsefunc("1","All Cancel Orders Details",outObj,""))
+}
+
+
+
+
+/*
+  * Complete Orders
+*/
+
+async function completeOrders(req,res) {
+    const bookingsFind = await booking.findAll({
+        where:{
+            bookingStatusId:{
+                [Op.eq]:[12]
+            }
+        },
+        include:[
+            {
+                model:customerSelectedService,
+                attributes:['id','date','time','items','serviceId','categoryPrice'],
+                include:[
+                    {
+                        model:service,
+                        attributes:['id','name','status']
+                    },
+                    {
+                        model:categories,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model:OnHoldConfirmation,
+                required:false,
+                attributes:['onHoldImg','noOfItems','description','bookingId']
+            },
+            {
+                model:addressDb,
+                as:'laundryShop',
+                include:{
+                    model:bussinessInformation,
+                    attributes:['shopName']
+                },
+                attributes:['id']
+            },
+            {
+                model:bookingStatus,
+                attributes:['title','description']
+            }
+        ],
+        order:[['id','ASC']],
+        attributes: {
+            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+        }
+    })
+
+    const completedOrdersCount=await booking.count({
+        where:{
+            bookingStatusId:{
+                [Op.eq]:[12]
+            }
+        }
+    })
+
+    let outObj={
+        allCompletedOrders:bookingsFind,
+        completedOrdersCount:completedOrdersCount
+    }
+
+    return res.json(responsefunc("1","All Completed Orders",outObj,""))
+    
+}
+
+
+//!---------------------------------Service Management--------------------------------------->>
+
+/*
+  * Get Admin Service Types
+*/
+
+async function getAdminServicesWithCategories(req,res) {
+
+    const countAndService= await subCategories.findAll({
+        attributes:[
+            'id',
+            [sequelize.fn('COUNT', sequelize.col('categoryId')), 'categorySubItemCount']
+        ],
+        include:[
+            {
+                model:categories,
+                attributes:['id','name','status','image']
+            }
+        ],
+        group: ['categoryId'],
+    })
+
+    const outObj={
+        serviceTypes:countAndService
+    }
+
+    return res.json(responsefunc("1","All Services with Count Fetched",outObj,""))
+}
+
+
+/*
+  * Add Service types
+*/
+async function addServiceTypes(req,res) {
+    const{name,description}=req.body
+    let CategoryImg = null;
+
+    if (req.file) {
+
+        let tempImage = req.file.path;
+        CategoryImg = tempImage.replace(/\\/g, "/")
+
+    }
+
+    const category = await categories.create({
+        name,
+        description,
+        image: CategoryImg,
+    })
+
+    return res.json(responsefunc("1", "Service Type Added Sucessfully", category))
+    
+
+}
+
+
+
+/*
+  * Get SubCategories/Items
+*/
+
+async function getSubCategories(req,res) {
+    const{categoryId}=req.params
+
+    const findData=await subCategories.findAll({
+        where:{
+            categoryId:categoryId
+        },
+        attributes:['id','name','price','status']
+    })
+
+    let outObj={
+        serviceTypesItems:findData
+    }
+
+    return res.json(responsefunc("1","All Items fetched",outObj,""))
+    
+}
+
+
+/*
+  * Add SubCategories/Items
+*/
+async function addServiceItems(req,res) {
+    const{name,price,categoryId}=req.body
+
+    const createSubCategory=await subCategories.create({
+        name,
+        price,
+        categoryId,
+        status:true
+    })
+
+    return res.json(responsefunc("1","SubCategory",createSubCategory,""))
+}
+
+//!----------------------------------------------------Employee Management--------------------------------------->>
+
+/* 
+ *  Employee Management
+*/
+async function getAdminEmployess(req,res) {
+    
+    const adminEmployees=await users.findAll({
+        where:{
+            classifiedAsId:2,
+            status:true
+        },
+        attributes:['id','firstName','lastName','email','classifiedAsId','roleId','phoneNum','status']
+    })
+
+    let outObj={
+        adminEmployees:adminEmployees
+    }
+
+
+    return res.json(responsefunc("1","Admin Employess",outObj,""))
+    
+}
+
+
+
+
+//!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
+
+/*
+   * Add Roles
+*/
+
+async function addRole(req, res) {
+    const { name, permissionRole } = req.body;
+
+    const checkExist = await roles.findOne({ where: { name } });
+    if (checkExist) {
+        throw new customError("Same role exists", "Please try another name");
+    }
+    const newRole = await roles.create({ name, status: true });
+    let bulkArray = [];
+    permissionRole.map((ele) => {
+        if (ele.permissions.create === true) {
+            bulkArray.push({
+                permissionType: "create",
+                featureId: ele.id,
+                roleId: newRole.id,
+            });
+        }
+        if (ele.permissions.read === true) {
+            bulkArray.push({
+                permissionType: "read",
+                featureId: ele.id,
+                roleId: newRole.id,
+            });
+        }
+        if (ele.permissions.update === true) {
+            bulkArray.push({
+                permissionType: "update",
+                featureId: ele.id,
+                roleId: newRole.id,
+            });
+        }
+        if (ele.permissions.delete === true) {
+            bulkArray.push({
+                permissionType: "delete",
+                featureId: ele.id,
+                roleId: newRole.id,
+            });
+        }
+    });
+    await permissions.bulkCreate(bulkArray);
+
+    return res.json(responsefunc("1", "Role and Permission Added Sucesfully", {}, ""))
+
+}
+
+
+/*
+   * Update Roles
+*/
+async function updateRoles(req, res) {
+
+    const { name, permissionRole, roleId } = req.body;
+
+    // Check if the role name already exists
+    const checkExist = await roles.findOne({
+        where: { name, id: { [Op.not]: roleId } },
+    });
+
+    if (checkExist) {
+        throw new customError("Same role exists", "Please try another name");
+    }
+
+
+    await roles.update({ name, status: true }, { where: { id: roleId } });
+
+    await permissions.destroy({ where: { roleId } });
+
+
+    const bulkArray = permissionRole.flatMap((ele) => {
+        const permissions = [];
+        if (ele.permissions.create) {
+            permissions.push({ permissionType: "create", featureId: ele.id, roleId });
+        }
+        if (ele.permissions.read) {
+            permissions.push({ permissionType: "read", featureId: ele.id, roleId });
+        }
+        if (ele.permissions.update) {
+            permissions.push({ permissionType: "update", featureId: ele.id, roleId });
+        }
+        if (ele.permissions.delete) {
+            permissions.push({ permissionType: "delete", featureId: ele.id, roleId });
+        }
+        return permissions;
+    });
+
+    // Bulk insert new permissions
+    await permissions.bulkCreate(bulkArray);
+
+    return res.json(responsefunc("1", "Role updated", {}, ""));
+
+}
+
+
+/*
+  * Get All Roles
+*/
+async function getAllRoles(req, res) {
+
+
+    const getRoles = await roles.findAll({
+        where: {
+            status: true
+        },
+        attributes: ['id', 'name', 'status']
+    })
+
+    return res.json(responsefunc("1", "Get All Roles", getRoles, " "))
+
+}
+
+/*
+   * Add Classified
+*/
+async function addClassifiedAs(req, res) {
+    const { name } = req.body
+    const createData = await classifiedAs.create({
+        name
+    })
+    return res.json(responsefunc("1", "Added the classified As", createData, ""))
+
+}
+
+
+/*
+   * Get ClassifiedAs
+*/
+async function getClassifiedAs(req, res) {
+
+    const findData = await classifiedAs.findAll({
+        attributes: ['id', 'name']
+    })
+
+    return res.json(responsefunc("1", "Fetched All ClassifiedAs Roles", findData, " "))
+
+}
+
+
+
+/*
+   * Add Features
+*/
+async function addfeatures(req, res) {
+    const { title, status, featureOf, key } = req.body
+
+    const titleFound = await features.findOne({
+        where: {
+            title: title,
+            key: key
+        }
+    })
+
+    if (titleFound) {
+        throw new customError("Feature Alreay Exists")
+
+    }
+
+    const createFeatures = await features.create({
+        title,
+        status,
+        featureOf,
+        key
+    })
+    return res.json(responsefunc("1", "Feature Added", createFeatures, ""))
+
+}
+
+
+/*
+   * Get Features
+*/
+async function getFeatures(req, res) {
+
+
+    const findFeature = await features.findAll({
+        where: {
+            status: true
+        },
+        attributes: ['id', 'name', 'status']
+    })
+
+    return res.json(responsefunc("1", "All Features Fetched", findFeature, " "))
+
+}
 
 
 //!----------------------------------------------------Add Countries,Cities,Zones && Zone Details--------------------------------------->>
@@ -913,7 +1576,7 @@ async function createOnHoldOptionsAndCustomerOptions(req, res) {
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
-        messsage: `${message}`,
+        message: `${message}`,
         data: data,
         error: `${error}`
     }
@@ -963,5 +1626,26 @@ module.exports = {
     countTotalDrivers,
     allDriverMiniDetails,
     driverStatusChange,
-    specificdriverDetail
+    specificdriverDetail,
+    //----------Order Management------------//
+    ordersCount,
+    allOrderDetails,
+    pendingOrders,
+    allCancelOrders,
+    completeOrders,
+    //----------Service Management---------//
+    getAdminServicesWithCategories,
+    addServiceTypes,
+    getSubCategories,
+    addServiceItems,
+    //----------Employee Management---------//
+    getAdminEmployess,
+    //----------Add,Roles,Permissions && Features ---------//
+    addRole,
+    updateRoles,
+    getAllRoles,
+    addClassifiedAs,
+    getClassifiedAs,
+    addfeatures,
+    getFeatures,
 }

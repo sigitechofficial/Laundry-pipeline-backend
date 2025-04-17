@@ -122,6 +122,117 @@ async function registerCustomerOTP(req, res) {
 }
 
 
+/*
+  * Combine Register with OTP
+*/
+async function registerCustomerWithOTP(req, res) {
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email } = req.body;
+    console.log("🚀 ~ registerCustomerWithOTP ~ req.body:", req.body);
+
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    
+    const userfind = await users.findOne({
+        where: {
+            email: email,
+            deletedAt: {
+                [Op.is]: null
+            }
+        },
+        include: [{
+            model: otpVerification,
+            required: false,
+            attributes: ['OTP']
+        }, {
+            model: deviceToken,
+            required: false,
+            attributes: ['tokenId']
+        }],
+        attributes: [
+            "id",
+            "firstName",
+            "lastName",
+            "email",
+            "phoneNum",
+            "userTypeId",
+            "verifiedAt",
+            [
+                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+                "joinedOn",
+            ],
+        ],
+    });
+
+    console.log("🚀 ~ registerCustomerWithOTP ~ userfind:", userfind);
+
+    if(userfind){
+        throw new customError("User with this email already exists ")
+    }else{
+        
+        let userTypeId = 2;
+        const hashedPassword=await bcrypt.hash(password,8) 
+        const userCreate = await users.create({
+            email,
+            firstName,
+            lastName,
+            phoneNum,
+            userTypeId,
+            password:hashedPassword,
+            status: true 
+        });
+
+        
+        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
+        console.log("🚀 ~ registerCustomerWithOTP ~ stripeCustomer:", stripeCustomer);
+
+        
+        const otp = otpGenerator.generate(4, {
+            lowerCaseAlphabets: false,
+            upperCaseAlphabets: false,
+            specialChars: false
+        });
+
+        
+        otpMail({
+            type: 'RegisterOTP',
+            email: email,
+            OTP: otp
+        });
+
+        let dt = new Date();
+
+        
+        const otpCreation = await otpVerification.create({
+            OTP: otp,
+            reqAt: dt,
+            userId: userCreate.id
+        });
+
+        
+        await deviceToken.create({
+            tokenId: dvToken,
+            status: true,
+            userId: userCreate.id
+        });
+
+        
+        await users.update({
+            stripeCustomerId: stripeCustomer,
+            image: profileImg,
+            countryId,
+            cityId
+        }, {
+            where: { id: userCreate.id }
+        });
+
+        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id }));
+    }
+}
+
 
 
 
@@ -764,7 +875,7 @@ async function updateUserProfile(req, res) {
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
-        messsage: `${message}`,
+        message: `${message}`,
         data: data,
         error: `${error}`
 
@@ -832,5 +943,6 @@ module.exports = {
     changePasswordOTP,
     logout,
     getUserProfile,
-    updateUserProfile
+    updateUserProfile,
+    registerCustomerWithOTP
 }

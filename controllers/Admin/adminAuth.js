@@ -100,10 +100,9 @@ async function signIn(req, res) {
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
-        messsage: `${message}`,
+        message: `${message}`,
         data: data,
         error: `${error}`
-
     }
 }
 

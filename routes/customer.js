@@ -28,12 +28,10 @@ const uploadProfile=multer({
 
 
 //!---------------------------------Modeule Authentication and Authorization----------------------------//
-//otp for register user
-router.post('/registerCustomerOTP',asyncMiddleware(customerAuthControllers.registerCustomerOTP))
+//complete registration of customer
+router.post('/registerCustomer',uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.registerCustomerWithOTP))
 //verify otp for registration
 router.post('/verifyOTpSignUp',asyncMiddleware(customerAuthControllers.verifyOTpSignUp))
-//complete registration of customer
-router.post('/registerCustomer',uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.registerCustomer))
 //User login
 router.post('/loginUser',asyncMiddleware(customerAuthControllers.loginUser))
 //forgot password request through otp send to mail

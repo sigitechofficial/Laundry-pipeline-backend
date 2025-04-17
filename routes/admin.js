@@ -50,7 +50,7 @@ const uploadcategoryImage=multer({
     storage:uploadCategoryPic
 })
 
-//!-------------------------------------------------------------------------------------------------------------------//
+//!----------------------------------------Auth Api's----------------------------------------------//
 
 //Admin SignIn
 router.post('/adminSignIn',asyncMiddleware(adminAuth.signIn))
@@ -59,7 +59,7 @@ router.post('/adminSignIn',asyncMiddleware(adminAuth.signIn))
 router.post('/addvehicle',uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
 
 //Add Countries
-router.post('/addCountries',uploadFlagImg.single('flagImg'),asyncMiddleware(adminController.addCountries))
+router.post('/addCountries',validateAccessToken,uploadFlagImg.single('flagImg'),asyncMiddleware(adminController.addCountries))
 //Get Countries
 router.get('/getCountries',validateAccessToken,asyncMiddleware(adminController.getCountries))
 //Add Cities
@@ -73,7 +73,7 @@ router.get('/getZones',validateAccessToken,asyncMiddleware(adminController.getZo
 //Create Service 
 router.post("/AddServices",validateAccessToken,asyncMiddleware(adminController.AddServices))
 //create categories 
-router.post('/addCategory',uploadcategoryImage.single('CategoryImg'),asyncMiddleware(adminController.AddCategories))
+router.post('/addCategory',validateAccessToken,uploadcategoryImage.single('CategoryImg'),asyncMiddleware(adminController.AddCategories))
 //create SubCategories
 router.post('/addSubCategories',validateAccessToken,asyncMiddleware(adminController.addSubCategories))
 //get categories
@@ -121,5 +121,46 @@ router.patch('/driverStatusChange/:driverId',validateAccessToken,asyncMiddleware
 //Specific Drive Details
 router.get('/specificdriverDetail/:driverId',validateAccessToken,asyncMiddleware(adminController.specificdriverDetail))
 
+//!-----------------------------Order Management------------------------------//
+//Get Order Count
+router.get('/ordersCount',validateAccessToken,asyncMiddleware(adminController.ordersCount))
+//Get All Order Details
+router.get('/allOrderDetails',validateAccessToken,asyncMiddleware(adminController.allOrderDetails))
+//Get All Pending Orders
+router.get('/pendingOrders',validateAccessToken,asyncMiddleware(adminController.pendingOrders))
+//Get All Cancel Orders
+router.get('/allCancelOrders',validateAccessToken,asyncMiddleware(adminController.allCancelOrders))
+//Get All Completed Orders
+router.get('/completeOrders',validateAccessToken,asyncMiddleware(adminController.completeOrders))
 
+
+//!-----------------------------Service Management------------------------------//
+//Get Services with CategOries && SubCategoriesCounts
+router.get('/getAdminServicesWithCategories',validateAccessToken,asyncMiddleware(adminController.getAdminServicesWithCategories))
+//Add Service Types
+router.post('/addServiceTypes',validateAccessToken,uploadcategoryImage.single('CategoryImg'),asyncMiddleware(adminController.addServiceTypes))
+//Get SubCategories&&Items
+router.get('/getSubCategories/:categoryId',validateAccessToken,asyncMiddleware(adminController.getSubCategories))
+//Add Service Items
+router.post('/addServiceItems',validateAccessToken,asyncMiddleware(adminController.addServiceItems))
+
+//!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
+//Add Roles
+router.post('/AddLaundryRoles',validateAccessToken,asyncMiddleware(adminController.addRole))
+//Update Roles
+router.put('/updateRoles',validateAccessToken,asyncMiddleware(adminController.updateRoles)) 
+//Get Roles
+router.get('/getAllRoles',validateAccessToken,asyncMiddleware(adminController.getAllRoles))
+//Add ClassifiedAs 
+router.post('/addClassifiedAs',validateAccessToken,asyncMiddleware(adminController.addClassifiedAs))
+//Get ClassifiedAs
+router.get('/getClassifiedAs',validateAccessToken,asyncMiddleware(adminController.getClassifiedAs))
+//Add Features
+router.post('/addfeatures',validateAccessToken,asyncMiddleware(adminController.addfeatures))
+
+
+
+//!-----------------------------Employee Management------------------------------//
+//Get All Employess Of Admin
+router.get('/getAdminEmployess',validateAccessToken,asyncMiddleware(adminController.getAdminEmployess))
 module.exports=router

@@ -23,6 +23,8 @@ tags:
   - name: Admin > On Hold
   - name: Admin > Customer Management
   - name: Admin > Driver Management
+  - name: Admin > Order Management
+  - name: Admin > Services Management
   - name: Driver
   - name: Driver > Driver Auth
   - name: Agent
@@ -35,32 +37,6 @@ tags:
   - name: Agent > Services
   - name: Agent > Agent Put Booking On Hold
 paths:
-  /customer/registerCustomerOTP:
-    post:
-      tags:
-        - Customer > Auth
-      summary: Register OTP
-      description: >-
-        This returns a `token` that you can use to retrieve information later
-        on.
-
-
-        We have included a test to confirm if a token is returned. We have also
-        added test scripts to copy the token to the `token` collection variable.
-        This makes it easy for us to reuse this token in other requests in the
-        collection.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              example:
-                email: fasiih1@gmail.com
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
   /customer/registerCustomer:
     post:
       tags:
@@ -79,6 +55,10 @@ paths:
                 lastName:
                   type: string
                   example: Shahbaz
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
                 password:
                   type: integer
                   example: '123456'
@@ -88,9 +68,6 @@ paths:
                 phoneNum:
                   type: string
                   example: +44 7712 345678
-                userId:
-                  type: integer
-                  example: '3'
                 confirmPassword:
                   type: integer
                   example: '123456'
@@ -1412,6 +1389,497 @@ paths:
           description: Successful response
           content:
             application/json: {}
+  /admin/ordersCount:
+    get:
+      summary: Get total order counts
+      description: Returns the count of all orders, completed orders, and on-hold orders.
+      tags:
+        - Admin > Order Management
+      parameters:
+        - name: accessToken
+          in: cookie
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (passed via cookie)
+      responses:
+        '200':
+          description: Successful response with order counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "1"
+                  message:
+                    type: string
+                    example: "All Order Count"
+                  data:
+                    type: object
+                    properties:
+                      allOrderCount:
+                        type: integer
+                        example: 100
+                      completedOrders:
+                        type: integer
+                        example: 60
+                      onHoldOrders:
+                        type: integer
+                        example: 10
+                  error:
+                    type: string
+                    example: ""
+        '401':
+          description: Unauthorized – Missing or invalid access token
+        '500':
+          description: Server error
+  /admin/allOrderDetails:
+    get:
+      summary: Get all booking order details
+      description: Returns detailed booking data including selected services, shop info, status, and on-hold confirmations.
+      tags:
+        - Admin > Order Management
+      parameters:
+        - name: accessToken
+          in: cookie
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (passed via cookie)
+      responses:
+        '200':
+          description: Successfully fetched all order details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "1"
+                  message:
+                    type: string
+                    example: "All booking Details Fetched"
+                  data:
+                    type: object
+                    properties:
+                      orerDetails:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              example: 1
+                            customerSelectedServices:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                  date:
+                                    type: string
+                                    format: date
+                                  time:
+                                    type: string
+                                  items:
+                                    type: string
+                                  serviceId:
+                                    type: integer
+                                  categoryPrice:
+                                    type: number
+                                  service:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      status:
+                                        type: string
+                                  category:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                            OnHoldConfirmation:
+                              type: object
+                              nullable: true
+                              properties:
+                                onHoldImg:
+                                  type: string
+                                  format: uri
+                                noOfItems:
+                                  type: integer
+                                description:
+                                  type: string
+                                bookingId:
+                                  type: integer
+                            laundryShop:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                bussinessInformation:
+                                  type: object
+                                  properties:
+                                    shopName:
+                                      type: string
+                            bookingStatus:
+                              type: object
+                              properties:
+                                title:
+                                  type: string
+                                description:
+                                  type: string
+                  error:
+                    type: string
+                    example: ""
+        '401':
+          description: Unauthorized – Missing or invalid access token
+        '500':
+          description: Server error
+  /admin/pendingOrders:
+    get:
+      summary: Get all pending booking orders
+      description: Returns pending booking orders with full details and pending order count. Orders with status IDs 7 and 22 are excluded.
+      tags:
+        - Admin > Order Management
+      parameters:
+        - name: accessToken
+          in: cookie
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (passed via cookie)
+      responses:
+        '200':
+          description: Successfully fetched all pending orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "1"
+                  message:
+                    type: string
+                    example: "All Pending Orders"
+                  data:
+                    type: object
+                    properties:
+                      orerDetails:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              example: 1
+                            customerSelectedServices:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                  date:
+                                    type: string
+                                    format: date
+                                  time:
+                                    type: string
+                                  items:
+                                    type: string
+                                  serviceId:
+                                    type: integer
+                                  categoryPrice:
+                                    type: number
+                                  service:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      status:
+                                        type: string
+                                  category:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                            OnHoldConfirmation:
+                              type: object
+                              nullable: true
+                              properties:
+                                onHoldImg:
+                                  type: string
+                                  format: uri
+                                noOfItems:
+                                  type: integer
+                                description:
+                                  type: string
+                                bookingId:
+                                  type: integer
+                            laundryShop:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                bussinessInformation:
+                                  type: object
+                                  properties:
+                                    shopName:
+                                      type: string
+                            bookingStatus:
+                              type: object
+                              properties:
+                                title:
+                                  type: string
+                                description:
+                                  type: string
+                      pendingOrdersCount:
+                        type: integer
+                        example: 42
+                  error:
+                    type: string
+                    example: ""
+        '401':
+          description: Unauthorized – Missing or invalid access token
+        '500':
+          description: Server error
+  /admin/allCancelOrders:
+    get:
+      summary: Get all canceled booking orders
+      description: Fetches all booking orders that have been canceled (bookingStatusId = 3), including full booking, service, shop, and status details.
+      tags:
+        - Admin > Order Management
+      parameters:
+        - name: accessToken
+          in: cookie
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (passed via cookie)
+      responses:
+        '200':
+          description: Successfully fetched all canceled orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "1"
+                  message:
+                    type: string
+                    example: "All Cancel Orders Details"
+                  data:
+                    type: object
+                    properties:
+                      cancelOrers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              example: 1
+                            customerSelectedServices:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                  date:
+                                    type: string
+                                    format: date
+                                  time:
+                                    type: string
+                                  items:
+                                    type: string
+                                  serviceId:
+                                    type: integer
+                                  categoryPrice:
+                                    type: number
+                                  service:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      status:
+                                        type: string
+                                  category:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                            OnHoldConfirmation:
+                              type: object
+                              nullable: true
+                              properties:
+                                onHoldImg:
+                                  type: string
+                                  format: uri
+                                noOfItems:
+                                  type: integer
+                                description:
+                                  type: string
+                                bookingId:
+                                  type: integer
+                            laundryShop:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                bussinessInformation:
+                                  type: object
+                                  properties:
+                                    shopName:
+                                      type: string
+                            bookingStatus:
+                              type: object
+                              properties:
+                                title:
+                                  type: string
+                                description:
+                                  type: string
+                      cancelBookingCount:
+                        type: integer
+                        example: 5
+                  error:
+                    type: string
+                    example: ""
+        '401':
+          description: Unauthorized – Missing or invalid access token
+        '500':
+          description: Server error
+  /admin/completeOrders:
+    get:
+      summary: Get all completed booking orders
+      description: Fetches all booking orders that are marked as completed (`bookingStatusId = 12`), along with service, shop, and status details.
+      tags:
+        - Admin > Order Management
+      parameters:
+        - name: accessToken
+          in: cookie
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (sent via cookie)
+      responses:
+        '200':
+          description: Successfully fetched completed orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "1"
+                  message:
+                    type: string
+                    example: "All Completed Orders"
+                  data:
+                    type: object
+                    properties:
+                      allCompletedOrders:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                              example: 1
+                            customerSelectedServices:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  id:
+                                    type: integer
+                                  date:
+                                    type: string
+                                    format: date
+                                  time:
+                                    type: string
+                                  items:
+                                    type: string
+                                  serviceId:
+                                    type: integer
+                                  categoryPrice:
+                                    type: number
+                                  service:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      status:
+                                        type: string
+                                  category:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                            OnHoldConfirmation:
+                              type: object
+                              nullable: true
+                              properties:
+                                onHoldImg:
+                                  type: string
+                                  format: uri
+                                noOfItems:
+                                  type: integer
+                                description:
+                                  type: string
+                                bookingId:
+                                  type: integer
+                            laundryShop:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                bussinessInformation:
+                                  type: object
+                                  properties:
+                                    shopName:
+                                      type: string
+                            bookingStatus:
+                              type: object
+                              properties:
+                                title:
+                                  type: string
+                                description:
+                                  type: string
+                      completedOrdersCount:
+                        type: integer
+                        example: 8
+                  error:
+                    type: string
+                    example: ""
+        '401':
+          description: Unauthorized – Missing or invalid access token
+        '500':
+          description: Internal server error
   /driver/driverRegisterStep1:
     post:
       tags:
@@ -2358,32 +2826,6 @@ paths:
                   joinedOn: '2023'
                   dvToken: ''
                 error: ''
-  /agent/registerCustomerOTP:
-    post:
-      tags:
-        - Agent > Auth
-      summary: Register OTP
-      description: >-
-        This returns a `token` that you can use to retrieve information later
-        on.
-
-
-        We have included a test to confirm if a token is returned. We have also
-        added test scripts to copy the token to the `token` collection variable.
-        This makes it easy for us to reuse this token in other requests in the
-        collection.
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              example:
-                email: agent1@gmail.com
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
   /agent/registerAgent:
     post:
       tags:
@@ -2402,6 +2844,10 @@ paths:
                 lastName:
                   type: string
                   example: New
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
                 password:
                   type: integer
                   example: '123456'
@@ -2411,9 +2857,6 @@ paths:
                 phoneNum:
                   type: string
                   example: +44 7712 345678
-                userId:
-                  type: integer
-                  example: '2'
                 confirmPassword:
                   type: integer
                   example: '123456'
@@ -2423,6 +2866,27 @@ paths:
                 profileImage:
                   type: string
                   format: binary
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json: {}
+  /agent/verifyOTpSignUp:
+    post:
+      tags:
+        - Agent > Auth
+      summary: verify OTP for SignUp
+      description: >-
+        This request is for verification of the OTP send to the Mail Default OTP is 5678
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              example:
+                otpId: '1'
+                OTP: '5678'
+                userId: '2'
       responses:
         '200':
           description: Successful response

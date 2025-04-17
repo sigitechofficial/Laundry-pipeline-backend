@@ -9,6 +9,13 @@ module.exports = {
         name:'Laundry Shop',
         createdAt:new Date(),
         updatedAt:new Date()
+      },
+      {
+        id:2,
+        name:'Admin Employee',
+        createdAt:new Date(),
+        updatedAt:new Date()
+        
       }
     ])
   },

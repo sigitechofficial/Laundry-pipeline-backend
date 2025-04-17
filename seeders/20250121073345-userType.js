@@ -9,7 +9,6 @@ module.exports = {
       name:'Admin',
       createdAt:new Date(),
       updatedAt:new Date()
-
       },
       {
         name:'Customer',
