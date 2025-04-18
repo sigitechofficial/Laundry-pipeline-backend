@@ -158,6 +158,8 @@ router.post('/addEmployee',validateAccessToken,asyncMiddleware(agentController.a
 router.patch('/updateEmployee',validateAccessToken,checkPermissions,asyncMiddleware(agentController.updateEmployee))
 //update Employee Status
 router.patch('/updateEmployeeStatus',validateAccessToken,checkPermissions,asyncMiddleware(agentController.changeEmployeeStatus))
+//Get All Employees
+router.get('/getAllEmployees',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getAllEmployees))
 //!-------------------------------------------------Agent Services----------------------------------------------------//
 router.get('/getAgentServices',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getAgentServices))
 //!--------------------------------------Customer Selected Services--------------------------------------------------//

@@ -819,7 +819,7 @@ async function addServiceItems(req,res) {
 //!----------------------------------------------------Employee Management--------------------------------------->>
 
 /* 
- *  Employee Management
+ *  Get Admin Employee
 */
 async function getAdminEmployess(req,res) {
     
@@ -840,8 +840,13 @@ async function getAdminEmployess(req,res) {
     
 }
 
-
-
+/* 
+ *  Add Admin Employee
+*/
+async function adminAdEmployee(req,res) {
+    
+    
+}
 
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 

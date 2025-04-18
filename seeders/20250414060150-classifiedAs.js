@@ -6,7 +6,7 @@ module.exports = {
     await queryInterface.bulkInsert('classifiedAs',[
       {
         id:1,
-        name:'Laundry Shop',
+        name:'Laundry Shop Employee',
         createdAt:new Date(),
         updatedAt:new Date()
       },
