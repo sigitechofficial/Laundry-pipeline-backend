@@ -108,7 +108,7 @@ jobs:
           server: ${{ secrets.STAGE_FTP_HOST }}
           username: ${{ secrets.STAGE_FTP_USERNAME }}
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
-          debug: true
+          timeout: 180
 
       - name: Trigger npm install on server
         run: |
@@ -119,4 +119,4 @@ jobs:
 
 
 
-            
+
