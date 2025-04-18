@@ -16,7 +16,7 @@ putenv("PATH=$nodeBinPath:" . getenv('PATH'));
 $npmCommand = "source /home/fomino/.nvm/nvm.sh && export HOME=/home/fomino && cd $workingDir && npm install";
 
 // Command to stop, delete, and restart the PM2 process
-$pm2Command = "pm2 stop thelaundary || true && pm2 delete thelaundary || true && pm2 start thelaundary.js --name testing && pm2 save";
+$pm2Command = "pm2 stop testing || true && pm2 delete testing || true && pm2 start thelaundary.js --name testing && pm2 save";
 
 // Run the npm install command and capture output
 $process = proc_open($npmCommand, [
