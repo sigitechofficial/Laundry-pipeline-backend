@@ -113,7 +113,7 @@ jobs:
       - name: Trigger npm install on server
         run: |
               echo "Triggering npm install and pm2 start via PHP script..."
-              curl -X GET "https://stagelaundaryb.fomino.ch/trigger_testing.php"
+              curl -X GET "https://testlaundaryb.fomino.ch/trigger_testing.php"
         env:
             HOME: /home/fomino
 

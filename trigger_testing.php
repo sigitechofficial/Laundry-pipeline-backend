@@ -1,6 +1,6 @@
 <?php
 // Path to your working directory
-$workingDir = '/home/fomino/stagelaundaryb.fomino.ch';
+$workingDir = '/home/fomino/testlaundaryb.fomino.ch';
 
 // Absolute path to node and PM2 binaries
 $nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin/node';
