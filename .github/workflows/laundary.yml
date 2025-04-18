@@ -102,12 +102,19 @@ jobs:
           echo "Creating firebase.json..."
           echo "${{ secrets.FIREBASE_CONTENT_STAGE }}" > firebase.json
 
-      - name: 📂 Sync files to development
-        uses: SamKirkland/FTP-Deploy-Action@v4.2.0
-        with:
-          server: ${{ secrets.STAGE_FTP_HOST }}
-          username: ${{ secrets.STAGE_FTP_USERNAME }}
-          password: ${{ secrets.STAGE_FTP_PASSWORD }}
+      - name: 📂 Sync files to staging
+          uses: SamKirkland/FTP-Deploy-Action@v4.2.0
+          with:
+            server: ${{ secrets.STAGE_FTP_HOST }}
+            username: ${{ secrets.STAGE_FTP_USERNAME }}
+            password: ${{ secrets.STAGE_FTP_PASSWORD }}
+            protocol: ftp
+            port: 21
+            local-dir: .
+            server-dir: /home/fomino/testlaundaryb.fomino.ch
+            log-level: verbose
+            security: loose
+        
 
       - name: Trigger npm install on server
         run: |
