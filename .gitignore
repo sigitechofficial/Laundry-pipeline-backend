@@ -1,2 +1,4 @@
 node_modules
-Public
+.env
+firebase.json
+config/config.json
