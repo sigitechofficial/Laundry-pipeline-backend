@@ -111,7 +111,7 @@ jobs:
           protocol: ftp
           port: 21
           local-dir: /
-          server-dir: /home/fomino/testlaundaryb.fomino.ch
+          server-dir: /home/fomino/testlaundaryb.fomino.ch/
           log-level: verbose
           security: loose
 
