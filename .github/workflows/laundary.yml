@@ -90,7 +90,7 @@ jobs:
         run: |
           echo "Creating config folder..."
           mkdir -p config
-          echo "${{ secrets.CONFIG_JSON_CONTENT }}" > config/config.json
+          echo "${{ secrets.CONFIG_JSON_CONTENT_STAGE }}" > config/config.json
 
       - name: Create .htaccess file
         run: |
