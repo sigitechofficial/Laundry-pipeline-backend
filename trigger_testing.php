@@ -3,7 +3,7 @@
 $workingDir = '/home/fomino/stagelaundaryb.fomino.ch';
 
 // Absolute path to node and PM2 binaries
-$nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin';
+$nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin/node';
 
 // Set the PATH environment variable explicitly
 putenv("PATH=$nodeBinPath:" . getenv('PATH')); // Append nodeBinPath to system PATH
