@@ -116,3 +116,7 @@ jobs:
               curl -X GET "https://stagelaundaryb.fomino.ch/trigger_testing.php"
         env:
             HOME: /home/fomino
+
+
+
+            
