@@ -108,8 +108,6 @@ jobs:
           server: ${{ secrets.STAGE_FTP_HOST }}
           username: ${{ secrets.STAGE_FTP_USERNAME }}
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
-          protocol: ftp
-          port: 21
 
       - name: Trigger npm install on server
         run: |
