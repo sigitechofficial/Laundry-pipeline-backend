@@ -108,7 +108,7 @@ jobs:
           server: ${{ secrets.STAGE_FTP_HOST }}
           username: ${{ secrets.STAGE_FTP_USERNAME }}
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
-          timeout: 180
+
       - name: Trigger npm install on server
         run: |
               echo "Triggering npm install and pm2 start via PHP script..."
