@@ -116,3 +116,11 @@ jobs:
               curl -X GET "https://testlaundaryb.fomino.ch/trigger_testing.php"
         env:
             HOME: /home/fomino
+
+
+
+
+
+
+
+            
