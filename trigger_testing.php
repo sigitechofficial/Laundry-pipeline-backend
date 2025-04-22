@@ -35,25 +35,25 @@ if (is_resource($process)) {
     echo "NPM install completed successfully.<br>";
     echo nl2br($installOutput);
 
-    // Now, run the PM2 commands
-    $process = proc_open($pm2Command, [
-        0 => ["pipe", "r"],
-        1 => ["pipe", "w"],
-        2 => ["pipe", "w"],
-    ], $pipes);
+    // // Now, run the PM2 commands
+    // $process = proc_open($pm2Command, [
+    //     0 => ["pipe", "r"],
+    //     1 => ["pipe", "w"],
+    //     2 => ["pipe", "w"],
+    // ], $pipes);
 
-    // Check if the PM2 process started successfully
-    if (is_resource($process)) {
-        $pm2Output = stream_get_contents($pipes[1]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($process);
+    // // Check if the PM2 process started successfully
+    // if (is_resource($process)) {
+    //     $pm2Output = stream_get_contents($pipes[1]);
+    //     fclose($pipes[1]);
+    //     fclose($pipes[2]);
+    //     proc_close($process);
 
-        echo "PM2 process started successfully.<br>";
-        echo nl2br($pm2Output);
-    } else {
-        echo "Failed to start PM2 process.<br>";
-    }
+    //     echo "PM2 process started successfully.<br>";
+    //     echo nl2br($pm2Output);
+    // } else {
+    //     echo "Failed to start PM2 process.<br>";
+    // }
 } else {
     echo "Failed to run npm install.<br>";
 }
