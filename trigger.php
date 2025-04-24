@@ -4,14 +4,14 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 // Path to your working directory
-$workingDir = '/home/fomino/backendlaundary.fomino.ch';
+$workingDir = '/home/fomino/testlaundaryb.fomino.ch';
 
 // Set up the correct environment variables for the shell
 $nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin';
 $npmCommand = "source /home/fomino/.nvm/nvm.sh && export HOME=/home/fomino && cd $workingDir && npm install";
 
 // Command to stop, delete, and restart the PM2 process
-$pm2Command = "source /home/fomino/.nvm/nvm.sh && export HOME=/home/fomino && pm2 stop laundary || true && pm2 delete laundary || true && pm2 start $workingDir/laundary.js --name laundary && pm2 save";
+$pm2Command = "source /home/fomino/.nvm/nvm.sh && export HOME=/home/fomino && pm2 stop thelaundary || true && pm2 delete thelaundary || true && pm2 start $workingDir/thelaundary.js --name thelaundary && pm2 save";
 
 // Set the PATH environment variable explicitly using putenv()
 putenv("PATH=$nodeBinPath:" . getenv('PATH'));
