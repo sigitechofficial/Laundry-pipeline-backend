@@ -15,9 +15,13 @@ module.exports=async function validateAccessToken(req,res,next) {
         if(!accessToken){
             throw new Error();
         }
+
+        console.log("AccessToken Step-1")
     
         const validateToken=verify(accessToken,process.env.JWT_ACCESS_SECRET)
         //console.log("🚀 ~ validateAccessToken ~ validateToken:", validateToken)
+
+        console.log("AccessToken Step-2",validateAccessToken)
 
     
         req.user=validateToken;

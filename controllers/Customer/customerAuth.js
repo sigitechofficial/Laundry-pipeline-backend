@@ -135,7 +135,7 @@ async function registerCustomerWithOTP(req, res) {
         profileImg = tempProfileImg.replace(/\\/g, "/");
     }
 
-    
+
     const userfind = await users.findOne({
         where: {
             email: email,
@@ -169,34 +169,34 @@ async function registerCustomerWithOTP(req, res) {
 
     console.log("🚀 ~ registerCustomerWithOTP ~ userfind:", userfind);
 
-    if(userfind){
+    if (userfind) {
         throw new customError("User with this email already exists ")
-    }else{
-        
+    } else {
+
         let userTypeId = 2;
-        const hashedPassword=await bcrypt.hash(password,8) 
+        const hashedPassword = await bcrypt.hash(password, 8)
         const userCreate = await users.create({
             email,
             firstName,
             lastName,
             phoneNum,
             userTypeId,
-            password:hashedPassword,
-            status: true 
+            password: hashedPassword,
+            status: true
         });
 
-        
+
         const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
         console.log("🚀 ~ registerCustomerWithOTP ~ stripeCustomer:", stripeCustomer);
 
-        
+
         const otp = otpGenerator.generate(4, {
             lowerCaseAlphabets: false,
             upperCaseAlphabets: false,
             specialChars: false
         });
 
-        
+
         otpMail({
             type: 'RegisterOTP',
             email: email,
@@ -205,21 +205,21 @@ async function registerCustomerWithOTP(req, res) {
 
         let dt = new Date();
 
-        
+
         const otpCreation = await otpVerification.create({
             OTP: otp,
             reqAt: dt,
             userId: userCreate.id
         });
 
-        
+
         await deviceToken.create({
             tokenId: dvToken,
             status: true,
             userId: userCreate.id
         });
 
-        
+
         await users.update({
             stripeCustomerId: stripeCustomer,
             image: profileImg,
@@ -320,7 +320,7 @@ async function registerCustomer(req, res) {
     console.log("🚀 ~ registerCustomer ~ userfind:", userfind)
 
 
-    if(!userfind){
+    if (!userfind) {
         throw new customError("User Not Exists")
     }
 
@@ -355,9 +355,9 @@ async function registerCustomer(req, res) {
         where: { id: userfind.id }
     })
 
-    const updatedUser=await users.findOne({
-        where:{
-            id:userfind.id
+    const updatedUser = await users.findOne({
+        where: {
+            id: userfind.id
         },
         attributes: [
             "id",
@@ -422,12 +422,12 @@ async function loginUser(req, res) {
             },
             {
                 model: countries,
-                required:false,
+                required: false,
                 attributes: ['name']
             },
             {
-                model:cities,
-                attributes:['name']
+                model: cities,
+                attributes: ['name']
             }],
         attributes: [
             "id",
@@ -448,7 +448,7 @@ async function loginUser(req, res) {
     //console.log("🚀 ~ loginUser ~ userFind:", userFind)
     console.log("🚀 ~ loginUser ~ userFind:", userFind)
 
-    if(!userFind){
+    if (!userFind) {
         throw new customError('User Not Exists with this email')
     }
 
@@ -534,6 +534,15 @@ async function loginUser(req, res) {
             dvToken,
             accessToken
         )
+
+        res.cookie("accessToken", accessToken, {
+            //   httpOnly: true,
+            //   secure: true, 
+            //   sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+
         let output = loginData(userData, accessToken, false);
         return res.json(output);
     }
@@ -618,6 +627,15 @@ async function loginUser(req, res) {
         dvToken,
         accessToken
     )
+
+    res.cookie("accessToken", accessToken, {
+        //   httpOnly: true,
+        //   secure: true, 
+        //   sameSite: "None",
+        path: "/customer",
+        maxAge: 24 * 60 * 60 * 1000
+    });
+
 
 
     let output = loginData(userFind, accessToken, false);

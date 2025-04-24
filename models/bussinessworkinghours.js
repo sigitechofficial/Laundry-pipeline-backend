@@ -20,11 +20,19 @@ module.exports = (sequelize, DataTypes) => {
     },
     openTime: {
       type:DataTypes.TIME,
-    allowNull:true
+    allowNull:true,
+    defaultValue:'07:00:00'
   },
-    closeTime: {
+  closeTime: {
       type:DataTypes.TIME,
-    allowNull:true}
+    allowNull:true,
+    defaultValue:'19:00:00'
+  },
+  status:{
+    type:DataTypes.BOOLEAN,
+    allowNull:false,
+    defaultValue:false
+  }
   }, {
     sequelize,
     modelName: 'bussinessWorkingHours',

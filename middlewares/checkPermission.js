@@ -12,7 +12,7 @@ module.exports = async function validatePermission(req, res, next) {
         let method = req.method.toLowerCase();
         method = method === 'get' ? 'read' : method === 'post' ? 'create' : method === 'put' ? 'update' : method;
         
-        if (userData.userTypeId === 4) {
+        if (userData.userTypeId === 4 || userData.userTypeId===1) {
             return next();
         } else {
             

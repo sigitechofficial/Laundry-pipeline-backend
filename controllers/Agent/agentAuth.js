@@ -10,7 +10,8 @@ const { users,
     bussinessWorkingHours,
     service,
     machines,
-    machineCount } = require('../../models')
+    machineCount,
+    addressDb } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -151,6 +152,17 @@ async function verifyOTpSignUp(req, res) {
             }
         })
 
+        const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        const dataMap = daysArray.map((day) => (
+            console.log("Day---->", day),
+            {
+                dayOfWeek: day,
+                status: false
+            }
+        ))
+        let output = await bussinessWorkingHours.bulkCreate(dataMap)
+        console.log("OutPut------------->", output);
+
         return res.json(responsefunc("1", "OTP Verified", { userId }))
     } else {
         const otpData = await otpVerification.findByPk(otpId)
@@ -171,6 +183,19 @@ async function verifyOTpSignUp(req, res) {
                 id: userId
             }
         })
+
+        const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        const dataMap = daysArray.map((day) => (
+            console.log("Day---->", day),
+            {
+                dayOfWeek: day,
+                status: true
+            }
+        ))
+        let output = await bussinessWorkingHours.bulkCreate(dataMap)
+        console.log("OutPut------------->", output);
+
+
         return res.json(responsefunc("1", "OTP verified", { userId }))
     }
 
@@ -183,7 +208,7 @@ async function verifyOTpSignUp(req, res) {
 */
 async function resendOTP(req, res) {
     const { userId } = req.body;
-    const userExist = await user.findByPk(userId);
+    const userExist = await users.findByPk(userId);
 
     if (!userExist) {
         throw new CustomException(
@@ -388,7 +413,7 @@ async function registerAgentWithOTP(req, res) {
 
     console.log("🚀 ~ registerAgentWithOTP ~ userfind:", userfind);
 
-    if (userfind.email === email && userfind.userTypeId === 4) {
+    if (userfind?.email === email && userfind?.userTypeId === 4) {
         throw new customError('User Already Exists')
     } else {
 
@@ -460,7 +485,7 @@ async function registerAgentWithOTP(req, res) {
 */
 
 async function agentBusinessInfo(req, res) {
-    const { shopName, services, matchProfileOptions, userId, otherText, bussinessWorkingDays, machineryCount, serviceTimes } = req.body
+    const { shopName, matchProfileOptions, userId, otherText, machineryCount, serviceTimes } = req.body
 
 
     if (matchProfileOptions !== 'Other' && otherText) {
@@ -475,24 +500,6 @@ async function agentBusinessInfo(req, res) {
             agentId: userId
         })
 
-        const servicesSelect = services.map(service => ({
-            serviceId: service.serviceId,
-            status: true,
-            agentServiceId: userId
-        }))
-        console.log("🚀 ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
-
-        await agentSelectServices.bulkCreate(servicesSelect)
-
-        const bussinessWorkingTime = bussinessWorkingDays.map(ele => ({
-            dayOfWeek: ele.dayOfWeek,
-            openTime: ele.openTime,
-            closeTime: ele.closeTime,
-            bussinessInformationId: agentInfo.id
-        }))
-        console.log("🚀 ~ agentBusinessInfo ~ bussinessWorkingTime:", bussinessWorkingTime)
-
-        await bussinessWorkingHours.bulkCreate(bussinessWorkingTime)
 
         const machinesCountCreate = machineryCount.map(ele => ({
             total: ele.total,
@@ -526,25 +533,6 @@ async function agentBusinessInfo(req, res) {
         agentId: userId
     })
 
-    const servicesSelect = services.map(service => ({
-        serviceId: service.serviceId,
-        status: true,
-        agentServiceId: userId
-    }))
-    console.log("🚀 ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
-
-    await agentSelectServices.bulkCreate(servicesSelect)
-
-    const bussinessWorkingTime = bussinessWorkingDays.map(ele => ({
-        dayOfWeek: ele.dayOfWeek,
-        openTime: ele.openTime,
-        closeTime: ele.closeTime,
-        bussinessInformationId: agentInfo.id
-    }))
-    console.log("🚀 ~ agentBusinessInfo ~ bussinessWorkingTime:", bussinessWorkingTime)
-
-    await bussinessWorkingHours.bulkCreate(bussinessWorkingTime)
-
     const machinesCountCreate = machineryCount.map(ele => ({
         total: ele.total,
         status: true,
@@ -569,6 +557,64 @@ async function agentBusinessInfo(req, res) {
 }
 
 
+/*
+ * Agent  Bussiness Services Information Add
+*/
+async function businesInfoAdded(req, res) {
+    const { userId } = req.params
+    const { services } = req.body
+
+    const servicesSelect = services.map(service => ({
+        serviceId: service.serviceId,
+        status: true,
+        agentServiceId: userId
+    }))
+    console.log("🚀 ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
+
+    const serviceCreate = await agentSelectServices.bulkCreate(servicesSelect)
+
+
+    return res.json(responsefunc("1", "Agent Services Added Sucessfully", { serviceCreate }, ""))
+}
+
+/*
+ *  Agent  Bussiness Working Hours Update
+*/
+async function workingHoursUpdate(req, res) {
+
+    const { userId } = req.params
+    const { bussinessWorkingDays } = req.body
+
+
+    for (const ele of bussinessWorkingDays) {
+        await bussinessWorkingHours.update(
+            {
+                openTime: ele.openTime,
+                closeTime: ele.closeTime,
+                status: ele.status
+            },
+            {
+                where: {
+                    dayOfWeek: ele.dayOfWeek,
+                    userId: userId,
+                },
+            }
+        );
+    }
+
+
+    return res.json(responsefunc("1", "Bussiness Days Updated", {}, ""))
+
+}
+
+
+
+
+
+
+
+
+
 
 /*
  * Login Agent 
@@ -582,7 +628,16 @@ async function loginUser(req, res) {
             email: email,
             deletedAt: { [Op.is]: null }
         },
-        include: { model: deviceToken, attributes: ['tokenId'] },
+        include: [
+            {
+                model: deviceToken,
+                attributes: ['tokenId']
+            },
+            {
+                model: addressDb,
+                attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates']
+            }
+        ],
         attributes: [
             "id",
             "firstName",
@@ -601,7 +656,9 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("🚀 ~ loginUser ~ userFind:", userFind)
+    console.log("🚀 ~ loginUser ~ userFind:", userFind.addressDb)
+
+    //return res.json(userFind)
     if (!userFind) {
         throw new customError("User not Exists with this credentials")
     }
@@ -613,6 +670,26 @@ async function loginUser(req, res) {
                 "Please enter correct password to continue")
         }
     }
+
+    if (!userFind.addressDb || userFind.addressDb.length === 0) {
+
+        return res.json(responsefunc("3", "Cannot login without adding an address", {}, ""))
+    }
+
+    const addr = userFind.addressDb
+    console.log("🚀 ~ loginUser ~ addr:", addr)
+
+    if (
+        !addr.streetAddress ||
+        !addr.addressType ||
+        !addr.province ||
+        addr.lat === null || addr.lat === "" ||
+        addr.lng === null || addr.lng === ""
+    ) {
+        return res.json(responsefunc("4", "Please complete your address information before logging in.", {}, ""));
+    }
+
+
 
     if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
 
@@ -646,8 +723,6 @@ async function loginUser(req, res) {
 
 
     if (signedFrom === 'google' || signedFrom === 'facebook' || signedFrom === 'apple') {
-
-
         const userFind = await users.findOne({
             where: {
                 email: email,
@@ -705,7 +780,16 @@ async function loginUser(req, res) {
             attributes: ['id', 'title']
         })
 
-        let output = loginData(userData, accessToken, false, featureData);
+        res.cookie("accessToken", accessToken, {
+            //   httpOnly: true,
+            //   secure: true, 
+            //   sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+
+
+        let output = loginData(userFind, accessToken, false, featureData);
         return res.json(output);
     }
 
@@ -798,6 +882,15 @@ async function loginUser(req, res) {
         dvToken,
         accessToken
     )
+
+    res.cookie("accessToken", accessToken, {
+        //   httpOnly: true,
+        //   secure: true, 
+        //   sameSite: "None",
+        path: "/agent",
+        maxAge: 24 * 60 * 60 * 1000
+    });
+
 
 
     let output = loginData(userFind, accessToken, false, featureData);
@@ -1122,6 +1215,8 @@ module.exports = {
     changePasswordOTP,
     agentBusinessInfo,
     registerAgentWithOTP,
-    resendOTP
+    resendOTP,
+    businesInfoAdded,
+    workingHoursUpdate
 
 }

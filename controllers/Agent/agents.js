@@ -26,7 +26,8 @@ const {
     bussinessInformation,
     bussinessWorkingHours,
     proofOfDeliveries,
-    OnHoldConfirmation
+    OnHoldConfirmation,
+    machines
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -61,12 +62,10 @@ async function agentAddressAdd(req, res) {
         lat,
         lng,
         coordinates,
-        countryId,
-        cityId,
         addressType,
+        userId,
     } = req.body;
 
-    const userId = req.user.id;
     const findAgentShopAddress = await addressDb.findAll({
         where: {
             userId: userId
@@ -83,21 +82,26 @@ async function agentAddressAdd(req, res) {
     };
 
     const fetchZones = await findZones(lat, lng)
-    console.log("🚀 ~ agentAddressAdd ~ fetchZones:", fetchZones)
+    console.log("🚀 ~ agentAddressAdd ~ fetchZones:", fetchZones[0].id)
+    console.log("🚀 ~ agentAddressAdd ~ fetchZones:", fetchZones[0].city.id)
+    console.log("🚀 ~ agentAddressAdd ~ fetchZones:", fetchZones[0].city.country.id)
+
+    // return res.json(fetchZones);
 
     const registerShop = await addressDb.create({
         streetAddress,
         district,
-        cityId,
+        cityId:fetchZones[0].city.id,
         province,
-        countryId,
+        countryId:fetchZones[0].city.country.id,
         lat,
         lng,
         status: true,
         coordinates: polygon,
         userId: userId,
-        zoneId: fetchZones,
-        addressType
+        zoneId: fetchZones[0].id,
+        addressType,
+        userId
     });
 
     return res.json(
@@ -939,7 +943,7 @@ async function customerServices(req, res) {
     console.log("🚀 ~ customerServices ~ customerServicesFind:", customerServicesFind)
 
 
-    return res.json(responsefunc("1", "Custoemr Selected Services", customerServicesFind, ""))
+    return res.json(responsefunc("1", "Custoemr Selected Services", {customerServices:customerServicesFind}, ""))
 
 }
 
@@ -1517,6 +1521,33 @@ async function changeEmployeeStatus(req, res) {
 
 
 /*
+    * Get All Employee 
+*/
+async function getAllEmployees(req,res) {
+    const agentEmployee=await users.findAll({
+        where:{
+            classifiedAsId:1
+        },
+        attributes:[
+            'id',
+            'firstName',
+            'lastName',
+            'email',
+            'status',
+            'phoneNum'
+        ],
+        include:[
+            {
+                model:roles,
+                attributes:['id','name']
+            }
+        ]
+    })
+    return res.json(responsefunc("1","All Employee Fetched",agentEmployee," "))
+}
+
+
+/*
     * Get Agent Services
 */
 
@@ -1572,6 +1603,62 @@ async function getCities(req,res) {
     
 }
 
+
+//!------------------Get Bussiness Information ------------------//
+async function getBussinessInforMation(req,res) {
+    const{userId}=req.params
+
+    const machineInfo=await machines.findAll();
+
+    const findServices = await agentSelectServices.findAll({
+        where: {
+            agentServiceId: userId,
+            status: true
+        },
+        include: [
+            {
+                model: service,
+                attributes: ['name']
+            },
+            {
+                model: users,
+                as: 'agentServices',
+                attributes: ['firstName', 'lastName', 'email']
+            }
+        ],
+        attributes:['id','status']
+    })
+
+
+    let outObj={
+        allMachineInformation:machineInfo,
+        agentServices:findServices
+    }
+
+
+    return res.json(responsefunc("1","Information fetched",outObj,""))
+    
+}
+
+async function getBussinessWrkinghours(req,res) {
+    const{userId}=req.params
+
+    const bussinesWorkingHours=await bussinessWorkingHours.findAll({
+        where:{
+            userId:userId
+        },
+        attributes:['id','dayOfWeek','openTime','closeTime','status','userId']
+    });
+    
+
+    let outObj={
+        bussinesWorkingHours:bussinesWorkingHours
+    }
+
+
+    return res.json(responsefunc("1","Information fetched",outObj,""))    
+}
+
 //!---------------Recurring Functions-------------------------//
 
 let responsefunc = (status, message, data, error) => {
@@ -1584,7 +1671,6 @@ let responsefunc = (status, message, data, error) => {
 };
 
 async function findZones(lat, lng) {
-    // Checking if the coordinates are inside any of the zones
     const findZone = await zone.findAll({
         where: {
             status: true,
@@ -1592,19 +1678,33 @@ async function findZones(lat, lng) {
                 sequelize.fn('ST_Contains', sequelize.col('coordinates'), sequelize.fn('ST_GeomFromText', `POINT(${lng} ${lat})`)),
                 true
             )
-        }
+        },
+        include:[
+            {
+                model:cities,
+                attributes:['id','name','lat','lng','status'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName','status']
+                    }
+                ]
+            }
+        ]
     });
 
-    console.log("🚀 ~ findZones ~ findZone:", findZone);
+    console.log("🚀 ~ findZones ~ findZone:", findZone[0].city.id);
+    console.log("🚀 ~ findZones ~ findZone:", findZone[0].city.country.id);
+
+
 
     if (findZone.length === 0) {
         throw new customError("No Zone found for these lat,lngs and coordinates");
     }
 
+    //return findZone[0].id;
 
-
-    // Assuming you want the ID of the first zone that matches
-    return findZone[0].id;
+    return findZone;
 }
 
 
@@ -1662,13 +1762,11 @@ module.exports = {
     orderDetailsById,
     getShopAddress,
     invoiceCreation,
-    //agentAcceptOrder,
     agentCancelBooking,
     agnetDrivers,
     agentAssignBookingToLaundryDriver,
     agentPickupOrderBySelf,
     driverAddSerivces,
-    //agentPickupOrder,
     AddPickupDeliveryProof,
     agentBookingStatusOnTheWay,
     driverStatusArrived,
@@ -1693,6 +1791,7 @@ module.exports = {
     addEmployee,
     updateEmployee,
     changeEmployeeStatus,
+    getAllEmployees,
     //--------------------Agent Services------------//
     getAgentServices,
     //-------------------Customer Services-------//
@@ -1700,9 +1799,12 @@ module.exports = {
     //-----------Booking OnHold--------------//
     onHoldConformation,
     agentIssueResolved,
-    //--------------Gte coutries && cities----------//
+    //--------------Get coutries && cities----------//
     getCountries,
-    getCities
+    getCities,
+    //-------------Get Bussines Information-------//
+    getBussinessInforMation,
+    getBussinessWrkinghours
 
 
 

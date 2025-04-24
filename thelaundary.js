@@ -17,8 +17,25 @@ const {intilizeSocketFunc}=require('./socket_io')
 
 const server = http.createServer(app);
 
+
+let origin
+if(process.env.NODE_ENV==='development'){
+    origin= `http://localhost:${process.env.PORT}`
+}
+else if(process.env.NODE_ENV ==='test'){
+  origin="https://testlaundaryb.fomino.ch"
+}
+else if(process.env.NODE_ENV ==='production'){
+  origin="https://backendlaundary.fomino.ch"
+}
+
+
+
 app.use(cookieParser())
-app.use(cors())
+app.use(cors({
+  origin:origin,
+  credentials:true
+}))
 app.use(express.json())
 
 app.use(express.urlencoded({extended:true}))

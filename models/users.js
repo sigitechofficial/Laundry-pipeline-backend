@@ -74,11 +74,15 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with model bussinesInformation
       users.hasOne(models.bussinessInformation,{as:'businessInfo',foreignKey:'agentId'})
       models.bussinessInformation.belongsTo(users,{as:'businessInfo',foreignKey:'agentId'})
-
-      // //Relation with users for employeOff
-      // users.hasMany(models.users,{as:'shopEmployee',foreignKey:'employeeOff'})
-      // models.users.belongsTo(users)
       
+      //Relation with Model bussinessWorkingHours
+      users.hasMany(models.bussinessWorkingHours,{foreignKey:'userId'})
+      models.bussinessWorkingHours.belongsTo(users,{foreignKey:'userId'})
+
+      //Relation with Zone table
+      users.hasMany(models.zone,{as:'zoneAdmin',foreignKey:'zoneAdminId'})
+      models.zone.belongsTo(users,{as:'zoneAdmin',foreignKey:'zoneAdminId'})
+
 
     }
   }
