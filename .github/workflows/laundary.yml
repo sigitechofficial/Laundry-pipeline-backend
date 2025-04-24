@@ -60,7 +60,7 @@ jobs:
       - name: 📂 Sync files to production
         uses: SamKirkland/FTP-Deploy-Action@v4.2.0
         with:
-          server: ${{ secrets.PROD_FTP_HOST }}
+          server: ftp.fomino.ch
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           debug: true
@@ -68,7 +68,7 @@ jobs:
       - name: Trigger npm install on server
         run: |
               echo "Triggering npm install via PHP script..."
-              curl -X GET "https://laundarybackend.fomino.ch/trigger.php"
+              curl -X GET "https://backendlaundary.fomino.ch/trigger.php"
         env:
             HOME: /home/fomino
 
@@ -116,11 +116,3 @@ jobs:
               curl -X GET "https://testlaundaryb.fomino.ch/trigger_testing.php"
         env:
             HOME: /home/fomino
-
-
-
-
-
-
-
-            
