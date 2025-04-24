@@ -37,7 +37,7 @@ module.exports=async function validateAccessToken(req,res,next) {
         return res.status(403).json({
             status:'0',
             message:"Access Denied",
-            data:{error},
+            data:{},
             error:'You are not authorized to access it'
         })
         

@@ -26,7 +26,8 @@ const {
     bussinessInformation,
     bussinessWorkingHours,
     proofOfDeliveries,
-    OnHoldConfirmation
+    OnHoldConfirmation,
+    machines
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -62,9 +63,9 @@ async function agentAddressAdd(req, res) {
         lng,
         coordinates,
         addressType,
+        userId,
     } = req.body;
 
-    const userId = req.user.id;
     const findAgentShopAddress = await addressDb.findAll({
         where: {
             userId: userId
@@ -99,7 +100,8 @@ async function agentAddressAdd(req, res) {
         coordinates: polygon,
         userId: userId,
         zoneId: fetchZones[0].id,
-        addressType
+        addressType,
+        userId
     });
 
     return res.json(
@@ -941,7 +943,7 @@ async function customerServices(req, res) {
     console.log("🚀 ~ customerServices ~ customerServicesFind:", customerServicesFind)
 
 
-    return res.json(responsefunc("1", "Custoemr Selected Services", customerServicesFind, ""))
+    return res.json(responsefunc("1", "Custoemr Selected Services", {customerServices:customerServicesFind}, ""))
 
 }
 
@@ -1545,15 +1547,6 @@ async function getAllEmployees(req,res) {
 }
 
 
-
-
-
-
-
-
-
-
-
 /*
     * Get Agent Services
 */
@@ -1608,6 +1601,62 @@ async function getCities(req,res) {
 
     return res.json(responsefunc("1","Fetched All Cities",outObj,""))
     
+}
+
+
+//!------------------Get Bussiness Information ------------------//
+async function getBussinessInforMation(req,res) {
+    const{userId}=req.params
+
+    const machineInfo=await machines.findAll();
+
+    const findServices = await agentSelectServices.findAll({
+        where: {
+            agentServiceId: userId,
+            status: true
+        },
+        include: [
+            {
+                model: service,
+                attributes: ['name']
+            },
+            {
+                model: users,
+                as: 'agentServices',
+                attributes: ['firstName', 'lastName', 'email']
+            }
+        ],
+        attributes:['id','status']
+    })
+
+
+    let outObj={
+        allMachineInformation:machineInfo,
+        agentServices:findServices
+    }
+
+
+    return res.json(responsefunc("1","Information fetched",outObj,""))
+    
+}
+
+async function getBussinessWrkinghours(req,res) {
+    const{userId}=req.params
+
+    const bussinesWorkingHours=await bussinessWorkingHours.findAll({
+        where:{
+            userId:userId
+        },
+        attributes:['id','dayOfWeek','openTime','closeTime','status','userId']
+    });
+    
+
+    let outObj={
+        bussinesWorkingHours:bussinesWorkingHours
+    }
+
+
+    return res.json(responsefunc("1","Information fetched",outObj,""))    
 }
 
 //!---------------Recurring Functions-------------------------//
@@ -1750,9 +1799,12 @@ module.exports = {
     //-----------Booking OnHold--------------//
     onHoldConformation,
     agentIssueResolved,
-    //--------------Gte coutries && cities----------//
+    //--------------Get coutries && cities----------//
     getCountries,
-    getCities
+    getCities,
+    //-------------Get Bussines Information-------//
+    getBussinessInforMation,
+    getBussinessWrkinghours
 
 
 

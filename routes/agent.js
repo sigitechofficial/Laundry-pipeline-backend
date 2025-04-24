@@ -70,6 +70,8 @@ router.post('/registerAgentOTP',asyncMiddleware(agentAuthController.registerAgen
 router.post('/verifyOTpSignUp',asyncMiddleware(agentAuthController.verifyOTpSignUp))
 //complete registration of Agent
 router.post('/registerAgent',uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.registerAgentWithOTP))
+//Resend OTP
+router.post('/resendotp', asyncMiddleware(agentAuthController.resendOTP));
 //User login
 router.post('/loginUser',asyncMiddleware(agentAuthController.loginUser))
 //forgot password request through otp send to mail
@@ -96,7 +98,7 @@ router.post('/acceptOrder',validateAccessToken,asyncMiddleware(agentController.a
 // //Get Invoice Details for Agent
 // router.get('/agentInvoiceMake',validateAccessToken,asyncMiddleware(agentController.orderDetailsforInvoice))
 //Get All Services
-router.get('/getAllServices',validateAccessToken,asyncMiddleware(adminController.getAllServices))
+router.get('/getAllServices',asyncMiddleware(adminController.getAllServices))
 //Agent upload proof Images
 router.post('/AddPickupDeliveryProof',validateAccessToken,checkPermissions,uploadPickDropProofs.array('Images', 10),asyncMiddleware(agentController.AddPickupDeliveryProof))
 //Agent goes to pick order Byself and Mark order on the way driver
@@ -167,5 +169,14 @@ router.get('/customerServices',validateAccessToken,checkPermissions,asyncMiddlew
 //!==============================Get countries && cities=============================//
 router.get('/getCountries',asyncMiddleware(agentController.getCountries))
 router.get('/getCities',asyncMiddleware(agentController.getCities))
+
+//!------------------------------------Bussiness Information--------------------//
+router.get('/getBussinessInforMation/:userId',asyncMiddleware(agentController.getBussinessInforMation))
+router.get('/getBussinessWrkinghours/:userId',asyncMiddleware(agentController.getBussinessWrkinghours))
+//Bussiness services info Add
+router.post('/businesInfoAdded/:userId',asyncMiddleware(agentAuthController.businesInfoAdded))
+//Update Working Hours
+router.patch('/workingHoursUpdate/:userId',asyncMiddleware(agentAuthController.workingHoursUpdate))
+
 module.exports=router
 

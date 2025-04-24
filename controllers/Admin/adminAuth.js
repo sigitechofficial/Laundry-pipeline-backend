@@ -91,6 +91,15 @@ async function signIn(req, res) {
         //featureData: featureData
     };
 
+    res.cookie("accessToken", accessToken, {
+        //   httpOnly: true,
+        //   secure: true, 
+        //   sameSite: "None",
+          path: "/admin",
+          maxAge: 24 * 60 * 60 * 1000
+        });
+        
+
     return res.json(responsefunc("1", "Login Successful", output, ""));
 }
 

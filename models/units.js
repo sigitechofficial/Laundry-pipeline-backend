@@ -37,6 +37,14 @@ module.exports = (sequelize, DataTypes) => {
         units.hasMany(models.baseUnits, { as: 'currencyUnitB', foreignKey: 'currencyUnitId' });
         models.baseUnits.belongsTo(units, { as: 'currencyUnitB', foreignKey: 'currencyUnitId' });
 
+        //Linking with model zone
+        units.hasMany(models.zone,{as:'distanceUnitZ',foreignKey:"distanceUnitId"})
+        models.zone.belongsTo(units,{as:'distanceUnitZ',foreignKey:"distanceUnitId"})
+
+           // Linking as currencyUnitB with appUnit model
+           units.hasMany(models.zone, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId' });
+           models.zone.belongsTo(units, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId' });
+
 
 
 

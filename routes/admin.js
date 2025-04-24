@@ -6,6 +6,7 @@ const adminAuth=require('../controllers/Admin/adminAuth')
 const multer=require('multer')
 const path=require('path')
 const validateAccessToken=require('../middlewares/adminValidateToken')
+const {createDestinationDirectory}=require('../utils/destination')
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -37,15 +38,18 @@ const uploadFlagImg=multer({
     storage:uploadCountryflagImg,
 })
 
-const uploadCategoryPic=multer.diskStorage({
-    destination:(req,file,cb)=>{
-        cb(null,'./Public/CategoryImages')
+ 
+const uploadCategoryPic = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const destinationPath = './Public/CategoryImages';
+      // Call the function to create the destination directory
+      createDestinationDirectory(destinationPath, cb);
     },
-    filename:(req,file,cb)=>{
-        cb(null,'CategoriesImg'+"-"+Date.now()+path.extname(file.originalname))
-    }
-})
-
+    filename: (req, file, cb) => {
+      cb(null, `CategoriesImg-${Date.now()}${path.extname(file.originalname)}`);
+    },
+  });
+  
 const uploadcategoryImage=multer({
     storage:uploadCategoryPic
 })
@@ -163,4 +167,10 @@ router.post('/addfeatures',validateAccessToken,asyncMiddleware(adminController.a
 //!-----------------------------Employee Management------------------------------//
 //Get All Employess Of Admin
 router.get('/getAdminEmployess',validateAccessToken,asyncMiddleware(adminController.getAdminEmployess))
+//Add Employee
+router.post('/adinEmployeeAdd',validateAccessToken,asyncMiddleware(adminController.addEmployee))
+//Update Employee
+router.patch('/updateEmployee',validateAccessToken,asyncMiddleware(adminController.updateEmployee))
+//update Employee Status
+router.patch('/updateEmployeeStatus',validateAccessToken,asyncMiddleware(adminController.changeEmployeeStatus))
 module.exports=router

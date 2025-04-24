@@ -18,6 +18,11 @@ module.exports = {
       closeTime: {
         type: Sequelize.TIME
       },
+      status:{
+        type:Sequelize.BOOLEAN,
+        allowNull:false,
+        defaultValue:false
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

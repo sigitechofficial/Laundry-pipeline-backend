@@ -17,6 +17,10 @@ module.exports = (sequelize, DataTypes) => {
       //Realltion with driverInZones Model
       zone.hasMany(models.driverInZones)
       models.driverInZones.belongsTo(zone)
+
+      //Relation with users Table
+      zone.hasMany(models.users)
+      models.users.belongsTo(zone)
     }
   }
   zone.init({
@@ -30,7 +34,7 @@ module.exports = (sequelize, DataTypes) => {
     defaultValue:false
   },
   zoneMinimumAmount:{
-    type:DataTypes.DECIMAL(2,2),
+    type:DataTypes.DECIMAL(5,2),
     allowNull:true
   },
   serviceCharge:{

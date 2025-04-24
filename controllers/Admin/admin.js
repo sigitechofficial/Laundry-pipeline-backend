@@ -843,11 +843,131 @@ async function getAdminEmployess(req,res) {
 /* 
  *  Add Admin Employee
 */
-async function adminAdEmployee(req,res) {
+async function addEmployee(req, res) {
+    const { firstName, lastName, email, password, phoneNum,countryId,cityId, roleId } = req.body
+
+    const agentId=req.user.id
+
+
+    const userFind=await users.findOne({
+        where:{
+            classifiedAsId:2,
+            roleId:roleId
+        }
+    })
+
+    if(userFind){
+        throw new customError("Employee Already Exists")
+    }
+
+    let hashpassword = await bcrypt.hash(password, 10)
+
+    const user = await users.create({
+        firstName,
+        lastName,
+        email,
+        password: hashpassword,
+        phoneNum,
+        roleId,
+        status: true,
+        classifiedAsId: 2,
+        verifiedAt: Date.now()
+
+    })
+
     
-    
+
+    if(user.classifiedAsId===1 || user.roleId===6){
+        await users.update({
+            employeeOff:agentId
+        },{where:{id:agentId}})
+
+
+        const agentAddress=await addressDb.findOne({
+            where:{
+                userId:agentId
+            }
+        })
+
+        const zoneId=agentAddress.zoneId
+        const shopAddressId=agentAddress.id
+        const driverId=user.id
+
+        await driverInZones.create({
+            driverId:driverId,
+            zoneId:zoneId,
+            laundaryShopId:shopAddressId,
+            countryId,
+            cityId
+        })
+    }
+
+    return res.json(responsefunc("1", "Employee Added Sucessfully", user, ""))
+
 }
 
+
+/*
+  * Update Employee
+*/
+async function updateEmployee(req, res) {
+    const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = req.body
+
+    const userExists = await users.findOne({
+        where: {
+            email: email ? email : null,
+            id: { [Op.not]: employeeId },
+            classifiedAs: 2
+        }
+    })
+
+    if (userExists) {
+        throw new customError("Employee with the following email exists",
+            "Please try another email"
+        )
+    }
+
+    if (updatePassword) {
+        let hashpassword = await bcrypt.hash(updatePassword, 10)
+        users.update({
+            firstName,
+            lastName,
+            email,
+            password: hashpassword,
+            phoneNum,
+            roleId
+        }, { where: { id: employeeId } })
+    } else {
+        users.update({
+            firstName,
+            lastName,
+            email,
+            roleId
+        }, { where: { id: employeeId } })
+    }
+
+
+    return res.json(responsefunc("1", "Employee Updated Sucesfully", {}, ""))
+}
+
+
+/*
+    * Change Employee status
+*/
+async function changeEmployeeStatus(req, res) {
+    const { status, employeeId } = req.body
+
+    users.update({
+        status
+    }, {
+        where: {
+            id: employeeId
+        }
+    })
+
+    return res.json(responsefunc("1", "Employee Status Updated", {}, ""))
+
+}
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 
 /*
@@ -1114,7 +1234,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId } = req.body
+    const { name, coordinates, cityId,zoneMinimumAmount } = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1182,14 +1302,14 @@ async function getAllServices(req, res) {
             status: true,
         }
     })
-    return res.json(responsefunc("1", "All Services", getServices, ""))
+    return res.json(responsefunc("1", "All Services", {services:getServices}, ""))
 }
 
 /*
   * Add Categories
 */
 async function AddCategories(req, res) {
-    const { name } = req.body
+    const { name,description } = req.body
 
     let CategoryImg = null;
 
@@ -1202,6 +1322,7 @@ async function AddCategories(req, res) {
 
     const category = await categories.create({
         name,
+        description,
         image: CategoryImg,
     })
 
@@ -1645,6 +1766,9 @@ module.exports = {
     addServiceItems,
     //----------Employee Management---------//
     getAdminEmployess,
+    addEmployee,
+    updateEmployee,
+    changeEmployeeStatus,
     //----------Add,Roles,Permissions && Features ---------//
     addRole,
     updateRoles,
