@@ -105,7 +105,7 @@ jobs:
       - name: 📂 Sync files to development
         uses: SamKirkland/FTP-Deploy-Action@v4.2.0
         with:
-          server: ${{ secrets.STAGE_FTP_HOST }}
+          server: ftp.fomino.ch
           username: ${{ secrets.STAGE_FTP_USERNAME }}
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
           timeout: 360
