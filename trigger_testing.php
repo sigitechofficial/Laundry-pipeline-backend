@@ -7,7 +7,7 @@ error_reporting(E_ALL);
 $workingDir = '/home/fomino/testlaundaryb.fomino.ch';
 
 // Set up the correct environment variables for the shell
-$nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin';
+$nodeBinPath = '/home/fomino/.nvm/versions/node/v16.20.2/bin/pm2';
 
 // Set the PATH environment variable explicitly using putenv()
 putenv("PATH=$nodeBinPath:" . getenv('PATH'));
