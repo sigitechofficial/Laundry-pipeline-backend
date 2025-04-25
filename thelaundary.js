@@ -18,15 +18,19 @@ const {intilizeSocketFunc}=require('./socket_io')
 const server = http.createServer(app);
 
 
-let origin
+let origin;
+let swaggerUrl;
 if(process.env.NODE_ENV==='development'){
-    origin= `http://localhost:${process.env.PORT}`
+    origin= `http://localhost:${process.env.PORT}`;
+    swaggerUrl=`http://localhost:${process.env.PORT}`
 }
 else if(process.env.NODE_ENV ==='test'){
-  origin="https://testlaundaryb.fomino.ch"
+  origin="https://testlaundaryb.fomino.ch";
+  swaggerUrl="https://testlaundaryb.fomino.ch"
 }
 else if(process.env.NODE_ENV ==='production'){
-  origin="https://backendlaundary.fomino.ch"
+  origin="https://backendlaundary.fomino.ch";
+  swaggerUrl="https://backendlaundary.fomino.ch"
 }
 
 
@@ -40,8 +44,14 @@ app.use(express.json())
 
 app.use(express.urlencoded({extended:true}))
 
-
 const swaggerDocument = YAML.load('./swagger.yaml');
+swaggerDocument.servers=[
+  {
+    url:swaggerUrl,
+    description:`${process.env.NODE_ENV} environment`
+  }
+]
+
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 console.log(`Swagger URL---> http://localhost:${process.env.PORT}/api-docs`)
@@ -65,7 +75,7 @@ let syncDb=0;
 async function startServer() {
     try {
       if (syncDb) {
-        await db.sequelize.sync({ force: true });
+        await db.sequelize.sync({ alter: true });
         console.log('Database synchronized successfully.');
         intilizeSocketFunc(server)
       }
@@ -81,3 +91,4 @@ async function startServer() {
   }
   
   startServer();
+  
