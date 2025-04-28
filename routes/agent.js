@@ -1,182 +1,401 @@
-const express=require('express')
-const router =express()
-const agentAuthController=require('../controllers/Agent/agentAuth')
-const agentController=require('../controllers/Agent/agents')
-const adminController=require('../controllers/Admin/admin')
-const asyncMiddleware=require('../middlewares/asyncHandler')
-const checkPermissions=require('../middlewares/checkPermission')
-const multer=require('multer')
-const path=require('path')
-const validateAccessToken=require('../middlewares/accessToken')
-const { access } = require('fs')
-const { route } = require('./driver')
-const { DATE } = require('sequelize')
-
-
+const express = require("express");
+const router = express();
+const agentAuthController = require("../controllers/Agent/agentAuth");
+const agentController = require("../controllers/Agent/agents");
+const adminController = require("../controllers/Admin/admin");
+const asyncMiddleware = require("../middlewares/asyncHandler");
+const checkPermissions = require("../middlewares/checkPermission");
+const multer = require("multer");
+const path = require("path");
+const validateAccessToken = require("../middlewares/accessToken");
+const { access } = require("fs");
+const { route } = require("./driver");
+const { DATE } = require("sequelize");
+const { createDestinationDirectory } = require("../utils/destination");
 
 //!--------------------------------------------------------Multer Middlewares---------------------------------------------------------//
 //for profile Picture
-const uploadProfilePic=multer.diskStorage({
-    destination:(req,file,cb)=>{
-        cb(null,'./Public/Profile')
+const uploadProfilePic = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = "./Public/Profile";
 
+        createDestinationDirectory(destinationPath, cb);
     },
-    filename:(req,file,cb)=>{
-        cb(null,'profile- '+ req?.user?.id + "- "+ Date.now() + path.extname(file.originalname))
-    }
-})
+    filename: (req, file, cb) => {
+        cb(
+            null,
+            "profile- " +
+            req?.user?.id +
+            "- " +
+            Date.now() +
+            path.extname(file.originalname)
+        );
+    },
+});
 
-const uploadProfile=multer({
-    storage:uploadProfilePic
-})
-
+const uploadProfile = multer({
+    storage: uploadProfilePic,
+});
 
 //For Driver pickup and delivery picture proofs
-const uploadProofsImg=multer.diskStorage({
-    destination:(req,file,cb)=>{
-        cb(null,'./Public/driverProofs')
+const uploadProofsImg = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = "./Public/driverProofs";
+        createDestinationDirectory(destinationPath, cb);
     },
-    filename:(req,file,cb)=>{
-        cb(null,'proofImg-'+ req?.user?.id+ '-'+Date.now() + path.extname(file.originalname))
-    }
-})
+    filename: (req, file, cb) => {
+        cb(
+            null,
+            "proofImg-" +
+            req?.user?.id +
+            "-" +
+            Date.now() +
+            path.extname(file.originalname)
+        );
+    },
+});
 
-const uploadPickDropProofs=multer({
-    storage:uploadProofsImg
-})
-
+const uploadPickDropProofs = multer({
+    storage: uploadProofsImg,
+});
 
 //For Agent on Hold Image Upload
-const onHoldImage=multer.diskStorage({
-    destination:(req,file,cb)=>{
-        cb(null,'./Public/onHoldImages')
-    },
-    filename:(req,file,cb)=>{
-        cb(null,'onHoldImg-'+ req?.user?.id+'-'+Date.now() + path.extname(file.originalname))
-    }
-})
+const onHoldImage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = "./Public/onHoldImages";
 
-const uploadonHoldImages=multer({
-    storage:onHoldImage
-})
+        createDestinationDirectory(destinationPath, cb)
+    },
+    filename: (req, file, cb) => {
+        cb(
+            null,
+            "onHoldImg-" +
+            req?.user?.id +
+            "-" +
+            Date.now() +
+            path.extname(file.originalname)
+        );
+    },
+});
+
+const uploadonHoldImages = multer({
+    storage: onHoldImage,
+});
 
 //!-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
 
-
 //!------------------------------------------------------------Auth Module-----------------------------------------------------//
 //otp for register agent
-router.post('/registerAgentOTP',asyncMiddleware(agentAuthController.registerAgentOTP))
+router.post(
+    "/registerAgentOTP",
+    asyncMiddleware(agentAuthController.registerAgentOTP)
+);
 //verify otp for registration
-router.post('/verifyOTpSignUp',asyncMiddleware(agentAuthController.verifyOTpSignUp))
+router.post(
+    "/verifyOTpSignUp",
+    asyncMiddleware(agentAuthController.verifyOTpSignUp)
+);
 //complete registration of Agent
-router.post('/registerAgent',uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.registerAgentWithOTP))
+router.post(
+    "/registerAgent",
+    uploadProfile.single("profileImage"),
+    asyncMiddleware(agentAuthController.registerAgentWithOTP)
+);
 //Resend OTP
-router.post('/resendotp', asyncMiddleware(agentAuthController.resendOTP));
+router.post("/resendotp", asyncMiddleware(agentAuthController.resendOTP));
 //User login
-router.post('/loginUser',asyncMiddleware(agentAuthController.loginUser))
+router.post("/loginUser", asyncMiddleware(agentAuthController.loginUser));
 //forgot password request through otp send to mail
-router.post('/forgetPasswordRequest',asyncMiddleware(agentAuthController.forgetPasswordRequest))
+router.post(
+    "/forgetPasswordRequest",
+    asyncMiddleware(agentAuthController.forgetPasswordRequest)
+);
 //Verify OTP to change password
-router.post('/verifyOTPforPassword',asyncMiddleware(agentAuthController.verifyOTPforPassword))
+router.post(
+    "/verifyOTPforPassword",
+    asyncMiddleware(agentAuthController.verifyOTPforPassword)
+);
 //Change Password
-router.post('/changePasswordOTP',asyncMiddleware(agentAuthController.changePasswordOTP))
+router.post(
+    "/changePasswordOTP",
+    asyncMiddleware(agentAuthController.changePasswordOTP)
+);
 //logout user and destroy the Token in redis
-router.get('/logout',validateAccessToken,asyncMiddleware(agentAuthController.logout))
+router.get(
+    "/logout",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.logout)
+);
 //Agent Bussiness Information
-router.post('/addBusinessInfor',asyncMiddleware(agentAuthController.agentBusinessInfo))
-
+router.post(
+    "/addBusinessInfor",
+    asyncMiddleware(agentAuthController.agentBusinessInfo)
+);
 
 //!---------------------------Agent Address Module-------------//
-router.post('/agentAddressAdd',validateAccessToken,asyncMiddleware(agentController.agentAddressAdd))
-router.get('/getShopAddress',validateAccessToken,asyncMiddleware(agentController.getShopAddress))
+router.post(
+    "/agentAddressAdd",
+    validateAccessToken,
+    asyncMiddleware(agentController.agentAddressAdd)
+);
+router.get(
+    "/getShopAddress",
+    validateAccessToken,
+    asyncMiddleware(agentController.getShopAddress)
+);
 
 //!------------------------------------------------------Agent Booking Api's-----------------------------------------------//
-//Get Order for Agent 
-router.get('/getAgentOrder',validateAccessToken,asyncMiddleware(agentController.getAgentOrder))
+//Get Order for Agent
+router.get(
+    "/getAgentOrder",
+    validateAccessToken,
+    asyncMiddleware(agentController.getAgentOrder)
+);
 //Agent Accept Order
-router.post('/acceptOrder',validateAccessToken,asyncMiddleware(agentController.agentAcceptOrder))
+router.post(
+    "/acceptOrder",
+    validateAccessToken,
+    asyncMiddleware(agentController.agentAcceptOrder)
+);
 // //Get Invoice Details for Agent
 // router.get('/agentInvoiceMake',validateAccessToken,asyncMiddleware(agentController.orderDetailsforInvoice))
 //Get All Services
-router.get('/getAllServices',asyncMiddleware(adminController.getAllServices))
+router.get("/getAllServices", asyncMiddleware(adminController.getAllServices));
 //Agent upload proof Images
-router.post('/AddPickupDeliveryProof',validateAccessToken,checkPermissions,uploadPickDropProofs.array('Images', 10),asyncMiddleware(agentController.AddPickupDeliveryProof))
+router.post(
+    "/AddPickupDeliveryProof",
+    validateAccessToken,
+    checkPermissions,
+    uploadPickDropProofs.array("Images", 10),
+    asyncMiddleware(agentController.AddPickupDeliveryProof)
+);
 //Agent goes to pick order Byself and Mark order on the way driver
-router.patch('/agentBookingStatusOnTheWay/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.agentBookingStatusOnTheWay))
+router.patch(
+    "/agentBookingStatusOnTheWay/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentBookingStatusOnTheWay)
+);
 //Agent mark booking Status Arrived
-router.patch('/driverStatusArrived/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.driverStatusArrived))
+router.patch(
+    "/driverStatusArrived/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.driverStatusArrived)
+);
 //Agent boooking status update picking and inspeection
-router.patch('/agentInspectionStatus/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.agentInspectionStatus))
+router.patch(
+    "/agentInspectionStatus/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentInspectionStatus)
+);
 //Agent Added the categories and items to make the Invoice
-router.post('/AgentAddSerivces',validateAccessToken,checkPermissions,asyncMiddleware(agentController.driverAddSerivces))
+router.post(
+    "/AgentAddSerivces",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.driverAddSerivces)
+);
 //Order Details of Specific Order
-router.get('/orderDetailsById',validateAccessToken,checkPermissions,asyncMiddleware(agentController.orderDetailsById))
+router.get(
+    "/orderDetailsById",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.orderDetailsById)
+);
 //Driver made delivery to the Laundry Shop
-router.patch('/reachedAtDeliveryShopStatus/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.reachedAtDeliveryShopStatus))
+router.patch(
+    "/reachedAtDeliveryShopStatus/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.reachedAtDeliveryShopStatus)
+);
 //Laundry Washed At Laundry Shop
-router.patch('/laundryWashCompleted/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.laundryWashCompleted))
+router.patch(
+    "/laundryWashCompleted/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.laundryWashCompleted)
+);
 //Driver out deliver Laundry to Customer
-router.patch('/laundryDeliverToCustomer/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.laundryDeliverToCustomer))
+router.patch(
+    "/laundryDeliverToCustomer/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.laundryDeliverToCustomer)
+);
 //Invoice Details of Order
-router.get('/invoiceCreation/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.invoiceCreation));
+router.get(
+    "/invoiceCreation/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.invoiceCreation)
+);
 //Booking Details on the Basis of the filters
-router.get('/agentBookingFilters',validateAccessToken,checkPermissions,asyncMiddleware(agentController.agentBookingFilters));
+router.get(
+    "/agentBookingFilters",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentBookingFilters)
+);
 //Set Order To On Hold
-router.patch('/onHoldConformation',validateAccessToken,checkPermissions,uploadonHoldImages.single('onHoldImg'),asyncMiddleware(agentController.onHoldConformation));
+router.patch(
+    "/onHoldConformation",
+    validateAccessToken,
+    checkPermissions,
+    uploadonHoldImages.single("onHoldImg"),
+    asyncMiddleware(agentController.onHoldConformation)
+);
 //Agent Set onHold Order issue to resolved
-router.patch('/agentIssueResolved/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.agentIssueResolved))
+router.patch(
+    "/agentIssueResolved/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentIssueResolved)
+);
 //Agent reached to deliver Laundry to customer
-router.patch('/driverReachedForDelivery/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.driverReachedForDelivery))
+router.patch(
+    "/driverReachedForDelivery/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.driverReachedForDelivery)
+);
 //Driver/Agent deliver delivery to customer
-router.patch('/bookingDeliverToCustomer/:bookingId',validateAccessToken,checkPermissions,asyncMiddleware(agentController.bookingDeliverToCustomer))
+router.patch(
+    "/bookingDeliverToCustomer/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.bookingDeliverToCustomer)
+);
 //!--------------------------Agent Cancel Booking--------------------------------------------------------------------------//
 //Agent Calcel Booking
-router.post('/agentCancelBooking',validateAccessToken,asyncMiddleware(agentController.agentCancelBooking))
+router.post(
+    "/agentCancelBooking",
+    validateAccessToken,
+    asyncMiddleware(agentController.agentCancelBooking)
+);
 //!---------------------------Agent Driver-------------------------------------------------------------------------------//
-// Get All Agent Drivers 
-router.get('/agnetDrivers',validateAccessToken,asyncMiddleware(agentController.agnetDrivers))
+// Get All Agent Drivers
+router.get(
+    "/agnetDrivers",
+    validateAccessToken,
+    asyncMiddleware(agentController.agnetDrivers)
+);
 //Agent Assign Order To Driver
-router.patch('/agentAssignBookingToLaundryDriver',validateAccessToken,asyncMiddleware(agentController.agentAssignBookingToLaundryDriver))
+router.patch(
+    "/agentAssignBookingToLaundryDriver",
+    validateAccessToken,
+    asyncMiddleware(agentController.agentAssignBookingToLaundryDriver)
+);
 //Agent Assign Order to Self
-router.patch('/agentPickupOrderBySelf',validateAccessToken,asyncMiddleware(agentController.agentPickupOrderBySelf))
+router.patch(
+    "/agentPickupOrderBySelf",
+    validateAccessToken,
+    asyncMiddleware(agentController.agentPickupOrderBySelf)
+);
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
 //Add Roles
-router.post('/AddLaundryRoles',validateAccessToken,asyncMiddleware(agentController.addRole))
+router.post(
+    "/AddLaundryRoles",
+    validateAccessToken,
+    asyncMiddleware(agentController.addRole)
+);
 //Update Roles
-router.put('/updateRoles',validateAccessToken,asyncMiddleware(agentController.updateRoles)) 
+router.put(
+    "/updateRoles",
+    validateAccessToken,
+    asyncMiddleware(agentController.updateRoles)
+);
 //Get Roles
-router.get('/getAllRoles',validateAccessToken,asyncMiddleware(agentController.getAllRoles))
-//Add ClassifiedAs 
-router.post('/addClassifiedAs',validateAccessToken,asyncMiddleware(agentController.addClassifiedAs))
+router.get(
+    "/getAllRoles",
+    validateAccessToken,
+    asyncMiddleware(agentController.getAllRoles)
+);
+//Add ClassifiedAs
+router.post(
+    "/addClassifiedAs",
+    validateAccessToken,
+    asyncMiddleware(agentController.addClassifiedAs)
+);
 //Get ClassifiedAs
-router.get('/getClassifiedAs',validateAccessToken,asyncMiddleware(agentController.getClassifiedAs))
+router.get(
+    "/getClassifiedAs",
+    validateAccessToken,
+    asyncMiddleware(agentController.getClassifiedAs)
+);
 //Add Features
-router.post('/addfeatures',validateAccessToken,asyncMiddleware(agentController.addfeatures))
+router.post(
+    "/addfeatures",
+    validateAccessToken,
+    asyncMiddleware(agentController.addfeatures)
+);
 
 //!--------------------------------------------------Agent Add,Update Employees---------------------------------------//
 //Add Employee
-router.post('/addEmployee',validateAccessToken,asyncMiddleware(agentController.addEmployee))
+router.post(
+    "/addEmployee",
+    validateAccessToken,
+    asyncMiddleware(agentController.addEmployee)
+);
 //update Employee
-router.patch('/updateEmployee',validateAccessToken,checkPermissions,asyncMiddleware(agentController.updateEmployee))
+router.patch(
+    "/updateEmployee",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.updateEmployee)
+);
 //update Employee Status
-router.patch('/updateEmployeeStatus',validateAccessToken,checkPermissions,asyncMiddleware(agentController.changeEmployeeStatus))
+router.patch(
+    "/updateEmployeeStatus",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.changeEmployeeStatus)
+);
 //Get All Employees
-router.get('/getAllEmployees',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getAllEmployees))
+router.get(
+    "/getAllEmployees",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getAllEmployees)
+);
 //!-------------------------------------------------Agent Services----------------------------------------------------//
-router.get('/getAgentServices',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getAgentServices))
+router.get(
+    "/getAgentServices",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getAgentServices)
+);
 //!--------------------------------------Customer Selected Services--------------------------------------------------//
-router.get('/customerServices',validateAccessToken,checkPermissions,asyncMiddleware(agentController.customerServices))
+router.get(
+    "/customerServices",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.customerServices)
+);
 //!==============================Get countries && cities=============================//
-router.get('/getCountries',asyncMiddleware(agentController.getCountries))
-router.get('/getCities',asyncMiddleware(agentController.getCities))
+router.get("/getCountries", asyncMiddleware(agentController.getCountries));
+router.get("/getCities", asyncMiddleware(agentController.getCities));
 
 //!------------------------------------Bussiness Information--------------------//
-router.get('/getBussinessInforMation/:userId',asyncMiddleware(agentController.getBussinessInforMation))
-router.get('/getBussinessWrkinghours/:userId',asyncMiddleware(agentController.getBussinessWrkinghours))
+router.get(
+    "/getBussinessInforMation/:userId",
+    asyncMiddleware(agentController.getBussinessInforMation)
+);
+router.get(
+    "/getBussinessWrkinghours/:userId",
+    asyncMiddleware(agentController.getBussinessWrkinghours)
+);
 //Bussiness services info Add
-router.post('/businesInfoAdded/:userId',asyncMiddleware(agentAuthController.businesInfoAdded))
+router.post(
+    "/businesInfoAdded/:userId",
+    asyncMiddleware(agentAuthController.businesInfoAdded)
+);
 //Update Working Hours
-router.patch('/workingHoursUpdate/:userId',asyncMiddleware(agentAuthController.workingHoursUpdate))
+router.patch(
+    "/workingHoursUpdate/:userId",
+    asyncMiddleware(agentAuthController.workingHoursUpdate)
+);
 
-module.exports=router
-
+module.exports = router;

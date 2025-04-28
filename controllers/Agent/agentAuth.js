@@ -636,7 +636,24 @@ async function loginUser(req, res) {
             {
                 model: addressDb,
                 attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates']
-            }
+            },
+            {
+                model:bussinessInformation,
+                as:'agentInfo',
+                attributes:['id','shopName','matchProfileOptions'],
+                include:[
+                    {
+                        model:machineCount,
+                        as:'agentShopMachine',
+                        attributes:['id','total','machineId']
+                    }
+                ]
+            },
+            {
+                model:agentSelectServices,
+                as:'agentServices',
+                attributes:['serviceId','status'],
+            },
         ],
         attributes: [
             "id",
@@ -656,7 +673,7 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("🚀 ~ loginUser ~ userFind:", userFind.addressDb)
+    console.log("🚀 ~ loginUser ~ userFind:", userFind?.addressDb)
 
     //return res.json(userFind)
     if (!userFind) {
@@ -673,20 +690,22 @@ async function loginUser(req, res) {
 
     if (!userFind.addressDb || userFind.addressDb.length === 0) {
 
+      
         return res.json(responsefunc("3", "Cannot login without adding an address", {}, ""))
     }
 
-    const addr = userFind.addressDb
-    console.log("🚀 ~ loginUser ~ addr:", addr)
+    const services = userFind?.agentServices
+    const agentInfo=userFind?.agentInfo
+    const userMachineInfo=userFind?.agentInfo[0]?.agentShopMachine
+    console.log("🚀 ~ loginUser ~ userMachineInfo:", userMachineInfo)
 
-    if (
-        !addr.streetAddress ||
-        !addr.addressType ||
-        !addr.province ||
-        addr.lat === null || addr.lat === "" ||
-        addr.lng === null || addr.lng === ""
-    ) {
-        return res.json(responsefunc("4", "Please complete your address information before logging in.", {}, ""));
+    if (!services || !agentInfo[0]?.shopName || !agentInfo[0]?.matchProfileOptions || !userMachineInfo) {
+        let outObj={
+            services:services,
+            agentInfo:agentInfo,
+            userMachineInfo:userMachineInfo
+        }
+        return res.json(responsefunc("4", "Please complete your information before logging in.",outObj, ""));
     }
 
 

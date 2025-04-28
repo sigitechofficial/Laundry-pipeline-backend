@@ -14,11 +14,19 @@ module.exports = (sequelize, DataTypes) => {
     }
   }
   appUnits.init({
-    status: {type:DataTypes.BOOLEAN,allowNull:true},
-    deleted: {type:DataTypes.BOOLEAN,allowNull:true,defaultValue:false}
+    status: {type:DataTypes.BOOLEAN,
+      allowNull:true
+    },
+    deleted: {
+      type:DataTypes.BOOLEAN,
+      allowNull:true,
+      defaultValue:false
+    }
   }, {
     sequelize,
     modelName: 'appUnits',
+    freezeTableName:true,
+    tableName:'appUnits'
   });
   return appUnits;
 };

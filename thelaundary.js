@@ -83,7 +83,6 @@ async function startServer() {
       server.listen(server_port, function (err) {
         if (err) throw err;
         console.log('Listening on port %d', server_port);
-       
       });
     } catch (error) {
       console.error('Error during initialization:', error);

@@ -13,7 +13,9 @@ const {createDestinationDirectory}=require('../utils/destination')
 //upload Vehicle Type Image
 const uploadVehicleType = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, `./Public/Images/VehicleTypes`)
+      const destinationPath=`./Public/Images/VehicleTypes`;
+
+      createDestinationDirectory(destinationPath,cb)
     },
     filename: (req, file, cb) => {
         cb(null, 'vehicleImage-' + req.body.title + '-'+ Date.now() +  path.extname(file.originalname))
@@ -27,7 +29,8 @@ const uploadVehicleTypeImage = multer({
 //Upload Country Images
 const uploadCountryflagImg=multer.diskStorage({
     destination:(req,file,cb)=>{
-        cb(null,`./Public/Images/CountryFlags`)
+        const destinationPath=`./Public/Images/CountryFlags`;
+        createDestinationDirectory(destinationPath,cb)
     },
     filename:(req,file,cb)=>{
         cb(null,'flagImg-'+req.body.shortName+'-'+ Date.now()+ path.extname(file.originalname))
