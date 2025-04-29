@@ -242,7 +242,7 @@ async function resendOTP(req, res) {
             verifiedInForgetCase: false,
             userId,
         });
-        res.json(returnFunction("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
     } else {
         await otpVerification.update(
             {
@@ -252,7 +252,7 @@ async function resendOTP(req, res) {
             },
             { where: { userId } }
         );
-        res.json(returnFunction("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
     }
 
 }
