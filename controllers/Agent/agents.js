@@ -72,7 +72,7 @@ async function agentAddressAdd(req, res) {
         }
     })
 
-    if (findAgentShopAddress) {
+    if (findAgentShopAddress.length>0) {
         throw new customError("Already Added the Shop Address")
     }
 

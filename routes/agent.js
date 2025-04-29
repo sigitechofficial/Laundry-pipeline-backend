@@ -135,7 +135,6 @@ router.post(
 //!---------------------------Agent Address Module-------------//
 router.post(
     "/agentAddressAdd",
-    validateAccessToken,
     asyncMiddleware(agentController.agentAddressAdd)
 );
 router.get(

@@ -157,7 +157,8 @@ async function verifyOTpSignUp(req, res) {
             console.log("Day---->", day),
             {
                 dayOfWeek: day,
-                status: false
+                status: true,
+                userId:userId
             }
         ))
         let output = await bussinessWorkingHours.bulkCreate(dataMap)
@@ -189,7 +190,8 @@ async function verifyOTpSignUp(req, res) {
             console.log("Day---->", day),
             {
                 dayOfWeek: day,
-                status: true
+                status: true,
+                userId:userId
             }
         ))
         let output = await bussinessWorkingHours.bulkCreate(dataMap)
@@ -564,6 +566,8 @@ async function businesInfoAdded(req, res) {
     const { userId } = req.params
     const { services } = req.body
 
+
+
     const servicesSelect = services.map(service => ({
         serviceId: service.serviceId,
         status: true,
@@ -584,6 +588,8 @@ async function workingHoursUpdate(req, res) {
 
     const { userId } = req.params
     const { bussinessWorkingDays } = req.body
+    
+    console.log(bussinessWorkingDays);
 
 
     for (const ele of bussinessWorkingDays) {
@@ -596,10 +602,12 @@ async function workingHoursUpdate(req, res) {
             {
                 where: {
                     dayOfWeek: ele.dayOfWeek,
-                    userId: userId,
+                    id: ele.id,
                 },
             }
         );
+        console.log("Updating openTime:", ele.openTime);
+console.log("Updating closeTime:", ele.closeTime);
     }
 
 
@@ -673,7 +681,7 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("🚀 ~ loginUser ~ userFind:", userFind?.addressDb)
+    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind?.addressDb)
 
     //return res.json(userFind)
     if (!userFind) {
@@ -691,21 +699,28 @@ async function loginUser(req, res) {
     if (!userFind.addressDb || userFind.addressDb.length === 0) {
 
       
-        return res.json(responsefunc("3", "Cannot login without adding an address", {}, ""))
+        return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id,}, ""))
     }
 
-    const services = userFind?.agentServices
-    const agentInfo=userFind?.agentInfo
-    const userMachineInfo=userFind?.agentInfo[0]?.agentShopMachine
-    console.log("🚀 ~ loginUser ~ userMachineInfo:", userMachineInfo)
+    const services = userFind?.agentServices ?? [];
+    const agentInfo = userFind?.agentInfo ?? [];
+    const userMachineInfo = agentInfo?.[0]?.agentShopMachine ?? [];
 
-    if (!services || !agentInfo[0]?.shopName || !agentInfo[0]?.matchProfileOptions || !userMachineInfo) {
-        let outObj={
-            services:services,
-            agentInfo:agentInfo,
-            userMachineInfo:userMachineInfo
-        }
-        return res.json(responsefunc("4", "Please complete your information before logging in.",outObj, ""));
+    let outObj = {
+        userId: userFind.id,
+        services: services,
+        agentInfo: agentInfo,
+        userMachineInfo: userMachineInfo,
+    };
+
+    // Check if required information is missing
+    if (
+        services.length === 0 ||
+        agentInfo.length === 0 ||
+        !agentInfo[0]?.shopName ||
+        !agentInfo[0]?.matchProfileOptions
+    ) {
+        return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
     }
 
 
@@ -874,7 +889,7 @@ async function loginUser(req, res) {
 
 
     const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken)
-    console.log("🚀 ~ loginUser ~ dvTokenFound:", dvTokenFound)
+    console.log("ðŸš€ ~ loginUser ~ dvTokenFound:", dvTokenFound)
     if (!dvTokenFound) {
         await deviceToken.create({
             tokenId: dvToken,
