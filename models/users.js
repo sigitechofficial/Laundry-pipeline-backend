@@ -148,6 +148,11 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.ENUM('Freelance Driver','laundary Shop Driver'),
       allowNull:true
     },
+    employeeOff:{
+      type:DataTypes.INTEGER,
+      allowNull:true,
+      defaultValue:null
+    },
     createdAt: {
       allowNull: false,
       type: DataTypes.DATE

@@ -27,7 +27,8 @@ const { users,
     bussinessInformation,
     proofOfDeliveries,
     bussinessWorkingHours,
-    features } = require('../../models')
+    features,
+    agentSelectServices } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -1215,11 +1216,9 @@ async function getShopInformation(req, res) {
 
 
 /*
-   * Shop Data
+   * All Shops Data
 */
 async function shopsData(req, res) {
-
-
     const getShopData = await bussinessInformation.findAll({
         include: [
             {
@@ -1231,6 +1230,10 @@ async function shopsData(req, res) {
                     'email',
                     'phoneNum',
                     'userTypeId',
+                    [
+                        sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
+                        'TotalEmployees',
+                    ]
                 ],
                 include: [
                     {
@@ -1249,13 +1252,109 @@ async function shopsData(req, res) {
                         sequelize.literal(
                             `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
                         ),
-                        'TotalbookingCount',
+                        'TotalBookingCount',
                     ],
                     [
                         sequelize.literal(
-                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = businessInfo.id AND bookings.bookingStatusId IN (1, 7))`
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (12))`
                         ),
-                        'PendingbookingCount',
+                        'PendingBookingCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalRevenue',
+                    ]
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName', 'image', 'status']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name', 'status']
+                    },
+                    {
+                        model: zone,
+                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                    }
+                ]
+            }
+        ],
+        attributes: ['id', 'shopName', 'matchProfileOptions', "otherText", 'shopAddressId', 'agentId']
+    })
+
+    let outObj = {
+        AllShopsData: getShopData
+    }
+
+
+
+    return res.json(responsefunc("1", "Shop Information Data", outObj, ""))
+
+}
+
+/*
+   * Single Shops Data
+*/
+async function singleShopData(req, res) {
+    const { Id } = req.params
+
+    const shopData = await bussinessInformation.findOne({
+        where: {
+            id: Id
+        },
+        include: [
+            {
+                model: users,
+                as: 'businessInfo',
+                attributes: [
+                    'id',
+                    'firstName',
+                    'lastName',
+                    'email',
+                    [
+                        sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
+                        'TotalEmployees',
+                    ]
+                ],
+                include: [
+                    {
+                        model: bussinessWorkingHours,
+                        where: {
+                            status: true
+                        },
+                        attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
+                    },
+                    {
+                        model:agentSelectServices,
+                        as:'agentServices',
+                        attributes:['id'],
+                        include:[
+                            {
+                                model:service,
+                                attributes:['id','name']
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalBookingCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalRevenue',
                     ]
                 ],
                 include: [
@@ -1276,35 +1375,9 @@ async function shopsData(req, res) {
         ]
     })
 
-    let outObj = {
-        AllShopsData: getShopData
-    }
-
-
-
-    return res.json(responsefunc("1", "Shop Information Data", outObj, ""))
+    return res.json(responsefunc("1", "Single Shop Data", shopData, ""))
 
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 //!----------------------------------------------------Add Countries,Cities,Zones && Zone Details--------------------------------------->>
@@ -1927,5 +2000,6 @@ module.exports = {
     getFeatures,
     //------------Shop Management-----------//
     getShopInformation,
-    shopsData
+    shopsData,
+    singleShopData
 }

@@ -181,9 +181,10 @@ router.patch('/updateEmployeeStatus',validateAccessToken,asyncMiddleware(adminCo
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts
 router.get('/getShopInformation',validateAccessToken,asyncMiddleware(adminController.getShopInformation))
-//get Shops Data
+//Get Shops Data
 router.get('/getShopsData',validateAccessToken,asyncMiddleware(adminController.shopsData))
-
+//Single Shop Data
+router.get('/singleShopData/:Id',validateAccessToken,asyncMiddleware(adminController.singleShopData))
 
 
 

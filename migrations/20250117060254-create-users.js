@@ -70,6 +70,11 @@ module.exports = {
         type:Sequelize.ENUM('Freelance Driver','laundary Shop Driver'),
         allowNull:true
       },
+      employeeOff:{
+        type:Sequelize.INTEGER,
+        allowNull:true,
+        defaultValue:null
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
