@@ -262,111 +262,111 @@ async function resendOTP(req, res) {
 /*
  * Register Agent 
 */
-async function registerAgent(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
-    console.log("🚀 ~ registerCustomer ~ req.body:", req.body)
+// async function registerAgent(req, res) {
+//     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
+//     console.log("🚀 ~ registerCustomer ~ req.body:", req.body)
 
-    let profileImg = null;
-    if (req.file) {
-        let tempProfileImg = req.file.path;
-        profileImg = tempProfileImg.replace(/\\/g, "/");
-    }
+//     let profileImg = null;
+//     if (req.file) {
+//         let tempProfileImg = req.file.path;
+//         profileImg = tempProfileImg.replace(/\\/g, "/");
+//     }
 
-    const userfind = await users.findOne({
-        where: {
-            id: userId
-        },
-        include: [{
-            model: otpVerification,
-            required: false,
-            attributes: ['OTP']
-        }, {
-            model: deviceToken,
-            required: false,
-            attributes: ['tokenId']
-        }],
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "phoneNum",
-            "userTypeId",
-            "verifiedAt",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ],
-    })
-    console.log("🚀 ~ registerAgent ~ userfind:", userfind)
-
-
-    if (userfind && userfind.userTypeId === 3) {
-        throw new customError('Driver Cannot register from Here')
-    }
-
-    if (userfind && userfind.userTypeId === 2) {
-        throw new customError('Customer Cannot Register from Here')
-    }
-
-    if (userfind.verifiedAt === null) {
-        return res.json(responsefunc("2", "Please verify your OTP", {}, ""))
-    }
+//     const userfind = await users.findOne({
+//         where: {
+//             id: userId
+//         },
+//         include: [{
+//             model: otpVerification,
+//             required: false,
+//             attributes: ['OTP']
+//         }, {
+//             model: deviceToken,
+//             required: false,
+//             attributes: ['tokenId']
+//         }],
+//         attributes: [
+//             "id",
+//             "firstName",
+//             "lastName",
+//             "email",
+//             "phoneNum",
+//             "userTypeId",
+//             "verifiedAt",
+//             [
+//                 sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+//                 "joinedOn",
+//             ],
+//         ],
+//     })
+//     console.log("🚀 ~ registerAgent ~ userfind:", userfind)
 
 
-    if (password !== confirmPassword) {
-        throw new customError(" Passwords do not match. Please try again.")
+//     if (userfind && userfind.userTypeId === 3) {
+//         throw new customError('Driver Cannot register from Here')
+//     }
 
-    }
+//     if (userfind && userfind.userTypeId === 2) {
+//         throw new customError('Customer Cannot Register from Here')
+//     }
 
-    const hashpass = await bcrypt.hash(password, 8)
-    console.log("🚀 ~ registerCustomer ~ hashpass:", hashpass)
-
-    const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
-    console.log("🚀 ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
-
-    await users.update({
-        firstName,
-        lastName,
-        status: true,
-        password: hashpass,
-        dvToken,
-        phoneNum,
-        stripeCustomerId: stripeCustomer,
-        image: profileImg,
-        countryId,
-        cityId
-    }, {
-        where: { id: userfind.id }
-    })
-
-    await deviceToken.create(({
-        tokenId: dvToken,
-        status: true,
-        userId: userfind.id
-    }))
-
-    const accessToken = jwt.sign({
-        id: userfind.id,
-        email: userfind.email,
-        dvToken: dvToken,
-        userTypeId: userfind.userTypeId
-    }, process.env.JWT_ACCESS_SECRET
-    )
-
-    redisCli.hSet(
-        `id-${userfind.id}`,
-        dvToken,
-        accessToken
-    )
+//     if (userfind.verifiedAt === null) {
+//         return res.json(responsefunc("2", "Please verify your OTP", {}, ""))
+//     }
 
 
-    let outputObj = registerData(userfind, accessToken, false)
+//     if (password !== confirmPassword) {
+//         throw new customError(" Passwords do not match. Please try again.")
 
-    return res.json(outputObj)
+//     }
 
-}
+//     const hashpass = await bcrypt.hash(password, 8)
+//     console.log("🚀 ~ registerCustomer ~ hashpass:", hashpass)
+
+//     const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
+//     console.log("🚀 ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
+
+//     await users.update({
+//         firstName,
+//         lastName,
+//         status: true,
+//         password: hashpass,
+//         dvToken,
+//         phoneNum,
+//         stripeCustomerId: stripeCustomer,
+//         image: profileImg,
+//         countryId,
+//         cityId
+//     }, {
+//         where: { id: userfind.id }
+//     })
+
+//     await deviceToken.create(({
+//         tokenId: dvToken,
+//         status: true,
+//         userId: userfind.id
+//     }))
+
+//     const accessToken = jwt.sign({
+//         id: userfind.id,
+//         email: userfind.email,
+//         dvToken: dvToken,
+//         userTypeId: userfind.userTypeId
+//     }, process.env.JWT_ACCESS_SECRET
+//     )
+
+//     redisCli.hSet(
+//         `id-${userfind.id}`,
+//         dvToken,
+//         accessToken
+//     )
+
+
+//     let outputObj = registerData(userfind, accessToken, false)
+
+//     return res.json(outputObj)
+
+// }
 
 /*
   *  OTP && Registration
@@ -687,7 +687,7 @@ async function loginUser(req, res) {
     if (!userFind) {
         throw new customError("User not Exists with this credentials")
     }
-    if (userFind.classifiedAsId === 2) {
+    if (userFind?.classifiedAsId === 2) {
         const passwordMatch = await bcrypt.compare(password, userFind.password)
         if (!passwordMatch) {
             throw new customError(
@@ -809,7 +809,8 @@ async function loginUser(req, res) {
 
         const featureData = await features.findAll({
             where: {
-                status: true
+                status: true,
+                featureOf:'Agent Employee'
             },
             attributes: ['id', 'title']
         })
@@ -1239,7 +1240,6 @@ let loginData = (userData, accessToken, isGuest, features) => {
 module.exports = {
     registerAgentOTP,
     verifyOTpSignUp,
-    registerAgent,
     loginUser,
     forgetPasswordRequest,
     verifyOTPforPassword,

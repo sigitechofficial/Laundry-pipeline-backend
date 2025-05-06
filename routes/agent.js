@@ -18,7 +18,6 @@ const { createDestinationDirectory } = require("../utils/destination");
 const uploadProfilePic = multer.diskStorage({
     destination: (req, file, cb) => {
         const destinationPath = "./Public/Profile";
-
         createDestinationDirectory(destinationPath, cb);
     },
     filename: (req, file, cb) => {

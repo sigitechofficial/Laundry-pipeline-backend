@@ -10,6 +10,13 @@ module.exports = {
         status:1,
         createdAt:new Date(),
         updatedAt:new Date()
+      },
+      {
+        id:7,
+        name:'Zone Admin',
+        status:1,
+        createdAt:new Date(),
+        updatedAt:new Date()
       }
     ])
   },

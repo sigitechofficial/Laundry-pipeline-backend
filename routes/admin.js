@@ -176,4 +176,24 @@ router.post('/adinEmployeeAdd',validateAccessToken,asyncMiddleware(adminControll
 router.patch('/updateEmployee',validateAccessToken,asyncMiddleware(adminController.updateEmployee))
 //update Employee Status
 router.patch('/updateEmployeeStatus',validateAccessToken,asyncMiddleware(adminController.changeEmployeeStatus))
+
+
+//!-----------------------------------Shop Management------------------------------------>>>>
+//Shops Data Counts
+router.get('/getShopInformation',validateAccessToken,asyncMiddleware(adminController.getShopInformation))
+//get Shops Data
+router.get('/getShopsData',validateAccessToken,asyncMiddleware(adminController.shopsData))
+
+
+
+
+
+
+
+
+
+
+
+
+
 module.exports=router

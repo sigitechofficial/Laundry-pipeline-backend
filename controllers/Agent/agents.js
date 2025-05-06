@@ -1429,7 +1429,7 @@ async function addEmployee(req, res) {
     if(user.classifiedAsId===1 || user.roleId===6){
         await users.update({
             employeeOff:agentId
-        },{where:{id:agentId}})
+        },{where:{id:user.id}})
 
 
         const agentAddress=await addressDb.findOne({
@@ -1618,7 +1618,7 @@ async function getBussinessInforMation(req,res) {
         include: [
             {
                 model: service,
-                attributes: ['name']
+                attributes: ['id','name']
             },
             {
                 model: users,
@@ -1658,6 +1658,8 @@ async function getBussinessWrkinghours(req,res) {
 
     return res.json(responsefunc("1","Information fetched",outObj,""))    
 }
+
+
 
 //!---------------Recurring Functions-------------------------//
 
@@ -1805,6 +1807,8 @@ module.exports = {
     //-------------Get Bussines Information-------//
     getBussinessInforMation,
     getBussinessWrkinghours
+    //-------------Agent Bussiness Information------//
+
 
 
 

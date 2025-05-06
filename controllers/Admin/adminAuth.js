@@ -7,7 +7,8 @@ const { users,
     vehicleType,
     countries,
     cities,
-    zone } = require('../../models')
+    zone,
+    features } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -67,6 +68,14 @@ async function signIn(req, res) {
         await users.update({ dvToken }, { where: { id: adminData.id } });
     }
 
+    const featureData = await features.findAll({
+        where: {
+            status: true,
+            featureOf:'Admin'
+        },
+        attributes: ['id', 'title']
+    })
+
 
 
     const payload = {
@@ -88,15 +97,15 @@ async function signIn(req, res) {
         email: adminData.email,
         accessToken,
         userName: adminData.companyName,
-        //featureData: featureData
+        featureData: featureData
     };
 
     res.cookie("accessToken", accessToken, {
         //   httpOnly: true,
         //   secure: true, 
         //   sameSite: "None",
-          path: "/admin",
-          maxAge: 24 * 60 * 60 * 1000
+        path: "/admin",
+        maxAge: 24 * 60 * 60 * 1000
         });
         
 

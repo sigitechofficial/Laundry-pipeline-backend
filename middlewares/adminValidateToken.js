@@ -11,11 +11,9 @@ module.exports=async function validateAccessToken(req,res,next) {
         console.log("🚀 ~ validateAccessToken ~ req.cookies:", req.cookies)
         console.log("URL---------------------------->>",req.url);
         
-
         if(!accessToken){
             throw new Error();
         }
-
         console.log("AccessToken Step-1")
     
         const validateToken=verify(accessToken,process.env.JWT_ACCESS_SECRET)

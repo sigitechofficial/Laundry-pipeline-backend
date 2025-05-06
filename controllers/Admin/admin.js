@@ -26,6 +26,7 @@ const { users,
     driverInZones,
     bussinessInformation,
     proofOfDeliveries,
+    bussinessWorkingHours,
     features } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
@@ -164,60 +165,60 @@ async function specificCustomerDetails(req, res) {
         where: {
             customerId: customerId,
         },
-        include:[
+        include: [
             {
-                model:customerSelectedService,
-                attributes:['id','date','time','items','serviceId','categoryPrice']
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice']
             },
             {
-                model:OnHoldConfirmation,
-                required:false,
-                attributes:['onHoldImg','noOfItems','description','bookingId']
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
             },
             {
-                model:addressDb,
-                as:'laundryShop',
-                include:{
-                    model:bussinessInformation,
-                    attributes:['shopName']
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
                 },
-                attributes:['id']
+                attributes: ['id']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ],
-        order:[['id','DESC']],
+        order: [['id', 'DESC']],
         attributes: {
             exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
         }
     })
     console.log("🚀 ~ specificCustomerDetails ~ bookingsFind:", bookingsFind)
-    
-    const userInfo=await addressDb.findAll({
-        where:{
-            userId:customerId
+
+    const userInfo = await addressDb.findAll({
+        where: {
+            userId: customerId
         },
-        include:[{
-            model:users,
-            attributes:['id','firstName','lastName','email']
+        include: [{
+            model: users,
+            attributes: ['id', 'firstName', 'lastName', 'email']
         }],
-        order:[
-            ['createdAt','DESC']
+        order: [
+            ['createdAt', 'DESC']
         ],
-        limit:1,
-        attributes:['id','title','streetAddress','district','province','lat','lng','status','addressType','userId']
+        limit: 1,
+        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'status', 'addressType', 'userId']
     })
 
-    const bookingIds=bookingsFind.map((ids) =>({
-       bookingIDS:ids.id
+    const bookingIds = bookingsFind.map((ids) => ({
+        bookingIDS: ids.id
     }))
     console.log("🚀 ~ bookingIds ~ bookingIds:", bookingIds)
 
-    let output={
-        bookingDetails:bookingsFind,
-        userDetails:userInfo
+    let output = {
+        bookingDetails: bookingsFind,
+        userDetails: userInfo
     }
 
     return res.json(responsefunc("1", "Custome Order Details", output, ""))
@@ -226,194 +227,196 @@ async function specificCustomerDetails(req, res) {
 /* 
  *  Drivers Count
 */
-async function countTotalDrivers(req,res) {
-    const driverCount=await users.count({
-        where:{
-            roleId:6,
-            classifiedAsId:1
+async function countTotalDrivers(req, res) {
+    const driverCount = await users.count({
+        where: {
+            roleId: 6,
+            classifiedAsId: 1
         }
     })
 
-    const shopAgentDrivers=await users.count({
-        where:{
-            roleId:6,
-            classifiedAsId:1
+    const shopAgentDrivers = await users.count({
+        where: {
+            roleId: 6,
+            classifiedAsId: 1
         }
     })
 
-    const availableDrivers=await users.count({
-       where:{
-        status:true,
-        classifiedAsId:1,
-        roleId:6
+    const availableDrivers = await users.count({
+        where: {
+            status: true,
+            classifiedAsId: 1,
+            roleId: 6
         }
     })
 
-    let outObj={
-        totalDrivers:driverCount,
-        shopAgentDrivers:shopAgentDrivers,
-        availableDrivers:availableDrivers
+    let outObj = {
+        totalDrivers: driverCount,
+        shopAgentDrivers: shopAgentDrivers,
+        availableDrivers: availableDrivers
     }
 
-    return res.json(responsefunc("1","All Counts Fetched",outObj,""))
+    return res.json(responsefunc("1", "All Counts Fetched", outObj, ""))
 }
 
 
 /* 
  *  All Drivers Detail 
 */
-async function allDriverMiniDetails(req,res){
+async function allDriverMiniDetails(req, res) {
 
-    const findDriver=await booking.findAll({
-        where:{
-            driverId:{
-                [Op.ne]:null
+    const findDriver = await booking.findAll({
+        where: {
+            driverId: {
+                [Op.ne]: null
             },
-            deliveryDriverId:{
-                [Op.ne]:null
+            deliveryDriverId: {
+                [Op.ne]: null
             }
         },
-        attributes:[
+        attributes: [
             'driverId',
-        [sequelize.fn('COUNT',sequelize.col('driverId')),'DriverPickUpOrders'],
-        [sequelize.fn('COUNT',sequelize.col('deliveryDriverId')),'DriverDeliveryOrders'],
+            [sequelize.fn('COUNT', sequelize.col('driverId')), 'DriverPickUpOrders'],
+            [sequelize.fn('COUNT', sequelize.col('deliveryDriverId')), 'DriverDeliveryOrders'],
         ],
-        include:[
+        include: [
             {
-                model:users,
-                as:'driver',
-                where:{
-                    status:true
+                model: users,
+                as: 'driver',
+                where: {
+                    status: true
                 },
-                attributes:['id','firstName','lastName','email','userTypeId','classifiedAsId','roleId'],
-                include:[
+                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'classifiedAsId', 'roleId'],
+                include: [
                     {
-                        model:roles,
-                        attributes:['name']
+                        model: roles,
+                        attributes: ['name']
                     }
                 ]
             }
         ],
-        group:['driverId','deliveryDriverId'],
+        group: ['driverId', 'deliveryDriverId'],
     })
-    return res.json(responsefunc("1","Drivers Details fetched",findDriver,""))
+    return res.json(responsefunc("1", "Drivers Details fetched", findDriver, ""))
 }
 
 
 /* 
  *  All Drivers Detail 
 */
-async function driverStatusChange(req,res) {
-    const{driverId}=req.params
+async function driverStatusChange(req, res) {
+    const { driverId } = req.params
 
-    const driverStatusChange=await users.update({
-        status:false
-    },{where:{
-        id:driverId
-    }})
+    const driverStatusChange = await users.update({
+        status: false
+    }, {
+        where: {
+            id: driverId
+        }
+    })
 
-    return res.json(responsefunc("1","Driver Status Updated",driverStatusChange,""))
-    
+    return res.json(responsefunc("1", "Driver Status Updated", driverStatusChange, ""))
+
 }
 
 /* 
  *   Specific Driver Detail  
 */
-async function specificdriverDetail(req,res) {
-    const{driverId}=req.params
+async function specificdriverDetail(req, res) {
+    const { driverId } = req.params
 
-    const userInfo=await driverInZones.findOne({
-        where:{
-            driverId:driverId,
+    const userInfo = await driverInZones.findOne({
+        where: {
+            driverId: driverId,
         },
-        include:[
+        include: [
             {
-                model:users,
-                as:'driverInZone',
-                attributes:['id','firstName','lastName','email'],
-                include:[
+                model: users,
+                as: 'driverInZone',
+                attributes: ['id', 'firstName', 'lastName', 'email'],
+                include: [
                     {
-                        model:roles,
-                        attributes:['name']
+                        model: roles,
+                        attributes: ['name']
                     }
                 ]
             },
             {
-                model:bussinessInformation,
-                as:'laundaryDriver',
-                attributes:['shopName','shopAddressId'],
-                include:[{
-                    model:addressDb,
-                    attributes:['streetAddress','province','district','addressType']
+                model: bussinessInformation,
+                as: 'laundaryDriver',
+                attributes: ['shopName', 'shopAddressId'],
+                include: [{
+                    model: addressDb,
+                    attributes: ['streetAddress', 'province', 'district', 'addressType']
                 }]
             },
         ],
-        attributes:['laundaryShopId']
+        attributes: ['laundaryShopId']
     })
 
-    const findBooking=await booking.findAll({
-        where:{
-            driverId:driverId,
-            [Op.or]:[
-                {driverId:driverId},
-                {deliveryDriverId:driverId}
+    const findBooking = await booking.findAll({
+        where: {
+            driverId: driverId,
+            [Op.or]: [
+                { driverId: driverId },
+                { deliveryDriverId: driverId }
             ]
         },
-        include:[
+        include: [
             {
-                model:proofOfDeliveries,
-                attributes:['id','imgUpload','noOfItems','bookingId','userId']
+                model: proofOfDeliveries,
+                attributes: ['id', 'imgUpload', 'noOfItems', 'bookingId', 'userId']
             },
             {
-                model:addressDb,
-                as:'pickupAddress',
-                attributes:['title','streetAddress','district','province','addressType']
+                model: addressDb,
+                as: 'pickupAddress',
+                attributes: ['title', 'streetAddress', 'district', 'province', 'addressType']
             },
             {
-                model:addressDb,
-                as:'dropOffAddress',
-                attributes:['title','streetAddress','district','province','addressType']
+                model: addressDb,
+                as: 'dropOffAddress',
+                attributes: ['title', 'streetAddress', 'district', 'province', 'addressType']
             }
         ],
-        attributes:{
-            exclude:['createdAt','updatedAt','onHoldReason','categoryId','serviceId','subCategoryId','vehicleTypeId','OnHoldOtherReasons']
+        attributes: {
+            exclude: ['createdAt', 'updatedAt', 'onHoldReason', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId', 'OnHoldOtherReasons']
         }
     })
 
-    const driverTotalOrders=await booking.count({
-        where:{
-            driverId:driverId,
-            [Op.or]:[
-                {driverId:driverId},
-                {deliveryDriverId:driverId}
+    const driverTotalOrders = await booking.count({
+        where: {
+            driverId: driverId,
+            [Op.or]: [
+                { driverId: driverId },
+                { deliveryDriverId: driverId }
             ]
         }
     })
 
-    const pendingOrder=await booking.count({
-        where:{
-            bookingStatusId:{
-                [Op.ne]:12
+    const pendingOrder = await booking.count({
+        where: {
+            bookingStatusId: {
+                [Op.ne]: 12
             },
-            [Op.or]:[
-                {driverId:driverId},
-                {deliveryDriverId:driverId}
+            [Op.or]: [
+                { driverId: driverId },
+                { deliveryDriverId: driverId }
             ]
-            
+
         }
     })
 
-    let outObj={
-        userInformation:userInfo,
-        driverBookings:findBooking,
-        totalOrders:driverTotalOrders,
-        pendingOrders:pendingOrder
+    let outObj = {
+        userInformation: userInfo,
+        driverBookings: findBooking,
+        totalOrders: driverTotalOrders,
+        pendingOrders: pendingOrder
 
     }
 
 
-    return res.json(responsefunc("1",`All booking Fetched for Driver id:${driverId}`,outObj,""))
-    
+    return res.json(responsefunc("1", `All booking Fetched for Driver id:${driverId}`, outObj, ""))
+
 }
 
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
@@ -421,90 +424,90 @@ async function specificdriverDetail(req,res) {
 /* 
  *  All Orders Counts
 */
-async function ordersCount(req,res) {
-    
+async function ordersCount(req, res) {
 
-    const allOrderCount=await booking.count()
 
-    const completedOrder=await booking.count({
-        where:{
-            bookingStatusId:12
+    const allOrderCount = await booking.count()
+
+    const completedOrder = await booking.count({
+        where: {
+            bookingStatusId: 12
         }
     })
 
-    const onHoldOrders=await booking.count({
-        where:{
-            bookingStatusId:{
-                [Op.or]:[7,22]
+    const onHoldOrders = await booking.count({
+        where: {
+            bookingStatusId: {
+                [Op.or]: [7, 22]
             }
         }
     })
     console.log("🚀 ~ ordersCount ~ onHoldOrders:", onHoldOrders)
 
-    let outObj={
-        allOrderCount:allOrderCount,
-        completedOrders:completedOrder,
-        onHoldOrders:onHoldOrders
-        
+    let outObj = {
+        allOrderCount: allOrderCount,
+        completedOrders: completedOrder,
+        onHoldOrders: onHoldOrders
+
     }
 
-    return res.json(responsefunc("1","All Order Count",outObj,""))
+    return res.json(responsefunc("1", "All Order Count", outObj, ""))
 }
 
 
 /*
   * All Order Details 
 */
-async function allOrderDetails(req,res) {
-    
+async function allOrderDetails(req, res) {
+
     const bookingsFind = await booking.findAll({
-        include:[
+        include: [
             {
-                model:customerSelectedService,
-                attributes:['id','date','time','items','serviceId','categoryPrice'],
-                include:[
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
                     {
-                        model:service,
-                        attributes:['id','name','status']
+                        model: service,
+                        attributes: ['id', 'name', 'status']
                     },
                     {
-                        model:categories,
-                        attributes:['id','name']
+                        model: categories,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
-                model:OnHoldConfirmation,
-                required:false,
-                attributes:['onHoldImg','noOfItems','description','bookingId']
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
             },
             {
-                model:addressDb,
-                as:'laundryShop',
-                include:{
-                    model:bussinessInformation,
-                    attributes:['shopName']
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
                 },
-                attributes:['id']
+                attributes: ['id']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ],
-        order:[['id','ASC']],
+        order: [['id', 'ASC']],
         attributes: {
             exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
         }
     })
 
-    let outObj={
-        orerDetails:bookingsFind
+    let outObj = {
+        orerDetails: bookingsFind
     }
 
 
 
-    return res.json(responsefunc("1","All booking Details Fetched",outObj,""))
+    return res.json(responsefunc("1", "All booking Details Fetched", outObj, ""))
 }
 
 
@@ -512,69 +515,69 @@ async function allOrderDetails(req,res) {
 /*
   * Pending Orders
 */
-async function pendingOrders(req,res) {
+async function pendingOrders(req, res) {
     const bookingsFind = await booking.findAll({
-        where:{
-            bookingStatusId:{
-                [Op.ne]:[7,22]
+        where: {
+            bookingStatusId: {
+                [Op.ne]: [7, 22]
             }
         },
-        include:[
+        include: [
             {
-                model:customerSelectedService,
-                attributes:['id','date','time','items','serviceId','categoryPrice'],
-                include:[
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
                     {
-                        model:service,
-                        attributes:['id','name','status']
+                        model: service,
+                        attributes: ['id', 'name', 'status']
                     },
                     {
-                        model:categories,
-                        attributes:['id','name']
+                        model: categories,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
-                model:OnHoldConfirmation,
-                required:false,
-                attributes:['onHoldImg','noOfItems','description','bookingId']
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
             },
             {
-                model:addressDb,
-                as:'laundryShop',
-                include:{
-                    model:bussinessInformation,
-                    attributes:['shopName']
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
                 },
-                attributes:['id']
+                attributes: ['id']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ],
-        order:[['id','ASC']],
+        order: [['id', 'ASC']],
         attributes: {
             exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
         }
     })
 
-    const pendingOrdersCount=await booking.count({
-        where:{
-            bookingStatusId:{
-                [Op.ne]:[7,22]
+    const pendingOrdersCount = await booking.count({
+        where: {
+            bookingStatusId: {
+                [Op.ne]: [7, 22]
             }
         }
     })
 
-    let outObj={
-        orerDetails:bookingsFind,
-        pendingOrdersCount:pendingOrdersCount
+    let outObj = {
+        orerDetails: bookingsFind,
+        pendingOrdersCount: pendingOrdersCount
     }
 
 
-    return res.json(responsefunc("1","All Pending Orders",outObj,""))
-    
+    return res.json(responsefunc("1", "All Pending Orders", outObj, ""))
+
 }
 
 
@@ -583,69 +586,69 @@ async function pendingOrders(req,res) {
 /*
   * Cancel Orders
 */
-async function allCancelOrders(req,res) {
-    
+async function allCancelOrders(req, res) {
+
     const bookingsFind = await booking.findAll({
-        where:{
-            bookingStatusId:{
-                [Op.eq]:[3]
+        where: {
+            bookingStatusId: {
+                [Op.eq]: [3]
             }
         },
-        include:[
+        include: [
             {
-                model:customerSelectedService,
-                attributes:['id','date','time','items','serviceId','categoryPrice'],
-                include:[
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
                     {
-                        model:service,
-                        attributes:['id','name','status']
+                        model: service,
+                        attributes: ['id', 'name', 'status']
                     },
                     {
-                        model:categories,
-                        attributes:['id','name']
+                        model: categories,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
-                model:OnHoldConfirmation,
-                required:false,
-                attributes:['onHoldImg','noOfItems','description','bookingId']
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
             },
             {
-                model:addressDb,
-                as:'laundryShop',
-                include:{
-                    model:bussinessInformation,
-                    attributes:['shopName']
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
                 },
-                attributes:['id']
+                attributes: ['id']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ],
-        order:[['id','ASC']],
+        order: [['id', 'ASC']],
         attributes: {
             exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
         }
     })
 
-    const cancelOrdersCount=await booking.count({
-        where:{
-            bookingStatusId:{
-                [Op.eq]:[3]
+    const cancelOrdersCount = await booking.count({
+        where: {
+            bookingStatusId: {
+                [Op.eq]: [3]
             }
         }
     })
 
-    let outObj={
-        cancelOrers:bookingsFind,
-        cancelBookingCount:cancelOrdersCount
+    let outObj = {
+        cancelOrers: bookingsFind,
+        cancelBookingCount: cancelOrdersCount
     }
 
 
-    return res.json(responsefunc("1","All Cancel Orders Details",outObj,""))
+    return res.json(responsefunc("1", "All Cancel Orders Details", outObj, ""))
 }
 
 
@@ -655,68 +658,68 @@ async function allCancelOrders(req,res) {
   * Complete Orders
 */
 
-async function completeOrders(req,res) {
+async function completeOrders(req, res) {
     const bookingsFind = await booking.findAll({
-        where:{
-            bookingStatusId:{
-                [Op.eq]:[12]
+        where: {
+            bookingStatusId: {
+                [Op.eq]: [12]
             }
         },
-        include:[
+        include: [
             {
-                model:customerSelectedService,
-                attributes:['id','date','time','items','serviceId','categoryPrice'],
-                include:[
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
                     {
-                        model:service,
-                        attributes:['id','name','status']
+                        model: service,
+                        attributes: ['id', 'name', 'status']
                     },
                     {
-                        model:categories,
-                        attributes:['id','name']
+                        model: categories,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
-                model:OnHoldConfirmation,
-                required:false,
-                attributes:['onHoldImg','noOfItems','description','bookingId']
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
             },
             {
-                model:addressDb,
-                as:'laundryShop',
-                include:{
-                    model:bussinessInformation,
-                    attributes:['shopName']
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
                 },
-                attributes:['id']
+                attributes: ['id']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ],
-        order:[['id','ASC']],
+        order: [['id', 'ASC']],
         attributes: {
             exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
         }
     })
 
-    const completedOrdersCount=await booking.count({
-        where:{
-            bookingStatusId:{
-                [Op.eq]:[12]
+    const completedOrdersCount = await booking.count({
+        where: {
+            bookingStatusId: {
+                [Op.eq]: [12]
             }
         }
     })
 
-    let outObj={
-        allCompletedOrders:bookingsFind,
-        completedOrdersCount:completedOrdersCount
+    let outObj = {
+        allCompletedOrders: bookingsFind,
+        completedOrdersCount: completedOrdersCount
     }
 
-    return res.json(responsefunc("1","All Completed Orders",outObj,""))
-    
+    return res.json(responsefunc("1", "All Completed Orders", outObj, ""))
+
 }
 
 
@@ -726,35 +729,35 @@ async function completeOrders(req,res) {
   * Get Admin Service Types
 */
 
-async function getAdminServicesWithCategories(req,res) {
+async function getAdminServicesWithCategories(req, res) {
 
-    const countAndService= await subCategories.findAll({
-        attributes:[
+    const countAndService = await subCategories.findAll({
+        attributes: [
             'id',
             [sequelize.fn('COUNT', sequelize.col('categoryId')), 'categorySubItemCount']
         ],
-        include:[
+        include: [
             {
-                model:categories,
-                attributes:['id','name','status','image']
+                model: categories,
+                attributes: ['id', 'name', 'status', 'image']
             }
         ],
         group: ['categoryId'],
     })
 
-    const outObj={
-        serviceTypes:countAndService
+    const outObj = {
+        serviceTypes: countAndService
     }
 
-    return res.json(responsefunc("1","All Services with Count Fetched",outObj,""))
+    return res.json(responsefunc("1", "All Services with Count Fetched", outObj, ""))
 }
 
 
 /*
   * Add Service types
 */
-async function addServiceTypes(req,res) {
-    const{name,description}=req.body
+async function addServiceTypes(req, res) {
+    const { name, description } = req.body
     let CategoryImg = null;
 
     if (req.file) {
@@ -771,7 +774,7 @@ async function addServiceTypes(req,res) {
     })
 
     return res.json(responsefunc("1", "Service Type Added Sucessfully", category))
-    
+
 
 }
 
@@ -781,39 +784,39 @@ async function addServiceTypes(req,res) {
   * Get SubCategories/Items
 */
 
-async function getSubCategories(req,res) {
-    const{categoryId}=req.params
+async function getSubCategories(req, res) {
+    const { categoryId } = req.params
 
-    const findData=await subCategories.findAll({
-        where:{
-            categoryId:categoryId
+    const findData = await subCategories.findAll({
+        where: {
+            categoryId: categoryId
         },
-        attributes:['id','name','price','status']
+        attributes: ['id', 'name', 'price', 'status']
     })
 
-    let outObj={
-        serviceTypesItems:findData
+    let outObj = {
+        serviceTypesItems: findData
     }
 
-    return res.json(responsefunc("1","All Items fetched",outObj,""))
-    
+    return res.json(responsefunc("1", "All Items fetched", outObj, ""))
+
 }
 
 
 /*
   * Add SubCategories/Items
 */
-async function addServiceItems(req,res) {
-    const{name,price,categoryId}=req.body
+async function addServiceItems(req, res) {
+    const { name, price, categoryId } = req.body
 
-    const createSubCategory=await subCategories.create({
+    const createSubCategory = await subCategories.create({
         name,
         price,
         categoryId,
-        status:true
+        status: true
     })
 
-    return res.json(responsefunc("1","SubCategory",createSubCategory,""))
+    return res.json(responsefunc("1", "SubCategory", createSubCategory, ""))
 }
 
 //!----------------------------------------------------Employee Management--------------------------------------->>
@@ -821,42 +824,42 @@ async function addServiceItems(req,res) {
 /* 
  *  Get Admin Employee
 */
-async function getAdminEmployess(req,res) {
-    
-    const adminEmployees=await users.findAll({
-        where:{
-            classifiedAsId:2,
-            status:true
+async function getAdminEmployess(req, res) {
+
+    const adminEmployees = await users.findAll({
+        where: {
+            classifiedAsId: 2,
+            status: true
         },
-        attributes:['id','firstName','lastName','email','classifiedAsId','roleId','phoneNum','status']
+        attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
     })
 
-    let outObj={
-        adminEmployees:adminEmployees
+    let outObj = {
+        adminEmployees: adminEmployees
     }
 
 
-    return res.json(responsefunc("1","Admin Employess",outObj,""))
-    
+    return res.json(responsefunc("1", "Admin Employess", outObj, ""))
+
 }
 
 /* 
  *  Add Admin Employee
 */
 async function addEmployee(req, res) {
-    const { firstName, lastName, email, password, phoneNum,countryId,cityId, roleId } = req.body
+    const { firstName, lastName, email, password, phoneNum, countryId, cityId, roleId } = req.body
 
-    const agentId=req.user.id
+    const agentId = req.user.id
 
 
-    const userFind=await users.findOne({
-        where:{
-            classifiedAsId:2,
-            roleId:roleId
+    const userFind = await users.findOne({
+        where: {
+            classifiedAsId: 2,
+            roleId: roleId
         }
     })
 
-    if(userFind){
+    if (userFind) {
         throw new customError("Employee Already Exists")
     }
 
@@ -875,28 +878,28 @@ async function addEmployee(req, res) {
 
     })
 
-    
 
-    if(user.classifiedAsId===1 || user.roleId===6){
+
+    if (user.classifiedAsId === 1 || user.roleId === 6) {
         await users.update({
-            employeeOff:agentId
-        },{where:{id:agentId}})
+            employeeOff: agentId
+        }, { where: { id: agentId } })
 
 
-        const agentAddress=await addressDb.findOne({
-            where:{
-                userId:agentId
+        const agentAddress = await addressDb.findOne({
+            where: {
+                userId: agentId
             }
         })
 
-        const zoneId=agentAddress.zoneId
-        const shopAddressId=agentAddress.id
-        const driverId=user.id
+        const zoneId = agentAddress.zoneId
+        const shopAddressId = agentAddress.id
+        const driverId = user.id
 
         await driverInZones.create({
-            driverId:driverId,
-            zoneId:zoneId,
-            laundaryShopId:shopAddressId,
+            driverId: driverId,
+            zoneId: zoneId,
+            laundaryShopId: shopAddressId,
             countryId,
             cityId
         })
@@ -1159,6 +1162,151 @@ async function getFeatures(req, res) {
 }
 
 
+//!------------------------------------------------------------Shop Management------------------------------------------------->>>>>>>
+
+/*
+   * Shop Counts
+*/
+async function getShopInformation(req, res) {
+
+    const fourDayAgo = new Date();
+    fourDayAgo.setDate(fourDayAgo.getDate() - 4)
+
+
+    const getShopsCount = await addressDb.count({
+        where: {
+            addressType: 'LaundaryShopAddress'
+        }
+    })
+
+    const newRegisterShops = await addressDb.count({
+        where: {
+            status: true,
+            createdAt: {
+                [Op.gte]: fourDayAgo
+            }
+        }
+    })
+
+    const activeShops = await addressDb.count({
+        where: {
+            addressType: 'LaundaryShopAddress',
+            status: true
+        }
+    })
+
+    const inActiveShops = await addressDb.count({
+        where: {
+            addressType: 'LaundaryShopAddress',
+            status: false
+        }
+    })
+
+    let outObj = {
+        getShopsCount: getShopsCount,
+        newRegisterShops: newRegisterShops,
+        activeShops: activeShops,
+        inActiveShops: inActiveShops
+    }
+
+
+    return res.json(responsefunc("1", "Shops Information Fetched", outObj, ""))
+}
+
+
+/*
+   * Shop Data
+*/
+async function shopsData(req, res) {
+
+
+    const getShopData = await bussinessInformation.findAll({
+        include: [
+            {
+                model: users,
+                as: 'businessInfo',
+                attributes: [
+                    'firstName',
+                    'lastName',
+                    'email',
+                    'phoneNum',
+                    'userTypeId',
+                ],
+                include: [
+                    {
+                        model: bussinessWorkingHours,
+                        where: {
+                            status: true
+                        },
+                        attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalbookingCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = businessInfo.id AND bookings.bookingStatusId IN (1, 7))`
+                        ),
+                        'PendingbookingCount',
+                    ]
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName', 'image', 'status']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name', 'status']
+                    },
+                    {
+                        model: zone,
+                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                    }
+                ]
+            }
+        ]
+    })
+
+    let outObj = {
+        AllShopsData: getShopData
+    }
+
+
+
+    return res.json(responsefunc("1", "Shop Information Data", outObj, ""))
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 //!----------------------------------------------------Add Countries,Cities,Zones && Zone Details--------------------------------------->>
 /* 
  *  Add Countries
@@ -1234,7 +1382,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId,zoneMinimumAmount } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount } = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1302,14 +1450,14 @@ async function getAllServices(req, res) {
             status: true,
         }
     })
-    return res.json(responsefunc("1", "All Services", {services:getServices}, ""))
+    return res.json(responsefunc("1", "All Services", { services: getServices }, ""))
 }
 
 /*
   * Add Categories
 */
 async function AddCategories(req, res) {
-    const { name,description } = req.body
+    const { name, description } = req.body
 
     let CategoryImg = null;
 
@@ -1777,4 +1925,7 @@ module.exports = {
     getClassifiedAs,
     addfeatures,
     getFeatures,
+    //------------Shop Management-----------//
+    getShopInformation,
+    shopsData
 }
