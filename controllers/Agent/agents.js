@@ -201,6 +201,11 @@ async function getAgentOrder(req, res) {
                 model: addressDb,
                 as: 'pickupAddress',
                 attributes: ['id','title','streetAddress','province','district','postalCode','lat', 'lng']
+            },
+            {
+                model: addressDb,
+                as: 'dropOffAddress',
+                attributes: ['id','title','streetAddress','province','district','postalCode','lat', 'lng']
             }
         ],
             attributes:[
@@ -223,7 +228,71 @@ async function getAgentOrder(req, res) {
 
     //return res.json(getBooking);
 
-    return res.json(responsefunc("1", "Booking Available to Accept",{bookingData:getBooking},""))
+    const outObj = {
+        bookingData: getBooking.map(b => ({
+            id: b.id,
+            collectionTimeTo: b.collectionTimeTo,
+            collectionTimeFrom: b.collectionTimeFrom,
+            driverInstructionOptions: b.driverInstructionOptions,
+            driverInstructionOptions1: b.driverInstructionOptions1,
+            driverInstruction: b.driverInstruction,
+            totalItems: b.totalItems,
+            bookingStatusId: b.bookingStatusId,
+            deliveryDate: b.deliveryDate,
+            deliveryTimeFrom: b.deliveryTimeFrom,
+            deliveryTimeTo: b.deliveryTimeTo,
+            laundryShopId: b.laundryShopId,
+            customerId: b.customerId,
+            customer: {
+                id: b.customer?.id,
+                firstName: b.customer?.firstName,
+                lastName: b.customer?.lastName,
+                email: b.customer?.email,
+                phoneNum: b.customer?.phoneNum,
+                image: b.customer?.image,
+            },
+            pickupAddress: b.pickupAddress ? {
+                id: b.pickupAddress.id,
+                title: b.pickupAddress.title,
+                streetAddress: b.pickupAddress.streetAddress,
+                province: b.pickupAddress.province,
+                district: b.pickupAddress.district,
+                postalCode: b.pickupAddress.postalCode,
+                lat: b.pickupAddress.lat,
+                lng: b.pickupAddress.lng,
+                country: b.customer?.country ? {
+                    id: b.customer.country.id,
+                    name: b.customer.country.name,
+                    shortName: b.customer.country.shortName
+                } : null,
+                city: b.customer?.city ? {
+                    id: b.customer.city.id,
+                    name: b.customer.city.name
+                } : null
+            } : null,
+            dropOffAddress: b.dropOffAddress ? {
+                id: b.dropOffAddress.id,
+                title: b.dropOffAddress.title,
+                streetAddress: b.dropOffAddress.streetAddress,
+                province: b.dropOffAddress.province,
+                district: b.dropOffAddress.district,
+                postalCode: b.dropOffAddress.postalCode,
+                lat: b.dropOffAddress.lat,
+                lng: b.dropOffAddress.lng,
+                country: b.customer?.country ? {
+                    id: b.customer.country.id,
+                    name: b.customer.country.name,
+                    shortName: b.customer.country.shortName
+                } : null,
+                city: b.customer?.city ? {
+                    id: b.customer.city.id,
+                    name: b.customer.city.name
+                } : null
+            } : null
+        }))
+    };
+
+    return res.json(responsefunc("1", "Booking Available to Accept",outObj,""))
 
 }
 
