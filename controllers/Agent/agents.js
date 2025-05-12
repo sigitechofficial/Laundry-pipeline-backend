@@ -185,12 +185,24 @@ async function getAgentOrder(req, res) {
             {
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
-            }, {
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum','image'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
                 model: addressDb,
                 as: 'pickupAddress',
-                attributes: ['lat', 'lng', 'zoneId']
-            }],
+                attributes: ['id','title','streetAddress','province','district','postalCode','lat', 'lng']
+            }
+        ],
             attributes:[
                 'id',
                 'collectionTimeTo',
@@ -211,7 +223,7 @@ async function getAgentOrder(req, res) {
 
     //return res.json(getBooking);
 
-    return res.json(responsefunc("1", "Booking Available to Accept", getBooking))
+    return res.json(responsefunc("1", "Booking Available to Accept",{bookingData:getBooking},""))
 
 }
 
