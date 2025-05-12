@@ -1380,6 +1380,36 @@ async function singleShopData(req, res) {
 }
 
 
+/*
+   * Get Shop Employees
+*/
+async function getShopEmployees(req,res) {
+    const{bussinessId}=req.params
+
+    const findEmployees=await bussinessInformation.findOne({
+        where:{
+            id:bussinessId
+        },
+        include:[
+            {
+                model:users,
+                as:'businessInfo',
+                attributes:[
+                    'id'
+                    [
+                        sequelize.literal(`(SELECT * FROM users WHERE users.employeeOff = businessInfo.Id)`),
+                        'EmployeeData'
+                    ]
+                ]
+            }
+        ]
+    })
+
+    return res.json(responsefunc("1","Employee Data Fetched",findEmployees,""))
+    
+}
+
+
 //!----------------------------------------------------Add Countries,Cities,Zones && Zone Details--------------------------------------->>
 /* 
  *  Add Countries
@@ -1467,7 +1497,11 @@ async function addZones(req, res) {
         coordinates: polygon,
         status: true,
         cityId,
-        zoneMinimumAmount
+        zoneMinimumAmount,
+        currencyUnitId,
+        distanceUnitId,
+        serviceCharge,
+        zoneComission
     })
 
     return res.json(responsefunc("1", "Zone Added Sucessfully", zoneCreate, ""))
@@ -2001,5 +2035,6 @@ module.exports = {
     //------------Shop Management-----------//
     getShopInformation,
     shopsData,
-    singleShopData
+    singleShopData,
+    getShopEmployees
 }

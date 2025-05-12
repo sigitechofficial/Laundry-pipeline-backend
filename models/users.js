@@ -140,10 +140,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull:true
     },
-    laundaryShopName:{
-      type:DataTypes.STRING,
-      allowNull:true,
-    },
     driverType:{
       type:DataTypes.ENUM('Freelance Driver','laundary Shop Driver'),
       allowNull:true
