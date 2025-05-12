@@ -813,6 +813,39 @@ async function logout(req, res) {
 }
 
 
+/*
+   * Session    
+*/
+async function session(req, res) {
+    const userId = req.user.id;
+    const { guestUser } = req.body;
+    if (guestUser) throw new CustomException("Login failed", "");
+    const userData = await users.findByPk(userId, {
+        attributes: [
+            "id",
+            "firstName",
+            "lastName",
+            "email",
+            "status",
+            "countryCode",
+            "phoneNum",
+        ],
+    });
+    if (!userData) {
+        throw new customError(
+            "Sorry no user found!",
+            "Please contact support for more information"
+        );
+    }
+    if (!userData?.status)
+        throw new customError(
+            "You are blocked by Admin",
+            "Please contact support for more information"
+        );
+    let output = loginData(userData, "", guestUser);
+    return res.json(output);
+}
+
 
 
 /*
@@ -962,5 +995,6 @@ module.exports = {
     logout,
     getUserProfile,
     updateUserProfile,
-    registerCustomerWithOTP
+    registerCustomerWithOTP,
+    session
 }

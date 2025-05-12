@@ -178,7 +178,7 @@ async function getAgentOrder(req, res) {
 
     const getBooking = await booking.findAll({
         where: {
-            bookingStatusId: 1,
+            bookingStatusId: 2,
             laundryShopId: getShopAddress.id,
         },
         include: [
@@ -190,8 +190,22 @@ async function getAgentOrder(req, res) {
                 model: addressDb,
                 as: 'pickupAddress',
                 attributes: ['lat', 'lng', 'zoneId']
-
-            }]
+            }],
+            attributes:[
+                'id',
+                'collectionTimeTo',
+                "collectionTimeFrom",
+                "driverInstructionOptions",
+                "driverInstructionOptions1",
+                'driverInstruction',
+                "totalItems",
+                "bookingStatusId",
+                "deliveryDate",
+                "deliveryTimeFrom",
+                "deliveryTimeTo",
+                "laundryShopId",
+                "customerId",
+            ]
     });
     console.log("🚀 ~ getAgentOrder ~ getBooking:", getBooking);
 

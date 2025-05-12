@@ -158,7 +158,7 @@ async function verifyOTpSignUp(req, res) {
             {
                 dayOfWeek: day,
                 status: true,
-                userId:userId
+                userId: userId
             }
         ))
         let output = await bussinessWorkingHours.bulkCreate(dataMap)
@@ -191,7 +191,7 @@ async function verifyOTpSignUp(req, res) {
             {
                 dayOfWeek: day,
                 status: true,
-                userId:userId
+                userId: userId
             }
         ))
         let output = await bussinessWorkingHours.bulkCreate(dataMap)
@@ -588,7 +588,7 @@ async function workingHoursUpdate(req, res) {
 
     const { userId } = req.params
     const { bussinessWorkingDays } = req.body
-    
+
     console.log(bussinessWorkingDays);
 
 
@@ -607,7 +607,7 @@ async function workingHoursUpdate(req, res) {
             }
         );
         console.log("Updating openTime:", ele.openTime);
-console.log("Updating closeTime:", ele.closeTime);
+        console.log("Updating closeTime:", ele.closeTime);
     }
 
 
@@ -646,21 +646,21 @@ async function loginUser(req, res) {
                 attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates']
             },
             {
-                model:bussinessInformation,
-                as:'agentInfo',
-                attributes:['id','shopName','matchProfileOptions'],
-                include:[
+                model: bussinessInformation,
+                as: 'agentInfo',
+                attributes: ['id', 'shopName', 'matchProfileOptions'],
+                include: [
                     {
-                        model:machineCount,
-                        as:'agentShopMachine',
-                        attributes:['id','total','machineId']
+                        model: machineCount,
+                        as: 'agentShopMachine',
+                        attributes: ['id', 'total', 'machineId']
                     }
                 ]
             },
             {
-                model:agentSelectServices,
-                as:'agentServices',
-                attributes:['serviceId','status'],
+                model: agentSelectServices,
+                as: 'agentServices',
+                attributes: ['serviceId', 'status'],
             },
         ],
         attributes: [
@@ -698,8 +698,8 @@ async function loginUser(req, res) {
 
     if (!userFind.addressDb || userFind.addressDb.length === 0) {
 
-      
-        return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id,}, ""))
+
+        return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id, }, ""))
     }
 
     const services = userFind?.agentServices ?? [];
@@ -810,7 +810,7 @@ async function loginUser(req, res) {
         const featureData = await features.findAll({
             where: {
                 status: true,
-                featureOf:'Agent Employee'
+                featureOf: 'Agent Employee'
             },
             attributes: ['id', 'title']
         })
@@ -1103,7 +1103,38 @@ async function logout(req, res) {
 }
 
 
-
+/*
+   * Session    
+*/
+async function session(req, res) {
+    const userId = req.user.id;
+    const { guestUser } = req.body;
+    if (guestUser) throw new CustomException("Login failed", "");
+    const userData = await users.findByPk(userId, {
+        attributes: [
+            "id",
+            "firstName",
+            "lastName",
+            "email",
+            "status",
+            "countryCode",
+            "phoneNum",
+        ],
+    });
+    if (!userData) {
+        throw new customError(
+            "Sorry no user found!",
+            "Please contact support for more information"
+        );
+    }
+    if (!userData?.status)
+        throw new customError(
+            "You are blocked by Admin",
+            "Please contact support for more information"
+        );
+    let output = loginData(userData, "", guestUser);
+    return res.json(output);
+}
 
 /*
 * Get User profile
@@ -1251,6 +1282,7 @@ module.exports = {
     registerAgentWithOTP,
     resendOTP,
     businesInfoAdded,
-    workingHoursUpdate
+    workingHoursUpdate,
+    session
 
 }

@@ -42,7 +42,8 @@ router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.veri
 router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
 //logout user and destroy the Token in redis
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
-
+//Session Api
+router.get("/session", asyncMiddleware(customerAuthControllers.session))
 //!------------------------------------Drawer-------------------------------//
 //get Profile
 router.get('/getUserProfile',validateAccessToken,asyncMiddleware(customerAuthControllers.getUserProfile));
