@@ -200,12 +200,12 @@ async function getAgentOrder(req, res) {
             {
                 model: addressDb,
                 as: 'pickupAddress',
-                attributes: ['id','title','streetAddress','province','district','postalCode','lat', 'lng']
+                attributes: ['id','title','streetAddress','province','district','postalcode','lat', 'lng']
             },
             {
                 model: addressDb,
                 as: 'dropOffAddress',
-                attributes: ['id','title','streetAddress','province','district','postalCode','lat', 'lng']
+                attributes: ['id','title','streetAddress','province','district','postalcode','lat', 'lng']
             }
         ],
             attributes:[
@@ -257,7 +257,7 @@ async function getAgentOrder(req, res) {
                 streetAddress: b.pickupAddress.streetAddress,
                 province: b.pickupAddress.province,
                 district: b.pickupAddress.district,
-                postalCode: b.pickupAddress.postalCode,
+                postalcode: b.pickupAddress.postalcode,
                 lat: b.pickupAddress.lat,
                 lng: b.pickupAddress.lng,
                 country: b.customer?.country ? {
@@ -276,7 +276,7 @@ async function getAgentOrder(req, res) {
                 streetAddress: b.dropOffAddress.streetAddress,
                 province: b.dropOffAddress.province,
                 district: b.dropOffAddress.district,
-                postalCode: b.dropOffAddress.postalCode,
+                postalcode: b.dropOffAddress.postalcode,
                 lat: b.dropOffAddress.lat,
                 lng: b.dropOffAddress.lng,
                 country: b.customer?.country ? {
