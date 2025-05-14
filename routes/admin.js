@@ -185,7 +185,8 @@ router.get('/getShopInformation',validateAccessToken,asyncMiddleware(adminContro
 router.get('/getShopsData',validateAccessToken,asyncMiddleware(adminController.shopsData))
 //Single Shop Data
 router.get('/singleShopData/:Id',validateAccessToken,asyncMiddleware(adminController.singleShopData))
-
+//Get Shop Employees 
+router.get('/getShopEmployees/:bussinessId',validateAccessToken,asyncMiddleware(adminController.getShopEmployees))
 
 
 

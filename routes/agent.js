@@ -135,6 +135,13 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
+
+//!------------------------------------Drawer-------------------------------//
+//get Profile
+router.get('/getUserProfile',validateAccessToken,asyncMiddleware(agentAuthController.getUserProfile));
+//Update Customer Profile
+router.patch("/updateUserProfile",validateAccessToken,uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.updateUserProfile))
+
 //!---------------------------Agent Address Module-------------//
 router.post(
     "/agentAddressAdd",
