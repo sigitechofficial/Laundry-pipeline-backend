@@ -101,6 +101,10 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.TIME,
     allowNull:false
   },
+  orderExpireTime:{
+    type:DataTypes.TIME,
+    allowNull:true,
+  },
   deliveryTimeTo:{
     type:DataTypes.TIME,
     allowNull:false

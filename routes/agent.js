@@ -153,6 +153,8 @@ router.get(
     asyncMiddleware(agentController.getShopAddress)
 );
 
+router.get('/getBookingHome',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getBookingHome))
+
 //!------------------------------------------------------Agent Booking Api's-----------------------------------------------//
 //Get Order for Agent
 router.get(

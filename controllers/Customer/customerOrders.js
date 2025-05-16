@@ -198,6 +198,15 @@ async function createBooking(req, res) {
     const upfrontAmount = zoneUpfrontAmount;
     console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
+      const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
+        [],
+        {
+            hour: "2-digit",
+            minute: "2-digit",
+        }
+    );
+      console.log("🚀 ~ createBooking ~ fixTimeKey:", fixTimeKey)
+
 
     // Create the billing details
     await billingDetails.create({
@@ -218,6 +227,7 @@ async function createBooking(req, res) {
     await booking.update({
         orderAmount: total || 0,
         orderTrackId: ordertrackingNumber,
+        orderExpireTime:fixTimeKey
     }, { where: { id: bookingData.id } });
 
 
@@ -493,9 +503,6 @@ async function findZones(lat, lng) {
         throw new customError("Service not served in this area");
     }
 
-
-
-    // Assuming you want the ID of the first zone that matches
     return findZone;
 }
 

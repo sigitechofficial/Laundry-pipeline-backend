@@ -18,6 +18,6 @@ module.exports = {
   },
 
   async down (queryInterface, Sequelize) {
-    await queryInterface.bulkDelete('appunits',null,{})
+    await queryInterface.bulkDelete('appUnits',null,{})
   }
 };

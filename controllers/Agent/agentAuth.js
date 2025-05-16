@@ -945,11 +945,12 @@ async function forgetPasswordRequest(req, res) {
         where: {
             email,
             deletedAt: { [Op.is]: null },
-            userTypeId: { [Op.or]: [2] },
+            userTypeId: { [Op.or]: [4] },
         },
         include: { model: otpVerification, attributes: ["id"] },
         attributes: ["id"],
     });
+    console.log("🚀 ~ forgetPasswordRequest ~ users:", userData)
 
     // user not found
     if (!userData)
@@ -960,7 +961,7 @@ async function forgetPasswordRequest(req, res) {
     let OTP = otpGenerator.generate(4, {
         lowerCaseAlphabets: false,
         upperCaseAlphabets: false,
-        specialChars: true,
+        specialChars: false,
     });
     //return res.json(OTP)
 
