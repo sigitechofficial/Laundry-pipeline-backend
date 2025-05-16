@@ -201,11 +201,18 @@ async function getBookingHome(req, res) {
 
     let agentZone = userData.addressDb.zoneId;
     console.log("🚀 ~ getBookingHome ~ agentZone:", agentZone);
+    const currentDate = new Date();
+    currentDate.setSeconds(0, 0);
+    const currentTimeString = currentDate.toTimeString().slice(0, 5);
 
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
             bookingStatusId: 1,
+            zoneId: agentZone,
+            orderExpireTime: {
+                [Op.gte]: currentTimeString
+            }
         },
         include: [
             {
@@ -216,62 +223,14 @@ async function getBookingHome(req, res) {
         ],
     });
 
-    let filterBookings = [];
+    //return res.json(bookingData)
 
-    for (const bookings of bookingData) {
-        console.log("🚀 ~ getBookingHome ~ customerData:", bookings.customerId);
-
-        const customerData = await users.findOne({
-            where: {
-                id: bookings.customerId,
-            },
-            include: [
-                {
-                    model: addressDb,
-                    where: {
-                        addressType: "pickUp",
-                    },
-                    attributes: ["id", "streetAddress", "lat", "lng"],
-                },
-            ],
-            attributes: ["id"],
-        });
-        console.log("🚀 ~ getBookingHome ~ customerData:", customerData);
-        //return res.json(customerData)
-
-        let customerLat = customerData.addressDb.lat;
-        let customerLng = customerData.addressDb.lng;
-
-        let customerZone = await findZones(customerLat, customerLng);
-        console.log("🚀 ~ getBookingHome ~ customerZone:", customerZone[0].id)
-        console.log("🚀 ~ getBookingHome ~ agentZone:", agentZone)
-
-        if (customerZone[0].id === agentZone) {
-
-            const currentDate = new Date();
-            currentDate.setSeconds(0, 0);
-            console.log("🚀 ~ getBookingHome ~ currentDate:", currentDate)
-
-            let orderExpireTime = bookings.orderExpireTime;
-            console.log("🚀 ~ getBookingHome ~ orderExpireTime:", orderExpireTime)
-
-            const [hours, minutes] = orderExpireTime.split(":");
-
-
-            let expireDate = new Date(currentDate);
-            expireDate.setHours(hours, minutes, 0, 0);
-
-            if (expireDate > currentDate) {
-                filterBookings.push(bookings);
-            }
-        }
-    }
 
     return res.json(
         responsefunc(
             "1",
             "Agent Orders fetched",
-            { filterBookings },
+            { bookingData },
             ""
         )
     );

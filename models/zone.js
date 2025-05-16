@@ -21,6 +21,10 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with users Table
       zone.hasMany(models.users)
       models.users.belongsTo(zone)
+
+      //Relation with the Booking Table
+      zone.hasMany(models.booking)
+      models.booking.belongsTo(zone)
     }
   }
   zone.init({

@@ -85,9 +85,9 @@ async function createBooking(req, res) {
     console.log("Lng ---------------------->", pickUpAddress.lng);
 
     let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
-    let zoneId=findZone[0].id;
-    let zoneUpfrontAmount=findZone[0].zoneMinimumAmount
-    let zoneSeviceCharge=findZone[0].serviceCharge
+    let zoneId = findZone[0].id;
+    let zoneUpfrontAmount = findZone[0].zoneMinimumAmount
+    let zoneSeviceCharge = findZone[0].serviceCharge
     console.log("🚀 ~ createBooking ~ findZone:", zoneId);
     console.log("🚀 ~ createBooking ~ findZone:", zoneUpfrontAmount);
     console.log("🚀 ~ createBooking ~ findZone:", zoneSeviceCharge);
@@ -115,16 +115,16 @@ async function createBooking(req, res) {
         specialChars: false
     });
 
-    const createPreferences=preferencesArray.map((preferences) =>({
-        type:preferences.type,
-        chooseTemperature:preferences.chooseTemperature,
-        serviceId:preferences.serviceId,
-        preferencesServiceNameId:preferences.preferencesServiceNameId,
-        numberOfBags:preferences.numberOfBags
+    const createPreferences = preferencesArray.map((preferences) => ({
+        type: preferences.type,
+        chooseTemperature: preferences.chooseTemperature,
+        serviceId: preferences.serviceId,
+        preferencesServiceNameId: preferences.preferencesServiceNameId,
+        numberOfBags: preferences.numberOfBags
     }))
-    
-    
-    
+
+
+
     await servicePreferences.bulkCreate(createPreferences)
 
 
@@ -144,6 +144,7 @@ async function createBooking(req, res) {
         totalItems: totalItems || 0,
         paymentConfirmed: false,
         partialPayment: false,
+        zoneId:zoneId,
         driverInstructionOptions,
         driverInstructionOptions1
     });
@@ -172,15 +173,15 @@ async function createBooking(req, res) {
 
         // Prepare the serviceData to be inserted
         const serviceData = services.map((service) => {
-            let serviceObj={
+            let serviceObj = {
                 bookingId: bookingData.id,
                 serviceId: service.serviceId,
                 date: currentDate,
                 time: currentTime,
             };
-            if(service.categoryId) serviceObj.categoryId=service.categoryId;
-            if(service.subCategoryId) serviceObj.categoryId=service.categoryId;
-            if(service.categoryCharge) serviceObj.categoryPrice = total
+            if (service.categoryId) serviceObj.categoryId = service.categoryId;
+            if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
+            if (service.categoryCharge) serviceObj.categoryPrice = total
 
             return serviceObj;
         });
@@ -198,14 +199,15 @@ async function createBooking(req, res) {
     const upfrontAmount = zoneUpfrontAmount;
     console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-      const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
-        [],
+    const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
+        'en-GB',
         {
+            hour12: false, // Forces 24-hour format
             hour: "2-digit",
             minute: "2-digit",
         }
     );
-      console.log("🚀 ~ createBooking ~ fixTimeKey:", fixTimeKey)
+    console.log("🚀 ~ createBooking ~ fixTimeKey:", fixTimeKey)
 
 
     // Create the billing details
@@ -227,7 +229,7 @@ async function createBooking(req, res) {
     await booking.update({
         orderAmount: total || 0,
         orderTrackId: ordertrackingNumber,
-        orderExpireTime:fixTimeKey
+        orderExpireTime: fixTimeKey
     }, { where: { id: bookingData.id } });
 
 
@@ -242,45 +244,45 @@ async function createBooking(req, res) {
 /*
   * Show Customer On Hold Reason
 */
-async function onHoldCustomerShow(req,res) {
-    const{bookingId}=req.body
+async function onHoldCustomerShow(req, res) {
+    const { bookingId } = req.body
 
-    const userFound=await booking.findOne({
-        where:{
-            id:bookingId
+    const userFound = await booking.findOne({
+        where: {
+            id: bookingId
         },
-        include:[
+        include: [
             {
-                model:users,
-                as:'customer',
-                attributes:['id','email']
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'email']
             }
         ]
     })
     console.log("🚀 ~ onHoldCustomerShow ~ userFound:", userFound.customer.id)
-    
 
-    const optionIdFound=await OnHoldConfirmation.findOne({
-        where:{
-            bookingId:bookingId
+
+    const optionIdFound = await OnHoldConfirmation.findOne({
+        where: {
+            bookingId: bookingId
         },
-        include:[{
-            model:onHoldOption,
-            as:'agentHoldId',
+        include: [{
+            model: onHoldOption,
+            as: 'agentHoldId',
         }],
-        attributes:['onHoldOptionId']
+        attributes: ['onHoldOptionId']
     })
     console.log("🚀 ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound)
 
 
-    const customerOptionFound=await onHoldCustomerOption.findOne({
-        where:{
-            onHoldOptionId:optionIdFound.onHoldOptionId
+    const customerOptionFound = await onHoldCustomerOption.findOne({
+        where: {
+            onHoldOptionId: optionIdFound.onHoldOptionId
         },
-        attributes:['id','option','title','conformationText','notConfirmText']
+        attributes: ['id', 'option', 'title', 'conformationText', 'notConfirmText']
     })
 
-    return res.json(responsefunc("1","Customer On Hold Response Show",customerOptionFound,""))
+    return res.json(responsefunc("1", "Customer On Hold Response Show", customerOptionFound, ""))
 }
 
 
@@ -288,34 +290,34 @@ async function onHoldCustomerShow(req,res) {
 /*
  *   on Hold Laundry Customer response Updated
 */
-async function customerResponseUpdate(req,res) {
-    const{bookingId,customerResponse}=req.body
+async function customerResponseUpdate(req, res) {
+    const { bookingId, customerResponse } = req.body
 
-    const bookingFind=await booking.findOne({
-        where:{
-            id:bookingId
+    const bookingFind = await booking.findOne({
+        where: {
+            id: bookingId
         },
-        include:[
+        include: [
             {
-                model:addressDb,
-                as:'laundryShop',
-                attributes:['id','userId'],
-                include:[
+                model: addressDb,
+                as: 'laundryShop',
+                attributes: ['id', 'userId'],
+                include: [
                     {
-                        model:users,
-                        attributes:['id','firstName','lastName','userTypeId']
+                        model: users,
+                        attributes: ['id', 'firstName', 'lastName', 'userTypeId']
                     }
                 ]
             }
         ]
     })
     console.log("🚀 ~ customerResponseUpdate ~ bookingFind:", bookingFind.laundryShop.user.id)
-    const userId=bookingFind.laundryShop.user.id
+    const userId = bookingFind.laundryShop.user.id
     //return res.json(bookingFind)
 
     await OnHoldConfirmation.update({
-        customerResponse:customerResponse,
-    },{where:{bookingId:bookingId}})
+        customerResponse: customerResponse,
+    }, { where: { bookingId: bookingId } })
 
     const currentTime = new Date().toLocaleTimeString('en-US', {
         hour: '2-digit',
@@ -326,128 +328,128 @@ async function customerResponseUpdate(req,res) {
 
 
     await booking.update({
-        bookingStatusId:22
-    },{where:{id:bookingId}})
+        bookingStatusId: 22
+    }, { where: { id: bookingId } })
 
     await bookingHistory.create({
-        bookingId:bookingId,
-        bookingStatusId:22,
-        date:currentDate,
-        time:currentTime
+        bookingId: bookingId,
+        bookingStatusId: 22,
+        date: currentDate,
+        time: currentTime
     })
 
-    let eventData={
-        type:'customerResponse',
-        data:{
-            customerResponse:customerResponse,
-            bookingId:bookingId
+    let eventData = {
+        type: 'customerResponse',
+        data: {
+            customerResponse: customerResponse,
+            bookingId: bookingId
         }
     }
 
-    sendEvent(userId,eventData)
+    sendEvent(userId, eventData)
     //two options can send event for new tab or can send notification from here 
 
-    return res.json(responsefunc("1","Customer Response",{},""))
-    
+    return res.json(responsefunc("1", "Customer Response", {}, ""))
+
 }
 
 
 /*
   * Customer All bookings
 */
-async function allBookings(req,res) {
-    const userId=req.user.id
+async function allBookings(req, res) {
+    const userId = req.user.id
 
-    const findAllBooking=await booking.findAll({
-        where:{
-            customerId:userId
+    const findAllBooking = await booking.findAll({
+        where: {
+            customerId: userId
         },
-        include:[
+        include: [
             {
-                model:users,
-                as:'customer',
-                attributes:['firstName','lastName','email']
+                model: users,
+                as: 'customer',
+                attributes: ['firstName', 'lastName', 'email']
             },
             {
-                model:addressDb,
-                as:'pickupAddress',
-                attributes:['title','streetAddress','province','addressType']
+                model: addressDb,
+                as: 'pickupAddress',
+                attributes: ['title', 'streetAddress', 'province', 'addressType']
             },
             {
-                model:addressDb,
-                as:'dropOffAddress',
-                attributes:['title','streetAddress','province','addressType']
+                model: addressDb,
+                as: 'dropOffAddress',
+                attributes: ['title', 'streetAddress', 'province', 'addressType']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             }
         ]
     })
 
 
-    return res.json(responsefunc("1","Customer All Bookings",findAllBooking,""))
-    
+    return res.json(responsefunc("1", "Customer All Bookings", findAllBooking, ""))
+
 }
 
 /*
   * Customer booking Detail
 */
-async function bookingDetailsById(req,res) {
-    const{bookingId,orderTrackId}=req.query
+async function bookingDetailsById(req, res) {
+    const { bookingId, orderTrackId } = req.query
 
-    let whereCondition={}
+    let whereCondition = {}
 
-    if(bookingId){
-        whereCondition.id=bookingId
-    }else{
-        whereCondition.orderTrackId=orderTrackId
+    if (bookingId) {
+        whereCondition.id = bookingId
+    } else {
+        whereCondition.orderTrackId = orderTrackId
     }
 
 
-    const bookingFind=await booking.findOne({
-        where:whereCondition,
-        include:[
+    const bookingFind = await booking.findOne({
+        where: whereCondition,
+        include: [
             {
-                model:users,
-                as:'customer',
-                attributes:['id','firstName','lastName','email']
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'firstName', 'lastName', 'email']
             },
             {
-                model:addressDb,
-                as:'pickupAddress',
-                attributes:['title','streetAddress','province','district','addressType']
+                model: addressDb,
+                as: 'pickupAddress',
+                attributes: ['title', 'streetAddress', 'province', 'district', 'addressType']
             },
             {
-                model:addressDb,
-                as:'dropOffAddress',
-                attributes:['title','streetAddress','province','district','addressType']
+                model: addressDb,
+                as: 'dropOffAddress',
+                attributes: ['title', 'streetAddress', 'province', 'district', 'addressType']
             },
             {
-                model:customerSelectedService,
-                attributes:['date','time','categoryprice','categoryId','serviceId','subCategoryId','items']
+                model: customerSelectedService,
+                attributes: ['date', 'time', 'categoryprice', 'categoryId', 'serviceId', 'subCategoryId', 'items']
             },
             {
-                model:bookingStatus,
-                attributes:['title','description']
+                model: bookingStatus,
+                attributes: ['title', 'description']
             },
             {
-                model:bookingHistory,
-                attributes:['date','time'],
-                include:[
+                model: bookingHistory,
+                attributes: ['date', 'time'],
+                include: [
                     {
-                        model:bookingStatus,
-                        attributes:['title','description']
+                        model: bookingStatus,
+                        attributes: ['title', 'description']
                     }
                 ]
             }
-            
+
         ]
     })
 
 
-    return res.json(responsefunc("1","Customer Order Details Fetched",bookingFind,""))
-    
+    return res.json(responsefunc("1", "Customer Order Details Fetched", bookingFind, ""))
+
 }
 
 
@@ -518,16 +520,16 @@ async function checkIfTimeSlotBooked(shopId, deliveryTimeFrom, deliveryTimeTo, c
                     deliveryDate: fn('DATE', col('deliveryDate')),
                     bookingStatusId: 1,
                     [Op.and]: [
-                        { deliveryTimeFrom: { [Op.gte]: deliveryTimeFrom } }, 
-                        { deliveryTimeTo: { [Op.lte]: deliveryTimeTo } }  
+                        { deliveryTimeFrom: { [Op.gte]: deliveryTimeFrom } },
+                        { deliveryTimeTo: { [Op.lte]: deliveryTimeTo } }
                     ]
                 },
                 {
                     collectionDate: fn('DATE', col('collectionDate')),
                     bookingStatusId: 1,
                     [Op.and]: [
-                        { collectionTimeFrom: { [Op.gte]: collectionTimeFrom } }, 
-                        { collectionTimeTo: { [Op.lte]: collectionTimeTo } }  
+                        { collectionTimeFrom: { [Op.gte]: collectionTimeFrom } },
+                        { collectionTimeTo: { [Op.lte]: collectionTimeTo } }
                     ]
                 }
             ],
@@ -577,14 +579,14 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
         include: [{
             model: users,
             attributes: ['id', 'firstName', 'email', 'lastName'],
-            include:[{
-                model:bussinessInformation,
-                as:'businessInfo',
-                attributes:['shopName']
+            include: [{
+                model: bussinessInformation,
+                as: 'businessInfo',
+                attributes: ['shopName']
             }]
         }],
         attributes: ['id', 'status', 'zoneId', 'userId']
-    }); 
+    });
 
     console.log("🚀 ~ getBookingDetails ~ getShopsAndOwners ----------------->:", getShopsAndOwners);
 
@@ -667,10 +669,10 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
                     orderTrackId: bookingDetails.orderTrackId,
                     collectionDate: collectionDate,
                     collectionTimeTo: collectionTimeTo,
-                    collectionTimeFrom:collectionTimeFrom,
+                    collectionTimeFrom: collectionTimeFrom,
                     deliveryDate: deliveryDate,
                     deliveryTimeTo: deliveryTimeTo,
-                    deliveryTimeFrom:deliveryTimeFrom,
+                    deliveryTimeFrom: deliveryTimeFrom,
                     totalAmount: bookingDetails?.billingDetail?.total,
                     serviceCharge: bookingDetails?.billingDetail?.serviceCharge,
                     categoryCharge: bookingDetails?.billingDetail?.categoryCharge,
