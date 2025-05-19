@@ -14,23 +14,26 @@ module.exports = (sequelize, DataTypes) => {
     }
   }
   customerSelectedService.init({
-    date:{
+    date: {
       type: DataTypes.DATE,
-    allowNull:false},
+      allowNull: false
+    },
     time: {
-      type:DataTypes.TIME,
-    allowNull:false},
+      type: DataTypes.TIME,
+      allowNull: false
+    },
     servicePrice: {
-      type:DataTypes.DECIMAL(10,2),
-    allowNull:false},
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true
+    },
     categoryPrice: {
-      type:DataTypes.DECIMAL(10,2),
-    allowNull:false
-  },
-  items:{
-    type:DataTypes.INTEGER,
-    allowNull:true
-  }
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true
+    },
+    items: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    }
   }, {
     sequelize,
     modelName: 'customerSelectedService',

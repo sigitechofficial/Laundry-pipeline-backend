@@ -29,6 +29,14 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with Model on Hold Conformations
       service.hasMany(models.OnHoldConfirmation)
       models.OnHoldConfirmation.belongsTo(service)
+
+      //Relation with Model Categories
+      service.hasMany(models.categories)
+      models.categories.belongsTo(service)
+
+      //Realtion with Model serviceCategories
+      service.hasMany(models.serviceCategories)
+      models.serviceCategories.belongsTo(service)
     }
   }
   service.init({

@@ -24,7 +24,8 @@ tags:
   - name: Admin > Customer Management
   - name: Admin > Driver Management
   - name: Admin > Order Management
-  - name: Admin > Services Management
+  - name: Admin > Service Management
+  - name: Admin > Employee Management
   - name: Driver
   - name: Driver > Driver Auth
   - name: Agent
@@ -1880,6 +1881,496 @@ paths:
           description: Unauthorized – Missing or invalid access token
         '500':
           description: Internal server error
+  /admin/getAdminServicesWithCategories:
+    get:
+      summary: "Fetch all services with category count"
+      description: "Fetches all services along with the count of subcategories for each service."
+      tags:
+        - Admin > Service Management
+      produces:
+        - "application/json"
+      parameters:
+        - name: "accessToken"
+          in: "cookie"
+          description: "The access token to authorize the user"
+          required: true
+          type: "string"
+      responses:
+        200:
+          description: "Successfully fetched all services with category counts"
+          schema:
+            type: "object"
+            properties:
+              status:
+                type: "string"
+                example: "1"
+              message:
+                type: "string"
+                example: "All Services with Count Fetched"
+              data:
+                type: "object"
+                properties:
+                  serviceTypes:
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        id:
+                          type: "integer"
+                          example: 1
+                        categorySubItemCount:
+                          type: "integer"
+                          example: 5
+                        categories:
+                          type: "object"
+                          properties:
+                            id:
+                              type: "integer"
+                              example: 1
+                            name:
+                              type: "string"
+                              example: "Category A"
+                            status:
+                              type: "string"
+                              example: "active"
+                            image:
+                              type: "string"
+                              example: "image_url.jpg"
+        400:
+          description: "Bad Request"
+          schema:
+            type: "object"
+            properties:
+              status:
+                type: "string"
+                example: "0"
+              message:
+                type: "string"
+                example: "Invalid request or missing parameters"
+        401:
+          description: "Unauthorized access, invalid access token"
+          schema:
+            type: "object"
+            properties:
+              status:
+                type: "string"
+                example: "0"
+              message:
+                type: "string"
+                example: "Unauthorized, invalid or expired access token"
+        500:
+          description: "Internal server error"
+          schema:
+            type: "object"
+            properties:
+              status:
+                type: "string"
+                example: "0"
+              message:
+                type: "string"
+                example: "Server error, please try again later"
+  /admin/addServiceTypes:
+    post:
+      summary: "Add a new service type with an image"
+      description: "Creates a new service type by uploading a name, description, and an image."
+      tags:
+        - Admin > Service Management  # Tag as requested
+      produces:
+        - "application/json"
+      consumes:
+        - "multipart/form-data"  # Specify that the request body is multipart/form-data
+      parameters:
+        - name: "accessToken"
+          in: "cookie"  # accessToken is passed via the cookie
+          description: "The access token to authorize the user"
+          required: true
+          type: "string"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: "object"
+              properties:
+                name:
+                  type: "string"
+                  description: "The name of the service type"
+                  example: "Laundry Service"
+                description:
+                  type: "string"
+                  description: "The description of the service type"
+                  example: "Full-service laundry with wash, dry, and fold."
+                CategoryImg:
+                  type: "string"
+                  format: "binary"
+                  description: "The image file for the service type"
+      responses:
+        200:
+          description: "Successfully added the service type"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "1"
+                  message:
+                    type: "string"
+                    example: "Service Type Added Successfully"
+                  data:
+                    type: "object"
+                    properties:
+                      id:
+                        type: "integer"
+                        example: 1
+                      name:
+                        type: "string"
+                        example: "Laundry Service"
+                      description:
+                        type: "string"
+                        example: "Full-service laundry with wash, dry, and fold."
+                      image:
+                        type: "string"
+                        example: "/uploads/service-type-image.jpg"
+        400:
+          description: "Bad Request - Invalid input"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Invalid input or missing parameters"
+        401:
+          description: "Unauthorized - Invalid or expired access token"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Unauthorized, invalid or expired access token"
+        500:
+          description: "Internal Server Error"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Server error, please try again later"
+  /admin/getSubCategories/{categoryId}:
+    get:
+      summary: "Fetch all subcategories for a given category"
+      description: "Fetches all subcategories by the given category ID and returns their details."
+      tags:
+        - Admin > Service Management  # Tag as requested
+      produces:
+        - "application/json"
+      parameters:
+        - name: "accessToken"
+          in: "cookie"
+          description: "The access token to authorize the user"
+          required: true
+          type: "string"
+        - name: "categoryId"
+          in: "path"
+          description: "The ID of the category to fetch subcategories for"
+          required: true
+          type: "integer"
+          format: "int64"
+      responses:
+        200:
+          description: "Successfully fetched subcategories for the given category ID"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "1"
+                  message:
+                    type: "string"
+                    example: "All Items fetched"
+                  data:
+                    type: "object"
+                    properties:
+                      serviceTypesItems:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            id:
+                              type: "integer"
+                              example: 1
+                            name:
+                              type: "string"
+                              example: "Subcategory Name"
+                            price:
+                              type: "number"
+                              format: "float"
+                              example: 99.99
+                            status:
+                              type: "string"
+                              example: "active"
+        400:
+          description: "Bad Request - Invalid input"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Invalid category ID"
+        401:
+          description: "Unauthorized - Invalid or expired access token"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Unauthorized, invalid or expired access token"
+        500:
+          description: "Internal Server Error"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Server error, please try again later"
+  /admin/addServiceItems:
+    post:
+      summary: "Add a new service item (subcategory)"
+      description: "Creates a new service item (subcategory) by providing the name, price, and category ID."
+      tags:
+        - Admin > Service Management   # Tag as requested
+      produces:
+        - "application/json"
+      parameters:
+        - name: "accessToken"
+          in: "cookie"
+          description: "The access token to authorize the user"
+          required: true
+          type: "string"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: "object"
+              properties:
+                name:
+                  type: "string"
+                  description: "The name of the subcategory"
+                  example: "Wash & Fold"
+                price:
+                  type: "number"
+                  format: "float"
+                  description: "The price of the subcategory"
+                  example: 9.99
+                categoryId:
+                  type: "integer"
+                  description: "The ID of the category the subcategory belongs to"
+                  example: 2
+      responses:
+        200:
+          description: "Successfully added the service item (subcategory)"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "1"
+                  message:
+                    type: "string"
+                    example: "SubCategory"
+                  data:
+                    type: "object"
+                    properties:
+                      id:
+                        type: "integer"
+                        example: 1
+                      name:
+                        type: "string"
+                        example: "Wash & Fold"
+                      price:
+                        type: "number"
+                        format: "float"
+                        example: 9.99
+                      categoryId:
+                        type: "integer"
+                        example: 2
+                      status:
+                        type: "boolean"
+                        example: true
+        400:
+          description: "Bad Request - Invalid input"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Invalid input or missing parameters"
+        401:
+          description: "Unauthorized - Invalid or expired access token"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Unauthorized, invalid or expired access token"
+        500:
+          description: "Internal Server Error"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Server error, please try again later"
+  /admin/getAdminEmployess:
+    get:
+      summary: "Fetch all admin employees"
+      description: "Fetches all admin employees from the system where classifiedAsId = 2 and status = true."
+      tags:
+        - Admin > Employee Management # Tag as requested
+      produces:
+        - "application/json"
+      parameters:
+        - name: "accessToken"
+          in: "cookie"
+          description: "The access token to authorize the user"
+          required: true
+          type: "string"
+      responses:
+        200:
+          description: "Successfully fetched admin employees"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "1"
+                  message:
+                    type: "string"
+                    example: "Admin Employees"
+                  data:
+                    type: "object"
+                    properties:
+                      adminEmployees:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            id:
+                              type: "integer"
+                              example: 1
+                            firstName:
+                              type: "string"
+                              example: "John"
+                            lastName:
+                              type: "string"
+                              example: "Doe"
+                            email:
+                              type: "string"
+                              example: "john.doe@example.com"
+                            classifiedAsId:
+                              type: "integer"
+                              example: 2
+                            roleId:
+                              type: "integer"
+                              example: 3
+                            phoneNum:
+                              type: "string"
+                              example: "1234567890"
+                            status:
+                              type: "boolean"
+                              example: true
+        400:
+          description: "Bad Request - Invalid input"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Invalid request"
+        401:
+          description: "Unauthorized - Invalid or expired access token"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Unauthorized, invalid or expired access token"
+        500:
+          description: "Internal Server Error"
+          content:
+            application/json:
+              schema:
+                type: "object"
+                properties:
+                  status:
+                    type: "string"
+                    example: "0"
+                  message:
+                    type: "string"
+                    example: "Server error, please try again later"
   /driver/driverRegisterStep1:
     post:
       tags:

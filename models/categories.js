@@ -19,6 +19,10 @@ module.exports = (sequelize, DataTypes) => {
       // Relation with Model customerSelectedService
       categories.hasMany(models.customerSelectedService)
       models.customerSelectedService.belongsTo(categories)
+
+      //Relation with Model serviceCategories
+      categories.hasMany(models.serviceCategories)
+      models.serviceCategories.belongsTo(categories)
     }
   }
   categories.init({

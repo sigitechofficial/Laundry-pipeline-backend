@@ -18,6 +18,7 @@ const { users,
     bussinessInformation,
     onHoldOption,
     onHoldCustomerOption,
+    serviceCategories,
     servicePreferences } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
@@ -453,6 +454,53 @@ async function bookingDetailsById(req, res) {
 }
 
 
+/*
+  * Services For the Customer
+*/
+async function allServices(req,res) {
+
+    const serviceData=await service.findAll()
+
+    return res.json(responsefunc("1"," All Services",{serviceData},""))
+    
+}
+
+
+
+
+/*
+  *  Specific Service Detail For the Customer
+*/
+async function serviceDetail(req,res) {
+    const{serviceId}=req.params
+
+    const serviceData=await serviceCategories.findAll({
+        where:{
+            id:serviceId,
+            status:true
+        },
+        include:[
+            {
+                model:service,
+                attributes:['id','name','status']
+            },
+            {
+                model:categories,
+                attributes:['id','name','status','image','description'],
+                include:[
+                    {
+                        model:subCategories,
+                        attributes:['id','name','status','price']
+                    }
+                ]
+            }
+        ]
+    })
+
+
+    return res.json(responsefunc("1","Service Details",{serviceData},""))
+    
+}
 //!---------------------------------Recurring functions------------------------>>>>>
 async function addressAdder(addNew, address, type, userId, addressId) {
 
@@ -699,4 +747,7 @@ module.exports = {
     allBookings,
     bookingDetailsById,
     customerResponseUpdate,
+    //---------Services----------//
+    allServices,
+    serviceDetail,
 }

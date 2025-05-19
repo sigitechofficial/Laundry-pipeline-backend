@@ -64,4 +64,9 @@ router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(custo
 router.get('/onHoldCustomerShow',validateAccessToken,asyncMiddleware(customerOtherController.onHoldCustomerShow))
 //on Hold Customer Update
 router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(customerOtherController.customerUpdateResponse))
+//!----------------------------Customer Services---------------------//
+//get All Services
+router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
+//Get Specific Service Detail
+router.get('/serviceDetail/:serviceId',validateAccessToken,asyncMiddleware(customerOtherController.serviceDetail))
 module.exports=router

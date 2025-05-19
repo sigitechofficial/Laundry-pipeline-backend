@@ -89,6 +89,8 @@ router.get('/getcategories',validateAccessToken,asyncMiddleware(adminController.
 router.get('/getServices',validateAccessToken,asyncMiddleware(adminController.getAllServices))
 //get SubCategories
 router.get('/getSubcategories',validateAccessToken,asyncMiddleware(adminController.getSubcategories))
+//Assign Service to Categories
+router.post('/serviceCategoriesAssign',validateAccessToken,asyncMiddleware(adminController.serviceCategoriesAssign))
 
 //!---------------------------------------Cancel Api---------------------------------------------------------------//
 //Create cancel booking reasons

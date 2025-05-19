@@ -28,7 +28,8 @@ const { users,
     proofOfDeliveries,
     bussinessWorkingHours,
     features,
-    agentSelectServices } = require('../../models')
+    agentSelectServices,
+serviceCategories } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -1593,9 +1594,36 @@ async function getCategories(req, res) {
 
     const getCategories = await categories.findAll()
 
-    return res.json(responsefunc("1", "All Categories Fetched", getCategories))
+    return res.json(responsefunc("1", "All Categories Fetched", getCategories,""))
 
 }
+
+
+/*
+  * Assign Services to Categories
+*/
+async function serviceCategoriesAssign(req,res) {
+    const{serviceId,categoryId}=req.body
+
+    if(!serviceId || !categoryId || !Array.isArray(categoryId) || categoryId.length ===0){
+        throw new customError("Invalid input. Please provide serviceId and an array of categoryIds.")
+    }
+    
+    const serviceCategoriesData=categoryId.map(id =>({
+        serviceId:serviceId,
+        categoryId:id,
+        status:true
+    }))
+
+    const createData=await serviceCategories.bulkCreate(serviceCategoriesData)
+
+
+    return res.json(responsefunc("1","Service Assign to Categories",{createData},""))
+}
+
+
+
+
 
 
 /*
@@ -1981,6 +2009,7 @@ module.exports = {
     addSubCategories,
     getCategories,
     getSubcategories,
+    serviceCategoriesAssign,
     //-------------Services--------//
     getAllServices,
     AddServices,

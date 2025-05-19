@@ -218,9 +218,46 @@ async function getBookingHome(req, res) {
             {
                 model: addressDb,
                 as: "pickupAddress",
-                attributes: ["id", "streetAddress", "lat", "lng", "addressType"],
+                attributes: ["id", "streetAddress","district","province", "postalcode","lat", "lng", "addressType"],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
             },
+            {
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId']
+            }
         ],
+        attributes: ['id',
+            'orderTrackId',
+            'collectionDate',
+            'collectionTimeTo',
+            'collectionTimeFrom',
+            'driverInstructionOptions',
+            'driverInstructionOptions1',
+            'driverInstruction',
+            'paymentConfirmed',
+            "partialPayment",
+            "totalItems",
+            "orderAmount",
+            "frequency",
+            "deliveryDate",
+            "deliveryTimeFrom",
+            "orderExpireTime",
+            "deliveryTimeTo",
+            "pickupAddresId",
+            "dropOffAddressId",
+            "laundryShopId",
+            "customerId"
+        ]
     });
 
     //return res.json(bookingData)

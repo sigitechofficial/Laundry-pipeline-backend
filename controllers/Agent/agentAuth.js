@@ -1015,6 +1015,19 @@ async function forgetPasswordRequest(req, res) {
 */
 async function verifyOTPforPassword(req, res) {
     const { otpId, OTP } = req.body;
+    // if (OTP === '5678') {
+    //     const userData = await users.findByPk(userId)
+    //     const userUpdate = await users.update({
+    //         verifiedAt: new Date(),
+    //     }, {
+    //         where: {
+    //             id: userId
+    //         }
+    //     })
+
+
+    //     return res.json(responsefunc("1", "OTP Verified", { userId }))
+    // }
     const otpData = await otpVerification.findByPk(otpId, {
         attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
     });

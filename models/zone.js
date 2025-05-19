@@ -19,8 +19,8 @@ module.exports = (sequelize, DataTypes) => {
       models.driverInZones.belongsTo(zone)
 
       //Relation with users Table
-      zone.hasMany(models.users)
-      models.users.belongsTo(zone)
+      // zone.hasMany(models.users)
+      // models.users.belongsTo(zone)
 
       //Relation with the Booking Table
       zone.hasMany(models.booking)
