@@ -193,9 +193,6 @@ async function createBooking(req, res) {
         throw new customError("Cannot Continue without Selection of Service Types", "Select Minimum one Service Type")
     }
 
-
-
-    console.log("🚀 ~ createBooking ~ bookingData:", bookingData);
     const ordertrackingNumber = `${bookingData.id}-${orderTrackingId}`;
     const upfrontAmount = zoneUpfrontAmount;
     console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);

@@ -218,22 +218,22 @@ async function getBookingHome(req, res) {
             {
                 model: addressDb,
                 as: "pickupAddress",
-                attributes: ["id", "streetAddress","district","province", "postalcode","lat", "lng", "addressType"],
-                include:[
+                attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+                include: [
                     {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
+                        model: cities,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId']
+                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum']
             }
         ],
         attributes: ['id',
@@ -514,65 +514,136 @@ async function orderDetailsById(req, res) {
 /*
  *  Agent booking Filters
  */
-async function agentBookingFilters(req, res) {
-    const { filterType } = req.query;
-    console.log("🚀 ~ agentBookingFilters ~ req.query:", req.query);
+// async function agentBookingFilters(req, res) {
+//     const { filterType } = req.query;
+//     console.log("🚀 ~ agentBookingFilters ~ req.query:", req.query);
 
+//     const agentId = req.user.id;
+
+//     const addressFound = await addressDb.findOne({
+//         where: {
+//             userId: agentId,
+//         },
+//     });
+//     console.log("🚀 ~ agentBookingFilters ~ addressFound:", addressFound.id);
+
+//     let whereCondition = {};
+
+//     if (filterType === "pick") {
+//         whereCondition = {
+//             bookingStatusId: 4,
+//             laundryShopId: addressFound.id,
+//         };
+//     } else if (filterType === "drop") {
+//         whereCondition = {
+//             bookingStatusId: 8,
+//             laundryShopId: addressFound.id,
+//         };
+//     } else if (filterType === "slots") {
+//         const slotBookings = await getSlotBookings(addressFound.id);
+//         return res.json(
+//             responsefunc("1", `Booking Details Fetch for slots`, slotBookings, "")
+//         );
+//     } else if (filterType === "maps") {
+//         const bookingFound = await booking.findAll({
+//             where: {
+//                 laundryShopId: addressFound.id,
+//             },
+//             include: [
+//                 {
+//                     model: addressDb,
+//                     as: "pickupAddress",
+//                     attributes: ["lat", "lng"],
+//                 },
+//                 {
+//                     model: addressDb,
+//                     as: "dropOffAddress",
+//                     attributes: ["lat", "lng"],
+//                 },
+//             ],
+//             attributes: ["id", "ordertrackId"],
+//         });
+
+//         return res.json(responsefunc("1", "All Address Fetched", bookingFound, ""));
+//     } else if (filterType === "All") {
+//         whereCondition = {
+//             laundryShopId: addressFound.id,
+//         };
+//     }
+
+//     const bookingFound = await booking.findAll({
+//         where: whereCondition,
+//         attributes: [
+//             "id",
+//             "ordertrackId",
+//             "collectionTimeFrom",
+//             "collectiontimeTo",
+//             "collectionDate",
+//             "deliveryTimeFrom",
+//             "deliveryTimeTo",
+//             "deliveryDate",
+//             "driverInstructionOptions",
+//             "driverInstructionOptions1",
+//         ],
+//         include: [
+//             {
+//                 model: addressDb,
+//                 as: "laundryShop",
+//                 attributes: [
+//                     "streetAddress",
+//                     "district",
+//                     "province",
+//                     "addressType",
+//                     "lat",
+//                     "lng",
+//                 ],
+//             },
+//             {
+//                 model: users,
+//                 as: "customer",
+//                 attributes: ["firstName", "lastName", "email", "phoneNum"],
+//             },
+//         ],
+//     });
+
+//     return res.json(
+//         responsefunc(
+//             "1",
+//             `Booking Details Fetch on the basis of ${filterType}`,
+//             bookingFound,
+//             ""
+//         )
+//     );
+// }
+
+
+async function agentBookingFilters(req, res) {
     const agentId = req.user.id;
 
+    const {filterType}=req.query
+
     const addressFound = await addressDb.findOne({
-        where: {
-            userId: agentId,
-        },
+        where: { userId: agentId },
     });
-    console.log("🚀 ~ agentBookingFilters ~ addressFound:", addressFound.id);
 
-    let whereCondition = {};
-
-    if (filterType === "pick") {
-        whereCondition = {
-            bookingStatusId: 4,
-            laundryShopId: addressFound.id,
-        };
-    } else if (filterType === "drop") {
-        whereCondition = {
-            bookingStatusId: 8,
-            laundryShopId: addressFound.id,
-        };
-    } else if (filterType === "slots") {
-        const slotBookings = await getSlotBookings(addressFound.id);
-        return res.json(
-            responsefunc("1", `Booking Details Fetch for slots`, slotBookings, "")
-        );
-    } else if (filterType === "maps") {
-        const bookingFound = await booking.findAll({
-            where: {
-                laundryShopId: addressFound.id,
-            },
-            include: [
-                {
-                    model: addressDb,
-                    as: "pickupAddress",
-                    attributes: ["lat", "lng"],
-                },
-                {
-                    model: addressDb,
-                    as: "dropOffAddress",
-                    attributes: ["lat", "lng"],
-                },
-            ],
-            attributes: ["id", "ordertrackId"],
-        });
-
-        return res.json(responsefunc("1", "All Address Fetched", bookingFound, ""));
-    } else if (filterType === "All") {
-        whereCondition = {
-            laundryShopId: addressFound.id,
-        };
+    if (!addressFound) {
+        return res.json(responsefunc("0", "Address not found for agent", {}, ""));
     }
 
-    const bookingFound = await booking.findAll({
-        where: whereCondition,
+    const results = {};
+
+
+
+    // Slot bookings
+    if(filterType==='slots'){
+        results.slots = await getSlotBookings(addressFound.id);
+        return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
+    }
+
+
+    // All bookings (any booking with this laundryShopId)
+    results.All = await booking.findAll({
+        where: { laundryShopId: addressFound.id },
         attributes: [
             "id",
             "ordertrackId",
@@ -584,19 +655,23 @@ async function agentBookingFilters(req, res) {
             "deliveryDate",
             "driverInstructionOptions",
             "driverInstructionOptions1",
+            "bookingStatusId"
         ],
         include: [
             {
                 model: addressDb,
                 as: "laundryShop",
-                attributes: [
-                    "streetAddress",
-                    "district",
-                    "province",
-                    "addressType",
-                    "lat",
-                    "lng",
-                ],
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+            },
+            {
+                model: addressDb,
+                as: "pickupAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+            },
+            {
+                model: addressDb,
+                as: "dropOffAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
             },
             {
                 model: users,
@@ -606,14 +681,7 @@ async function agentBookingFilters(req, res) {
         ],
     });
 
-    return res.json(
-        responsefunc(
-            "1",
-            `Booking Details Fetch on the basis of ${filterType}`,
-            bookingFound,
-            ""
-        )
-    );
+    return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
 }
 
 /*
@@ -2028,29 +2096,62 @@ async function getSlotBookings(laundryShopId) {
         "18:00",
     ];
 
-    let slotBookings = [];
+    // Use map to iterate over slots and get the booking count and details for each slot
+    const slotBookings = await Promise.all(
+        slots.map(async (slot) => {
+            const collectionTimeFrom = slot;
+            const collectionTimeTo = getNextHourTime(slot);
 
-    for (let slot of slots) {
-        const collectionTimeFrom = slot;
-        const collectionTimeTo = getNextHourTime(slot);
+            // Fetch the count of bookings for the current slot
+            const bookingCount = await booking.count({
+                where: {
+                    laundryShopId: laundryShopId,
+                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
+                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
+                },
+            });
+            console.log("🚀 ~ getSlotBookings ~ bookingCount:", bookingCount);
 
-        const bookingCount = await booking.count({
-            where: {
-                laundryShopId: laundryShopId,
-                collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                collectionTimeTo: { [Op.lte]: collectionTimeTo },
-            },
-        });
-        console.log("🚀 ~ getSlotBookings ~ bookingCount:", bookingCount);
+            // Fetch the booking details for the current slot
+            const bookings = await booking.findAll({
+                where: {
+                    laundryShopId: laundryShopId,
+                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
+                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
+                },
+                attributes: [
+                    "id", 
+                    "ordertrackId", 
+                    "collectionTimeFrom", 
+                    "collectiontimeTo", 
+                    "collectionDate", 
+                    "deliveryTimeFrom", 
+                    "deliveryTimeTo", 
+                    "deliveryDate", 
+                    "driverInstructionOptions", 
+                    "driverInstructionOptions1",
+                ],
+                include: [
+                    {
+                        model: users,
+                        as: "customer",
+                        attributes: ["firstName", "lastName", "email", "phoneNum"],
+                    },
+                ],
+            });
 
-        slotBookings.push({
-            slot: `${collectionTimeFrom} - ${collectionTimeTo}`,
-            bookingCount: bookingCount,
-        });
-    }
+            // Return the result for each slot
+            return {
+                slot: `${collectionTimeFrom} - ${collectionTimeTo}`,
+                bookingCount: bookingCount,
+                bookings: bookings, // Include the actual booking details
+            };
+        })
+    );
 
     return slotBookings;
 }
+
 
 function getNextHourTime(time) {
     const [hour, minute] = time.split(":").map(Number);

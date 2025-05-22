@@ -681,9 +681,9 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind?.addressDb)
+    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind.addressDbs)
 
-    //return res.json(userFind)
+    // return res.json(userFind)
     if (!userFind) {
         throw new customError("User not Exists with this credentials")
     }

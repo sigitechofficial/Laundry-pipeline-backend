@@ -26,7 +26,7 @@ const intilizeSocketFunc=(server)=>{
         //Event when User Connects
         socket.on("joinRoom",(message) =>{
             try {
-                const data=message
+                let data = JSON.parse(message);
                 console.log("🚀 ~ socket.on ~ data:", data)
                 const userId=data.userId
                 const userTypeId=data.userTypeId
@@ -53,7 +53,7 @@ const intilizeSocketFunc=(server)=>{
         //Agent Accept Order
         socket.on('agentAcceptOrder',async(bookingData)=>{
             try {
-                const bookingDetails=bookingData;
+                const bookingDetails=JSON.parse(bookingData);
                 let bookingId=bookingDetails.id
                 let agentId=bookingDetails.agentId
                 await booking.update({
