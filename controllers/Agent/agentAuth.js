@@ -616,14 +616,6 @@ async function workingHoursUpdate(req, res) {
 }
 
 
-
-
-
-
-
-
-
-
 /*
  * Login Agent 
 */

@@ -10,6 +10,7 @@ tags:
   - name: Customer > User Profile
     description: Here are user get profile and update profile routes.
   - name: Customer > Booking Management
+  - name: Customer > Services
   - name: Admin
   - name: Admin > Create Services, Categories && SubCategories
   - name: Admin > Vehicle Types
@@ -40,385 +41,1316 @@ tags:
 paths:
   /customer/registerCustomer:
     post:
+      summary: Register a new customer and send OTP
+      description: Registers a new customer with email, phone, and optional profile image. Sends OTP on success.
       tags:
         - Customer > Auth
-      summary: User Registration
-      description: "This request uses the saved `token` collection variable to access a secret 'name' stored against that token.\n\nIn this request, we used the\_`token`\_collection variable as a query param to fetch the name generated for that token. We have added a test to check that a name is correctly returned."
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for this endpoint)
       requestBody:
+        required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              required:
+                - firstName
+                - lastName
+                - password
+                - confirmPassword
+                - phoneNum
+                - dvToken
+                - email
+                - countryId
+                - cityId
               properties:
                 firstName:
                   type: string
-                  example: Fasih
+                  example: John
+                  description: Customer's first name
                 lastName:
                   type: string
-                  example: Shahbaz
+                  example: Doe
+                  description: Customer's last name
                 email:
                   type: string
                   format: email
-                  example: user@example.com
+                  example: john.doe@example.com
+                  description: Customer's email address
                 password:
-                  type: integer
-                  example: '123456'
-                dvToken:
                   type: string
-                  example: dfdfdfdfdfd
+                  example: Pass@1234
+                  description: Password for login
+                confirmPassword:
+                  type: string
+                  example: Pass@1234
+                  description: Must match the password field
                 phoneNum:
                   type: string
-                  example: +44 7712 345678
-                confirmPassword:
-                  type: integer
-                  example: '123456'
+                  example: "+1234567890"
+                  description: Customer's phone number
+                dvToken:
+                  type: string
+                  example: abcdefgh123456
+                  description: Device token for notifications
                 countryId:
                   type: integer
-                  example: '1'
+                  example: 1
+                  description: ID of the customer's country
                 cityId:
                   type: integer
-                  example: '1'
+                  example: 101
+                  description: ID of the customer's city
                 profileImage:
                   type: string
                   format: binary
+                  description: Optional profile picture (uploaded as file)
       responses:
         '200':
-          description: Successful response
+          description: OTP sent successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP sent successfully"
+                data:
+                  otpId: 1234
+                  userId: 5678
+        '400':
+          description: Bad request - missing fields or validation failed
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "User with this email already exists"
+                data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
   /customer/verifyOTpSignUp:
     post:
+      summary: Verify customer's OTP after signup
+      description: Verifies the OTP sent to a newly registered customer. Marks the user as verified if OTP is correct.
       tags:
         - Customer > Auth
-      summary: verify OTP for SignUp
-      description: >-
-        This request un-registers a token by using the token collection variable
-        in the POST body.
-        We also added a test to ensure the response has a 200 OK status code.
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for this endpoint)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                otpId: '1'
-                OTP: '5678'
-                userId: '2'
+              required:
+                - otpId
+                - OTP
+                - userId
+              properties:
+                otpId:
+                  type: integer
+                  example: 1234
+                  description: OTP record ID returned during signup
+                OTP:
+                  type: string
+                  example: "5678"
+                  description: OTP code entered by the user
+                userId:
+                  type: integer
+                  example: 7890
+                  description: User ID of the registered customer
       responses:
         '200':
-          description: Successful response
+          description: OTP verified successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP Verified"
+                data:
+                  userId: 7890
+        '400':
+          description: Invalid OTP or OTP record not found
+          content:
+            application/json:
+              examples:
+                otpNotFound:
+                  summary: OTP record not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    data: {}
+                incorrectOtp:
+                  summary: Incorrect OTP
+                  value:
+                    status: "0"
+                    message: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Something went wrong"
+                data: {}
   /customer/loginUser:
     post:
+      summary: Customer login (Email or Social)
+      description: Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
       tags:
         - Customer > Auth
-      summary: Login User
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Access token cookie (optional in login)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                email: azhar@gmail.com
-                password: '123456'
-                signedFrom: ''
-                dvToken: gfgfdgbgfhg
+              required:
+                - email
+                - dvToken
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: johndoe@example.com
+                  description: User's email address
+                password:
+                  type: string
+                  example: MySecret123!
+                  description: Required for standard login; optional for social login
+                signedFrom:
+                  type: string
+                  example: google
+                  enum: [google, facebook, apple]
+                  description: Indicates if login is via a social provider
+                dvToken:
+                  type: string
+                  example: device-token-xyz
+                  description: Device token for authentication and push notifications
       responses:
         '200':
-          description: Successful response
+          description: Login successful or user verification pending
           content:
-            application/json: {}
+            application/json:
+              examples:
+                loginSuccess:
+                  summary: Standard login success
+                  value:
+                    status: "1"
+                    message: "Login successful"
+                    data:
+                      userId: 123
+                      token: "jwt_token"
+                socialLoginRedirect:
+                  summary: Social login required
+                  value:
+                    status: "4"
+                    message: "Social Login Required"
+                    data: {}
+                    detail: "You have previously signed up using google. Please log in using google."
+                otpVerificationPending:
+                  summary: OTP verification required
+                  value:
+                    status: "2"
+                    message: "Pending email verification"
+                    data:
+                      userId: 123
+                      otpId: 456
+                      email: johndoe@example.com
+                    detail: "Please verify your email to continue"
+                profileIncomplete:
+                  summary: Missing user data
+                  value:
+                    status: "3"
+                    message: "Pending User Data"
+                    data:
+                      userId: 123
+                    detail: "Your first Name or Phone Number is Missing"
+        '400':
+          description: Bad request or invalid credentials
+          content:
+            application/json:
+              examples:
+                userNotFound:
+                  summary: User not found
+                  value:
+                    status: "0"
+                    message: "User Not Exists with this email"
+                    data: {}
+                wrongPassword:
+                  summary: Invalid password
+                  value:
+                    status: "0"
+                    message: "Bad credentials"
+                    detail: "Please enter correct password to continue"
+                    data: {}
+                blockedUser:
+                  summary: User is blocked
+                  value:
+                    status: "0"
+                    message: "Blocked by admin Please contact admin to continue"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
   /customer/forgetPasswordRequest:
-    post:
+     post:
+      summary: Request OTP for password reset
+      description: Sends an OTP to the user's email for password reset. Updates existing OTP if already present.
       tags:
         - Customer > Auth
-      summary: Password Reset Request
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for this endpoint)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                email: arbab1@gmail.com
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: customer@example.com
+                  description: Email address of the customer requesting password reset
       responses:
         '200':
-          description: Successful response
+          description: OTP sent or updated successfully
           content:
-            application/json: {}
+            application/json:
+              examples:
+                otpUpdated:
+                  summary: OTP updated
+                  value:
+                    status: "1"
+                    message: "OTP Updated Sucessfully"
+                    data:
+                      otpid: 234
+                      userId: 567
+                otpSent:
+                  summary: OTP sent
+                  value:
+                    status: "1"
+                    message: "OTP sent Sucessfully for Password Reset"
+                    data:
+                      otpId: 123
+                      userId: 567
+        '400':
+          description: Invalid email or user not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid information"
+                detail: "No user exists against this email"
+                data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Error in updating OTP"
+                data: {}
   /customer/verifyOTPforPassword:
     post:
+      summary: Verify OTP for password reset
+      description: Verifies the OTP sent to the user's email during the password reset process.
       tags:
         - Customer > Auth
-      summary: Verify OTP For Password
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for OTP verification)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                OTP: '#142'
-                otpId: '4'
+              required:
+                - otpId
+                - OTP
+              properties:
+                otpId:
+                  type: integer
+                  example: 123
+                  description: ID of the OTP record
+                OTP:
+                  type: string
+                  example: "5678"
+                  description: OTP sent to the user's email
       responses:
         '200':
-          description: Successful response
+          description: OTP verified successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP verified"
+                data:
+                  otpId: 123
+                  userId: 456
+        '400':
+          description: OTP is incorrect or OTP record not found
+          content:
+            application/json:
+              examples:
+                otpNotFound:
+                  summary: OTP record not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    detail: "Please rensend OTP to continue"
+                    data: {}
+                incorrectOtp:
+                  summary: Incorrect OTP
+                  value:
+                    status: "0"
+                    message: "You entered incorrect OTP Please enter correct OTP to continue"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
   /customer/changePasswordOTP:
-    post:
+     post:
+      summary: Change password using OTP
+      description: Allows the user to reset their password after verifying an OTP. OTP must be verified before calling this.
       tags:
         - Customer > Auth
-      summary: Change Password
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for password change via OTP)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                password: '123456789'
-                otpId: ' 4'
-                userId: 4
+              required:
+                - userId
+                - otpId
+                - password
+              properties:
+                userId:
+                  type: integer
+                  example: 456
+                  description: ID of the user who is resetting the password
+                otpId:
+                  type: integer
+                  example: 123
+                  description: ID of the OTP that was verified
+                password:
+                  type: string
+                  format: password
+                  example: NewPassword@123
+                  description: New password to set for the user
       responses:
         '200':
-          description: Successful response
+          description: Password changed successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Password updated successfully. Please login to continue"
+                data: {}
+        '400':
+          description: OTP verification missing or invalid data
+          content:
+            application/json:
+              examples:
+                otpNotVerified:
+                  summary: OTP not verified
+                  value:
+                    status: "0"
+                    message: "OTP not verified yet"
+                    detail: "Please verify OTP first"
+                    data: {}
+                otpNotFound:
+                  summary: OTP record not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    detail: "Please rensend OTP to continue"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
   /customer/logout:
     get:
+      summary: Logout user
+      description: Logs out the user by removing their device token and clearing their session from Redis.
       tags:
         - Customer > Auth
-      summary: User Logout
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Access token identifying the session to be logged out (sent in cookie)
       responses:
         '200':
-          description: Successful response
+          description: Logout success
           content:
-            application/json: {}
-  /customer/getUserProfile:
+            application/json:
+              example:
+                status: "1"
+                message: "Log-out successfully"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error during logout
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "There is some error logging out. Please try again"
+  /customer/session:
     get:
+      summary: Get user session details
+      description: Returns authenticated user's session details. Throws an error if guest access is detected or user is blocked.
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token identifying the user session (required)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                guestUser:
+                  type: boolean
+                  example: false
+                  description: Optional flag to indicate guest access (should be false)
+      responses:
+        '200':
+          description: Session retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Login successful"
+                data:
+                  user:
+                    id: 123
+                    firstName: John
+                    lastName: Doe
+                    email: john@example.com
+                    phoneNum: "+123456789"
+                    countryCode: "+1"
+                  accessToken: ""
+                  guestUser: false
+        '400':
+          description: Guest login attempt or user not found
+          content:
+            application/json:
+              examples:
+                guestUser:
+                  summary: Guest login blocked
+                  value:
+                    status: "0"
+                    message: "Login failed"
+                    data: {}
+                noUserFound:
+                  summary: User not found
+                  value:
+                    status: "0"
+                    message: "Sorry no user found!"
+                    detail: "Please contact support for more information"
+                    data: {}
+                blockedUser:
+                  summary: User is blocked
+                  value:
+                    status: "0"
+                    message: "You are blocked by Admin"
+                    detail: "Please contact support for more information"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+  /customer/getUserProfile:
+     get:
+      summary: Fetch logged-in user profile
+      description: Retrieves the profile details of the currently authenticated user.
       tags:
         - Customer > User Profile
-      summary: get User Profile
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Access token for identifying the logged-in user
       responses:
         '200':
-          description: Successful response
+          description: User profile fetched successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "User Profile fetched"
+                data:
+                  id: 123
+                  firstName: "John"
+                  lastName: "Doe"
+                  email: "john@example.com"
+                  phoneNum: "+123456789"
+                  image: "Public/Images/Restaurant/user123.jpg"
+                  userTypeId: 2
+                  stripeCustomerId: "cus_ABC123"
+                error: ""
+        '400':
+          description: User not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "No User Exists with this email"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: ""
   /customer/updateUserProfile:
     patch:
+      summary: Update user profile
+      description: Updates profile information of the logged-in user. Profile image is required only if `isProfileImgChanged` is `true`.
       tags:
         - Customer > User Profile
-      summary: Update User Profile
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Access token identifying the authenticated user (required)
       requestBody:
+        required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - phoneNum
+                - isProfileImgChanged
               properties:
                 firstName:
                   type: string
+                  example: "John"
+                  description: User's first name
                 lastName:
                   type: string
+                  example: "Doe"
+                  description: User's last name
                 email:
                   type: string
-                isProfileImgChanged:
-                  type: boolean
-                  example: 'true'
+                  format: email
+                  example: "john.doe@example.com"
+                  description: User's email address
                 phoneNum:
                   type: string
+                  example: "+123456789"
+                  description: User's phone number
+                isProfileImgChanged:
+                  type: string
+                  enum: ["true", "false"]
+                  example: "true"
+                  description: Indicates whether the profile image is being updated
                 profileImage:
                   type: string
                   format: binary
+                  description: New profile image file (only required if `isProfileImgChanged` is `"true"`)
       responses:
         '200':
-          description: Successful response
+          description: Profile updated successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "User Profile Updated Sucessfully"
+                data: {}
+                error: ""
+        '400':
+          description: Validation or input error
+          content:
+            application/json:
+              examples:
+                userNotFound:
+                  summary: User not found
+                  value:
+                    status: "0"
+                    message: "user Not Exists with this ID"
+                    data: {}
+                    error: ""
+                imageRequired:
+                  summary: Profile image missing when required
+                  value:
+                    status: "0"
+                    message: "Profile Image Required"
+                    data: {}
+                    error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: ""
   /customer/createBooking:
     post:
+      summary: Create a new booking
+      description: Creates a booking with pickup, drop-off, services, and preferences. Validates addresses, calculates charges, and triggers billing and event flows.
       tags:
         - Customer > Booking Management
-      summary: Customer Generate Booking
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Authenticated access token (required in cookie)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                collectionDate: '2025-01-30'
-                collectionTimeTo: '10:00'
-                collectionTimeFrom: '11:00'
-                driverInstruction: Please call upon arrival.
-                frequency: Just Once
-                deliveryDate: '2025-01-24'
-                deliveryTimeTo: '13:00'
-                deliveryTimeFrom: '16:00'
-                addressId: ''
-                driverInstructionOptions: Collect from me in person
+              required:
+                - collectionDate
+                - collectionTimeFrom
+                - collectionTimeTo
+                - deliveryDate
+                - deliveryTimeFrom
+                - deliveryTimeTo
+                - pickUpAddress
+                - dropOffAddress
+                - dropOffSamePickUp
+                - services
+                - totalItems
+              properties:
+                collectionDate:
+                  type: string
+                  format: date
+                  example: "2025-05-22"
+                  description: Date when items will be picked up
+                collectionTimeFrom:
+                  type: string
+                  example: "09:00"
+                  description: Start time for pickup
+                collectionTimeTo:
+                  type: string
+                  example: "10:00"
+                  description: End time for pickup
+                deliveryDate:
+                  type: string
+                  format: date
+                  example: "2025-05-23"
+                  description: Delivery date for the items
+                deliveryTimeFrom:
+                  type: string
+                  example: "13:00"
+                  description: Start time for delivery
+                deliveryTimeTo:
+                  type: string
+                  example: "14:00"
+                  description: End time for delivery
+                driverInstruction:
+                  type: string
+                  example: "Please ring the doorbell"
+                  description: Optional driver instructions
+                frequency:
+                  type: string
+                  example: "One-time"
+                  description: Booking frequency (if any)
+                dropOffSamePickUp:
+                  type: boolean
+                  example: true
+                  description: If true, drop-off address is same as pickup
                 pickUpAddress:
-                  title: Home
-                  hotelName: null
-                  apartmentNumber: null
-                  floor: null
-                  streetAddress: 100 Oxford Street
-                  district: Westminster
-                  city: Lahore
-                  province: Greater London
-                  country: United Kingdom
-                  postalCode: '54000'
-                  lat: 51.5145
-                  lng: -0.1445
-                  radius: 10
-                  addressType: pickUp
-                  save: true
+                  type: object
+                  required: [lat, lng]
+                  properties:
+                    lat:
+                      type: number
+                      example: 25.276987
+                    lng:
+                      type: number
+                      example: 55.296249
                 dropOffAddress:
-                  title: Office
-                  hotelName: null
-                  apartmentNumber: null
-                  floor: null
-                  streetAddress: 456 Business Road
-                  district: DHA
-                  city: Lahore
-                  province: Punjab
-                  country: Pakistan
-                  postalCode: '54001'
-                  lat: 31.5404
-                  lng: 74.3687
-                  radius: null
-                  addressType: dropOff
-                driverInstructionOptions1: Deliver to me in person
-                addNewAddress: true
-                addNewDropOffAddress: false
-                dropOffSamePickUp: true
-                dropOffAddressId: null
-                pickUpAddressId: null
+                  type: object
+                  required: [lat, lng]
+                  properties:
+                    lat:
+                      type: number
+                      example: 25.204849
+                    lng:
+                      type: number
+                      example: 55.270782
+                addNewAddress:
+                  type: object
+                  description: Optional new address info for pickup
+                addNewDropOffAddress:
+                  type: object
+                  description: Optional new address info for drop-off
+                pickUpAddressId:
+                  type: integer
+                  example: 101
+                  description: Existing address ID if not adding new pickup address
+                dropOffAddressId:
+                  type: integer
+                  example: 202
+                  description: Existing address ID if not adding new drop-off address
+                addressId:
+                  type: integer
+                  example: 105
+                  description: Legacy/optional address ID for tracking
+                totalItems:
+                  type: integer
+                  example: 3
+                  description: Total number of items in the order
                 services:
-                  - categoryId: 1
-                    serviceId: 1
-                    subCategoryId: 1
-                    categoryCharge: 10.5
-                  - categoryId: 1
-                    serviceId: 3
-                    subCategoryId: 2
-                    serviceCharge: 30.67
-                    categoryCharge: 20
-                totalItems: 5
+                  type: array
+                  minItems: 1
+                  description: List of selected service entries
+                  items:
+                    type: object
+                    required: [serviceId]
+                    properties:
+                      serviceId:
+                        type: integer
+                        example: 1
+                      categoryId:
+                        type: integer
+                        example: 2
+                      subCategoryId:
+                        type: integer
+                        example: 4
+                      categoryCharge:
+                        type: number
+                        example: 25.00
+                driverInstructionOptions:
+                  type: string
+                  example: "Leave at the door"
+                  description: Optional preset driver instruction
+                driverInstructionOptions1:
+                  type: string
+                  example: "Call on arrival"
+                  description: Optional additional instruction
+                preferencesArray:
+                  type: array
+                  description: List of preferences to apply per service
+                  items:
+                    type: object
+                    required: [type, chooseTemperature, serviceId, preferencesServiceNameId, numberOfBags]
+                    properties:
+                      type:
+                        type: string
+                        example: "Wash"
+                      chooseTemperature:
+                        type: string
+                        example: "Cold"
+                      serviceId:
+                        type: integer
+                        example: 3
+                      preferencesServiceNameId:
+                        type: integer
+                        example: 5
+                      numberOfBags:
+                        type: integer
+                        example: 2
       responses:
         '200':
-          description: Successful response
+          description: Booking created successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Booking Created"
+                data: {}
+                error: ""
+        '400':
+          description: Missing or invalid input
+          content:
+            application/json:
+              examples:
+                noServiceSelected:
+                  summary: No services provided
+                  value:
+                    status: "0"
+                    message: "Cannot Continue without Selection of Service Types"
+                    detail: "Select Minimum one Service Type"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong while processing booking"
   /customer/onHoldCustomerShow:
     get:
+      summary: Show on-hold customer response
+      description: Fetches the on-hold option details for a booking by the customer.
       tags:
         - Customer > Booking Management
-      summary: Customer on Hold Options Show
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
-  /customer/customerUpdateResponse:
-    patch:
-      tags:
-        - Customer > Booking Management
-      summary: Update On Hold Response
-      parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
-          required: true
-          schema:
-            type: string
+          description: Authenticated access token (required)
       requestBody:
-        content: {}
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+              properties:
+                bookingId:
+                  type: integer
+                  example: 1234
+                  description: ID of the booking to fetch on-hold option
       responses:
         '200':
-          description: Successful response
+          description: On-hold option fetched successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Customer On Hold Response Show"
+                data:
+                  id: 1
+                  option: "Delayed"
+                  title: "Pickup Delayed"
+                  conformationText: "We’ve noted your delay."
+                  notConfirmText: "Please contact support."
+                error: ""
+        '400':
+          description: Missing or invalid bookingId
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong"
+  /customer/customerResponseUpdate:
+    patch:
+      summary: Update customer response for on-hold booking
+      description: Updates the customer's response for a booking that was put on hold and triggers a related event for the laundry shop.
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Authenticated access token (sent in cookie)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+                - customerResponse
+              properties:
+                bookingId:
+                  type: integer
+                  example: 1234
+                  description: ID of the booking being updated
+                customerResponse:
+                  type: string
+                  example: "Confirm"
+                  description: Response provided by the customer
+      responses:
+        '200':
+          description: Customer response updated and event triggered
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Customer Response"
+                data: {}
+                error: ""
+        '400':
+          description: Missing or invalid input
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID or response"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong while updating response"
   /customer/allBookings:
     get:
+      summary: Get all bookings for the logged-in customer
+      description: Retrieves all bookings made by the authenticated customer, including pickup/drop-off address and status info.
       tags:
         - Customer > Booking Management
-      summary: Customer All Bookings
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Authenticated access token (sent in cookie)
       responses:
         '200':
-          description: Successful response
+          description: List of bookings retrieved successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Customer All Bookings"
+                data:
+                  - id: 101
+                    collectionDate: "2025-05-22"
+                    deliveryDate: "2025-05-23"
+                    totalItems: 3
+                    customer:
+                      firstName: "John"
+                      lastName: "Doe"
+                      email: "john@example.com"
+                    pickupAddress:
+                      title: "Home"
+                      streetAddress: "123 Main St"
+                      province: "Dubai"
+                      addressType: "Residential"
+                    dropOffAddress:
+                      title: "Work"
+                      streetAddress: "456 Business Ave"
+                      province: "Dubai"
+                      addressType: "Commercial"
+                    bookingStatus:
+                      title: "Scheduled"
+                      description: "Pickup scheduled for tomorrow"
+                error: ""
+        '400':
+          description: User not authenticated or missing cookie
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Authentication failed"
+                data: {}
+                error: "Access token missing or invalid"
+        '500':
+          description: Server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong"
   /customer/bookingDetailsById:
     get:
+      summary: Get booking details by ID or orderTrackId
+      description: Retrieves detailed booking information using either the booking ID or the order tracking ID.
       tags:
         - Customer > Booking Management
-      summary: Specific Order Detail
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
-        - name: bookingId
-          in: query
-          description: The booking ID for the order
-          required: false  # Optional
+          description: Access token (required in cookie for authentication)
+        - in: query
+          name: bookingId
+          required: false
           schema:
             type: integer
-          example: 22
-        - name: orderTrackId
-          in: query
-          description: The tracking ID for the order
-          required: false  # Optional
+          description: Booking ID (used if present)
+        - in: query
+          name: orderTrackId
+          required: false
           schema:
             type: string
-          example: "abc123"
+          description: Order Tracking ID (used if bookingId is not provided)
       responses:
         '200':
-          description: Successful response
+          description: Booking details fetched successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Customer Order Details Fetched"
+                data:
+                  id: 101
+                  orderTrackId: "101-ABC123"
+                  customer:
+                    id: 1
+                    firstName: "John"
+                    lastName: "Doe"
+                    email: "john@example.com"
+                  pickupAddress:
+                    title: "Home"
+                    streetAddress: "123 Main St"
+                    province: "Dubai"
+                    district: "Business Bay"
+                    addressType: "Residential"
+                  dropOffAddress:
+                    title: "Work"
+                    streetAddress: "456 Commercial Ave"
+                    province: "Dubai"
+                    district: "Marina"
+                    addressType: "Commercial"
+                  customerSelectedServices:
+                    - date: "2025-05-22"
+                      time: "14:00"
+                      categoryprice: 30.0
+                      categoryId: 2
+                      serviceId: 5
+                      subCategoryId: 3
+                      items: 4
+                  bookingStatus:
+                    title: "Scheduled"
+                    description: "Scheduled for pickup"
+                  bookingHistory:
+                    - date: "2025-05-21"
+                      time: "13:00"
+                      bookingStatus:
+                        title: "Confirmed"
+                        description: "Booking confirmed"
+                error: ""
+        '400':
+          description: Missing query parameters or invalid identifiers
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "bookingId or orderTrackId must be provided"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unable to fetch booking details"
+  /customer/allServices:
+    get:
+      summary: Get all available services
+      description: Retrieves the complete list of available services for the authenticated customer.
+      tags:
+        - Customer > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Authenticated access token (sent in cookie)
+      responses:
+        '200':
+          description: Services fetched successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "All Services"
+                data:
+                  serviceData:
+                    - id: 1
+                      name: "Laundry"
+                      description: "Standard laundry service"
+                    - id: 2
+                      name: "Dry Cleaning"
+                      description: "Professional dry cleaning service"
+                error: ""
+        '400':
+          description: Unauthorized or access token missing
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Authentication failed"
+                data: {}
+                error: "Access token missing or invalid"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Could not fetch services"
+  /serviceDetail/{serviceId}:
+    get:
+      summary: Get detailed information for a service
+      description: Retrieves detailed information about a specific service including associated categories and subcategories.
+      tags:
+        - Customer > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (sent in cookie)
+        - in: path
+          name: serviceId
+          required: true
+          schema:
+            type: integer
+          description: ID of the service to retrieve details for
+      responses:
+        '200':
+          description: Service details fetched successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Service Details"
+                data:
+                  serviceData:
+                    - id: 1
+                      service:
+                        id: 10
+                        name: "Laundry"
+                        status: true
+                      categories:
+                        - id: 101
+                          name: "Clothes"
+                          image: "category.jpg"
+                          description: "All clothing items"
+                          status: true
+                          subCategories:
+                            - id: 1001
+                              name: "Shirts"
+                              price: 10.0
+                              status: true
+                            - id: 1002
+                              name: "Pants"
+                              price: 12.0
+                              status: true
+                error: ""
+        '400':
+          description: Invalid or missing service ID
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid service ID"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong while retrieving service details"
   /admin/AddServices:
     post:
       tags:
@@ -936,23 +1868,81 @@ paths:
             application/json: {}
   /admin/adminSignIn:
     post:
+      summary: Admin Sign-In
+      description: Authenticates an admin using email and password. If successful, returns access token and user profile.
       tags:
         - Admin > Admin Login
-      summary: Admin Login
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                email: admin@gmail.com
-                password: '123456'
-                dvToken: dsfsdfsdf
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@example.com
+                  description: Admin email address
+                password:
+                  type: string
+                  example: Admin@123
+                  description: Admin password
+                dvToken:
+                  type: string
+                  example: "device-token-abc"
+                  description: Optional device token for tracking admin sessions
       responses:
         '200':
-          description: Successful response
+          description: Admin authenticated successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Login Successful"
+                data:
+                  id: 1
+                  name: "Super Admin"
+                  email: "admin@example.com"
+                  accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  userName: "AdminCompany"
+                  featureData:
+                    - id: 1
+                      title: "Dashboard"
+                    - id: 2
+                      title: "User Management"
+                error: ""
+        '400':
+          description: Invalid credentials
+          content:
+            application/json:
+              examples:
+                notFound:
+                  summary: User not found
+                  value:
+                    status: "0"
+                    message: "User not found"
+                    detail: "Please enter valid data"
+                    data: {}
+                incorrectPassword:
+                  summary: Incorrect password
+                  value:
+                    status: "0"
+                    message: "Bad credentials"
+                    detail: "Please enter the correct password to continue"
+                    data: {}
+        '500':
+          description: Server error during login
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong"
   /admin/getLaundaryShops/:
     get:
       tags:
@@ -2371,6 +3361,235 @@ paths:
                   message:
                     type: "string"
                     example: "Server error, please try again later"
+  /admin/adinEmployeeAdd:
+    post:
+      summary: Add new employee (Admin)
+      description: Allows an admin/agent to add a new employee. If the role qualifies as a driver, the employee is also added to a zone.
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token of the admin or agent adding the employee (sent via cookie)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - password
+                - phoneNum
+                - countryId
+                - cityId
+                - roleId
+              properties:
+                firstName:
+                  type: string
+                  example: "Ali"
+                lastName:
+                  type: string
+                  example: "Khan"
+                email:
+                  type: string
+                  format: email
+                  example: "ali.khan@example.com"
+                password:
+                  type: string
+                  format: password
+                  example: "StrongPass123!"
+                phoneNum:
+                  type: string
+                  example: "+923001234567"
+                countryId:
+                  type: integer
+                  example: 1
+                cityId:
+                  type: integer
+                  example: 3
+                roleId:
+                  type: integer
+                  example: 6
+                  description: Role ID (e.g., 6 = driver)
+      responses:
+        '200':
+          description: Employee added successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee Added Sucessfully"
+                data:
+                  id: 789
+                  firstName: "Ali"
+                  lastName: "Khan"
+                  email: "ali.khan@example.com"
+                  roleId: 6
+                  classifiedAsId: 2
+                error: ""
+        '400':
+          description: Employee already exists with the same role
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Employee Already Exists"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unable to create employee"
+  /admin/updateEmployee:
+    patch:
+      summary: Update employee details (Admin)
+      description: Updates the employee’s basic details and optionally their password. Prevents duplicate emails for other employees.
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Admin's access token (sent via cookie)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - roleId
+                - employeeId
+              properties:
+                employeeId:
+                  type: integer
+                  example: 123
+                  description: ID of the employee being updated
+                firstName:
+                  type: string
+                  example: "Ahmad"
+                lastName:
+                  type: string
+                  example: "Yousaf"
+                email:
+                  type: string
+                  format: email
+                  example: "ahmad.yousaf@example.com"
+                phoneNum:
+                  type: string
+                  example: "+923001112222"
+                roleId:
+                  type: integer
+                  example: 6
+                updatePassword:
+                  type: string
+                  format: password
+                  example: "NewPass456!"
+                  description: Optional new password to set
+      responses:
+        '200':
+          description: Employee updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee Updated Sucesfully"
+                data: {}
+                error: ""
+        '400':
+          description: Email already used by another employee
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Employee with the following email exists"
+                detail: "Please try another email"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unable to update employee"
+  /admin/updateEmployeeStatus:
+    patch:
+      summary: Update employee status (Admin)
+      description: Allows an admin to activate or deactivate an employee account by toggling their `status`.
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Admin's access token (sent via cookie)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+                - employeeId
+              properties:
+                employeeId:
+                  type: integer
+                  example: 123
+                  description: ID of the employee to update
+                status:
+                  type: boolean
+                  example: false
+                  description: New status value (`true` = active, `false` = inactive)
+      responses:
+        '200':
+          description: Employee status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee Status Updated"
+                data: {}
+                error: ""
+        '400':
+          description: Missing or invalid input
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid employeeId or status"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to update employee status"
   /driver/driverRegisterStep1:
     post:
       tags:
@@ -3319,258 +4538,812 @@ paths:
                 error: ''
   /agent/registerAgent:
     post:
+      summary: Register new agent and send OTP
+      description: Registers a new agent account with basic details and profile image, then sends an OTP for email verification.
       tags:
         - Agent > Auth
-      summary: User Registration
-      description: "This request uses the saved `token` collection variable to access a secret 'name' stored against that token.\n\nIn this request, we used the\_`token`\_collection variable as a query param to fetch the name generated for that token. We have added a test to check that a name is correctly returned."
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
       requestBody:
+        required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - password
+                - confirmPassword
+                - phoneNum
+                - dvToken
+                - countryId
+                - cityId
               properties:
                 firstName:
                   type: string
-                  example: Agent
+                  example: "Alex"
+                  description: Agent's first name
                 lastName:
                   type: string
-                  example: New
+                  example: "Smith"
+                  description: Agent's last name
                 email:
                   type: string
                   format: email
-                  example: user@example.com
+                  example: alex.smith@example.com
+                  description: Email address for registration
                 password:
-                  type: integer
-                  example: '123456'
-                dvToken:
                   type: string
-                  example: dfdfdfdfdfd
+                  format: password
+                  example: Secure@123
+                  description: Password for login
+                confirmPassword:
+                  type: string
+                  format: password
+                  example: Secure@123
+                  description: Confirmation of the password
                 phoneNum:
                   type: string
-                  example: +44 7712 345678
-                confirmPassword:
-                  type: integer
-                  example: '123456'
-                laundaryShopName:
+                  example: "+15555550123"
+                  description: Phone number of the agent
+                dvToken:
                   type: string
-                  example: Love2Laundry
+                  example: "device-token-xyz"
+                  description: Device token for push notifications
+                countryId:
+                  type: integer
+                  example: 1
+                  description: ID of the agent's country
+                cityId:
+                  type: integer
+                  example: 101
+                  description: ID of the agent's city
                 profileImage:
                   type: string
                   format: binary
+                  description: Profile image file to upload (optional)
       responses:
         '200':
-          description: Successful response
+          description: OTP sent successfully after registration
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP sent successfully"
+                data:
+                  otpId: 789
+                  userId: 456
+                error: ""
+        '400':
+          description: Validation or user existence error
+          content:
+            application/json:
+              examples:
+                userExists:
+                  summary: User already exists
+                  value:
+                    status: "0"
+                    message: "User Already Exists"
+                    data: {}
+                    error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unexpected error occurred during registration"
   /agent/verifyOTpSignUp:
     post:
+      summary: Verify OTP for agent signup
+      description: Verifies the OTP for agent registration and sets up default business working hours.
       tags:
         - Agent > Auth
-      summary: verify OTP for SignUp
-      description: >-
-        This request is for verification of the OTP send to the Mail Default OTP is 5678
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie (not required for OTP verification)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                otpId: '1'
-                OTP: '5678'
-                userId: '2'
+              required:
+                - otpId
+                - OTP
+                - userId
+              properties:
+                otpId:
+                  type: integer
+                  example: 1234
+                  description: ID of the OTP record
+                OTP:
+                  type: string
+                  example: "5678"
+                  description: OTP received via email
+                userId:
+                  type: integer
+                  example: 456
+                  description: ID of the agent being verified
       responses:
         '200':
-          description: Successful response
+          description: OTP verified successfully and working hours created
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP verified"
+                data:
+                  userId: 456
+                error: ""
+        '400':
+          description: Incorrect or missing OTP
+          content:
+            application/json:
+              examples:
+                notFound:
+                  summary: OTP not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    detail: "Please rensend OTP to continue"
+                    data: {}
+                incorrect:
+                  summary: OTP incorrect
+                  value:
+                    status: "0"
+                    message: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    data: {}
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong"
   /agent/addBusinessInfor:
     post:
+      summary: Add agent business information
+      description: Adds business profile data for an agent including shop name, profile match option, machine inventory, and service time settings.
       tags:
         - Agent > Auth
-      summary: Agent Business Register
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token (sent in cookie)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                shopName: Love2Laundry
-                matchProfileOptions: ALL IN HOUSE- Washing, Ironing and Dry cleaning all done by us
-                userId: 2
-                services:
-                  - serviceId: 1
-                  - serviceId: 2
-                bussinessWorkingDays:
-                  - dayOfWeek: Monday
-                    opentime: '07:00:00'
-                    closeTime: '19:00:00'
-                  - dayOfWeek: Tuesday
-                    opentime: '07:00:00'
-                    closeTime: '19:00:00'
-                  - dayOfWeek: Wednesday
-                    opentime: '07:00:00'
-                    closeTime: '19:00:00'
-                  - dayOfWeek: Thursday
-                    opentime: '07:00:00'
-                    closeTime: '19:00:00'
-                  - dayOfWeek: Friday
-                    opentime: '07:00:00'
-                    closeTime: '19:00:00'
+              required:
+                - shopName
+                - matchProfileOptions
+                - userId
+                - machineryCount
+                - serviceTimes
+              properties:
+                shopName:
+                  type: string
+                  example: "Elite Laundry & Dry Cleaners"
+                  description: Name of the agent's shop
+                matchProfileOptions:
+                  type: string
+                  example: "Franchise"
+                  description: Business match profile option; set to "Other" if using `otherText`
+                otherText:
+                  type: string
+                  example: "Self-operated boutique model"
+                  description: Custom description shown only if matchProfileOptions is "Other"
+                userId:
+                  type: integer
+                  example: 456
+                  description: ID of the agent submitting business info
                 machineryCount:
-                  - total: 1-2
-                    machineId: 1
-                  - total: 3-5
-                    machineId: 2
+                  type: array
+                  description: List of machines and their total count
+                  items:
+                    type: object
+                    required: [total, machineId]
+                    properties:
+                      total:
+                        type: integer
+                        example: 4
+                        description: Number of machines
+                      machineId:
+                        type: integer
+                        example: 2
+                        description: ID of the machine type
                 serviceTimes:
-                  - serviceId: 1
-                    serviceTimeRequired: 24 Hours
-                  - serviceId: 2
-                    serviceTimeRequired: 48 Hours
+                  type: array
+                  description: Time estimates for each selected service
+                  items:
+                    type: object
+                    required: [serviceId, serviceTimeRequired]
+                    properties:
+                      serviceId:
+                        type: integer
+                        example: 3
+                        description: ID of the service
+                      serviceTimeRequired:
+                        type: string
+                        example: "2 hours"
+                        description: Estimated time to complete the service
       responses:
         '200':
-          description: Successful response
+          description: Business information added successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Bussiness Info Added Sucessfully"
+                data: {}
+                error: ""
+        '400':
+          description: `otherText` provided without selecting "Other" as matchProfileOption
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "You cna Add this Field Only when Select Other Option"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unexpected error occurred while saving business info"
   /agent/loginUser:
     post:
+      summary: Agent login
+      description: Authenticates an agent using email and password or social login. Returns access token, feature permissions, and profile information.
       tags:
         - Agent > Auth
-      summary: Login User
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                email: agent1@gmail.com
-                password: '123456'
-                signedFrom: ''
-                dvToken: gfgfdgbgfhg
+              required:
+                - email
+                - dvToken
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: agent@example.com
+                  description: Agent email address
+                password:
+                  type: string
+                  example: Agent@123
+                  description: Password (required for standard login)
+                dvToken:
+                  type: string
+                  example: "device-token-xyz"
+                  description: Device token used for tracking sessions and notifications
+                signedFrom:
+                  type: string
+                  enum: [google, facebook, apple]
+                  example: google
+                  description: Optional social login provider
       responses:
         '200':
-          description: Successful response
+          description: Login success, access token issued and returned in cookie
           content:
-            application/json: {}
+            application/json:
+              examples:
+                standardLoginSuccess:
+                  summary: Standard login success
+                  value:
+                    status: "1"
+                    message: "Login successful"
+                    data:
+                      userId: 123
+                      services: []
+                      agentInfo: []
+                      userMachineInfo: []
+                      accessToken: "jwt.token.here"
+                    error: ""
+                socialLoginRequired:
+                  summary: Previously signed up with social provider
+                  value:
+                    status: "4"
+                    message: "Social Login Required"
+                    data: {}
+                    error: "Please log in using google."
+                incompleteProfile:
+                  summary: Incomplete profile
+                  value:
+                    status: "4"
+                    message: "Please complete your information before logging in."
+                    data:
+                      userId: 123
+                      services: []
+                      agentInfo: []
+                      userMachineInfo: []
+        '400':
+          description: Invalid login attempt
+          content:
+            application/json:
+              examples:
+                userNotFound:
+                  summary: No user found
+                  value:
+                    status: "0"
+                    message: "User not Exists with this credentials"
+                    data: {}
+                wrongPassword:
+                  summary: Incorrect password
+                  value:
+                    status: "0"
+                    message: "Bad credentials"
+                    detail: "Please enter correct password to continue"
+                    data: {}
+        '403':
+          description: Blocked or unverified user
+          content:
+            application/json:
+              examples:
+                blocked:
+                  summary: Blocked user
+                  value:
+                    status: "0"
+                    message: "Blocked by admin Please contact admin to continue"
+                    data: {}
+                notVerified:
+                  summary: Pending OTP verification
+                  value:
+                    status: "2"
+                    message: "Pending email verification"
+                    data:
+                      userId: 123
+                      otpId: 456
+                      email: agent@example.com
+                    error: "Please verify your email to continue"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong during login"
   /agent/forgetPasswordRequest:
     post:
+      summary: Request OTP for agent password reset
+      description: Sends or updates an OTP to the agent's email for password recovery.
       tags:
         - Agent > Auth
-      summary: Password Reset Request
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token (not required for password reset)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                email: arbab1@gmail.com
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: agent@example.com
+                  description: Email address of the agent requesting password reset
       responses:
         '200':
-          description: Successful response
+          description: OTP sent or updated successfully
           content:
-            application/json: {}
+            application/json:
+              examples:
+                otpUpdated:
+                  summary: OTP updated
+                  value:
+                    status: "1"
+                    message: "OTP Updated Sucessfully"
+                    data:
+                      otpid: 234
+                      userId: 567
+                    error: ""
+                otpSent:
+                  summary: OTP sent
+                  value:
+                    status: "1"
+                    message: "OTP sent Sucessfully for Password Reset"
+                    data:
+                      otpId: 123
+                      userId: 567
+                    error: ""
+        '400':
+          description: Invalid email or user not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid information"
+                detail: "No user exists against this email"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Error in updating OTP"
   /agent/verifyOTPforPassword:
     post:
+      summary: Verify OTP for agent password reset
+      description: Verifies the OTP sent to the agent’s email for resetting their password.
       tags:
         - Agent > Auth
-      summary: Verify OTP For Password
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token (not required for OTP verification)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                OTP: '#142'
-                otpId: '4'
+              required:
+                - otpId
+                - OTP
+              properties:
+                otpId:
+                  type: integer
+                  example: 123
+                  description: ID of the OTP record
+                OTP:
+                  type: string
+                  example: "5678"
+                  description: The OTP code received via email
       responses:
         '200':
-          description: Successful response
+          description: OTP verified successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "OTP verified"
+                data:
+                  otpId: 123
+                  userId: 456
+                error: ""
+        '400':
+          description: OTP record not found or incorrect OTP
+          content:
+            application/json:
+              examples:
+                otpNotFound:
+                  summary: OTP record not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    detail: "Please rensend OTP to continue"
+                    data: {}
+                    error: ""
+                incorrectOtp:
+                  summary: Incorrect OTP
+                  value:
+                    status: "0"
+                    message: "You entered incorrect OTP Please enter correct OTP to continue"
+                    data: {}
+                    error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unexpected error"
   /agent/changePasswordOTP:
     post:
+      summary: Change password using verified OTP (Agent)
+      description: Resets the agent's password after verifying the OTP. OTP must be verified before calling this.
       tags:
         - Agent > Auth
-      summary: Change Password
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token (not required for password reset)
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                password: '123456789'
-                otpId: ' 4'
-                userId: 4
+              required:
+                - userId
+                - otpId
+                - password
+              properties:
+                userId:
+                  type: integer
+                  example: 456
+                  description: ID of the agent resetting the password
+                otpId:
+                  type: integer
+                  example: 123
+                  description: OTP ID previously verified
+                password:
+                  type: string
+                  format: password
+                  example: "NewPassword@123"
+                  description: New password to be set
       responses:
         '200':
-          description: Successful response
+          description: Password reset successful
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Password updated successfully. Please login to continue"
+                data: {}
+                error: ""
+        '400':
+          description: OTP not verified or OTP record not found
+          content:
+            application/json:
+              examples:
+                otpNotVerified:
+                  summary: OTP not verified yet
+                  value:
+                    status: "0"
+                    message: "OTP not verified yet"
+                    detail: "Please verify OTP first"
+                    data: {}
+                    error: ""
+                otpNotFound:
+                  summary: OTP not found
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    detail: "Please rensend OTP to continue"
+                    data: {}
+                    error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong during password update"
   /agent/logout:
     get:
+      summary: Agent logout
+      description: Logs out the authenticated agent by removing the device token and clearing session data from Redis.
       tags:
         - Agent > Auth
-      summary: User Logout
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json: {}
-  /agent/agentAddressAdd:
-    post:
-      tags:
-        - Agent > Agent Shop Address
-      summary: Register Shop Address
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Access token for identifying the session to be logged out (sent via cookie)
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Log-out successfully"
+                data: {}
+                error: ""
+        '500':
+          description: Logout failed due to server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "There is some error logging out. Please try again"
+  /agent/agentAddressAdd:
+     post:
+      summary: Add agent's shop address
+      description: Adds a laundry shop address for the agent. Only one address can be added per agent. Associates the location with a zone and city using geolocation.
+      tags:
+        - Agent > Agent Shop Address
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token for verification
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                streetAddress: 123 Oxford Street
-                district: Westminster
-                cityId: 1
-                province: London
-                countryId: 1
-                postalCode: W1D 2LB
-                lat: 51.5145
-                lng: -0.1447
+              required:
+                - streetAddress
+                - district
+                - province
+                - lat
+                - lng
+                - coordinates
+                - addressType
+                - userId
+              properties:
+                streetAddress:
+                  type: string
+                  example: "123 Main Street"
+                district:
+                  type: string
+                  example: "Downtown"
+                province:
+                  type: string
+                  example: "Dubai"
+                lat:
+                  type: number
+                  example: 25.276987
+                lng:
+                  type: number
+                  example: 55.296249
                 coordinates:
-                        - 
-                          - [-0.1447, 51.5145]
-                          - [-0.1450, 51.5146]
-                          - [-0.1445, 51.5143]
-                          - [-0.1448, 51.5142]
-                          - [-0.1447, 51.5145]
-                addressType: LaundaryShopAddress
+                  type: array
+                  description: GeoJSON-compatible coordinates defining the address polygon
+                  items:
+                    type: array
+                    items:
+                      type: number
+                    example: [[55.296249, 25.276987], [55.297000, 25.276987], [55.297000, 25.277500], [55.296249, 25.277500], [55.296249, 25.276987]]
+                addressType:
+                  type: string
+                  example: "Shop"
+                  description: The type of address (e.g., Shop, Warehouse)
+                userId:
+                  type: integer
+                  example: 789
+                  description: ID of the agent user
       responses:
         '200':
-          description: Successful response
+          description: Shop address added successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Laundary Shhop Address Added"
+                data:
+                  id: 10
+                  streetAddress: "123 Main Street"
+                  cityId: 3
+                  countryId: 1
+                  zoneId: 2
+                error: ""
+        '400':
+          description: Address already exists
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Already Added the Shop Address"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Unable to save address"
   /agent/getShopAddress:
     get:
+      summary: Get agent's laundry shop address and working hours
+      description: Retrieves the laundry shop address, including country and city info, as well as the weekly business working hours for the authenticated agent.
       tags:
         - Agent > Agent Shop Address
-      summary: Get Laundary Shop
       parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
+        - in: cookie
+          name: accessToken
           required: true
           schema:
             type: string
+          description: Authenticated access token (sent via cookie)
       responses:
         '200':
-          description: Successful response
+          description: Shop address and working hours retrieved successfully
           content:
-            application/json: {}
+            application/json:
+              example:
+                status: "1"
+                message: "Address Get"
+                data:
+                  findAddress:
+                    id: 15
+                    shopName: "Elite Laundry"
+                    matchProfileOptions: "Franchise"
+                    agentId: 42
+                    addressDbs:
+                      - streetAddress: "123 Main St"
+                        province: "Dubai"
+                        postalCode: "00000"
+                        district: "Business Bay"
+                        lat: 25.276987
+                        lng: 55.296249
+                        coordinates:
+                          type: "Polygon"
+                          coordinates: [[[55.2962, 25.2769], [55.2970, 25.2769], [55.2970, 25.2775], [55.2962, 25.2775], [55.2962, 25.2769]]]
+                        addressType: "LaundaryShopAddress"
+                        zoneId: 3
+                        country: { name: "UAE" }
+                        city: { name: "Dubai" }
+                  workingHours:
+                    - dayOfWeek: "Monday"
+                      openTime: "09:00"
+                      closeTime: "18:00"
+                    - dayOfWeek: "Tuesday"
+                      openTime: "09:00"
+                      closeTime: "18:00"
+                error: ""
+        '401':
+          description: Unauthorized (missing or invalid token)
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized"
+                data: {}
+                error: "Access token missing or invalid"
+        '500':
+          description: Server error while retrieving shop address
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Could not fetch address data"
   /agent/getAgentOrder:
     get:
       tags:
@@ -3730,38 +5503,90 @@ paths:
           description: Successful response
           content:
             application/json: {}
-  /agent/orderDetailsById/:
+  /agent/orderDetailsById:
    get:
-    tags:
-      - Agent > Agent Handle Booking
-    summary: Get Specific Booking
-    description: Get specific booking id on the basis of ID && orderTrackId. Only one can be provided at a time.
-    parameters:
-      - name: orderTrackId
-        in: query
-        description: The order tracking ID of the booking
-        required: false  # Optional
-        schema:
-          type: string
-        example: 22-372561
-      - name: bookingId
-        in: query
-        description: The booking ID of the order
-        required: false  # Optional
-        schema:
-          type: integer
-        example: 12345
-      - name: accessToken
-        in: cookie
-        description: The authentication cookie
-        required: true
-        schema:
-          type: string
-    responses:
-      '200':
-        description: Successful response
-        content:
-          application/json: {}
+      summary: Get booking details by bookingId or orderTrackId (Agent)
+      description: Retrieves detailed booking/order information for the agent using either `bookingId` or `orderTrackId`. If the booking is in status 5, includes a 1-hour time window.
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Required access token (cookie)
+        - in: query
+          name: bookingId
+          required: false
+          schema:
+            type: integer
+          description: Booking ID of the order (optional if orderTrackId is provided)
+        - in: query
+          name: orderTrackId
+          required: false
+          schema:
+            type: string
+          description: Order tracking ID (optional if bookingId is provided)
+      responses:
+        '200':
+          description: Booking details fetched successfully
+          content:
+            application/json:
+              examples:
+                default:
+                  summary: Booking details
+                  value:
+                    status: "1"
+                    message: "Order Details for bookingId: 456"
+                    data:
+                      id: 456
+                      customer:
+                        id: 789
+                        firstName: "John"
+                        lastName: "Doe"
+                        email: "john@example.com"
+                      pickupAddress:
+                        title: "Home"
+                        streetAddress: "123 Main St"
+                        district: "Downtown"
+                        province: "Dubai"
+                      bookingStatus:
+                        title: "Confirmed"
+                        description: "Order has been confirmed"
+                      bookingHistory:
+                        - date: "2025-05-21"
+                          time: "13:00"
+                          bookingStatus:
+                            title: "Created"
+                            description: "Order created"
+                status5:
+                  summary: Includes 1-hour time for bookingStatusId = 5
+                  value:
+                    status: "1"
+                    message: "Order Details for orderTrackId: 456-XYZ"
+                    data:
+                      bookingfind: { /* booking object */ }
+                      oneHourLater: "16:15 PM"
+                    error: ""
+        '400':
+          description: Missing query parameter
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "bookingId or orderTrackId must be provided"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Something went wrong while retrieving the order"
 
   /agent/driverStatusArrived/{bookingId}:
     patch:

@@ -84,22 +84,19 @@ const uploadonHoldImages = multer({
 //!-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
 
 //!------------------------------------------------------------Auth Module-----------------------------------------------------//
-//otp for register agent
-router.post(
-    "/registerAgentOTP",
-    asyncMiddleware(agentAuthController.registerAgentOTP)
-);
-//verify otp for registration
-router.post(
-    "/verifyOTpSignUp",
-    asyncMiddleware(agentAuthController.verifyOTpSignUp)
-);
 //complete registration of Agent
 router.post(
     "/registerAgent",
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentAuthController.registerAgentWithOTP)
 );
+
+//verify otp for registration
+router.post(
+    "/verifyOTpSignUp",
+    asyncMiddleware(agentAuthController.verifyOTpSignUp)
+);
+
 //Resend OTP
 router.post("/resendotp", asyncMiddleware(agentAuthController.resendOTP));
 //User login
