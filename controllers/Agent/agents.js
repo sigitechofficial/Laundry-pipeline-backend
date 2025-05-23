@@ -514,108 +514,6 @@ async function orderDetailsById(req, res) {
 /*
  *  Agent booking Filters
  */
-// async function agentBookingFilters(req, res) {
-//     const { filterType } = req.query;
-//     console.log("🚀 ~ agentBookingFilters ~ req.query:", req.query);
-
-//     const agentId = req.user.id;
-
-//     const addressFound = await addressDb.findOne({
-//         where: {
-//             userId: agentId,
-//         },
-//     });
-//     console.log("🚀 ~ agentBookingFilters ~ addressFound:", addressFound.id);
-
-//     let whereCondition = {};
-
-//     if (filterType === "pick") {
-//         whereCondition = {
-//             bookingStatusId: 4,
-//             laundryShopId: addressFound.id,
-//         };
-//     } else if (filterType === "drop") {
-//         whereCondition = {
-//             bookingStatusId: 8,
-//             laundryShopId: addressFound.id,
-//         };
-//     } else if (filterType === "slots") {
-//         const slotBookings = await getSlotBookings(addressFound.id);
-//         return res.json(
-//             responsefunc("1", `Booking Details Fetch for slots`, slotBookings, "")
-//         );
-//     } else if (filterType === "maps") {
-//         const bookingFound = await booking.findAll({
-//             where: {
-//                 laundryShopId: addressFound.id,
-//             },
-//             include: [
-//                 {
-//                     model: addressDb,
-//                     as: "pickupAddress",
-//                     attributes: ["lat", "lng"],
-//                 },
-//                 {
-//                     model: addressDb,
-//                     as: "dropOffAddress",
-//                     attributes: ["lat", "lng"],
-//                 },
-//             ],
-//             attributes: ["id", "ordertrackId"],
-//         });
-
-//         return res.json(responsefunc("1", "All Address Fetched", bookingFound, ""));
-//     } else if (filterType === "All") {
-//         whereCondition = {
-//             laundryShopId: addressFound.id,
-//         };
-//     }
-
-//     const bookingFound = await booking.findAll({
-//         where: whereCondition,
-//         attributes: [
-//             "id",
-//             "ordertrackId",
-//             "collectionTimeFrom",
-//             "collectiontimeTo",
-//             "collectionDate",
-//             "deliveryTimeFrom",
-//             "deliveryTimeTo",
-//             "deliveryDate",
-//             "driverInstructionOptions",
-//             "driverInstructionOptions1",
-//         ],
-//         include: [
-//             {
-//                 model: addressDb,
-//                 as: "laundryShop",
-//                 attributes: [
-//                     "streetAddress",
-//                     "district",
-//                     "province",
-//                     "addressType",
-//                     "lat",
-//                     "lng",
-//                 ],
-//             },
-//             {
-//                 model: users,
-//                 as: "customer",
-//                 attributes: ["firstName", "lastName", "email", "phoneNum"],
-//             },
-//         ],
-//     });
-
-//     return res.json(
-//         responsefunc(
-//             "1",
-//             `Booking Details Fetch on the basis of ${filterType}`,
-//             bookingFound,
-//             ""
-//         )
-//     );
-// }
-
 
 async function agentBookingFilters(req, res) {
     const agentId = req.user.id;
@@ -666,27 +564,47 @@ async function agentBookingFilters(req, res) {
             {
                 model: addressDb,
                 as: "laundryShop",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
             },
             {
                 model: addressDb,
                 as: "pickupAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
                 include:[
                     {
                         model:countries,
-                        attributes:['id','name','shortName','status']
+                        attributes:['id','name','shortName']
                     },
                     {
                         model:cities,
-                        attributes:['id','name','status']
+                        attributes:['id','name']
                     }
                 ]
             },
             {
                 model: addressDb,
                 as: "dropOffAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
             },
             {
                 model: users,

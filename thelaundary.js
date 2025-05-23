@@ -103,9 +103,7 @@ async function startServer() {
     if (syncDb) {
       await db.sequelize.sync({ alter: true });
       console.log('Database synchronized successfully.');
-      intilizeSocketFunc(server);
     }
-
     server.listen(server_port, function (err) {
       if (err) throw err;
       console.log('Listening on port %d', server_port);

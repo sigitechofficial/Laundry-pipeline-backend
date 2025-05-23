@@ -20,7 +20,10 @@ let socket_Instance;
 
 
 const intilizeSocketFunc = (server) => {
-    const io = new Server(server)
+    const io = new Server(server,{
+    pingTimeout: 1000, // Time (in ms) before the server considers the connection dead if no pong is received
+    pingInterval: 500, // Time (in ms) between ping packets sent by the server to check client connectivity
+  })
     socket_Instance = io
     io.on("connection", (socket) => {
         console.log(`User Connected ${socket.id}`);
@@ -48,9 +51,9 @@ const intilizeSocketFunc = (server) => {
             rows.forEach((event) => {
                 //console.log(`🚀ðŸš€ðŸš€Even a`, event)
 
-                ioInstance
+                socket_Instance
                     .to(event.to)
-                    .emit(event.event, JSON.parse(event.data), async (ack) => {
+                    .emit(event.type, JSON.parse(event.data), async (ack) => {
                         if (ack) {
                             console.log(`🚀ðŸš€ðŸš€Even acknowledged by `)
                             await unAcknowledgedEvents.destroy({ where: { id: event.id } })
@@ -136,7 +139,7 @@ const sendEvent = async (userId, eventData) => {
         console.log(`Event data being sent:`, eventData);
         console.log(`Event data being sent to:`, userId.toString());
 
-        ioInstance
+        socket_Instance
             .to(userId.toString())
             .emit(eventData.type, eventData.data, async (ack) => {
                 console.log(`Acknowledgement received: ${ack}`);
