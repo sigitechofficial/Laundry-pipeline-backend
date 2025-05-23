@@ -124,7 +124,7 @@ router.get(
 );
 
 //Agent Sesion Api
-router.get("/session", asyncMiddleware(agentAuthController.session))
+router.get("/session", validateAccessToken,asyncMiddleware(agentAuthController.session))
 
 //Agent Bussiness Information
 router.post(

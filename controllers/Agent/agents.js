@@ -208,9 +208,7 @@ async function getBookingHome(req, res) {
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
-            bookingStatusId:{
-                [Op.ne]:[1,3]
-            },
+            bookingStatusId: 1,
             zoneId: agentZone,
             orderExpireTime: {
                 [Op.gte]: currentTimeString
@@ -645,7 +643,12 @@ async function agentBookingFilters(req, res) {
 
     // All bookings (any booking with this laundryShopId)
     results.All = await booking.findAll({
-        where: { laundryShopId: addressFound.id },
+        where: { 
+            laundryShopId: addressFound.id,
+            bookingStatusId:{
+                [Op.ne]:[1,3]
+            } 
+        },
         attributes: [
             "id",
             "ordertrackId",
@@ -669,6 +672,16 @@ async function agentBookingFilters(req, res) {
                 model: addressDb,
                 as: "pickupAddress",
                 attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng"],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName','status']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name','status']
+                    }
+                ]
             },
             {
                 model: addressDb,
