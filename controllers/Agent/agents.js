@@ -208,7 +208,9 @@ async function getBookingHome(req, res) {
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
-            bookingStatusId: 1,
+            bookingStatusId:{
+                [Op.ne]:[1,3]
+            },
             zoneId: agentZone,
             orderExpireTime: {
                 [Op.gte]: currentTimeString

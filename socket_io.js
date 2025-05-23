@@ -76,7 +76,15 @@ const intilizeSocketFunc=(server)=>{
                     bookingId:bookingId,
                     bookingStatusId:statusId
                 }))
-                await bookingHistory.bulkCreate(bookinghistories)
+                await bookingHistory.bulkCreate(bookinghistories);
+                const eventData={
+                    type:'AcceptedOrder',
+                    data:{
+                        data:bookingId,
+                        message:'Order Accepted By Agent'
+                    }
+                }
+                sendEvent(agentId,eventData)
             } catch (error) {
                 console.error("Error in event listeing agentAceeptOrder : ",error)
                 

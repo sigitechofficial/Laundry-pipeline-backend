@@ -38,6 +38,7 @@ tags:
   - name: Agent > Add Employee
   - name: Agent > Services
   - name: Agent > Agent Put Booking On Hold
+  - name: Agent > Agent Business
 paths:
   /customer/registerCustomer:
     post:
@@ -6134,3 +6135,328 @@ paths:
           description: Successful response
           content:
             application/json: {}
+  /agent/agentIssueResolved/{bookingId}:
+    patch:
+      summary: Mark agent issue as resolved for a booking
+      description: Updates the booking status to indicate the issue has been resolved if customer response was confirmed.
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token for authentication (sent via cookie)
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking to mark issue resolved
+      responses:
+        '200':
+          description: Booking status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Booking Status Updated Issue Resolved"
+                data: {}
+                error: ""
+        '400':
+          description: Booking customer response not confirmed or invalid bookingId
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Booking customer Response is not confirmed"
+                data: {}
+                error: ""
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Booking not found"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to update booking status"
+  /agent/getBussinessInforMation/{userId}:
+    get:
+      summary: Get business information for agent
+      description: Retrieves all machine information and active services linked to the specified agent user ID.
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: ID of the agent user to fetch information for
+      responses:
+        '200':
+          description: Business information fetched successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Information fetched"
+                data:
+                  allMachineInformation:
+                    - id: 1
+                      name: "Washing Machine"
+                      status: true
+                    - id: 2
+                      name: "Dryer"
+                      status: true
+                  agentServices:
+                    - id: 101
+                      status: true
+                      service:
+                        id: 10
+                        name: "Laundry"
+                      agentServices:
+                        firstName: "John"
+                        lastName: "Doe"
+                        email: "john.doe@example.com"
+                    - id: 102
+                      status: true
+                      service:
+                        id: 11
+                        name: "Dry Cleaning"
+                      agentServices:
+                        firstName: "John"
+                        lastName: "Doe"
+                        email: "john.doe@example.com"
+                error: ""
+        '404':
+          description: Agent user not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Agent not found"
+                data: {}
+                error: ""
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to fetch business information"
+  /agent/getBussinessWrkinghours/{userId}:
+    get:
+      summary: Get business working hours for agent
+      description: Retrieves business working hours for the specified agent user ID.
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: ID of the agent user to fetch business working hours for
+      responses:
+        '200':
+          description: Business working hours fetched successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Information fetched"
+                data:
+                  bussinesWorkingHours:
+                    - id: 1
+                      dayOfWeek: "Monday"
+                      openTime: "09:00"
+                      closeTime: "17:00"
+                      status: true
+                      userId: 123
+                    - id: 2
+                      dayOfWeek: "Tuesday"
+                      openTime: "09:00"
+                      closeTime: "17:00"
+                      status: true
+                      userId: 123
+                error: ""
+        '404':
+          description: Business working hours not found for user
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Business working hours not found"
+                data: {}
+                error: "No working hours found for this user"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to fetch business working hours"
+  /agent/businesInfoAdded/{userId}:
+    post:
+      summary: Add business services to agent
+      description: Adds multiple services to the specified agent by userId.
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: ID of the agent user to add services to
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - services
+              properties:
+                services:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - serviceId
+                    properties:
+                      serviceId:
+                        type: integer
+                        example: 101
+                        description: ID of the service to be added
+      responses:
+        '200':
+          description: Business services added successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Agent Services Added Sucessfully"
+                data:
+                  serviceCreate:
+                    - serviceId: 101
+                      agentServiceId: 123
+                      status: true
+                    - serviceId: 102
+                      agentServiceId: 123
+                      status: true
+                error: ""
+        '400':
+          description: Invalid input or service ID missing
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid input"
+                data: {}
+                error: "Service ID is required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to add agent services"
+  /agent/workingHoursUpdate/{userId}:
+    patch:
+      summary: Update agent's business working hours
+      description: Updates the business working hours for the specified agent using the provided working days data.
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: ID of the agent user to update working hours for
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bussinessWorkingDays
+              properties:
+                bussinessWorkingDays:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - dayOfWeek
+                      - openTime
+                      - closeTime
+                      - status
+                    properties:
+                      id:
+                        type: integer
+                        example: 1
+                        description: ID of the business working hour entry
+                      dayOfWeek:
+                        type: string
+                        example: "Monday"
+                        description: Day of the week
+                      openTime:
+                        type: string
+                        example: "09:00"
+                        description: Opening time for the business
+                      closeTime:
+                        type: string
+                        example: "17:00"
+                        description: Closing time for the business
+                      status:
+                        type: boolean
+                        example: true
+                        description: Status of the working day (open/closed)
+      responses:
+        '200':
+          description: Business working hours updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Bussiness Days Updated"
+                data: {}
+                error: ""
+        '400':
+          description: Invalid input or missing required fields
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid input"
+                data: {}
+                error: "Missing or invalid working hours data"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+                error: "Failed to update business working hours"

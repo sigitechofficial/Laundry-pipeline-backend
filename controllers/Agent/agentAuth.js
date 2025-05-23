@@ -808,9 +808,9 @@ async function loginUser(req, res) {
         })
 
         res.cookie("accessToken", accessToken, {
-            //   httpOnly: true,
-            //   secure: true, 
-            //   sameSite: "None",
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
             path: "/agent",
             maxAge: 24 * 60 * 60 * 1000
         });
@@ -911,9 +911,9 @@ async function loginUser(req, res) {
     )
 
     res.cookie("accessToken", accessToken, {
-        //   httpOnly: true,
-        //   secure: true, 
-        //   sameSite: "None",
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
         path: "/agent",
         maxAge: 24 * 60 * 60 * 1000
     });
