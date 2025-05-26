@@ -1261,6 +1261,7 @@ let loginData = (userData, accessToken, isGuest, features) => {
             email: `${userData.email}`,
             accessToken: `${accessToken}`,
             userTypeId: `${userData.userTypeId}`,
+            addressId:`${userData?.addressDb?.id}`,
             isGuest,
             joinedOn: userData.dataValues.joinedOn
                 ? userData.dataValues.joinedOn
@@ -1271,6 +1272,7 @@ let loginData = (userData, accessToken, isGuest, features) => {
         error: "",
     };
 };
+
 
 
 

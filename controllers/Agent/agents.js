@@ -562,6 +562,11 @@ async function agentBookingFilters(req, res) {
         ],
         include: [
             {
+                model:bookingStatus,
+                attributes:['id','title','description']
+            }
+            ,
+            {
                 model: addressDb,
                 as: "laundryShop",
                 attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
@@ -642,7 +647,7 @@ async function agentBookingStatusOnTheWay(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 13,
+            bookingStatusId: 3,
         },
         { where: { id: bookingId } }
     );
@@ -659,7 +664,7 @@ async function agentBookingStatusOnTheWay(req, res) {
         bookingId: bookingId,
         date: currentDate,
         time: currentTime,
-        bookingStatusId: 13,
+        bookingStatusId: 3,
     });
 
     return res.json(
@@ -1501,13 +1506,13 @@ async function agentCancelBooking(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 3,
+        bookingStatusId: 13,
         reasonId: reasonId,
     });
 
     await booking.update(
         {
-            bookingStatusId: 3,
+            bookingStatusId: 13,
         },
         { where: { id: bookingId } }
     );
@@ -2047,31 +2052,83 @@ async function getSlotBookings(laundryShopId) {
 
             // Fetch the booking details for the current slot
             const bookings = await booking.findAll({
-                where: {
-                    laundryShopId: laundryShopId,
-                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                },
-                attributes: [
-                    "id", 
-                    "ordertrackId", 
-                    "collectionTimeFrom", 
-                    "collectiontimeTo", 
-                    "collectionDate", 
-                    "deliveryTimeFrom", 
-                    "deliveryTimeTo", 
-                    "deliveryDate", 
-                    "driverInstructionOptions", 
-                    "driverInstructionOptions1",
-                ],
-                include: [
+        where: { 
+            laundryShopId: addressFound.id,
+            bookingStatusId:{
+                [Op.ne]:[1,3]
+            } 
+        },
+        attributes: [
+            "id",
+            "ordertrackId",
+            "collectionTimeFrom",
+            "collectiontimeTo",
+            "collectionDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
+            "deliveryDate",
+            "driverInstructionOptions",
+            "driverInstructionOptions1",
+            "bookingStatusId"
+        ],
+        include: [
+            {
+                model:bookingStatus,
+                attributes:['id','title','description']
+            }
+            ,
+            {
+                model: addressDb,
+                as: "laundryShop",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
+                include:[
                     {
-                        model: users,
-                        as: "customer",
-                        attributes: ["firstName", "lastName", "email", "phoneNum"],
+                        model:countries,
+                        attributes:['id','name','shortName']
                     },
-                ],
-            });
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "pickupAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "dropOffAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
+                include:[
+                    {
+                        model:countries,
+                        attributes:['id','name','shortName']
+                    },
+                    {
+                        model:cities,
+                        attributes:['id','name']
+                    }
+                ]
+            },
+            {
+                model: users,
+                as: "customer",
+                attributes: ["firstName", "lastName", "email", "phoneNum"],
+            },
+        ],
+    });
 
             // Return the result for each slot
             return {
