@@ -544,7 +544,7 @@ async function agentBookingFilters(req, res) {
         where: { 
             laundryShopId: addressFound.id,
             bookingStatusId:{
-                [Op.ne]:[1,3]
+                [Op.ne]:[1,13]
             } 
         },
         attributes: [
@@ -687,7 +687,7 @@ async function agentBookingStatusOnTheWay(req, res) {
         throw new customError(`Booking with this  id : ${bookingId} not exists`);
     }
 
-    if (bookingfind.bookingStatusId !== 13) {
+    if (bookingfind.bookingStatusId !== 3) {
         throw new customError("Your driver is still not out for pickup");
     }
 
@@ -2017,7 +2017,7 @@ async function findZones(lat, lng) {
 }
 
 async function getSlotBookings(laundryShopId) {
-    console.log("🚀 ~ getSlotBookings ~ laundryShopId:", laundryShopId);
+    console.log("ðŸš€ ~ getSlotBookings ~ laundryShopId:", laundryShopId);
 
     const slots = [
         "07:00",
@@ -2048,16 +2048,16 @@ async function getSlotBookings(laundryShopId) {
                     collectionTimeTo: { [Op.lte]: collectionTimeTo },
                 },
             });
-            console.log("🚀 ~ getSlotBookings ~ bookingCount:", bookingCount);
+            console.log("ðŸš€ ~ getSlotBookings ~ bookingCount:", bookingCount);
 
             // Fetch the booking details for the current slot
             const bookings = await booking.findAll({
-        where: { 
-            laundryShopId: addressFound.id,
-            bookingStatusId:{
-                [Op.ne]:[1,3]
-            } 
-        },
+         where: { 
+        laundryShopId: laundryShopId,
+        collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
+        collectionTimeTo: { [Op.lte]: collectionTimeTo },
+        bookingStatusId: { [Op.notIn]: [1, 13] } // exclude status 1 and 3
+    },
         attributes: [
             "id",
             "ordertrackId",

@@ -1123,7 +1123,6 @@ async function session(req, res) {
             "lastName",
             "email",
             "status",
-            "countryCode",
             "phoneNum",
         ],
     });
