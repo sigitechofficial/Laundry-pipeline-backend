@@ -518,7 +518,7 @@ async function orderDetailsById(req, res) {
 async function agentBookingFilters(req, res) {
     const agentId = req.user.id;
 
-    const {filterType}=req.query
+    const { filterType } = req.query
 
     const addressFound = await addressDb.findOne({
         where: { userId: agentId },
@@ -533,7 +533,7 @@ async function agentBookingFilters(req, res) {
 
 
     // Slot bookings
-    if(filterType==='slots'){
+    if (filterType === 'slots') {
         results.slots = await getSlotBookings(addressFound.id);
         return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
     }
@@ -541,11 +541,11 @@ async function agentBookingFilters(req, res) {
 
     // All bookings (any booking with this laundryShopId)
     results.All = await booking.findAll({
-        where: { 
+        where: {
             laundryShopId: addressFound.id,
-            bookingStatusId:{
-                [Op.ne]:[1,13]
-            } 
+            bookingStatusId: {
+                [Op.ne]: [1, 13]
+            }
         },
         attributes: [
             "id",
@@ -562,52 +562,52 @@ async function agentBookingFilters(req, res) {
         ],
         include: [
             {
-                model:bookingStatus,
-                attributes:['id','title','description']
+                model: bookingStatus,
+                attributes: ['id', 'title', 'description']
             }
             ,
             {
                 model: addressDb,
                 as: "laundryShop",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
                     {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
+                        model: cities,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
                 model: addressDb,
                 as: "pickupAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
                     {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
+                        model: cities,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
             {
                 model: addressDb,
                 as: "dropOffAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
                     {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
+                        model: cities,
+                        attributes: ['id', 'name']
                     }
                 ]
             },
@@ -693,7 +693,7 @@ async function agentBookingStatusOnTheWay(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 20,
+            bookingStatusId: 5,
         },
         { where: { id: bookingId } }
     );
@@ -709,7 +709,7 @@ async function agentBookingStatusOnTheWay(req, res) {
     await bookingHistory.create({
         date: currentDate,
         time: currentTime,
-        bookingStatusId: 20,
+        bookingStatusId: 5,
         bookingId: bookingId,
     });
     return res.json(
@@ -756,20 +756,12 @@ async function AddPickupDeliveryProof(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 5,
             totalitems: noOfItems,
         },
         {
             where: { id: bookingId },
         }
     );
-
-    await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
-        bookingId: bookingId,
-        bookingStatusId: 5,
-    });
 
     return res.json(
         responsefunc("1", "Driver proof Pics Uploaded Successfully", {}, "")
@@ -789,13 +781,13 @@ async function agentInspectionStatus(req, res) {
         },
     });
 
-    if (bookingFind.bookingStatusId !== 20) {
+    if (bookingFind.bookingStatusId !== 5) {
         throw new customError("Your driver is not reached yet");
     }
 
     await booking.update(
         {
-            bookingStatusId: 14,
+            bookingStatusId: 7,
         },
         { where: { id: bookingId } }
     );
@@ -808,12 +800,14 @@ async function agentInspectionStatus(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    await bookingHistory.create({
+    const statusId = [6, 7];
+    const bookinghistories = statusId.map(statusId => ({
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 14,
-    });
+        bookingStatusId: statusId
+    }))
+    await bookingHistory.bulkCreate(bookinghistories);
 
     return res.json(
         responsefunc("1", "Booking PickingUp and Inspection Status Updated", {}, "")
@@ -832,40 +826,9 @@ async function reachedAtDeliveryShopStatus(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 5) {
+    if (bookingCheck.bookingStatusId !== 7) {
         throw new customError("Booking is still not In Transit to Facility");
     }
-
-    await booking.update(
-        {
-            bookingStatusId: 6,
-        },
-        { where: { id: bookingId } }
-    );
-
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
-
-    await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
-        bookingId: bookingId,
-        bookingStatusId: 6,
-    });
-
-    return res.json(responsefunc("1", "Driver Reached At Laundry Shop"));
-}
-
-/*
- *   Laundry Status Updated That laundry is Washed
- */
-async function laundryWashCompleted(req, res) {
-    const { bookingId } = req.params;
 
     await booking.update(
         {
@@ -882,10 +845,53 @@ async function laundryWashCompleted(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+
     await bookingHistory.create({
         date: currentDate,
         time: currentTime,
+        bookingId: bookingId,
         bookingStatusId: 8,
+    });
+
+    return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
+}
+
+/*
+ *   Laundry Status Updated That laundry is Washed
+ */
+async function laundryWashCompleted(req, res) {
+    const { bookingId } = req.params;
+
+
+    const bookingCheck = await booking.findOne({
+        where: {
+            id: bookingId,
+        },
+    });
+
+    if (bookingCheck.bookingStatusId !== 10) {
+        throw new customError("Booking is still not In Procesing or Invoice Not Generated");
+    }
+
+    await booking.update(
+        {
+            bookingStatusId: 11,
+        },
+        { where: { id: bookingId } }
+    );
+
+    const currentTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    const currentDate = new Date().toISOString().split("T")[0];
+
+    await bookingHistory.create({
+        date: currentDate,
+        time: currentTime,
+        bookingStatusId: 11,
         bookingId: bookingId,
     });
     return res.json(responsefunc("1", "Laundry Has Been Washed At Shop", {}, ""));
@@ -904,7 +910,7 @@ async function laundryDeliverToCustomer(req, res) {
     if (driverId) {
         await booking.update(
             {
-                bookingStatusId: 21,
+                bookingStatusId: 12,
                 deliveryDriverId: driverId,
             },
             { where: { id: bookingId } }
@@ -912,7 +918,7 @@ async function laundryDeliverToCustomer(req, res) {
     } else {
         await booking.update(
             {
-                bookingStatusId: 21,
+                bookingStatusId: 12,
                 driverId: agentId,
             },
             { where: { id: bookingId } }
@@ -931,7 +937,7 @@ async function laundryDeliverToCustomer(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 21,
+        bookingStatusId: 12,
     });
 
     return res.json(
@@ -956,13 +962,13 @@ async function driverReachedForDelivery(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 21) {
+    if (bookingCheck.bookingStatusId !== 12) {
         throw new customError("Driver is not out to deliver your laundry");
     }
 
     await booking.update(
         {
-            bookingStatusId: 20,
+            bookingStatusId: 13,
         },
         { where: { id: bookingId } }
     );
@@ -979,7 +985,7 @@ async function driverReachedForDelivery(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 20,
+        bookingStatusId: 13,
     });
 
     return res.json(responsefunc("1", "Driver reached for delivery", {}, ""));
@@ -997,13 +1003,13 @@ async function bookingDeliverToCustomer(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 20) {
+    if (bookingCheck.bookingStatusId !== 13) {
         throw new customError("Driver not reached yet at customer destination");
     }
 
     await booking.update(
         {
-            bookingStatusId: 12,
+            bookingStatusId: 15,
         },
         { where: { id: bookingId } }
     );
@@ -1016,12 +1022,15 @@ async function bookingDeliverToCustomer(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    await bookingHistory.create({
+    const statusId = [15, 16];
+    const bookinghistories = statusId.map(statusId => ({
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 12,
-    });
+        bookingStatusId: statusId
+    }))
+    await bookingHistory.bulkCreate(bookinghistories);
+
 
     return res.json(
         responsefunc("1", "Laundry Delivered to customer sucessfully", {}, "")
@@ -1091,13 +1100,13 @@ async function driverAddSerivces(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 17,
+        bookingStatusId: 9,
     });
 
     await booking.update(
         {
             orderAmount: total,
-            bookingStatusId: 17,
+            bookingStatusId: 9,
         },
         { where: { id: bookingId } }
     );
@@ -2052,83 +2061,83 @@ async function getSlotBookings(laundryShopId) {
 
             // Fetch the booking details for the current slot
             const bookings = await booking.findAll({
-         where: { 
-        laundryShopId: laundryShopId,
-        collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-        collectionTimeTo: { [Op.lte]: collectionTimeTo },
-        bookingStatusId: { [Op.notIn]: [1, 13] } // exclude status 1 and 3
-    },
-        attributes: [
-            "id",
-            "ordertrackId",
-            "collectionTimeFrom",
-            "collectiontimeTo",
-            "collectionDate",
-            "deliveryTimeFrom",
-            "deliveryTimeTo",
-            "deliveryDate",
-            "driverInstructionOptions",
-            "driverInstructionOptions1",
-            "bookingStatusId"
-        ],
-        include: [
-            {
-                model:bookingStatus,
-                attributes:['id','title','description']
-            }
-            ,
-            {
-                model: addressDb,
-                as: "laundryShop",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
+                where: {
+                    laundryShopId: laundryShopId,
+                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
+                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
+                    bookingStatusId: { [Op.notIn]: [1, 13] } // exclude status 1 and 3
+                },
+                attributes: [
+                    "id",
+                    "ordertrackId",
+                    "collectionTimeFrom",
+                    "collectiontimeTo",
+                    "collectionDate",
+                    "deliveryTimeFrom",
+                    "deliveryTimeTo",
+                    "deliveryDate",
+                    "driverInstructionOptions",
+                    "driverInstructionOptions1",
+                    "bookingStatusId"
+                ],
+                include: [
                     {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: bookingStatus,
+                        attributes: ['id', 'title', 'description']
+                    }
+                    ,
+                    {
+                        model: addressDb,
+                        as: "laundryShop",
+                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                        include: [
+                            {
+                                model: countries,
+                                attributes: ['id', 'name', 'shortName']
+                            },
+                            {
+                                model: cities,
+                                attributes: ['id', 'name']
+                            }
+                        ]
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                as: "pickupAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
-                    {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: addressDb,
+                        as: "pickupAddress",
+                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                        include: [
+                            {
+                                model: countries,
+                                attributes: ['id', 'name', 'shortName']
+                            },
+                            {
+                                model: cities,
+                                attributes: ['id', 'name']
+                            }
+                        ]
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                as: "dropOffAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng",'postalcode'],
-                include:[
-                    {
-                        model:countries,
-                        attributes:['id','name','shortName']
+                        model: addressDb,
+                        as: "dropOffAddress",
+                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                        include: [
+                            {
+                                model: countries,
+                                attributes: ['id', 'name', 'shortName']
+                            },
+                            {
+                                model: cities,
+                                attributes: ['id', 'name']
+                            }
+                        ]
                     },
                     {
-                        model:cities,
-                        attributes:['id','name']
-                    }
-                ]
-            },
-            {
-                model: users,
-                as: "customer",
-                attributes: ["firstName", "lastName", "email", "phoneNum"],
-            },
-        ],
-    });
+                        model: users,
+                        as: "customer",
+                        attributes: ["firstName", "lastName", "email", "phoneNum"],
+                    },
+                ],
+            });
 
             // Return the result for each slot
             return {

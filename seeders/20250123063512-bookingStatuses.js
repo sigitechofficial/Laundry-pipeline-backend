@@ -30,20 +30,38 @@ module.exports = {
         updatedAt: new Date()
       },
       {
+        title: "Driver Reached Pickup",
+        description: "Driver reached at customer location for Pickup",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        title: 'PickingUp and Inspection',
+        description: 'Driver reached for laundary Pickup and inspecting the items',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
         title: "In Transit to Facility",
         description: "Items have been collected and are en route to the laundry facility.",
         createdAt: new Date(),
         updatedAt: new Date()
       },
       {
-        title: 'Processing',
-        description: 'Items are being serviced',
+        title: "Delivered Laundry to Shop",
+        description: "Driver Deliver Laundry to laundry Shop",
         createdAt: new Date(),
         updatedAt: new Date()
       },
       {
-        title: 'On Hold/Waiting for customer response',
-        description: 'The order is temporarily paused due to an issue',
+        title: "Invoice Generated",
+        description: "Inscpection Completed and payment Confirmed",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        title: 'Processing',
+        description: 'Items are being serviced',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -56,6 +74,12 @@ module.exports = {
       {
         title: "Out for Delivery",
         description: "The order is en route to the customer.",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        title: 'Driver Reached',
+        description: "Your driver has been arrived",
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -78,14 +102,14 @@ module.exports = {
         updatedAt: new Date()
       },
       {
-        title: "Cancelled",
-        description: 'The booking has been canceled by the customer, admin, or due to payment issues.',
+        title: 'On Hold/Waiting for customer response',
+        description: 'The order is temporarily paused due to an issue',
         createdAt: new Date(),
         updatedAt: new Date()
       },
       {
-        title: 'PickingUp and Inspection',
-        description: 'Driver reached for laundary Pickup and inspecting the items',
+        title: "Cancelled",
+        description: 'The booking has been canceled by the customer, admin, or due to payment issues.',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -102,12 +126,6 @@ module.exports = {
         updatedAt: new Date()
       },
       {
-        title: "Invoice Generated",
-        description: "Inscpection Completed and payment Confirmed",
-        createdAt: new Date(),
-        updatedAt: new Date()
-      },
-      {
         title: "Issue Resolving",
         description: 'Resolving the pending issue of On Hold Booking',
         createdAt: new Date(),
@@ -116,18 +134,6 @@ module.exports = {
       {
         title: "Issue Resolved",
         description: "Booking issue resolved",
-        createdAt: new Date(),
-        updatedAt: new Date()
-      },
-      {
-        title: 'Driver Reached',
-        description: "Your driver has been arrived",
-        createdAt: new Date(),
-        updatedAt: new Date()
-      },
-      {
-        title: 'Delivery To Customer',
-        description: 'Driver goes to deliver laundry to customer',
         createdAt: new Date(),
         updatedAt: new Date()
       },
