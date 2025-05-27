@@ -18,6 +18,10 @@ module.exports = {
       note: {
         type: Sequelize.STRING
       },
+      deliveryType: {
+        type: Sequelize.ENUM('pickUp', 'dropOff'),
+        allowNull: false
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

@@ -48,10 +48,9 @@ const corsOptions = {
     const isLocalhost = /^http:\/\/localhost:\d+$/.test(origin);
     console.log("isLocalhost================>",isLocalhost)
     if (isLocalhost) {
-      return callback(null, true); // allow any localhost:<port>
+      return callback(null, true); 
     }
 
-    // Optionally allow other domains (like production frontend)
     if (origin === 'http://localhost:3000') {
       return callback(null, true);
     }

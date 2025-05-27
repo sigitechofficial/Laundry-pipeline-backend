@@ -25,6 +25,10 @@ module.exports = (sequelize, DataTypes) => {
     note: {
       type: DataTypes.STRING,
       allowNull: true
+    },
+    deliveryType:{
+      type:DataTypes.ENUM('pickUp','dropOff'),
+      allowNull:false
     }
   }, {
     sequelize,

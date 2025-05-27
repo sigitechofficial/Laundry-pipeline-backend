@@ -398,7 +398,7 @@ async function specificdriverDetail(req, res) {
     const pendingOrder = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.ne]: 12
+                [Op.ne]: 11
             },
             [Op.or]: [
                 { driverId: driverId },
@@ -433,14 +433,14 @@ async function ordersCount(req, res) {
 
     const completedOrder = await booking.count({
         where: {
-            bookingStatusId: 12
+            bookingStatusId: 16
         }
     })
 
     const onHoldOrders = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.or]: [7, 22]
+                [Op.or]: [17, 23]
             }
         }
     })
@@ -521,7 +521,7 @@ async function pendingOrders(req, res) {
     const bookingsFind = await booking.findAll({
         where: {
             bookingStatusId: {
-                [Op.ne]: [7, 22]
+                [Op.ne]: [17, 23]
             }
         },
         include: [
@@ -567,7 +567,7 @@ async function pendingOrders(req, res) {
     const pendingOrdersCount = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.ne]: [7, 22]
+                [Op.ne]: [17, 23]
             }
         }
     })
@@ -593,7 +593,7 @@ async function allCancelOrders(req, res) {
     const bookingsFind = await booking.findAll({
         where: {
             bookingStatusId: {
-                [Op.eq]: [3]
+                [Op.eq]: [18]
             }
         },
         include: [
@@ -639,7 +639,7 @@ async function allCancelOrders(req, res) {
     const cancelOrdersCount = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.eq]: [3]
+                [Op.eq]: [18]
             }
         }
     })
@@ -664,7 +664,7 @@ async function completeOrders(req, res) {
     const bookingsFind = await booking.findAll({
         where: {
             bookingStatusId: {
-                [Op.eq]: [12]
+                [Op.eq]: [16]
             }
         },
         include: [
@@ -710,7 +710,7 @@ async function completeOrders(req, res) {
     const completedOrdersCount = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.eq]: [12]
+                [Op.eq]: [16]
             }
         }
     })

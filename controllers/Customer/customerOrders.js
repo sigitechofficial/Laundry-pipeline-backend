@@ -145,7 +145,7 @@ async function createBooking(req, res) {
         totalItems: totalItems || 0,
         paymentConfirmed: false,
         partialPayment: false,
-        zoneId:zoneId,
+        zoneId: zoneId,
         driverInstructionOptions,
         driverInstructionOptions1
     });
@@ -197,15 +197,17 @@ async function createBooking(req, res) {
     const upfrontAmount = zoneUpfrontAmount;
     console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-    const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
-        'en-GB',
-        {
-            hour12: false, // Forces 24-hour format
-            hour: "2-digit",
-            minute: "2-digit",
-        }
-    );
-    console.log("🚀 ~ createBooking ~ fixTimeKey:", fixTimeKey)
+    // const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
+    //     'en-GB',
+    //     {
+    //         hour12: false, // Forces 24-hour format
+    //         hour: "2-digit",
+    //         minute: "2-digit",
+    //     }
+    // );
+
+    const fixTimeKey = getTimePlusMinutes()
+    console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey)
 
 
     // Create the billing details
@@ -454,12 +456,12 @@ async function bookingDetailsById(req, res) {
 /*
   * Services For the Customer
 */
-async function allServices(req,res) {
+async function allServices(req, res) {
 
-    const serviceData=await service.findAll()
+    const serviceData = await service.findAll()
 
-    return res.json(responsefunc("1"," All Services",{serviceData},""))
-    
+    return res.json(responsefunc("1", " All Services", { serviceData }, ""))
+
 }
 
 
@@ -468,26 +470,26 @@ async function allServices(req,res) {
 /*
   *  Specific Service Detail For the Customer
 */
-async function serviceDetail(req,res) {
-    const{serviceId}=req.params
+async function serviceDetail(req, res) {
+    const { serviceId } = req.params
 
-    const serviceData=await serviceCategories.findAll({
-        where:{
-            id:serviceId,
-            status:true
+    const serviceData = await serviceCategories.findAll({
+        where: {
+            id: serviceId,
+            status: true
         },
-        include:[
+        include: [
             {
-                model:service,
-                attributes:['id','name','status']
+                model: service,
+                attributes: ['id', 'name', 'status']
             },
             {
-                model:categories,
-                attributes:['id','name','status','image','description'],
-                include:[
+                model: categories,
+                attributes: ['id', 'name', 'status', 'image', 'description'],
+                include: [
                     {
-                        model:subCategories,
-                        attributes:['id','name','status','price']
+                        model: subCategories,
+                        attributes: ['id', 'name', 'status', 'price']
                     }
                 ]
             }
@@ -495,8 +497,8 @@ async function serviceDetail(req,res) {
     })
 
 
-    return res.json(responsefunc("1","Service Details",{serviceData},""))
-    
+    return res.json(responsefunc("1", "Service Details", { serviceData }, ""))
+
 }
 //!---------------------------------Recurring functions------------------------>>>>>
 async function addressAdder(addNew, address, type, userId, addressId) {
@@ -734,6 +736,26 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
     }
 }
 
+
+// function getTimePlusMinutes(minutesToAdd = 40) {
+//     const now = new Date();
+//     now.setMinutes(now.getMinutes() + minutesToAdd);
+
+//     const hh = String(now.getHours()).padStart(2, '0');
+//     const mm = String(now.getMinutes()).padStart(2, '0');
+//     return `${hh}:${mm}`;
+// }
+
+
+function getTimePlusMinutes(mins = 40) {
+    const dt = new Date(Date.now() + mins * 60000);
+    return dt.toLocaleTimeString('en-GB', {
+        timeZone: 'Asia/Karachi',
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
 
 
 //!--------------------------------------------------------------------------------------------------------------->>>

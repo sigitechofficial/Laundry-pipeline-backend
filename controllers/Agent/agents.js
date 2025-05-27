@@ -721,7 +721,7 @@ async function agentBookingStatusOnTheWay(req, res) {
  *   Driver/Agent Add pictures of pickup and delivery
  */
 async function AddPickupDeliveryProof(req, res) {
-    const { noOfItems, note, bookingId } = req.body;
+    const { noOfItems, note, bookingId,deliveryType } = req.body;
     console.log("🚀 ~ AddPickupDeliveryProof ~ req.body:", req.body);
     const userId = req.user.id;
 
@@ -741,6 +741,7 @@ async function AddPickupDeliveryProof(req, res) {
             bookingId,
             noOfItems,
             note,
+            deliveryType
         };
     });
 
