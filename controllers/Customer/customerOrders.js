@@ -676,6 +676,10 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
                         model: subCategories,
                         attributes: ['id', 'name', 'status']
                     }]
+                },
+                {
+                    model:zone,
+                    attributes:['id','zoneMinimumAmount','serviceCharge','currencyUnitId']
                 }
             ]
         });
@@ -721,9 +725,9 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
                     deliveryTimeTo: deliveryTimeTo,
                     deliveryTimeFrom: deliveryTimeFrom,
                     totalAmount: bookingDetails?.billingDetail?.total,
-                    serviceCharge: bookingDetails?.billingDetail?.serviceCharge,
+                    serviceCharge: bookingDetails?.zone?.serviceCharge,
                     categoryCharge: bookingDetails?.billingDetail?.categoryCharge,
-                    upfrontAmount: bookingDetails?.billingDetail?.upfrontAmount,
+                    upfrontAmount: bookingDetails?.zone?.zoneMinimumAmount,
                 },
                 customerServices: {
                     services: customerService

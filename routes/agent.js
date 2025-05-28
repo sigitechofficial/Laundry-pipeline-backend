@@ -63,7 +63,7 @@ const onHoldImage = multer.diskStorage({
     destination: (req, file, cb) => {
         const destinationPath = "./Public/onHoldImages";
 
-        createDestinationDirectory(destinationPath, cb)
+        createDestinationDirectory(destinationPath, cb);
     },
     filename: (req, file, cb) => {
         cb(
@@ -124,7 +124,11 @@ router.get(
 );
 
 //Agent Sesion Api
-router.get("/session", validateAccessToken,asyncMiddleware(agentAuthController.session))
+router.get(
+    "/session",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.session)
+);
 
 //Agent Bussiness Information
 router.post(
@@ -132,12 +136,20 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
-
 //!------------------------------------Drawer-------------------------------//
 //get Profile
-router.get('/getUserProfile',validateAccessToken,asyncMiddleware(agentAuthController.getUserProfile));
+router.get(
+    "/getUserProfile",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.getUserProfile)
+);
 //Update Customer Profile
-router.patch("/updateUserProfile",validateAccessToken,uploadProfile.single('profileImage'),asyncMiddleware(agentAuthController.updateUserProfile))
+router.patch(
+    "/updateUserProfile",
+    validateAccessToken,
+    uploadProfile.single("profileImage"),
+    asyncMiddleware(agentAuthController.updateUserProfile)
+);
 
 //!---------------------------Agent Address Module-------------//
 router.post(
@@ -150,7 +162,12 @@ router.get(
     asyncMiddleware(agentController.getShopAddress)
 );
 
-router.get('/getBookingHome',validateAccessToken,checkPermissions,asyncMiddleware(agentController.getBookingHome))
+router.get(
+    "/getBookingHome",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getBookingHome)
+);
 
 //!------------------------------------------------------Agent Booking Api's-----------------------------------------------//
 //Get Order for Agent
@@ -275,6 +292,13 @@ router.patch(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.bookingDeliverToCustomer)
+);
+//invoice Details Tab Api
+router.get(
+    "/invoiceDetailTab",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.invoiceDetailTab)
 );
 //!--------------------------Agent Cancel Booking--------------------------------------------------------------------------//
 //Agent Calcel Booking

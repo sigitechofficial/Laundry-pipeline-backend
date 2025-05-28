@@ -1486,7 +1486,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount,currencyUnitId,distanceUnitId,serviceCharge} = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1502,7 +1502,6 @@ async function addZones(req, res) {
         currencyUnitId,
         distanceUnitId,
         serviceCharge,
-        zoneComission
     })
 
     return res.json(responsefunc("1", "Zone Added Sucessfully", zoneCreate, ""))

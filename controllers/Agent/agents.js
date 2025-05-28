@@ -234,6 +234,10 @@ async function getBookingHome(req, res) {
                 model: users,
                 as: 'customer',
                 attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum']
+            },
+            {
+                model:zone,
+                attributes:['id','name','zoneMinimumAmount','serviceCharge','currencyUnitId']
             }
         ],
         attributes: ['id',
@@ -621,6 +625,108 @@ async function agentBookingFilters(req, res) {
 
     return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
 }
+
+
+
+
+async function invoiceDetailTab(req, res) {
+    const agentId = req.user.id;
+
+
+    const addressFound = await addressDb.findOne({
+        where: { userId: agentId },
+    });
+
+    if (!addressFound) {
+        return res.json(responsefunc("0", "Address not found for agent", {}, ""));
+    }
+
+    const results = {};
+
+
+
+    // All bookings (any booking with this laundryShopId)
+    results.All = await booking.findAll({
+        where: {
+            laundryShopId: addressFound.id,
+            bookingStatusId:8
+        },
+        attributes: [
+            "id",
+            "ordertrackId",
+            "collectionTimeFrom",
+            "collectiontimeTo",
+            "collectionDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
+            "deliveryDate",
+            "driverInstructionOptions",
+            "driverInstructionOptions1",
+            "bookingStatusId"
+        ],
+        include: [
+            {
+                model: bookingStatus,
+                attributes: ['id', 'title', 'description']
+            }
+            ,
+            {
+                model: addressDb,
+                as: "laundryShop",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "pickupAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "dropOffAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: users,
+                as: "customer",
+                attributes: ["firstName", "lastName", "email", "phoneNum"],
+            },
+        ],
+    });
+
+    return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
+}
+
+
 
 /*
  *   Agent Booking status Update to one the way
@@ -2185,6 +2291,7 @@ module.exports = {
     agentBookingFilters,
     driverReachedForDelivery,
     bookingDeliverToCustomer,
+    invoiceDetailTab,
     //----------------ClassifiedAs--------------//
     addClassifiedAs,
     getClassifiedAs,

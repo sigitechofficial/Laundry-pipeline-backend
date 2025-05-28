@@ -11,7 +11,8 @@ const { users,
     service,
     machines,
     machineCount,
-    addressDb } = require('../../models')
+    addressDb,
+zone } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -25,8 +26,7 @@ const error = require('../../middlewares/error')
 const path = require('path')
 const { stat } = require('fs')
 const stripe = require('../stripe')
-const { create } = require('domain')
-
+const { create } = require('domain');
 //!-------------------Agent Auth---------------------//
 /*
   *  Agent Register
@@ -635,7 +635,13 @@ async function loginUser(req, res) {
             },
             {
                 model: addressDb,
-                attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates']
+                attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
+                include:[
+                    {
+                        model:zone,
+                        attributes:['id','name','zoneMinimumAmount','serviceCharge','currencyUnitId','distanceUnitId']
+                    }
+                ]
             },
             {
                 model: bussinessInformation,
@@ -673,7 +679,7 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind.addressDbs)
+    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind.addressDbs.zone.currencyUnitId)
 
     // return res.json(userFind)
     if (!userFind) {
@@ -1261,6 +1267,7 @@ let loginData = (userData, accessToken, isGuest, features) => {
             accessToken: `${accessToken}`,
             userTypeId: `${userData.userTypeId}`,
             addressId:`${userData?.addressDb?.id}`,
+            currencyUnitId:`${userData?.addressDb?.zone?.currencyUnitId}`,
             isGuest,
             joinedOn: userData.dataValues.joinedOn
                 ? userData.dataValues.joinedOn
