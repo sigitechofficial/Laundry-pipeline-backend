@@ -41,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with model proofOfDeliveries
       booking.hasMany(models.proofOfDeliveries)
       models.proofOfDeliveries.belongsTo(booking)
+
+      //Relation with servicePreferences Model
+      booking.hasMany(models.servicePreferences)
+      models.servicePreferences.belongsTo(booking)
     }
   }
   booking.init({

@@ -28,6 +28,7 @@ const {
     proofOfDeliveries,
     OnHoldConfirmation,
     machines,
+    servicePreferences
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -1226,6 +1227,7 @@ async function driverAddSerivces(req, res) {
  */
 async function invoiceCreation(req, res) {
     const bookingId = req.params.bookingId;
+    console.log("bookingId",bookingId)
     const invoiceDetails = await booking.findOne({
         where: {
             id: bookingId,
@@ -1234,17 +1236,7 @@ async function invoiceCreation(req, res) {
             {
                 model: users,
                 as: "customer",
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["name", "shortName", "image"],
-                    },
-                    {
-                        model: cities,
-                        attributes: ["name", "lat", "lng"],
-                    },
-                ],
-                attributes: ["firstName", "lastName", "email", "phoneNum"],
+                attributes: ["firstName", "lastName", "email", "phoneNum","image"],
             },
             {
                 model: addressDb,
@@ -1256,6 +1248,16 @@ async function invoiceCreation(req, res) {
                     "province",
                     "postalcode",
                     "addressType",
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ["name", "shortName"],
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id',"name"],
+                    },
                 ],
             },
             {
@@ -1269,24 +1271,43 @@ async function invoiceCreation(req, res) {
                     "postalcode",
                     "addressType",
                 ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ["name", "shortName"],
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id',"name"],
+                    },
+                ],
             },
             {
                 model: customerSelectedService,
-                required: true,
+                required: false,
                 include: [
                     {
                         model: service,
-                        required: true,
+                        required: false,
                         attributes: { exclude: ["createdAt", "updatedAt", "timeRequired"] },
+                        include:[
+                            {
+                                model:servicePreferences,
+                                where:{
+                                    bookingId:bookingId
+                                },
+                                attributes:['id','type','chooseTemperature','numberOfBags','preferenceServiceNameId','serviceId']
+                            }
+                        ]
                     },
                     {
                         model: categories,
-                        required: true,
+                        required: false,
                         attributes: { exclude: ["createdAt", "updatedAt"] },
                     },
                     {
                         model: subCategories,
-                        required: true,
+                        required: false,
                         attributes: { exclude: ["createdAt", "updatedAt"] },
                     },
                 ],
@@ -1303,12 +1324,16 @@ async function invoiceCreation(req, res) {
             },
             {
                 model: billingDetails,
-                required: true,
+                required: false,
                 attributes: ["upfrontAmount", "total", "paymentStatus"],
             },
             {
                 model: bookingStatus,
                 attributes: ["title", "description"],
+            },
+            {
+                model:proofOfDeliveries,
+                attributes:['id','imgUpload','noOfItems','note','deliveryType','bookingId','userId']
             },
             {
                 model: bookingHistory,
@@ -1323,8 +1348,10 @@ async function invoiceCreation(req, res) {
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] },
     });
+    
+    console.log("invoiceDetails================================>>>>>>>>>>>>>>>>>>>>>",invoiceDetails)
 
-    return res.json(responsefunc("1", "Invoice Details", invoiceDetails, ""));
+    return res.json(responsefunc("1", "Invoice Details", {invoiceDetails}, ""));
 }
 
 /*

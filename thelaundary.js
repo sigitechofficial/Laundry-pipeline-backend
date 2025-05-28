@@ -100,7 +100,7 @@ let syncDb = 0;
 async function startServer() {
   try {
     if (syncDb) {
-      await db.sequelize.sync({ force: true });
+      await db.sequelize.sync({ alter: true });
       console.log('Database synchronized successfully.');
     }
     server.listen(server_port, function (err) {

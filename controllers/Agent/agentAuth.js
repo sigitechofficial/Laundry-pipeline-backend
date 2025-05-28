@@ -12,7 +12,8 @@ const { users,
     machines,
     machineCount,
     addressDb,
-zone } = require('../../models')
+    zone,
+    units } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -129,7 +130,7 @@ async function registerAgentOTP(req, res) {
             reqAt: dt,
             userId: userCreate.id
         })
-        console.log("🚀 ~ registerCustomerOTP ~ otpCreatetion:", otpCreatetion)
+        console.log("ðŸš€ ~ registerCustomerOTP ~ otpCreatetion:", otpCreatetion)
 
         return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpCreatetion.id, userId: userCreate.id }))
     }
@@ -264,7 +265,7 @@ async function resendOTP(req, res) {
 */
 // async function registerAgent(req, res) {
 //     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
-//     console.log("🚀 ~ registerCustomer ~ req.body:", req.body)
+//     console.log("ðŸš€ ~ registerCustomer ~ req.body:", req.body)
 
 //     let profileImg = null;
 //     if (req.file) {
@@ -299,7 +300,7 @@ async function resendOTP(req, res) {
 //             ],
 //         ],
 //     })
-//     console.log("🚀 ~ registerAgent ~ userfind:", userfind)
+//     console.log("ðŸš€ ~ registerAgent ~ userfind:", userfind)
 
 
 //     if (userfind && userfind.userTypeId === 3) {
@@ -321,10 +322,10 @@ async function resendOTP(req, res) {
 //     }
 
 //     const hashpass = await bcrypt.hash(password, 8)
-//     console.log("🚀 ~ registerCustomer ~ hashpass:", hashpass)
+//     console.log("ðŸš€ ~ registerCustomer ~ hashpass:", hashpass)
 
 //     const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
-//     console.log("🚀 ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
+//     console.log("ðŸš€ ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
 
 //     await users.update({
 //         firstName,
@@ -373,7 +374,7 @@ async function resendOTP(req, res) {
 */
 async function registerAgentWithOTP(req, res) {
     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email } = req.body;
-    console.log("🚀 ~ registerAgentWithOTP ~ req.body:", req.body);
+    console.log("ðŸš€ ~ registerAgentWithOTP ~ req.body:", req.body);
 
     let profileImg = null;
     if (req.file) {
@@ -413,7 +414,7 @@ async function registerAgentWithOTP(req, res) {
         ],
     });
 
-    console.log("🚀 ~ registerAgentWithOTP ~ userfind:", userfind);
+    console.log("ðŸš€ ~ registerAgentWithOTP ~ userfind:", userfind);
 
     if (userfind?.email === email && userfind?.userTypeId === 4) {
         throw new customError('User Already Exists')
@@ -433,7 +434,7 @@ async function registerAgentWithOTP(req, res) {
 
 
         const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        console.log("🚀 ~ registerAgentWithOTP ~ stripeCustomer:", stripeCustomer);
+        console.log("ðŸš€ ~ registerAgentWithOTP ~ stripeCustomer:", stripeCustomer);
 
         // Generate OTP
         const otp = otpGenerator.generate(4, {
@@ -475,7 +476,7 @@ async function registerAgentWithOTP(req, res) {
             where: { id: userCreate.id }
         });
 
-        console.log("🚀 ~ registerAgentWithOTP ~ otpCreation:", otpCreation);
+        console.log("ðŸš€ ~ registerAgentWithOTP ~ otpCreation:", otpCreation);
 
         return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id }));
     }
@@ -509,7 +510,7 @@ async function agentBusinessInfo(req, res) {
             machineId: ele.machineId,
             bussinessInformationId: agentInfo.id
         }))
-        console.log("🚀 ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
+        console.log("ðŸš€ ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
 
         await machineCount.bulkCreate(machinesCountCreate)
 
@@ -541,7 +542,7 @@ async function agentBusinessInfo(req, res) {
         machineId: ele.machineId,
         bussinessInformationId: agentInfo.id
     }))
-    console.log("🚀 ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
+    console.log("ðŸš€ ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
 
     await machineCount.bulkCreate(machinesCountCreate)
 
@@ -573,7 +574,7 @@ async function businesInfoAdded(req, res) {
         status: true,
         agentServiceId: userId
     }))
-    console.log("🚀 ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
+    console.log("ðŸš€ ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
 
     const serviceCreate = await agentSelectServices.bulkCreate(servicesSelect)
 
@@ -636,10 +637,17 @@ async function loginUser(req, res) {
             {
                 model: addressDb,
                 attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
-                include:[
+                include: [
                     {
-                        model:zone,
-                        attributes:['id','name','zoneMinimumAmount','serviceCharge','currencyUnitId','distanceUnitId']
+                        model: zone,
+                        attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId', 'distanceUnitId'],
+                        include: [
+                            {
+                                model: units,
+                                as: 'currencyUnitZ',
+                                attributes: ['name', 'symbol']
+                            }
+                        ]
                     }
                 ]
             },
@@ -679,7 +687,7 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind.addressDbs.zone.currencyUnitId)
+    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind.addressDb.zone.currencyUnitId)
 
     // return res.json(userFind)
     if (!userFind) {
@@ -888,7 +896,7 @@ async function loginUser(req, res) {
 
 
     const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken)
-    console.log("ðŸš€ ~ loginUser ~ dvTokenFound:", dvTokenFound)
+    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ dvTokenFound:", dvTokenFound)
     if (!dvTokenFound) {
         await deviceToken.create({
             tokenId: dvToken,
@@ -948,7 +956,7 @@ async function forgetPasswordRequest(req, res) {
         include: { model: otpVerification, attributes: ["id"] },
         attributes: ["id"],
     });
-    console.log("🚀 ~ forgetPasswordRequest ~ users:", userData)
+    console.log("ðŸš€ ~ forgetPasswordRequest ~ users:", userData)
 
     // user not found
     if (!userData)
@@ -1266,8 +1274,8 @@ let loginData = (userData, accessToken, isGuest, features) => {
             email: `${userData.email}`,
             accessToken: `${accessToken}`,
             userTypeId: `${userData.userTypeId}`,
-            addressId:`${userData?.addressDb?.id}`,
-            currencyUnitId:`${userData?.addressDb?.zone?.currencyUnitId}`,
+            addressId: `${userData?.addressDb?.id}`,
+            currencyUnit: `${userData?.addressDb?.zone?.currencyUnitZ?.symbol}`,
             isGuest,
             joinedOn: userData.dataValues.joinedOn
                 ? userData.dataValues.joinedOn
