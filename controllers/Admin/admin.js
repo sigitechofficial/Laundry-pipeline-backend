@@ -1601,23 +1601,43 @@ async function getCategories(req, res) {
 /*
   * Assign Services to Categories
 */
-async function serviceCategoriesAssign(req,res) {
-    const{serviceId,categoryId}=req.body
+async function serviceCategoriesAssign(req, res) {
+    const { serviceId, categoryId } = req.body;
 
-    if(!serviceId || !categoryId || !Array.isArray(categoryId) || categoryId.length ===0){
-        throw new customError("Invalid input. Please provide serviceId and an array of categoryIds.")
+    if (!serviceId || !categoryId || !Array.isArray(categoryId) || categoryId.length === 0) {
+        throw new customError("Invalid input. Please provide serviceId and an array of categoryIds.");
     }
+
     
-    const serviceCategoriesData=categoryId.map(id =>({
-        serviceId:serviceId,
-        categoryId:id,
-        status:true
-    }))
+    const existingAssignments = await serviceCategories.findAll({
+        where: {
+            serviceId,
+            categoryId: { [Op.in]: categoryId },
+            status: true
+        },
+        attributes: ['categoryId']
+    });
 
-    const createData=await serviceCategories.bulkCreate(serviceCategoriesData)
+    const existingCategoryIds = existingAssignments.map(item => item.categoryId);
 
+    
+    const newCategoryIds = categoryId.filter(id => !existingCategoryIds.includes(id));
 
-    return res.json(responsefunc("1","Service Assign to Categories",{createData},""))
+    if (newCategoryIds.length === 0) {
+        return res.json(responsefunc("0", "All selected categories are already assigned to the service.", {}, ""));
+    }
+
+    
+    const serviceCategoriesData = newCategoryIds.map(id => ({
+        serviceId: serviceId,
+        categoryId: id,
+        status: true
+    }));
+
+    
+    const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
+
+    return res.json(responsefunc("1", "Service assigned to categories successfully.", { createData }, ""));
 }
 
 

@@ -18,6 +18,10 @@ module.exports = {
       status: {
         type: Sequelize.BOOLEAN
       },
+      description: {
+        type: Sequelize.STRING,
+        allowNull: true,
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

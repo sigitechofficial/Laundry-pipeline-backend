@@ -28,7 +28,8 @@ const {
     proofOfDeliveries,
     OnHoldConfirmation,
     machines,
-    servicePreferences
+    servicePreferences,
+    serviceCategories
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -237,8 +238,8 @@ async function getBookingHome(req, res) {
                 attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum']
             },
             {
-                model:zone,
-                attributes:['id','name','zoneMinimumAmount','serviceCharge','currencyUnitId']
+                model: zone,
+                attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId']
             }
         ],
         attributes: ['id',
@@ -650,7 +651,7 @@ async function invoiceDetailTab(req, res) {
     results.All = await booking.findAll({
         where: {
             laundryShopId: addressFound.id,
-            bookingStatusId:8
+            bookingStatusId: 8
         },
         attributes: [
             "id",
@@ -828,7 +829,7 @@ async function agentBookingStatusOnTheWay(req, res) {
  *   Driver/Agent Add pictures of pickup and delivery
  */
 async function AddPickupDeliveryProof(req, res) {
-    const { noOfItems, note, bookingId,deliveryType } = req.body;
+    const { noOfItems, note, bookingId, deliveryType } = req.body;
     console.log("🚀 ~ AddPickupDeliveryProof ~ req.body:", req.body);
     const userId = req.user.id;
 
@@ -1227,7 +1228,7 @@ async function driverAddSerivces(req, res) {
  */
 async function invoiceCreation(req, res) {
     const bookingId = req.params.bookingId;
-    console.log("bookingId",bookingId)
+    console.log("bookingId", bookingId)
     const invoiceDetails = await booking.findAll({
         where: {
             id: bookingId,
@@ -1236,7 +1237,7 @@ async function invoiceCreation(req, res) {
             {
                 model: users,
                 as: "customer",
-                attributes: ["firstName", "lastName", "email", "phoneNum","image"],
+                attributes: ["firstName", "lastName", "email", "phoneNum", "image"],
             },
             {
                 model: addressDb,
@@ -1256,7 +1257,7 @@ async function invoiceCreation(req, res) {
                     },
                     {
                         model: cities,
-                        attributes: ['id',"name"],
+                        attributes: ['id', "name"],
                     },
                 ],
             },
@@ -1278,7 +1279,7 @@ async function invoiceCreation(req, res) {
                     },
                     {
                         model: cities,
-                        attributes: ['id',"name"],
+                        attributes: ['id', "name"],
                     },
                 ],
             },
@@ -1290,13 +1291,13 @@ async function invoiceCreation(req, res) {
                         model: service,
                         required: false,
                         attributes: { exclude: ["createdAt", "updatedAt", "timeRequired"] },
-                        include:[
+                        include: [
                             {
-                                model:servicePreferences,
-                                where:{
-                                    bookingId:bookingId
+                                model: servicePreferences,
+                                where: {
+                                    bookingId: bookingId
                                 },
-                                attributes:['id','type','chooseTemperature','numberOfBags','preferencesServiceNameId','serviceId']
+                                attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
                             }
                         ]
                     },
@@ -1332,8 +1333,8 @@ async function invoiceCreation(req, res) {
                 attributes: ["title", "description"],
             },
             {
-                model:proofOfDeliveries,
-                attributes:['id','imgUpload','noOfItems','note','deliveryType','bookingId','userId']
+                model: proofOfDeliveries,
+                attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
             },
             {
                 model: bookingHistory,
@@ -1348,10 +1349,10 @@ async function invoiceCreation(req, res) {
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] },
     });
-    
-    console.log("invoiceDetails================================>>>>>>>>>>>>>>>>>>>>>",invoiceDetails)
 
-    return res.json(responsefunc("1", "Invoice Details", {invoiceDetails}, ""));
+    console.log("invoiceDetails================================>>>>>>>>>>>>>>>>>>>>>", invoiceDetails)
+
+    return res.json(responsefunc("1", "Invoice Details", { invoiceDetails }, ""));
 }
 
 /*
@@ -2039,11 +2040,20 @@ async function getAgentServices(req, res) {
   *  Specific Service Detail For the Customer
 */
 async function serviceDetail(req, res) {
-    const { serviceId } = req.params
+    const agentId = req.user.id;
+
+
+    const agentServiceFind = await agentSelectServices.findAll({
+        where: { agentServiceId: agentId },
+        attributes: ['serviceId']
+    });
+
+    const serviceIds = agentServiceFind.map(service => service.serviceId);
+
 
     const serviceData = await serviceCategories.findAll({
         where: {
-            id: serviceId,
+            serviceId: { [Op.in]: serviceIds },
             status: true
         },
         include: [
@@ -2062,11 +2072,40 @@ async function serviceDetail(req, res) {
                 ]
             }
         ]
-    })
+    });
 
 
-    return res.json(responsefunc("1", "Service Details", { serviceData }, ""))
+    const grouped = {};
 
+    for (const item of serviceData) {
+        const serviceId = item.service.id;
+        const serviceName = item.service.name;
+
+        if (!grouped[serviceId]) {
+            grouped[serviceId] = {
+                serviceId: serviceId,
+                serviceName: serviceName,
+                categories: []
+            };
+        }
+
+
+        const categoryExists = grouped[serviceId].categories.find(cat => cat.id === item.category.id);
+        if (!categoryExists) {
+            grouped[serviceId].categories.push({
+                id: item.category.id,
+                name: item.category.name,
+                status: item.category.status,
+                image: item.category.image,
+                description: item.category.description,
+                subCategories: item.category.subCategories || []
+            });
+        }
+    }
+
+    const ServiceCategoriesList = Object.values(grouped);
+
+    return res.json(responsefunc("1", "Service Details", { ServiceCategoriesList }, ""));
 }
 
 //!------------------Get Countries && Cities------------------//
