@@ -65,7 +65,7 @@ const uploadServicePic = multer.diskStorage({
         createDestinationDirectory(destinationPath, cb);
     },
     filename: (req, file, cb) => {
-        cb(null, `CategoriesImg-${Date.now()}${path.extname(file.originalname)}`);
+        cb(null, `ServiceImg-${Date.now()}${path.extname(file.originalname)}`);
     },
 });
 

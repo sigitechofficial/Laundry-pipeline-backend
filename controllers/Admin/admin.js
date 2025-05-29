@@ -1539,7 +1539,7 @@ async function AddServices(req, res) {
 
     }
 
-    const serviceCreate = await categories.create({
+    const serviceCreate = await service.create({
         name,
         description,
         image: serviceImg,
