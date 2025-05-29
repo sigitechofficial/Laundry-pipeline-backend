@@ -678,8 +678,8 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
                     }]
                 },
                 {
-                    model:zone,
-                    attributes:['id','zoneMinimumAmount','serviceCharge','currencyUnitId']
+                    model: zone,
+                    attributes: ['id', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId']
                 }
             ]
         });
@@ -703,12 +703,12 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
 
         const eventData = {
             type: 'newBookingRequest',
-            data: availableShops.map(shop => ({
-                shopId: shop.id,
-                shopName: shop?.user?.businessInfo?.shopName,
-                owner: shop.user.firstName + ' ' + shop.user.lastName,
-                ownerEmail: shop.user.email,
-                zoneId: shop.zoneId,
+            data: {
+                shopId: availableShops[0].id,
+                shopName: availableShops[0]?.user?.businessInfo?.shopName,
+                owner: availableShops[0].user.firstName + ' ' + availableShops[0].user.lastName,
+                ownerEmail: availableShops[0].user.email,
+                zoneId: availableShops[0].zoneId,
                 bookingId: bookingId,
                 customer: {
                     firstName: bookingDetails.customer.firstName,
@@ -732,7 +732,7 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
                 customerServices: {
                     services: customerService
                 }
-            }))
+            }
         };
         availableShops.forEach(shop => {
             sendEvent(shop.user.id, eventData);

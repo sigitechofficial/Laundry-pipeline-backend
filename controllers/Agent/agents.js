@@ -1228,7 +1228,7 @@ async function driverAddSerivces(req, res) {
 async function invoiceCreation(req, res) {
     const bookingId = req.params.bookingId;
     console.log("bookingId",bookingId)
-    const invoiceDetails = await booking.findOne({
+    const invoiceDetails = await booking.findAll({
         where: {
             id: bookingId,
         },
@@ -1296,7 +1296,7 @@ async function invoiceCreation(req, res) {
                                 where:{
                                     bookingId:bookingId
                                 },
-                                attributes:['id','type','chooseTemperature','numberOfBags','preferenceServiceNameId','serviceId']
+                                attributes:['id','type','chooseTemperature','numberOfBags','preferencesServiceNameId','serviceId']
                             }
                         ]
                     },
@@ -2035,6 +2035,40 @@ async function getAgentServices(req, res) {
     return res.json(responsefunc("1", "Services Found", findServices, ""));
 }
 
+/*
+  *  Specific Service Detail For the Customer
+*/
+async function serviceDetail(req, res) {
+    const { serviceId } = req.params
+
+    const serviceData = await serviceCategories.findAll({
+        where: {
+            id: serviceId,
+            status: true
+        },
+        include: [
+            {
+                model: service,
+                attributes: ['id', 'name', 'status']
+            },
+            {
+                model: categories,
+                attributes: ['id', 'name', 'status', 'image', 'description'],
+                include: [
+                    {
+                        model: subCategories,
+                        attributes: ['id', 'name', 'status', 'price']
+                    }
+                ]
+            }
+        ]
+    })
+
+
+    return res.json(responsefunc("1", "Service Details", { serviceData }, ""))
+
+}
+
 //!------------------Get Countries && Cities------------------//
 async function getCountries(req, res) {
     const countriesFind = await countries.findAll();
@@ -2336,6 +2370,7 @@ module.exports = {
     getAllEmployees,
     //--------------------Agent Services------------//
     getAgentServices,
+    serviceDetail,
     //-------------------Customer Services-------//
     customerServices,
     //-----------Booking OnHold--------------//

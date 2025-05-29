@@ -393,11 +393,19 @@ router.get(
     asyncMiddleware(agentController.getAllEmployees)
 );
 //!-------------------------------------------------Agent Services----------------------------------------------------//
+//Get Agent Services
 router.get(
     "/getAgentServices",
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.getAgentServices)
+);
+//Services Deatils for Showing
+router.get(
+    "/serviceDetail",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.serviceDetail)
 );
 //!--------------------------------------Customer Selected Services--------------------------------------------------//
 router.get(
