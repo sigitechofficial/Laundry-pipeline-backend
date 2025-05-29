@@ -1528,21 +1528,25 @@ async function getZones(req, res) {
 
 */
 async function AddServices(req, res) {
-    const services = req.body
-    console.log("🚀 ~ AddServices ~ req.body:", req.body)
+    const { name, description } = req.body
 
-    if (!Array.isArray(services) || services.length === 0) {
-        throw new customError("Invalid request. Please provide an array of services.")
+    let serviceImg = null;
+
+    if (req.file) {
+
+        let tempImage = req.file.path;
+        serviceImg = tempImage.replace(/\\/g, "/")
+
     }
 
-    const createService = await service.bulkCreate(
-        services.map((service) => ({
-            ...service,
-            status: true
-        }))
-    )
+    const serviceCreate = await categories.create({
+        name,
+        description,
+        image: serviceImg,
+    })
 
-    return res.json(responsefunc("1", "Services Added Sucessfully", createService, ""))
+
+    return res.json(responsefunc("1", "Services Added Sucessfully", serviceCreate, ""))
 
 }
 

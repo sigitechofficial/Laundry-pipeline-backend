@@ -2067,7 +2067,7 @@ async function serviceDetail(req, res) {
                 include: [
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'status', 'price']
+                        attributes: ['id', 'name', 'status', 'price','description']
                     }
                 ]
             }
