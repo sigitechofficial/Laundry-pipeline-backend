@@ -17,15 +17,14 @@ module.exports = {
         updatedAt: new Date()
       },
       {
-        title: "Driver Out for PickUp",
-        description: "Driver accepted the the booking and coming for laundary pickup",
-        createdAt: new Date(),
-        updatedAt: new Date()
-
-      },
-      {
         title: "Awaiting Collection",
         description: "The booking is active, and the driver/agent is scheduled to collect the items at the specified time.",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        title: "Driver Out for PickUp",
+        description: "Driver accepted the the booking and coming for laundary pickup",
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -50,6 +49,12 @@ module.exports = {
       {
         title: "Delivered Laundry to Shop",
         description: "Driver Deliver Laundry to laundry Shop",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        title: "Agent Added the Services",
+        description: "Agent Added the Customer Services",
         createdAt: new Date(),
         updatedAt: new Date()
       },

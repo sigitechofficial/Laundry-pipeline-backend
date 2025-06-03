@@ -116,17 +116,7 @@ async function createBooking(req, res) {
         specialChars: false
     });
 
-    const createPreferences = preferencesArray.map((preferences) => ({
-        type: preferences.type,
-        chooseTemperature: preferences.chooseTemperature,
-        serviceId: preferences.serviceId,
-        preferencesServiceNameId: preferences.preferencesServiceNameId,
-        numberOfBags: preferences.numberOfBags
-    }))
 
-
-
-    await servicePreferences.bulkCreate(createPreferences)
 
 
     const bookingData = await booking.create({
@@ -149,6 +139,19 @@ async function createBooking(req, res) {
         driverInstructionOptions,
         driverInstructionOptions1
     });
+
+        const createPreferences = preferencesArray.map((preferences) => ({
+        type: preferences.type,
+        chooseTemperature: preferences.chooseTemperature,
+        serviceId: preferences.serviceId,
+        preferencesServiceNameId: preferences.preferencesServiceNameId,
+        numberOfBags: preferences.numberOfBags,
+        bookingId:bookingData.id
+    }))
+
+
+
+    await servicePreferences.bulkCreate(createPreferences)
 
 
     let total = 0;

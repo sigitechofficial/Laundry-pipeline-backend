@@ -71,7 +71,7 @@ const intilizeSocketFunc = (server) => {
                 let bookingId = bookingDetails.id
                 let agentId = bookingDetails.agentId
                 await booking.update({
-                    bookingStatusId: 4,
+                    bookingStatusId: 3,
                     laundryShopId: bookingDetails.laundryShopId,
                     driverId: agentId
                 }, { where: { id: bookingId } })
@@ -83,7 +83,7 @@ const intilizeSocketFunc = (server) => {
                 const currentDate = new Date().toISOString().split('T')[0];
                 console.log(currentDate);
                 console.log(currentTime);
-                const statusId = [2, 4];
+                const statusId = [2, 3];
                 const bookinghistories = statusId.map(statusId => ({
                     date: currentDate,
                     time: currentTime,

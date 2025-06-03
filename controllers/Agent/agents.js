@@ -1291,20 +1291,21 @@ async function invoiceCreation(req, res) {
                         model: service,
                         required: false,
                         attributes: { exclude: ["createdAt", "updatedAt", "timeRequired"] },
-                        include: [
-                            {
-                                model: servicePreferences,
-                                where: {
-                                    bookingId: bookingId
-                                },
-                                attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
-                            }
-                        ]
+                        // include: [
+                        //     {
+                        //         model: servicePreferences,
+                        //         required: false,
+                        //         where: {
+                        //             bookingId: bookingId
+                        //         },
+                        //         attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
+                        //     }
+                        // ]
                     },
                     {
                         model: categories,
                         required: false,
-                        attributes: { exclude: ["createdAt", "updatedAt"] },
+                        attributes: { exclude: ["createdAt", "updatedAt", "serviceId"] },
                     },
                     {
                         model: subCategories,
@@ -1336,23 +1337,30 @@ async function invoiceCreation(req, res) {
                 model: proofOfDeliveries,
                 attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
             },
-            {
-                model: bookingHistory,
-                include: [
-                    {
-                        model: bookingStatus,
-                        attributes: ["title", "description"],
-                    },
-                ],
-                attributes: ["date", "time", "bookingId", "bookingStatusId"],
-            },
+            // {
+            //     model: bookingHistory,
+            //     include: [
+            //         {
+            //             model: bookingStatus,
+            //             attributes: ["title", "description"],
+            //         },
+            //     ],
+            //     attributes: ["date", "time", "bookingId", "bookingStatusId"],
+            // },
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] },
     });
+    
+    
+    const nowInKarachi = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+const currentKarachiTime = new Date(nowInKarachi);
+const futureTime = new Date(currentKarachiTime.getTime() + 60 * 60 * 1000); // Add 1 hour
+const remainingTime = Math.floor((futureTime - currentKarachiTime) / 60000); // Should be 60
+
 
     console.log("invoiceDetails================================>>>>>>>>>>>>>>>>>>>>>", invoiceDetails)
 
-    return res.json(responsefunc("1", "Invoice Details", { invoiceDetails }, ""));
+    return res.json(responsefunc("1", "Invoice Details", { invoiceDetails,remainingTime }, ""));
 }
 
 /*
@@ -1369,6 +1377,16 @@ async function customerServices(req, res) {
             {
                 model: service,
                 attributes: ["id", "name"],
+                include: [
+                    {
+                        model: servicePreferences,
+                        required: false,
+                        where: {
+                            bookingId: bookingId
+                        },
+                        attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
+                    }
+                ]
             },
             {
                 model: categories,
@@ -1379,17 +1397,66 @@ async function customerServices(req, res) {
                 attributes: ["id", "name", "price"],
             },
         ],
+        attributes: ['categoryPrice', 'items']
     });
+
     console.log(
         "🚀 ~ customerServices ~ customerServicesFind:",
         customerServicesFind
     );
 
+    // Group by service name
+    const groupedServices = customerServicesFind.reduce((acc, item) => {
+        const serviceName = item.service.name;
+
+        // If the service name doesn't exist in the accumulator, create it
+        if (!acc[serviceName]) {
+            acc[serviceName] = {
+                serviceName,
+                serviceId: item.service.id,
+                servicePreferences: item.service.servicePreferences || [],
+                categories: []
+            };
+        }
+
+        // Find if category already exists for this service name
+        const existingCategoryIndex = acc[serviceName].categories.findIndex(
+            category => category.name === item.category.name
+        );
+
+        // If category doesn't exist, add it
+        if (existingCategoryIndex === -1) {
+            acc[serviceName].categories.push({
+                id: item.category.id,
+                name: item.category.name,
+                subCategories: [
+                    {
+                        id: item.subCategory.id,
+                        name: item.subCategory.name,
+                        price: item.subCategory.price
+                    }
+                ]
+            });
+        } else {
+            // If category exists, add the subcategory to it
+            acc[serviceName].categories[existingCategoryIndex].subCategories.push({
+                id: item.subCategory.id,
+                name: item.subCategory.name,
+                price: item.subCategory.price
+            });
+        }
+
+        return acc;
+    }, {});
+
+    // Convert the groupedServices object to an array
+    const formattedResponse = Object.values(groupedServices);
+
     return res.json(
         responsefunc(
             "1",
-            "Custoemr Selected Services",
-            { customerServices: customerServicesFind },
+            "Customer Selected Services",
+            { customerServices: formattedResponse },
             ""
         )
     );
@@ -2059,7 +2126,7 @@ async function serviceDetail(req, res) {
         include: [
             {
                 model: service,
-                attributes: ['id', 'name', 'status']
+                attributes: ['id', 'name', 'status', 'image']
             },
             {
                 model: categories,
@@ -2067,7 +2134,7 @@ async function serviceDetail(req, res) {
                 include: [
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'status', 'price','description']
+                        attributes: ['id', 'name', 'status', 'price', 'description']
                     }
                 ]
             }
@@ -2080,11 +2147,13 @@ async function serviceDetail(req, res) {
     for (const item of serviceData) {
         const serviceId = item.service.id;
         const serviceName = item.service.name;
+        const image = item.service.image
 
         if (!grouped[serviceId]) {
             grouped[serviceId] = {
                 serviceId: serviceId,
                 serviceName: serviceName,
+                image: image,
                 categories: []
             };
         }
