@@ -749,13 +749,13 @@ async function agentBookingStatusOnTheWay(req, res) {
         throw new customError(`Booking with this ${bookingId} not exists`);
     }
 
-    if (bookingfind.bookingStatusId !== 4) {
+    if (bookingfind.bookingStatusId !== 3) {
         throw new customError("No driver is assigned to your booking Yet");
     }
 
     await booking.update(
         {
-            bookingStatusId: 3,
+            bookingStatusId: 4,
         },
         { where: { id: bookingId } }
     );
@@ -772,7 +772,7 @@ async function agentBookingStatusOnTheWay(req, res) {
         bookingId: bookingId,
         date: currentDate,
         time: currentTime,
-        bookingStatusId: 3,
+        bookingStatusId: 4,
     });
 
     return res.json(
@@ -795,7 +795,7 @@ async function agentBookingStatusOnTheWay(req, res) {
         throw new customError(`Booking with this  id : ${bookingId} not exists`);
     }
 
-    if (bookingfind.bookingStatusId !== 3) {
+    if (bookingfind.bookingStatusId !== 4) {
         throw new customError("Your driver is still not out for pickup");
     }
 
@@ -896,7 +896,7 @@ async function agentInspectionStatus(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 7,
+            bookingStatusId: 6,
         },
         { where: { id: bookingId } }
     );
@@ -965,12 +965,13 @@ async function reachedAtDeliveryShopStatus(req, res) {
     return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
 }
 
-/*
- *   Laundry Status Updated That laundry is Washed
- */
-async function laundryWashCompleted(req, res) {
-    const { bookingId } = req.params;
 
+
+/*
+ *   Laundry Status Updated Invoice Generated and Status goes to In-Procesing
+ */
+async function bookingInvoiceGeneratedStatusUpdated(req, res) {
+    const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
         where: {
@@ -978,8 +979,8 @@ async function laundryWashCompleted(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 10) {
-        throw new customError("Booking is still not In Procesing or Invoice Not Generated");
+    if (bookingCheck.bookingStatusId !== 9) {
+        throw new customError("Booking is still not In Transit to Facility");
     }
 
     await booking.update(
@@ -997,10 +998,56 @@ async function laundryWashCompleted(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+
+    const statusId = [10, 11];
+    const bookinghistories = statusId.map(statusId => ({
+        date: currentDate,
+        time: currentTime,
+        bookingId: bookingId,
+        bookingStatusId: statusId
+    }))
+    await bookingHistory.bulkCreate(bookinghistories);
+
+    return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
+}
+
+
+/*
+ *   Laundry Status Updated That laundry is Washed
+ */
+async function laundryWashCompleted(req, res) {
+    const { bookingId } = req.params;
+
+
+    const bookingCheck = await booking.findOne({
+        where: {
+            id: bookingId,
+        },
+    });
+
+    if (bookingCheck.bookingStatusId !== 11) {
+        throw new customError("Booking is still not In Procesing or Invoice Not Generated");
+    }
+
+    await booking.update(
+        {
+            bookingStatusId: 12,
+        },
+        { where: { id: bookingId } }
+    );
+
+    const currentTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    const currentDate = new Date().toISOString().split("T")[0];
+
     await bookingHistory.create({
         date: currentDate,
         time: currentTime,
-        bookingStatusId: 11,
+        bookingStatusId: 12,
         bookingId: bookingId,
     });
     return res.json(responsefunc("1", "Laundry Has Been Washed At Shop", {}, ""));
@@ -1019,7 +1066,7 @@ async function laundryDeliverToCustomer(req, res) {
     if (driverId) {
         await booking.update(
             {
-                bookingStatusId: 12,
+                bookingStatusId: 13,
                 deliveryDriverId: driverId,
             },
             { where: { id: bookingId } }
@@ -1027,7 +1074,7 @@ async function laundryDeliverToCustomer(req, res) {
     } else {
         await booking.update(
             {
-                bookingStatusId: 12,
+                bookingStatusId: 13,
                 driverId: agentId,
             },
             { where: { id: bookingId } }
@@ -1046,7 +1093,7 @@ async function laundryDeliverToCustomer(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 12,
+        bookingStatusId: 13,
     });
 
     return res.json(
@@ -1071,13 +1118,13 @@ async function driverReachedForDelivery(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 12) {
+    if (bookingCheck.bookingStatusId !== 13) {
         throw new customError("Driver is not out to deliver your laundry");
     }
 
     await booking.update(
         {
-            bookingStatusId: 13,
+            bookingStatusId: 14,
         },
         { where: { id: bookingId } }
     );
@@ -1094,7 +1141,7 @@ async function driverReachedForDelivery(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 13,
+        bookingStatusId: 14,
     });
 
     return res.json(responsefunc("1", "Driver reached for delivery", {}, ""));
@@ -1112,13 +1159,13 @@ async function bookingDeliverToCustomer(req, res) {
         },
     });
 
-    if (bookingCheck.bookingStatusId !== 13) {
+    if (bookingCheck.bookingStatusId !== 14) {
         throw new customError("Driver not reached yet at customer destination");
     }
 
     await booking.update(
         {
-            bookingStatusId: 15,
+            bookingStatusId: 17,
         },
         { where: { id: bookingId } }
     );
@@ -1131,7 +1178,7 @@ async function bookingDeliverToCustomer(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    const statusId = [15, 16];
+    const statusId = [16, 17 ];
     const bookinghistories = statusId.map(statusId => ({
         date: currentDate,
         time: currentTime,
@@ -1405,11 +1452,11 @@ async function customerServices(req, res) {
         customerServicesFind
     );
 
-    // Group by service name
+    
     const groupedServices = customerServicesFind.reduce((acc, item) => {
         const serviceName = item.service.name;
 
-        // If the service name doesn't exist in the accumulator, create it
+        
         if (!acc[serviceName]) {
             acc[serviceName] = {
                 serviceName,
@@ -1419,12 +1466,12 @@ async function customerServices(req, res) {
             };
         }
 
-        // Find if category already exists for this service name
+        
         const existingCategoryIndex = acc[serviceName].categories.findIndex(
             category => category.name === item.category.name
         );
 
-        // If category doesn't exist, add it
+        
         if (existingCategoryIndex === -1) {
             acc[serviceName].categories.push({
                 id: item.category.id,
@@ -1438,7 +1485,7 @@ async function customerServices(req, res) {
                 ]
             });
         } else {
-            // If category exists, add the subcategory to it
+            
             acc[serviceName].categories[existingCategoryIndex].subCategories.push({
                 id: item.subCategory.id,
                 name: item.subCategory.name,
@@ -1449,7 +1496,7 @@ async function customerServices(req, res) {
         return acc;
     }, {});
 
-    // Convert the groupedServices object to an array
+    
     const formattedResponse = Object.values(groupedServices);
 
     return res.json(
@@ -2461,6 +2508,7 @@ module.exports = {
     driverReachedForDelivery,
     bookingDeliverToCustomer,
     invoiceDetailTab,
+    bookingInvoiceGeneratedStatusUpdated,
     //----------------ClassifiedAs--------------//
     addClassifiedAs,
     getClassifiedAs,

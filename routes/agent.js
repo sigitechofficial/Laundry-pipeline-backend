@@ -300,6 +300,9 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.invoiceDetailTab)
 );
+
+//Invoice Generate Status 
+router.patch("/bookingInvoiceGeneratedStatusUpdated", validateAccessToken, checkPermissions, asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated))
 //!--------------------------Agent Cancel Booking--------------------------------------------------------------------------//
 //Agent Calcel Booking
 router.post(
