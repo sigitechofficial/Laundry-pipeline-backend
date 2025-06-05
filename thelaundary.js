@@ -54,12 +54,15 @@ const corsOptions = {
     if (origin === 'http://localhost:3000') {
       return callback(null, true);
     }
+    
+    if (origin === 'https://backendlaundary.fomino.ch') {
+      return callback(null, true);
+    }
 
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true, 
 };
-
 console.log("corsOptions------------->>>>>",corsOptions.origin)
 
 // === Apply middleware ===

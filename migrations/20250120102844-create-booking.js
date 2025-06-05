@@ -33,6 +33,10 @@ module.exports = {
       orderAmount: {
         type: Sequelize.FLOAT
       },
+      subTotal: {
+        type: Sequelize.FLOAT,
+        allowNull: true,
+      },
       frequency: {
         type: Sequelize.ENUM('Just Once', 'Weekly', 'Every two weeks', 'Every four weeks')
       },

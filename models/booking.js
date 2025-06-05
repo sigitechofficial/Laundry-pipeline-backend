@@ -92,6 +92,10 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.FLOAT,
       allowNull:true,
     },
+    subTotal:{
+      type:DataTypes.FLOAT,
+      allowNull:true,
+    },
     frequency: {
       type:DataTypes.ENUM('Just Once','Weekly','Every two weeks','Every four weeks'),
       allowNull:false,

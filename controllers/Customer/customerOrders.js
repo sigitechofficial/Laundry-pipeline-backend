@@ -42,11 +42,6 @@ const { title } = require("process");
 
 
 
-
-
-
-
-
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -75,7 +70,7 @@ async function createBooking(req, res) {
         driverInstructionOptions1,
         preferencesArray } = req.body;
 
-    console.log("🚀 ~ createBooking ~ req.body:", req.body);
+    console.log("ðŸš€ ~ createBooking ~ req.body:", req.body);
 
     const userId = req.user.id;
     let userAddressId;
@@ -89,9 +84,9 @@ async function createBooking(req, res) {
     let zoneId = findZone[0].id;
     let zoneUpfrontAmount = findZone[0].zoneMinimumAmount
     let zoneSeviceCharge = findZone[0].serviceCharge
-    console.log("🚀 ~ createBooking ~ findZone:", zoneId);
-    console.log("🚀 ~ createBooking ~ findZone:", zoneUpfrontAmount);
-    console.log("🚀 ~ createBooking ~ findZone:", zoneSeviceCharge);
+    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneId);
+    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneUpfrontAmount);
+    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneSeviceCharge);
 
     //return res.json(findZone)
 
@@ -137,16 +132,17 @@ async function createBooking(req, res) {
         partialPayment: false,
         zoneId: zoneId,
         driverInstructionOptions,
-        driverInstructionOptions1
+        driverInstructionOptions1,
+        subTotal: 0
     });
 
-        const createPreferences = preferencesArray.map((preferences) => ({
+    const createPreferences = preferencesArray.map((preferences) => ({
         type: preferences.type,
         chooseTemperature: preferences.chooseTemperature,
         serviceId: preferences.serviceId,
         preferencesServiceNameId: preferences.preferencesServiceNameId,
         numberOfBags: preferences.numberOfBags,
-        bookingId:bookingData.id
+        bookingId: bookingData.id
     }))
 
 
@@ -189,16 +185,16 @@ async function createBooking(req, res) {
 
             return serviceObj;
         });
-        console.log("🚀 ~ createBooking ~ serviceData:", serviceData);
+        console.log("ðŸš€ ~ createBooking ~ serviceData:", serviceData);
         let serviceCreate = await customerSelectedService.bulkCreate(serviceData);
-        console.log("🚀 ~ createBooking ~ serviceCreate:", serviceCreate);
+        console.log("ðŸš€ ~ createBooking ~ serviceCreate:", serviceCreate);
     } else if (services.length === 0) {
         throw new customError("Cannot Continue without Selection of Service Types", "Select Minimum one Service Type")
     }
 
     const ordertrackingNumber = `${bookingData.id}-${orderTrackingId}`;
     const upfrontAmount = zoneUpfrontAmount;
-    console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
+    console.log("ðŸš€ ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
     // const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
     //     'en-GB',
@@ -210,7 +206,7 @@ async function createBooking(req, res) {
     // );
 
     const fixTimeKey = getTimePlusMinutes()
-    console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey)
+    console.log("ðŸš€ ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey)
 
 
     // Create the billing details
@@ -262,7 +258,7 @@ async function onHoldCustomerShow(req, res) {
             }
         ]
     })
-    console.log("🚀 ~ onHoldCustomerShow ~ userFound:", userFound.customer.id)
+    console.log("ðŸš€ ~ onHoldCustomerShow ~ userFound:", userFound.customer.id)
 
 
     const optionIdFound = await OnHoldConfirmation.findOne({
@@ -275,7 +271,7 @@ async function onHoldCustomerShow(req, res) {
         }],
         attributes: ['onHoldOptionId']
     })
-    console.log("🚀 ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound)
+    console.log("ðŸš€ ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound)
 
 
     const customerOptionFound = await onHoldCustomerOption.findOne({
@@ -314,7 +310,7 @@ async function customerResponseUpdate(req, res) {
             }
         ]
     })
-    console.log("🚀 ~ customerResponseUpdate ~ bookingFind:", bookingFind.laundryShop.user.id)
+    console.log("ðŸš€ ~ customerResponseUpdate ~ bookingFind:", bookingFind.laundryShop.user.id)
     const userId = bookingFind.laundryShop.user.id
     //return res.json(bookingFind)
 
@@ -549,7 +545,7 @@ async function findZones(lat, lng) {
         }
     });
 
-    console.log("🚀 ~ findZones ~ findZone:", findZone);
+    console.log("ðŸš€ ~ findZones ~ findZone:", findZone);
 
     if (findZone.length === 0) {
         throw new customError("Service not served in this area");
@@ -560,7 +556,7 @@ async function findZones(lat, lng) {
 
 
 async function checkIfTimeSlotBooked(shopId, deliveryTimeFrom, deliveryTimeTo, collectionTimeFrom, collectionTimeTo) {
-    console.log("🚀 ~ checkIfTimeSlotBooked ~ shopId:", shopId);
+    console.log("ðŸš€ ~ checkIfTimeSlotBooked ~ shopId:", shopId);
 
     const existingTimeSlots = await booking.findAll({
         where: {
@@ -612,7 +608,7 @@ async function checkIfTimeSlotBooked(shopId, deliveryTimeFrom, deliveryTimeTo, c
         ]
     });
 
-    console.log("🚀 ~ checkIfTimeSlotBooked ~ existingTimeSlots:", existingTimeSlots);
+    console.log("ðŸš€ ~ checkIfTimeSlotBooked ~ existingTimeSlots:", existingTimeSlots);
 
     return existingTimeSlots;
 }
@@ -638,19 +634,19 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
         attributes: ['id', 'status', 'zoneId', 'userId']
     });
 
-    console.log("🚀 ~ getBookingDetails ~ getShopsAndOwners ----------------->:", getShopsAndOwners);
+    console.log("ðŸš€ ~ getBookingDetails ~ getShopsAndOwners ----------------->:", getShopsAndOwners);
 
     let availableShops = [];
 
     for (let shop of getShopsAndOwners) {
         let checkSlots = await checkIfTimeSlotBooked(shop.id, deliveryDate, collectionTimeTo, collectionTimeFrom, collectionDate, deliveryTimeTo, deliveryTimeFrom);
-        console.log("🚀 ~ getBookingDetails ~ checkSlots:", checkSlots);
+        console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
         if (!checkSlots || checkSlots.length === 0) {
             availableShops.push(shop);
         }
     }
 
-    console.log("🚀 ~ getBookingDetails ~ availableShops:", availableShops);
+    console.log("ðŸš€ ~ getBookingDetails ~ availableShops:", availableShops);
 
     if (availableShops.length > 0) {
         const bookingDetails = await booking.findOne({
@@ -687,7 +683,7 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
             ]
         });
 
-        console.log("🚀 ~ getBookingDetails ~ bookingDetails:", bookingDetails);
+        console.log("ðŸš€ ~ getBookingDetails ~ bookingDetails:", bookingDetails);
 
 
         const customerService = bookingDetails.customerSelectedServices.length > 0
@@ -704,37 +700,76 @@ async function bookingEventSentCheckTheShops(bookingId, zoneId, collectionDate, 
             }))
             : [];
 
+        // const eventData = {
+        //     type: 'newBookingRequest',
+        //     data: {
+        //         shopId: availableShops[0].id,
+        //         shopName: availableShops[0]?.user?.businessInfo?.shopName,
+        //         owner: availableShops[0].user.firstName + ' ' + availableShops[0].user.lastName,
+        //         ownerEmail: availableShops[0].user.email,
+        //         zoneId: availableShops[0].zoneId,
+        //         bookingId: bookingId,
+        //         customer: {
+        //             firstName: bookingDetails.customer.firstName,
+        //             lastName: bookingDetails.customer.lastName,
+        //             email: bookingDetails.customer.email,
+        //             phoneNum: bookingDetails.customer.phoneNum
+        //         },
+        //         orderDetails: {
+        //             orderTrackId: bookingDetails.orderTrackId,
+        //             collectionDate: collectionDate,
+        //             collectionTimeTo: collectionTimeTo,
+        //             collectionTimeFrom: collectionTimeFrom,
+        //             deliveryDate: deliveryDate,
+        //             deliveryTimeTo: deliveryTimeTo,
+        //             deliveryTimeFrom: deliveryTimeFrom,
+        //             totalAmount: bookingDetails?.billingDetail?.total,
+        //             serviceCharge: bookingDetails?.zone?.serviceCharge,
+        //             categoryCharge: bookingDetails?.billingDetail?.categoryCharge,
+        //             upfrontAmount: bookingDetails?.zone?.zoneMinimumAmount,
+        //         },
+        //         customerServices: {
+        //             services: customerService
+        //         }
+        //     }
+        // };
         const eventData = {
+
             type: 'newBookingRequest',
             data: {
-                shopId: availableShops[0].id,
-                shopName: availableShops[0]?.user?.businessInfo?.shopName,
-                owner: availableShops[0].user.firstName + ' ' + availableShops[0].user.lastName,
-                ownerEmail: availableShops[0].user.email,
-                zoneId: availableShops[0].zoneId,
-                bookingId: bookingId,
+                id: bookingDetails.id,
+                orderTrackId: bookingDetails.orderTrackId,
+                collectionDate,
+                collectionTimeTo,
+                collectionTimeFrom,
+                deliveryDate,
+                deliveryTimeTo,
+                deliveryTimeFrom,
+                driverInstructionOptions: bookingDetails.driverInstructionOptions || null,
+                driverInstructionOptions1: bookingDetails.driverInstructionOptions1 || null,
+                driverInstruction: bookingDetails.driverInstruction || null,
+                paymentConfirmed: bookingDetails.paymentConfirmed || false,
+                partialPayment: bookingDetails.partialPayment || false,
+                totalItems: bookingDetails.totalItems || 0,
+                orderAmount: bookingDetails?.billingDetail?.total || 0,
+                frequency: bookingDetails.frequency || "Just Once",
+                orderExpireTime: bookingDetails.orderExpireTime || null,
+                pickupAddresId: bookingDetails.pickupAddresId || null,
+                dropOffAddressId: bookingDetails.dropOffAddressId || null,
+                laundryShopId: availableShops[0]?.id || null,
+                customerId: bookingDetails.customer.id,
+
+                pickupAddress: bookingDetails.pickupAddress || {},
                 customer: {
+                    id: bookingDetails.customer.id,
                     firstName: bookingDetails.customer.firstName,
                     lastName: bookingDetails.customer.lastName,
                     email: bookingDetails.customer.email,
+                    userTypeId: bookingDetails.customer.userTypeId || 2,
+                    image: bookingDetails.customer.image || null,
                     phoneNum: bookingDetails.customer.phoneNum
                 },
-                orderDetails: {
-                    orderTrackId: bookingDetails.orderTrackId,
-                    collectionDate: collectionDate,
-                    collectionTimeTo: collectionTimeTo,
-                    collectionTimeFrom: collectionTimeFrom,
-                    deliveryDate: deliveryDate,
-                    deliveryTimeTo: deliveryTimeTo,
-                    deliveryTimeFrom: deliveryTimeFrom,
-                    totalAmount: bookingDetails?.billingDetail?.total,
-                    serviceCharge: bookingDetails?.zone?.serviceCharge,
-                    categoryCharge: bookingDetails?.billingDetail?.categoryCharge,
-                    upfrontAmount: bookingDetails?.zone?.zoneMinimumAmount,
-                },
-                customerServices: {
-                    services: customerService
-                }
+                zone: bookingDetails.zone || {}
             }
         };
         availableShops.forEach(shop => {
