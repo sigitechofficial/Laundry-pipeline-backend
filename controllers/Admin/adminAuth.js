@@ -71,10 +71,20 @@ async function signIn(req, res) {
     const featureData = await features.findAll({
         where: {
             status: true,
-            featureOf:'Admin'
+            featureOf: 'Admin'
         },
         attributes: ['id', 'title']
     })
+
+    const zoneAdminFind = await zone.findOne({
+        where: {
+            zoneAdminId: adminData.id
+        },
+        attributes: ['id', 'name']
+    })
+
+    const zoneId = zoneAdminFind?.id
+    console.log("🚀 ~ signIn ~ zoneId:", zoneId)
 
 
 
@@ -82,6 +92,7 @@ async function signIn(req, res) {
         id: adminData.id,
         email: adminData.email,
         dvToken: dvToken,
+        zoneId: zoneId || "",
     };
 
 
@@ -101,13 +112,13 @@ async function signIn(req, res) {
     };
 
     res.cookie("accessToken", accessToken, {
-        //   httpOnly: true,
-        //   secure: true, 
-        //   sameSite: "None",
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
         path: "/admin",
         maxAge: 24 * 60 * 60 * 1000
-        });
-        
+    });
+
 
     return res.json(responsefunc("1", "Login Successful", output, ""));
 }

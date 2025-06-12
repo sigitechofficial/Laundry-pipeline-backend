@@ -19,7 +19,9 @@ const { users,
     onHoldOption,
     onHoldCustomerOption,
     serviceCategories,
-    servicePreferences } = require('../../models')
+    servicePreferences,
+    countries,
+    cities} = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -77,21 +79,23 @@ async function createBooking(req, res) {
     let userPickUpAddressId;
     let userDropOffAddressId;
 
-    console.log("Lat -------------->", pickUpAddress.lat);
-    console.log("Lng ---------------------->", pickUpAddress.lng);
+    // console.log("Lat -------------->", pickUpAddress.lat);
+    // console.log("Lng ---------------------->", pickUpAddress.lng);
 
     let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
     let zoneId = findZone[0].id;
     let zoneUpfrontAmount = findZone[0].zoneMinimumAmount
     let zoneSeviceCharge = findZone[0].serviceCharge
-    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneId);
-    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneUpfrontAmount);
-    console.log("ðŸš€ ~ createBooking ~ findZone:", zoneSeviceCharge);
+    let cityId=findZone[0].city.id
+    let countryId=findZone[0].city.country.id;
+    console.log("ðŸš€ ~ createBooking ~ findZone:==============================", zoneId);
+    console.log("ðŸš€ ~ createBooking ~ findZone:------------------------------", zoneUpfrontAmount);
+    console.log("ðŸš€ ~ createBooking ~ findZone:======================+++++++++", zoneSeviceCharge);
 
     //return res.json(findZone)
 
     if (addNewAddress || !pickUpAddressId) {
-        userAddressId = await addressAdder(addNewAddress, pickUpAddress, "pickUp", userId, pickUpAddressId);
+        userAddressId = await addressAdder(addNewAddress, pickUpAddress, "pickUp", userId, pickUpAddressId,cityId,countryId);
         userPickUpAddressId = userAddressId;
     } else {
         userPickUpAddressId = pickUpAddressId;
@@ -500,25 +504,45 @@ async function serviceDetail(req, res) {
 
 }
 //!---------------------------------Recurring functions------------------------>>>>>
-async function addressAdder(addNew, address, type, userId, addressId) {
-
+async function addressAdder(addNew, address, type, userId, addressId, cityId, countryId) {
     console.log("Address Data------>", address.lat);
     console.log("Address Data------>", address.lng);
-
+    console.log("City ID----------->", cityId);
+    console.log("Country ID-------->", countryId);
 
     if (addNew) {
-        const dropOffAddressData = await addressDb.create(address);
+        await addressDb.update(
+            { isDefault: false },
+            { where: { userId } }
+        );
+
+        const dropOffAddressData = await addressDb.create({
+            ...address,
+            userId,
+            type,
+            cityId,
+            countryId,
+            isDefault: true
+        });
+
         if (address.save) {
-            await addressDb.update({
-                userId,
-                type,
-            }, { where: { id: dropOffAddressData.id } });
+            await addressDb.update(
+                {
+                    userId,
+                    type,
+                    cityId,
+                    countryId
+                },
+                { where: { id: dropOffAddressData.id } }
+            );
         }
+
         return dropOffAddressData.id;
     } else {
         return addressId;
     }
 }
+
 
 
 
@@ -534,21 +558,35 @@ let responsefunc = (status, message, data, error) => {
 }
 
 async function findZones(lat, lng) {
-    // Checking if the coordinates are inside any of the zones
     const findZone = await zone.findAll({
         where: {
             status: true,
             coordinates: sequelize.where(
-                sequelize.fn('ST_Contains', sequelize.col('coordinates'), sequelize.fn('ST_GeomFromText', `POINT(${lng} ${lat})`)),
+                sequelize.fn(
+                    "ST_Contains",
+                    sequelize.col("coordinates"),
+                    sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
+                ),
                 true
-            )
-        }
+            ),
+        },
+        include: [
+            {
+                model: cities,
+                attributes: ["id", "name", "lat", "lng", "status"],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ["id", "name", "shortName", "status"],
+                    },
+                ],
+            },
+        ],
     });
 
-    console.log("ðŸš€ ~ findZones ~ findZone:", findZone);
 
     if (findZone.length === 0) {
-        throw new customError("Service not served in this area");
+        throw new customError("No Zone found for these lat,lngs and coordinates");
     }
 
     return findZone;

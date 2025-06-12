@@ -29,18 +29,16 @@ const { users,
     bussinessWorkingHours,
     features,
     agentSelectServices,
-serviceCategories } = require('../../models')
+    serviceCategories } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
-var JSbarcode = require('jsbarcode')
 const redisCli = require('../../redis/redis')
 const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
-const path = require('path')
 const { stat } = require('fs')
 const stripe = require('../stripe')
 const {
@@ -53,7 +51,10 @@ const { type } = require("os");
 const { group } = require("console");
 const { literal } = require('sequelize');
 const { registerCustomer } = require("../Customer/customerAuth");
-
+const { createCanvas } = require("canvas")
+const JsBarcode = require("jsbarcode")
+const fs = require("fs")
+const path = require("path")
 //!----------------------------------Customer Management-----------------------------------------//
 
 /*
@@ -433,14 +434,14 @@ async function ordersCount(req, res) {
 
     const completedOrder = await booking.count({
         where: {
-            bookingStatusId: 16
+            bookingStatusId: 17
         }
     })
 
     const onHoldOrders = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.or]: [17, 23]
+                [Op.or]: [18, 24]
             }
         }
     })
@@ -593,7 +594,7 @@ async function allCancelOrders(req, res) {
     const bookingsFind = await booking.findAll({
         where: {
             bookingStatusId: {
-                [Op.eq]: [18]
+                [Op.eq]: [19]
             }
         },
         include: [
@@ -639,7 +640,7 @@ async function allCancelOrders(req, res) {
     const cancelOrdersCount = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.eq]: [18]
+                [Op.eq]: [19]
             }
         }
     })
@@ -664,7 +665,7 @@ async function completeOrders(req, res) {
     const bookingsFind = await booking.findAll({
         where: {
             bookingStatusId: {
-                [Op.eq]: [16]
+                [Op.eq]: [17]
             }
         },
         include: [
@@ -710,7 +711,7 @@ async function completeOrders(req, res) {
     const completedOrdersCount = await booking.count({
         where: {
             bookingStatusId: {
-                [Op.eq]: [16]
+                [Op.eq]: [17]
             }
         }
     })
@@ -1330,13 +1331,13 @@ async function singleShopData(req, res) {
                         attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
                     },
                     {
-                        model:agentSelectServices,
-                        as:'agentServices',
-                        attributes:['id'],
-                        include:[
+                        model: agentSelectServices,
+                        as: 'agentServices',
+                        attributes: ['id'],
+                        include: [
                             {
-                                model:service,
-                                attributes:['id','name']
+                                model: service,
+                                attributes: ['id', 'name']
                             }
                         ]
                     }
@@ -1384,30 +1385,30 @@ async function singleShopData(req, res) {
 /*
    * Get Shop Employees
 */
-async function getShopEmployees(req,res) {
-    const{bussinessId}=req.params
+async function getShopEmployees(req, res) {
+    const { bussinessId } = req.params
 
-    const findEmployees=await bussinessInformation.findOne({
-        where:{
-            id:bussinessId
+    const findEmployees = await bussinessInformation.findOne({
+        where: {
+            id: bussinessId
         },
-        include:[
+        include: [
             {
-                model:users,
-                as:'businessInfo',
-                attributes:[
+                model: users,
+                as: 'businessInfo',
+                attributes: [
                     'id'
                     [
-                        sequelize.literal(`(SELECT * FROM users WHERE users.employeeOff = businessInfo.Id)`),
-                        'EmployeeData'
+                    sequelize.literal(`(SELECT * FROM users WHERE users.employeeOff = businessInfo.Id)`),
+                    'EmployeeData'
                     ]
                 ]
             }
         ]
     })
 
-    return res.json(responsefunc("1","Employee Data Fetched",findEmployees,""))
-    
+    return res.json(responsefunc("1", "Employee Data Fetched", findEmployees, ""))
+
 }
 
 
@@ -1486,7 +1487,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount,currencyUnitId,distanceUnitId,serviceCharge} = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge } = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1597,7 +1598,7 @@ async function getCategories(req, res) {
 
     const getCategories = await categories.findAll()
 
-    return res.json(responsefunc("1", "All Categories Fetched", getCategories,""))
+    return res.json(responsefunc("1", "All Categories Fetched", getCategories, ""))
 
 }
 
@@ -1612,7 +1613,7 @@ async function serviceCategoriesAssign(req, res) {
         throw new customError("Invalid input. Please provide serviceId and an array of categoryIds.");
     }
 
-    
+
     const existingAssignments = await serviceCategories.findAll({
         where: {
             serviceId,
@@ -1624,21 +1625,21 @@ async function serviceCategoriesAssign(req, res) {
 
     const existingCategoryIds = existingAssignments.map(item => item.categoryId);
 
-    
+
     const newCategoryIds = categoryId.filter(id => !existingCategoryIds.includes(id));
 
     if (newCategoryIds.length === 0) {
         return res.json(responsefunc("0", "All selected categories are already assigned to the service.", {}, ""));
     }
 
-    
+
     const serviceCategoriesData = newCategoryIds.map(id => ({
         serviceId: serviceId,
         categoryId: id,
         status: true
     }));
 
-    
+
     const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
 
     return res.json(responsefunc("1", "Service assigned to categories successfully.", { createData }, ""));
@@ -1656,12 +1657,20 @@ async function addSubCategories(req, res) {
     const categoryData = req.body
     console.log("🚀 ~ addSubCategories ~ req.body:", req.body)
 
-    const createSubCategories = await subCategories.bulkCreate(
-        categoryData.map((categories) => ({
-            ...categories,
-            status: true
-        }))
-    )
+    const processedData = categoryData.map((cat) => {
+        const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
+        const barcodePath = generateBarcodeforSubCategories(cat.name, cat.price, fileName)
+
+        return {
+            ...cat,
+            status: true,
+            barCode: barcodePath
+        }
+
+    })
+    console.log("🚀 ~ processedData ~ processedData:", processedData)
+
+    const createSubCategories = await subCategories.bulkCreate(processedData);
 
     if (!createSubCategories) {
         throw new customError("There is error in the request")
@@ -2004,7 +2013,7 @@ async function createOnHoldOptionsAndCustomerOptions(req, res) {
 
 
 
-//!Recurring functions
+//!===================================================Recurring functions=======================================//
 let responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
@@ -2012,6 +2021,32 @@ let responsefunc = (status, message, data, error) => {
         data: data,
         error: `${error}`
     }
+}
+
+function generateBarcodeforSubCategories(name, price, fileName) {
+    const canvas = createCanvas(800, 300); // Wider + taller canvas
+    const barcodeData = `${name.replace(/\s/g, '')}-${price}`;
+
+    JsBarcode(canvas, barcodeData, {
+        format: "CODE128",
+        width: 3,         
+        height: 200,      
+        displayValue: false,
+        fontSize: 20,
+        margin: 20,  
+    });
+
+    const buffer = canvas.toBuffer("image/png");
+
+    const dirPath = path.join(__dirname, "..", "..", "Public", "BarCodeImages");
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+
+    const filePath = path.join(dirPath, fileName);
+    fs.writeFileSync(filePath, buffer);
+
+    return `Public/BarCodeImages/${fileName}`;
 }
 
 

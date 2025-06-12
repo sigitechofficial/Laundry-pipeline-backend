@@ -59,7 +59,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     timeRequired: {
       type: DataTypes.STRING(50),
-      allowNull: false
+      allowNull: true
     }
   }, {
     sequelize,

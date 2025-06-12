@@ -39,6 +39,10 @@ module.exports = (sequelize, DataTypes) => {
     description:{
       type:DataTypes.STRING,
       allowNull:true,
+    },
+    barCode:{
+      type:DataTypes.STRING,
+      allowNull:true
     }
   }, {
     sequelize,
