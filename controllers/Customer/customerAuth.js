@@ -126,7 +126,7 @@ async function registerCustomerOTP(req, res) {
   * Combine Register with OTP
 */
 async function registerCustomerWithOTP(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email } = req.body;
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email,countryCode } = req.body;
     console.log("🚀 ~ registerCustomerWithOTP ~ req.body:", req.body);
 
     let profileImg = null;
@@ -182,7 +182,8 @@ async function registerCustomerWithOTP(req, res) {
             phoneNum,
             userTypeId,
             password: hashedPassword,
-            status: true
+            status: true,
+            countryCode
         });
 
 
@@ -860,7 +861,7 @@ async function getUserProfile(req, res) {
         where: {
             id: userId
         },
-        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId']
+        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId','countryCode']
     })
 
     if (!userData) {
@@ -879,7 +880,7 @@ async function getUserProfile(req, res) {
 
 async function updateUserProfile(req, res) {
     const userId = req.user.id
-    const { firstName, lastName, email, isProfileImgChanged, phoneNum } = req.body
+    const { firstName, lastName, email, isProfileImgChanged, phoneNum,countryCode } = req.body
 
     const userFind = await users.findOne({
         where: {
@@ -911,6 +912,7 @@ async function updateUserProfile(req, res) {
         lastName,
         phoneNum,
         email,
+        countryCode,
         image: isProfileImgChanged === "true" ? profileImage : undefined,
 
     }, { where: { id: userId } })

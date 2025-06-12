@@ -55,6 +55,7 @@ const { type } = require("os");
 const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const { map } = require("../../routes/driver");
+const { resolveObjectURL } = require("buffer");
 
 //!----------------------------------Agent Shop Address Add-----------------------------//
 async function agentAddressAdd(req, res) {
@@ -2448,6 +2449,51 @@ async function getBussinessWrkinghours(req, res) {
 
     return res.json(responsefunc("1", "Information fetched", outObj, ""));
 }
+
+
+exports.printLabelData=async(req,res)=>{
+    const{bookingId}=req.params
+    const datafind=await booking.findAll({
+        where:{
+            id:bookingId
+        },
+        include:[
+            {
+                model:users,
+                as:'customer',
+                attributes
+            },
+            {
+                model:customerSelectedService,
+                where:{
+                    bookingId:bookingId
+                },
+                attributes:['id'],
+                include:[
+                    {
+                        model:service,
+                        attributes:['id','name'],
+                    },
+                    {
+                        model:categories,
+                        attributes:['id','name'],
+                    },
+                    {
+                        model:subCategories,
+                        attributes:['id','name','price','barCode']
+                    }
+                ]
+            }
+            
+        ]
+    })
+
+
+    return res.json(responsefunc("1","Print Label Data"))
+}
+
+
+
 
 //!---------------Recurring Functions-------------------------//
 

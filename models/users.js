@@ -149,6 +149,10 @@ module.exports = (sequelize, DataTypes) => {
       allowNull:true,
       defaultValue:null
     },
+    countryCode:{
+      type:DataTypes.STRING,
+      allowNull:true
+    },
     createdAt: {
       allowNull: false,
       type: DataTypes.DATE
