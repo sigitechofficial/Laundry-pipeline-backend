@@ -503,6 +503,30 @@ async function serviceDetail(req, res) {
     return res.json(responsefunc("1", "Service Details", { serviceData }, ""))
 
 }
+
+
+/*
+  *  Customer Addresses
+*/
+async function customerAddresses(req, res) {
+    const userId = req.user.id
+
+    const customerAddresses = await addressDb.findAll({
+        where: {
+            userId: userId,
+            isDefault: true
+        },
+        attributes: ['id', 'title', 'streetAddress', 'province', 'district', 'addressType']
+    })
+    
+    return res.json(responsefunc("1", "Customer Addresses", customerAddresses, ""))
+}
+
+
+
+
+
+
 //!---------------------------------Recurring functions------------------------>>>>>
 async function addressAdder(addNew, address, type, userId, addressId, cityId, countryId) {
     console.log("Address Data------>", address.lat);
@@ -849,4 +873,6 @@ module.exports = {
     //---------Services----------//
     allServices,
     serviceDetail,
+    //---Customer Addresses----//
+    customerAddresses
 }

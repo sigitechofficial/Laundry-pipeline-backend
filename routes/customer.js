@@ -44,11 +44,15 @@ router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changeP
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
 //Session Api
 router.get("/session",validateAccessToken, asyncMiddleware(customerAuthControllers.session))
+//Resend OTP
+router.post('/resendOTP',validateAccessToken,asyncMiddleware(customerAuthControllers.resendOTP))
 //!------------------------------------Drawer-------------------------------//
 //get Profile
 router.get('/getUserProfile',validateAccessToken,asyncMiddleware(customerAuthControllers.getUserProfile));
 //Update Customer Profile
 router.patch("/updateUserProfile",validateAccessToken,uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.updateUserProfile))
+//Customer Addresses
+router.get('/customerAddresses',validateAccessToken,asyncMiddleware(customerOtherController.customerAddresses))
 //!------------------------------Customer Booking--------------------------//
 //create Booking
 router.post('/createBooking',validateAccessToken,asyncMiddleware(customerOtherController.createBooking))

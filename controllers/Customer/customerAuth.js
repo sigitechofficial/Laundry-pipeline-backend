@@ -474,7 +474,7 @@ async function loginUser(req, res) {
 
     if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedBy) {
         return res.json(
-            returnFunction(
+            responsefunc(
                 "4",
                 "Social Login Required",
                 {},
@@ -564,7 +564,7 @@ async function loginUser(req, res) {
 
     if (!userFind.verifiedAt) {
         return res.json(
-            returnFunction(
+            responsefunc(
                 2,
                 "Pending email verification",
                 { userId: userData.id, otpId, email: userData.email },
@@ -576,7 +576,7 @@ async function loginUser(req, res) {
     if (userFind.userTypeId === 1) {
         if (userFind.firstName === null || !userData.phoneNum) {
             return res.json(
-                returnFunction(
+                responsefunc(
                     3,
                     "Pending User Data",
                     { userId: userData.id },
@@ -589,7 +589,7 @@ async function loginUser(req, res) {
     if (userFind.userTypeId === 1) {
         if (userFind.firstName === null) {
             return res.json(
-                returnFunction(
+                responsefunc(
                     3,
                     "Pending User Data",
                     { userId: userData.id },
@@ -614,6 +614,7 @@ async function loginUser(req, res) {
             tokenId: dvToken,
             status: true,
             userId: userFind.id
+            
         })
     }
 
@@ -781,6 +782,60 @@ async function changePasswordOTP(req, res) {
             ""
         )
     );
+}
+
+
+
+/* 
+   * Resend OTP
+*/
+async function resendOTP(req, res) {
+    const { userId } = req.body;
+    const userExist = await users.findByPk(userId);
+
+    if (!userExist) {
+        throw new CustomException(
+            "Sorry, we could not fetch the associated data",    
+            "Please try sending again"
+        );
+    }
+
+    let otpData = await otpVerification.findOne({ where: { userId } });
+    let OTP = otpGenerator.generate(4, {
+        lowerCaseAlphabets: false,
+        upperCaseAlphabets: false,
+        specialChars: false,
+    });
+
+    // Send OTP email using otpMail
+    otpMail({
+        type: 'RegisterOTP',
+        email: userExist.email,
+        OTP: OTP,
+    });
+
+    let DT = new Date();
+
+    if (!otpData) {
+        await otpVerification.create({
+            OTP,
+            reqAt: DT,
+            verifiedInForgetCase: false,
+            userId,
+        });
+        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+    } else {
+        await otpVerification.update(
+            {
+                OTP,
+                reqAt: DT,
+                verifiedInForgetCase: false,
+            },
+            { where: { userId } }
+        );
+        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+    }
+
 }
 
 /*
@@ -998,5 +1053,6 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     registerCustomerWithOTP,
-    session
+    session,
+    resendOTP
 }
