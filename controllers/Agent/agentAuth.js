@@ -214,7 +214,7 @@ async function resendOTP(req, res) {
     const userExist = await users.findByPk(userId);
 
     if (!userExist) {
-        throw new CustomException(
+        throw new customError(
             "Sorry, we could not fetch the associated data",
             "Please try sending again"
         );

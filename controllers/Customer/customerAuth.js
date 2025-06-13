@@ -446,8 +446,8 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    //console.log("🚀 ~ loginUser ~ userFind:", userFind)
-    console.log("🚀 ~ loginUser ~ userFind:", userFind)
+    //console.log("ðŸš€ ~ loginUser ~ userFind:", userFind)
+    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind)
 
     if (!userFind) {
         throw new customError('User Not Exists with this email')
@@ -567,19 +567,19 @@ async function loginUser(req, res) {
             responsefunc(
                 2,
                 "Pending email verification",
-                { userId: userData.id, otpId, email: userData.email },
+                { userId: userFind.id, otpId, email: userFind.email },
                 "Please verify your email to continue"
             )
         );
     }
 
     if (userFind.userTypeId === 1) {
-        if (userFind.firstName === null || !userData.phoneNum) {
+        if (userFind.firstName === null || !userFind.phoneNum) {
             return res.json(
                 responsefunc(
                     3,
                     "Pending User Data",
-                    { userId: userData.id },
+                    { userId: userFind.id },
                     "Your first Name or Phone Number is Missing"
                 )
             );
@@ -592,7 +592,7 @@ async function loginUser(req, res) {
                 responsefunc(
                     3,
                     "Pending User Data",
-                    { userId: userData.id },
+                    { userId: userFind.id },
                     "Your first Name is Missing"
                 )
             );
@@ -608,7 +608,7 @@ async function loginUser(req, res) {
 
 
     const dvTokenFound = userFind.deviceTokens.find((ele) => ele.tokenId === dvToken)
-    console.log("🚀 ~ loginUser ~ dvTokenFound:", dvTokenFound)
+    console.log("ðŸš€ ~ loginUser ~ dvTokenFound:", dvTokenFound)
     if (!dvTokenFound) {
         await deviceToken.create({
             tokenId: dvToken,
@@ -794,7 +794,7 @@ async function resendOTP(req, res) {
     const userExist = await users.findByPk(userId);
 
     if (!userExist) {
-        throw new CustomException(
+        throw new customError(
             "Sorry, we could not fetch the associated data",    
             "Please try sending again"
         );
@@ -875,7 +875,7 @@ async function logout(req, res) {
 async function session(req, res) {
     const userId = req.user.id;
     const { guestUser } = req.body;
-    if (guestUser) throw new CustomException("Login failed", "");
+    if (guestUser) throw new customError("Login failed", "");
     const userData = await users.findByPk(userId, {
         attributes: [
             "id",
