@@ -442,5 +442,7 @@ router.patch(
 );
 //Get On Hold Options
 router.get("/getOnHoldOptions", asyncMiddleware(agentController.getOnHoldOptions));
+//Get Permissions
+router.get("/getPermissions", asyncMiddleware(agentController.getPermissions));
 
 module.exports = router;

@@ -2028,12 +2028,45 @@ async function getAllRoles(req, res) {
     const getRoles = await roles.findAll({
         where: {
             status: true,
+            classifiedAsId: 1,
         },
         attributes: ["id", "name", "status"],
     });
 
     return res.json(responsefunc("1", "Get All Roles", getRoles, " "));
 }
+
+
+/*
+ * Get Permissions
+ */
+async function getPermissions(req, res) {
+    const roleId = req.query.roleId;
+    const getPermissions = await permissions.findAll({
+        where: {
+            status: true,
+            roleId: roleId
+        },
+        include:[
+            {
+                model: features,
+                attributes: ['id', 'name', 'status']
+            },
+            {
+                model: roles,
+                attributes: ['id', 'name', 'status']
+            },
+        ],
+        attributes: ['id', 'permissionType', 'featureId', 'roleId']
+    });
+    return res.json(responsefunc("1", "Get All Permissions", {getPermissions}, " "));
+}
+
+
+
+
+
+
 
 /*
  * Add Classified
@@ -2511,9 +2544,6 @@ async function getOnHoldOptions(req, res) {
 
 }
 
-
-
-
 //!---------------Recurring Functions-------------------------//
 
 let responsefunc = (status, message, data, error) => {
@@ -2731,6 +2761,7 @@ module.exports = {
     addRole,
     updateRoles,
     getAllRoles,
+    getPermissions,
     //------------------------Employees-----------//
     addEmployee,
     updateEmployee,
@@ -2754,4 +2785,4 @@ module.exports = {
     getBookingHome,
     //-------------Get On Hold Options-------//
     getOnHoldOptions,
-};
+}
