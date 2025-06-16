@@ -269,7 +269,7 @@ router.patch(
     "/onHoldConformation",
     validateAccessToken,
     checkPermissions,
-    uploadonHoldImages.single("onHoldImg"),
+    uploadonHoldImages.array("onHoldImg", 5),
     asyncMiddleware(agentController.onHoldConformation)
 );
 //Agent Set onHold Order issue to resolved
@@ -440,5 +440,7 @@ router.patch(
     "/workingHoursUpdate/:userId",
     asyncMiddleware(agentAuthController.workingHoursUpdate)
 );
+//Get On Hold Options
+router.get("/getOnHoldOptions", asyncMiddleware(agentController.getOnHoldOptions));
 
 module.exports = router;

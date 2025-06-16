@@ -86,6 +86,10 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.GEOMETRY('POLYGON'),
       allowNull:true
     },
+    isDefault:{
+      type:DataTypes.BOOLEAN,
+      defaultValue:false
+    },
     createdAt: {
       allowNull: false,
       type: DataTypes.DATE

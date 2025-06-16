@@ -850,9 +850,9 @@ async function getAdminEmployess(req, res) {
  *  Add Admin Employee
 */
 async function addEmployee(req, res) {
-    const { firstName, lastName, email, password, phoneNum, countryId, cityId, roleId } = req.body
+    const { firstName, lastName, email, password, phoneNum, roleId } = req.body
 
-    const agentId = req.user.id
+    const adminId = req.user.id
 
 
     const userFind = await users.findOne({
@@ -877,35 +877,21 @@ async function addEmployee(req, res) {
         roleId,
         status: true,
         classifiedAsId: 2,
+        roleId: roleId,
         verifiedAt: Date.now()
 
     })
 
 
 
-    if (user.classifiedAsId === 1 || user.roleId === 6) {
+    if (user.classifiedAsId === 2 ) {
         await users.update({
-            employeeOff: agentId
-        }, { where: { id: agentId } })
+            employeeOff: adminId
+        }, { where: { id: adminId } })
 
 
-        const agentAddress = await addressDb.findOne({
-            where: {
-                userId: agentId
-            }
-        })
 
-        const zoneId = agentAddress.zoneId
-        const shopAddressId = agentAddress.id
-        const driverId = user.id
-
-        await driverInZones.create({
-            driverId: driverId,
-            zoneId: zoneId,
-            laundaryShopId: shopAddressId,
-            countryId,
-            cityId
-        })
+        const zoneId = adminAddress.zoneId
     }
 
     return res.json(responsefunc("1", "Employee Added Sucessfully", user, ""))
@@ -1888,7 +1874,8 @@ async function getOnHoldOptions(req, res) {
     const getOptions = await onHoldOption.findAll({
         where: {
             status: true
-        }
+        },
+        attributes: ['id', 'option', 'status']
     })
 
     return res.json(responsefunc("1", "All on Hold Options Fetched", getOptions, ""))

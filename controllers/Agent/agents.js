@@ -1180,7 +1180,7 @@ async function bookingDeliverToCustomer(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    const statusId = [16, 17 ];
+    const statusId = [16, 17];
     const bookinghistories = statusId.map(statusId => ({
         date: currentDate,
         time: currentTime,
@@ -1220,55 +1220,55 @@ async function driverAddSerivces(req, res) {
     let total = 0;
 
     if (services.length > 0) {
-       for (let service of services) {
-    const itemTotalPrice = parseFloat(service.categoryCharge || 0);
-    total += itemTotalPrice;
+        for (let service of services) {
+            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
+            total += itemTotalPrice;
 
-    const existingRecords = await customerSelectedService.findAll({
-        where: {
-            bookingId,
-            serviceId: service.serviceId
+            const existingRecords = await customerSelectedService.findAll({
+                where: {
+                    bookingId,
+                    serviceId: service.serviceId
+                }
+            });
+
+            let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
+
+            // 👇 fallback: update the first one with null subCategoryId
+            if (!matched) {
+                matched = existingRecords.find(r => r.subCategoryId === null);
+            }
+
+            if (matched) {
+                console.log(`✅ Updating existing record (id ${matched.id})`);
+                await matched.update({
+                    categoryId: service.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: service.subCategoryId,
+                    items: service.items,
+                    date: currentDate,
+                    time: currentTime
+                });
+            } else {
+                console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
+                await customerSelectedService.create({
+                    date: currentDate,
+                    time: currentTime,
+                    bookingId: bookingId,
+                    serviceId: service.serviceId,
+                    categoryId: service.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: service.subCategoryId,
+                    items: service.items
+                });
+            }
         }
-    });
-
-    let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
-
-    // 👇 fallback: update the first one with null subCategoryId
-    if (!matched) {
-        matched = existingRecords.find(r => r.subCategoryId === null);
-    }
-
-    if (matched) {
-        console.log(`✅ Updating existing record (id ${matched.id})`);
-        await matched.update({
-            categoryId: service.categoryId,
-            categoryPrice: itemTotalPrice,
-            subCategoryId: service.subCategoryId,
-            items: service.items,
-            date: currentDate,
-            time: currentTime
-        });
-    } else {
-        console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-        await customerSelectedService.create({
-            date: currentDate,
-            time: currentTime,
-            bookingId: bookingId,
-            serviceId: service.serviceId,
-            categoryId: service.categoryId,
-            categoryPrice: itemTotalPrice,
-            subCategoryId: service.subCategoryId,
-            items: service.items
-        });
-    }
-}
     }
 
     const parsedServiceCharge = parseFloat(serviceCharge) || 0;
     const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
 
     let subTotal = total;
-    console.log("Sub-Total------->>>",subTotal);
+    console.log("Sub-Total------->>>", subTotal);
 
     total += parsedServiceCharge;
     console.log("Total Before Zone Deduction:", total);
@@ -1497,11 +1497,11 @@ async function invoiceCreation(req, res) {
 //         customerServicesFind
 //     );
 
-    
+
 //     const groupedServices = customerServicesFind.reduce((acc, item) => {
 //         const serviceName = item.service.name;
 
-        
+
 //         if (!acc[serviceName]) {
 //             acc[serviceName] = {
 //                 serviceName,
@@ -1511,12 +1511,12 @@ async function invoiceCreation(req, res) {
 //             };
 //         }
 
-        
+
 //         const existingCategoryIndex = acc[serviceName].categories.findIndex(
 //             category => category.name === item.category.name
 //         );
 
-        
+
 //         if (existingCategoryIndex === -1) {
 //             acc[serviceName].categories.push({
 //                 id: item.category.id,
@@ -1530,7 +1530,7 @@ async function invoiceCreation(req, res) {
 //                 ]
 //             });
 //         } else {
-            
+
 //             acc[serviceName].categories[existingCategoryIndex].subCategories.push({
 //                 id: item.subCategory.id,
 //                 name: item.subCategory.name,
@@ -1541,7 +1541,7 @@ async function invoiceCreation(req, res) {
 //         return acc;
 //     }, {});
 
-    
+
 //     const formattedResponse = Object.values(groupedServices);
 
 //     return res.json(
@@ -1664,10 +1664,11 @@ async function onHoldConformation(req, res) {
     const { serviceId, subCategoryId, bookingId, noOfItems, description } =
         req.body;
 
-    let onHoldImg = null;
-    if (req.file) {
-        let tempProfileImg = req.file.path;
-        onHoldImg = tempProfileImg.replace(/\\/g, "/");
+    let onHoldImg = [];
+    if (req.files) {
+        req.files.forEach(file => {
+            onHoldImg.push(file.path.replace(/\\/g, "/"));
+        });
     }
 
     const createConformation = await OnHoldConfirmation.create({
@@ -1690,7 +1691,7 @@ async function onHoldConformation(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 7,
+            bookingStatusId: 24,
         },
         { where: { id: bookingId } }
     );
@@ -1699,11 +1700,11 @@ async function onHoldConformation(req, res) {
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 7,
+        bookingStatusId: 24,
     });
 
     return res.json(
-        responsefunc("1", "Hold Conformation Submitted", createConformation, "")
+        responsefunc("1", "Hold Conformation Submitted", {createConformation}, "")
     );
 }
 
@@ -2451,45 +2452,63 @@ async function getBussinessWrkinghours(req, res) {
 }
 
 
-exports.printLabelData=async(req,res)=>{
-    const{bookingId}=req.params
-    const datafind=await booking.findAll({
-        where:{
-            id:bookingId
+exports.printLabelData = async (req, res) => {
+    const { bookingId } = req.params
+    const datafind = await booking.findAll({
+        where: {
+            id: bookingId
         },
-        include:[
+        include: [
             {
-                model:users,
-                as:'customer',
+                model: users,
+                as: 'customer',
                 attributes
             },
             {
-                model:customerSelectedService,
-                where:{
-                    bookingId:bookingId
+                model: customerSelectedService,
+                where: {
+                    bookingId: bookingId
                 },
-                attributes:['id'],
-                include:[
+                attributes: ['id'],
+                include: [
                     {
-                        model:service,
-                        attributes:['id','name'],
+                        model: service,
+                        attributes: ['id', 'name'],
                     },
                     {
-                        model:categories,
-                        attributes:['id','name'],
+                        model: categories,
+                        attributes: ['id', 'name'],
                     },
                     {
-                        model:subCategories,
-                        attributes:['id','name','price','barCode']
+                        model: subCategories,
+                        attributes: ['id', 'name', 'price', 'barCode']
                     }
                 ]
             }
-            
+
         ]
     })
 
 
-    return res.json(responsefunc("1","Print Label Data"))
+    return res.json(responsefunc("1", "Print Label Data"))
+}
+
+
+/*
+  * Get On Hold Options
+*/
+
+async function getOnHoldOptions(req, res) {
+
+    const getOptions = await onHoldOption.findAll({
+        where: {
+            status: true
+        },
+        attributes: ['id', 'option', 'status']
+    })
+
+    return res.json(responsefunc("1", "All on Hold Options Fetched", getOptions, ""))
+
 }
 
 
@@ -2733,4 +2752,6 @@ module.exports = {
     getBussinessWrkinghours,
     //-------------Agent Home Api------//
     getBookingHome,
+    //-------------Get On Hold Options-------//
+    getOnHoldOptions,
 };
