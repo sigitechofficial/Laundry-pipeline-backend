@@ -17,7 +17,15 @@ module.exports = (sequelize, DataTypes) => {
     permissionType: {
       type:DataTypes.STRING,
       allowNull: false,
-    }
+    },
+    read: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    write: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
   }, {
     sequelize,
     modelName: 'permissions',

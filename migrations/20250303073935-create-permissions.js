@@ -12,6 +12,14 @@ module.exports = {
       permissionType: {
         type: Sequelize.STRING
       },
+      read: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
+      },
+      write: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

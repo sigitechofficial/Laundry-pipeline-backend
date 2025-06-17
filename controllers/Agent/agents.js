@@ -22,6 +22,7 @@ const {
     roles,
     features,
     permissions,
+    onHoldOption,
     agentSelectServices,
     bussinessInformation,
     bussinessWorkingHours,
@@ -1941,42 +1942,17 @@ async function addRole(req, res) {
         throw new customError("Same role exists", "Please try another name");
     }
     const newRole = await roles.create({ name, status: true });
-    let bulkArray = [];
-    permissionRole.map((ele) => {
-        if (ele.permissions.create === true) {
-            bulkArray.push({
-                permissionType: "create",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.read === true) {
-            bulkArray.push({
-                permissionType: "read",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.update === true) {
-            bulkArray.push({
-                permissionType: "update",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.delete === true) {
-            bulkArray.push({
-                permissionType: "delete",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-    });
+
+    let bulkArray = permissionRole.map((ele) => ({
+        featureId: ele.id,
+        roleId: newRole.id,
+        read: ele.permissions.read || false,
+        write: ele.permissions.write || false
+    }));
+
     await permissions.bulkCreate(bulkArray);
 
-    return res.json(
-        responsefunc("1", "Role and Permission Added Sucesfully", {}, "")
-    );
+    return res.json(responsefunc("1", "Role and Permission Added Successfully", {}, ""));
 }
 
 /*
@@ -1994,31 +1970,23 @@ async function updateRoles(req, res) {
         throw new customError("Same role exists", "Please try another name");
     }
 
+    
     await roles.update({ name, status: true }, { where: { id: roleId } });
 
     await permissions.destroy({ where: { roleId } });
 
-    const bulkArray = permissionRole.flatMap((ele) => {
-        const permissions = [];
-        if (ele.permissions.create) {
-            permissions.push({ permissionType: "create", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.read) {
-            permissions.push({ permissionType: "read", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.update) {
-            permissions.push({ permissionType: "update", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.delete) {
-            permissions.push({ permissionType: "delete", featureId: ele.id, roleId });
-        }
-        return permissions;
-    });
+    
+    const bulkArray = permissionRole.map((ele) => ({
+        featureId: ele.id,
+        roleId,
+        read: ele.permissions.read || false,
+        write: ele.permissions.write || false
+    }));
 
-    // Bulk insert new permissions
+    
     await permissions.bulkCreate(bulkArray);
 
-    return res.json(responsefunc("1", "Role updated", {}, ""));
+    return res.json(responsefunc("1", "Role updated successfully", {}, ""));
 }
 
 /*
@@ -2033,7 +2001,7 @@ async function getAllRoles(req, res) {
         attributes: ["id", "name", "status"],
     });
 
-    return res.json(responsefunc("1", "Get All Roles", getRoles, " "));
+    return res.json(responsefunc("1", "Get All Roles", {getRoles}, " "));
 }
 
 
@@ -2057,7 +2025,7 @@ async function getPermissions(req, res) {
                 attributes: ['id', 'name', 'status']
             },
         ],
-        attributes: ['id', 'permissionType', 'featureId', 'roleId']
+        attributes: ['id', 'permissionType','read', 'write', 'featureId', 'roleId']
     });
     return res.json(responsefunc("1", "Get All Permissions", {getPermissions}, " "));
 }

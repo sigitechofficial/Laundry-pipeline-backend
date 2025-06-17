@@ -478,7 +478,7 @@ async function serviceDetail(req, res) {
 
     const serviceData = await serviceCategories.findAll({
         where: {
-            id: serviceId,
+            serviceId: serviceId,
             status: true
         },
         include: [
