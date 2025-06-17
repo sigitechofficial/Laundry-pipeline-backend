@@ -1996,7 +1996,6 @@ async function getAllRoles(req, res) {
     const getRoles = await roles.findAll({
         where: {
             status: true,
-            classifiedAsId: 1,
         },
         attributes: ["id", "name", "status"],
     });
@@ -2012,28 +2011,22 @@ async function getPermissions(req, res) {
     const roleId = req.query.roleId;
     const getPermissions = await permissions.findAll({
         where: {
-            status: true,
             roleId: roleId
         },
         include:[
             {
                 model: features,
-                attributes: ['id', 'name', 'status']
+                attributes: ['id', 'title', 'status']
             },
             {
                 model: roles,
                 attributes: ['id', 'name', 'status']
             },
         ],
-        attributes: ['id', 'permissionType','read', 'write', 'featureId', 'roleId']
+        attributes: ['id','read', 'write', 'featureId', 'roleId']
     });
     return res.json(responsefunc("1", "Get All Permissions", {getPermissions}, " "));
 }
-
-
-
-
-
 
 
 /*
@@ -2112,12 +2105,17 @@ async function addEmployee(req, res) {
         email,
         password,
         phoneNum,
-        countryId,
-        cityId,
+        countryCode,
         roleId,
     } = req.body;
 
     const agentId = req.user.id;
+
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
 
     const userFind = await users.findOne({
         where: {
@@ -2141,6 +2139,8 @@ async function addEmployee(req, res) {
         roleId,
         status: true,
         classifiedAsId: 1,
+        image: profileImg,
+        countryCode,
         verifiedAt: Date.now(),
     });
 

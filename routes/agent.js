@@ -372,6 +372,7 @@ router.post(
 router.post(
     "/addEmployee",
     validateAccessToken,
+    uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.addEmployee)
 );
 //update Employee
