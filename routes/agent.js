@@ -302,7 +302,7 @@ router.get(
 );
 
 //Invoice Generate Status 
-router.patch("/bookingInvoiceGeneratedStatusUpdated", validateAccessToken, checkPermissions, asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated))
+router.patch("/bookingInvoiceGeneratedStatusUpdated/:bookingId", validateAccessToken, checkPermissions, asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated))
 //!--------------------------Agent Cancel Booking--------------------------------------------------------------------------//
 //Agent Calcel Booking
 router.post(
@@ -337,7 +337,7 @@ router.post(
     asyncMiddleware(agentController.addRole)
 );
 //Update Roles
-router.put(
+router.patch(
     "/updateRoles",
     validateAccessToken,
     asyncMiddleware(agentController.updateRoles)
@@ -366,7 +366,12 @@ router.post(
     validateAccessToken,
     asyncMiddleware(agentController.addfeatures)
 );
-
+//Get Features
+router.get(
+    "/getFeatures",
+    validateAccessToken,
+    asyncMiddleware(agentController.getFeatures)
+);
 //!--------------------------------------------------Agent Add,Update Employees---------------------------------------//
 //Add Employee
 router.post(

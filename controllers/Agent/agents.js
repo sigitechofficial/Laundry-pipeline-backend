@@ -1705,7 +1705,7 @@ async function onHoldConformation(req, res) {
     });
 
     return res.json(
-        responsefunc("1", "Hold Conformation Submitted", {createConformation}, "")
+        responsefunc("1", "Hold Conformation Submitted", { createConformation }, "")
     );
 }
 
@@ -1961,30 +1961,40 @@ async function addRole(req, res) {
 async function updateRoles(req, res) {
     const { name, permissionRole, roleId } = req.body;
 
-    // Check if the role name already exists
-    const checkExist = await roles.findOne({
-        where: { name, id: { [Op.not]: roleId } },
-    });
-
-    if (checkExist) {
-        throw new customError("Same role exists", "Please try another name");
+    if (!roleId) {
+        throw new customError("Missing role ID", "Role ID is required to update role");
     }
 
-    
-    await roles.update({ name, status: true }, { where: { id: roleId } });
+    if (name) {
+        const checkExist = await roles.findOne({
+            where: { name, id: { [Op.not]: roleId } },
+        });
 
-    await permissions.destroy({ where: { roleId } });
+        if (checkExist) {
+            throw new customError("Same role exists", "Please try another name");
+        }
+    }
 
-    
-    const bulkArray = permissionRole.map((ele) => ({
-        featureId: ele.id,
-        roleId,
-        read: ele.permissions.read || false,
-        write: ele.permissions.write || false
-    }));
+    const updatePayload = {};
+    if (name) updatePayload.name = name;
+    updatePayload.status = true;
 
-    
-    await permissions.bulkCreate(bulkArray);
+    await roles.update(updatePayload, { where: { id: roleId } });
+
+    if (Array.isArray(permissionRole) && permissionRole.length > 0) {
+        await permissions.destroy({ where: { roleId } });
+
+        const bulkArray = permissionRole.map((ele) => ({
+            featureId: ele.id,
+            roleId,
+            read: ele.permissions?.read || false,
+            write: ele.permissions?.write || false,
+        }));
+
+        await permissions.bulkCreate(bulkArray);
+    }
+
+
 
     return res.json(responsefunc("1", "Role updated successfully", {}, ""));
 }
@@ -2000,7 +2010,7 @@ async function getAllRoles(req, res) {
         attributes: ["id", "name", "status"],
     });
 
-    return res.json(responsefunc("1", "Get All Roles", {getRoles}, " "));
+    return res.json(responsefunc("1", "Get All Roles", { getRoles }, " "));
 }
 
 
@@ -2013,7 +2023,7 @@ async function getPermissions(req, res) {
         where: {
             roleId: roleId
         },
-        include:[
+        include: [
             {
                 model: features,
                 attributes: ['id', 'title', 'status']
@@ -2023,9 +2033,9 @@ async function getPermissions(req, res) {
                 attributes: ['id', 'name', 'status']
             },
         ],
-        attributes: ['id','read', 'write', 'featureId', 'roleId']
+        attributes: ['id', 'read', 'write', 'featureId', 'roleId']
     });
-    return res.json(responsefunc("1", "Get All Permissions", {getPermissions}, " "));
+    return res.json(responsefunc("1", "Get All Permissions", { getPermissions }, " "));
 }
 
 
@@ -2076,7 +2086,7 @@ async function addfeatures(req, res) {
         featureOf,
         key,
     });
-    return res.json(responsefunc("1", "Feature Added", createFeatures, ""));
+    return res.json(responsefunc("1", "Feature Added", { createFeatures }, ""));
 }
 
 /*
@@ -2087,10 +2097,10 @@ async function getFeatures(req, res) {
         where: {
             status: true,
         },
-        attributes: ["id", "name", "status"],
+        attributes: ["id", "title", "status"],
     });
 
-    return res.json(responsefunc("1", "All Features Fetched", findFeature, " "));
+    return res.json(responsefunc("1", "All Features Fetched", { findFeature }, " "));
 }
 
 //!------------------------------Agent Add Employees--------------------------//
@@ -2185,50 +2195,55 @@ async function updateEmployee(req, res) {
         phoneNum,
         roleId,
         updatePassword,
-        employeeId,
+        employeeId
     } = req.body;
 
-    const userExists = await users.findOne({
-        where: {
-            email: email ? email : null,
-            id: { [Op.not]: employeeId },
-            classifiedAs: 1,
-        },
+    
+    if (email) {
+        const userExists = await users.findOne({
+            where: {
+                email: email,
+                id: { [Op.not]: employeeId },
+                classifiedAs: 1,
+            },
+        });
+
+        if (userExists) {
+            throw new customError(
+                "Employee with the following email exists",
+                "Please try another email"
+            );
+        }
+    }
+
+    
+    const updatedFields = {};
+
+    if (firstName !== undefined) updatedFields.firstName = firstName;
+    if (lastName !== undefined) updatedFields.lastName = lastName;
+    if (email !== undefined) updatedFields.email = email;
+    if (phoneNum !== undefined) updatedFields.phoneNum = phoneNum;
+    if (roleId !== undefined) updatedFields.roleId = roleId;
+
+    
+    if (updatePassword && updatePassword.trim() !== '') {
+        const hashedPassword = await bcrypt.hash(updatePassword, 10);
+        updatedFields.password = hashedPassword;
+    }
+
+    
+    if (req.file) {
+        const tempProfileImg = req.file.path;
+        const profileImage = path.join('Public', 'ProfileImages', path.basename(tempProfileImg)); 
+        updatedFields.image = profileImage.replace(/\\/g, "/"); 
+    }
+    await users.update(updatedFields, {
+        where: { id: employeeId },
     });
 
-    if (userExists) {
-        throw new customError(
-            "Employee with the following email exists",
-            "Please try another email"
-        );
-    }
-
-    if (updatePassword) {
-        let hashpassword = await bcrypt.hash(updatePassword, 10);
-        users.update(
-            {
-                firstName,
-                lastName,
-                email,
-                password: hashpassword,
-                phoneNum,
-                roleId,
-            },
-            { where: { id: employeeId } }
-        );
-    } else {
-        users.update(
-            {
-                firstName,
-                lastName,
-                email,
-                roleId,
-            },
-            { where: { id: employeeId } }
-        );
-    }
-
-    return res.json(responsefunc("1", "Employee Updated Sucesfully", {}, ""));
+    return res.json(
+        responsefunc("1", "Employee Updated Successfully", {}, "")
+    );
 }
 
 /*
@@ -2259,7 +2274,7 @@ async function getAllEmployees(req, res) {
         where: {
             classifiedAsId: 1,
         },
-        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum"],
+        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum",'image'],
         include: [
             {
                 model: roles,
@@ -2268,7 +2283,7 @@ async function getAllEmployees(req, res) {
         ],
     });
     return res.json(
-        responsefunc("1", "All Employee Fetched", agentEmployee, " ")
+        responsefunc("1", "All Employee Fetched", {agentEmployee}, " ")
     );
 }
 

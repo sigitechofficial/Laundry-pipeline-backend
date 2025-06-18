@@ -21,6 +21,11 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with Model with driverInZones
       bussinessInformation.hasMany(models.driverInZones, { as: 'laundaryDriver', foreignKey: 'laundaryShopId' })
       models.driverInZones.belongsTo(bussinessInformation, { as: 'laundaryDriver', foreignKey: 'laundaryShopId' })
+
+      //Relation with Model with addressDb
+      bussinessInformation.belongsTo(models.addressDb, { foreignKey: 'shopAddressId' })
+      models.addressDb.hasMany(bussinessInformation, { foreignKey: 'shopAddressId' })
+      
     }
   }
   bussinessInformation.init({
