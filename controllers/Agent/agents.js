@@ -2131,6 +2131,9 @@ async function addEmployee(req, res) {
         where: {
             classifiedAsId: 1,
             roleId: roleId,
+            firstName:firstName,
+            lastName:lastName,
+            email
         },
     });
 
@@ -2170,14 +2173,16 @@ async function addEmployee(req, res) {
 
         const zoneId = agentAddress.zoneId;
         const shopAddressId = agentAddress.id;
+        const countryId=agentAddress.countryId
+        const cityId=agentAddress.cityId
         const driverId = user.id;
 
         await driverInZones.create({
             driverId: driverId,
             zoneId: zoneId,
-            laundaryShopId: shopAddressId,
-            countryId,
-            cityId,
+            shopAddressId: shopAddressId,
+            countryId:countryId,
+            cityId:cityId, 
         });
     }
 
@@ -2270,9 +2275,12 @@ async function changeEmployeeStatus(req, res) {
  * Get All Employee
  */
 async function getAllEmployees(req, res) {
+    
+    const agentId=req.user.id
     const agentEmployee = await users.findAll({
         where: {
             classifiedAsId: 1,
+            employeeOff:agentId
         },
         attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum",'image'],
         include: [

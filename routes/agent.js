@@ -385,6 +385,7 @@ router.patch(
     "/updateEmployee",
     validateAccessToken,
     checkPermissions,
+    uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.updateEmployee)
 );
 //update Employee Status

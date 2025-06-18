@@ -16,7 +16,7 @@ module.exports = (sequelize, DataTypes) => {
   permissions.init({
     permissionType: {
       type:DataTypes.STRING,
-      allowNull: false,
+      allowNull: true,
     },
     read: {
       type: DataTypes.BOOLEAN,
