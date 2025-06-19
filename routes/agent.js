@@ -447,9 +447,12 @@ router.patch(
     "/workingHoursUpdate/:userId",
     asyncMiddleware(agentAuthController.workingHoursUpdate)
 );
+//!-----------------------------------------OnHold Api---------------------------------//
 //Get On Hold Options
 router.get("/getOnHoldOptions", asyncMiddleware(agentController.getOnHoldOptions));
 //Get Permissions
 router.get("/getPermissions", asyncMiddleware(agentController.getPermissions));
+//Get getCustomerServicesForOnHold
+router.get("/getCustomerServicesForOnHold",validateAccessToken,checkPermissions,asyncMiddleware(agentController.getCustomerServicesForOnHold))
 
 module.exports = router;

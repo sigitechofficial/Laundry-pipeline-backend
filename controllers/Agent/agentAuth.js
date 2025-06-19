@@ -688,7 +688,7 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind.addressDb.zone.currencyUnitId)
+    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind)
 
     // return res.json(userFind)
     if (!userFind) {

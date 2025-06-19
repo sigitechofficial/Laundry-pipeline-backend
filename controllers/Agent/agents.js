@@ -2131,8 +2131,8 @@ async function addEmployee(req, res) {
         where: {
             classifiedAsId: 1,
             roleId: roleId,
-            firstName:firstName,
-            lastName:lastName,
+            firstName: firstName,
+            lastName: lastName,
             email
         },
     });
@@ -2173,16 +2173,16 @@ async function addEmployee(req, res) {
 
         const zoneId = agentAddress.zoneId;
         const shopAddressId = agentAddress.id;
-        const countryId=agentAddress.countryId
-        const cityId=agentAddress.cityId
+        const countryId = agentAddress.countryId
+        const cityId = agentAddress.cityId
         const driverId = user.id;
 
         await driverInZones.create({
             driverId: driverId,
             zoneId: zoneId,
             shopAddressId: shopAddressId,
-            countryId:countryId,
-            cityId:cityId, 
+            countryId: countryId,
+            cityId: cityId,
         });
     }
 
@@ -2203,7 +2203,7 @@ async function updateEmployee(req, res) {
         employeeId
     } = req.body;
 
-    
+
     if (email) {
         const userExists = await users.findOne({
             where: {
@@ -2221,7 +2221,7 @@ async function updateEmployee(req, res) {
         }
     }
 
-    
+
     const updatedFields = {};
 
     if (firstName !== undefined) updatedFields.firstName = firstName;
@@ -2230,17 +2230,17 @@ async function updateEmployee(req, res) {
     if (phoneNum !== undefined) updatedFields.phoneNum = phoneNum;
     if (roleId !== undefined) updatedFields.roleId = roleId;
 
-    
+
     if (updatePassword && updatePassword.trim() !== '') {
         const hashedPassword = await bcrypt.hash(updatePassword, 10);
         updatedFields.password = hashedPassword;
     }
 
-    
+
     if (req.file) {
         const tempProfileImg = req.file.path;
-        const profileImage = path.join('Public', 'ProfileImages', path.basename(tempProfileImg)); 
-        updatedFields.image = profileImage.replace(/\\/g, "/"); 
+        const profileImage = path.join('Public', 'Profile', path.basename(tempProfileImg));
+        updatedFields.image = profileImage.replace(/\\/g, "/");
     }
     await users.update(updatedFields, {
         where: { id: employeeId },
@@ -2275,14 +2275,14 @@ async function changeEmployeeStatus(req, res) {
  * Get All Employee
  */
 async function getAllEmployees(req, res) {
-    
-    const agentId=req.user.id
+
+    const agentId = req.user.id
     const agentEmployee = await users.findAll({
         where: {
             classifiedAsId: 1,
-            employeeOff:agentId
+            employeeOff: agentId
         },
-        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum",'image'],
+        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image'],
         include: [
             {
                 model: roles,
@@ -2291,7 +2291,7 @@ async function getAllEmployees(req, res) {
         ],
     });
     return res.json(
-        responsefunc("1", "All Employee Fetched", {agentEmployee}, " ")
+        responsefunc("1", "All Employee Fetched", { agentEmployee }, " ")
     );
 }
 
@@ -2532,6 +2532,46 @@ async function getOnHoldOptions(req, res) {
     })
 
     return res.json(responsefunc("1", "All on Hold Options Fetched", getOptions, ""))
+
+}
+
+
+/*
+  * Get Customer Services and SubCategories For onHold  
+*/
+async function getCustomerServicesForOnHold(req, res) {
+
+    const { bookingId } = req.params
+
+    const customerServicesFind = await customerSelectedService.findAll({
+        where: {
+            bookingId: bookingId,
+        },
+        include: [
+            {
+                model: service,
+                attributes: ["id", "name"],
+                // include: [
+                //     {
+                //         model: servicePreferences,
+                //         required: false,
+                //         where: {
+                //             bookingId: bookingId
+                //         },
+                //         attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
+                //     }
+                // ]
+            },
+            {
+                model: subCategories,
+                attributes: ["id", "name", "price"],
+            },
+        ],
+        attributes: ['categoryPrice', 'items']
+    });
+
+
+    return res.json(responsefunc("1","Services of Customer",{customerServicesFind},""))
 
 }
 
@@ -2776,4 +2816,5 @@ module.exports = {
     getBookingHome,
     //-------------Get On Hold Options-------//
     getOnHoldOptions,
+    getCustomerServicesForOnHold
 }

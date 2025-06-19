@@ -461,10 +461,9 @@ async function loginUser(req, res) {
 
         const createUser = await users.create({
             email,
-            userTypeId: 1,
+            userTypeId: 2,
             verifiedAt: Date.now(),
             stripeCustomerId: createStripeCustomer
-
         })
 
         const userId = createUser.id
@@ -472,7 +471,7 @@ async function loginUser(req, res) {
         return res.json(responsefunc('3', `User signed-In by${signedFrom}`, { userId }))
     }
 
-    if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedBy) {
+    if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
         return res.json(
             responsefunc(
                 "4",
@@ -485,13 +484,12 @@ async function loginUser(req, res) {
 
 
     if (signedFrom === 'google' || signedFrom === 'facebook' || signedFrom === 'apple') {
-
-
         const userFind = await users.findOne({
             where: {
                 email: email,
                 userTypeId: 2,
-                deletedAt: { [Op.is]: null }
+                deletedAt: { [Op.is]: null },
+                signedFrom
             },
             include: { model: deviceToken, attributes: ['tokenId'] },
             attributes: [
@@ -505,17 +503,21 @@ async function loginUser(req, res) {
                 "verifiedAt",
                 "phoneNum",
                 [
-                    sequelize.fn("date_format", sequelize.col("createdAt"), "%Y"),
+                    sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
                 ],
             ]
         })
+        
+            if (!userFind) {
+        throw new customError("User not found. Please ensure the correct email and sign-in method.");
+    }
 
         if (!userFind.status) {
             throw new customError('Blocked By admin Please contact admin to continue')
         }
 
-        const dvTokenFound = userFind.deviceToken.find((ele) => ele.tokenId === dvToken)
+        const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken)
         if (!dvTokenFound) {
             await deviceToken.create({
                 tokenId: dvToken,
@@ -544,7 +546,7 @@ async function loginUser(req, res) {
             maxAge: 24 * 60 * 60 * 1000
         });
 
-        let output = loginData(userData, accessToken, false);
+        let output = loginData(userFind, accessToken, false);
         return res.json(output);
     }
 
@@ -573,7 +575,7 @@ async function loginUser(req, res) {
         );
     }
 
-    if (userFind.userTypeId === 1) {
+    if (userFind.userTypeId === 2) {
         if (userFind.firstName === null || !userFind.phoneNum) {
             return res.json(
                 responsefunc(
@@ -586,7 +588,7 @@ async function loginUser(req, res) {
         }
     }
 
-    if (userFind.userTypeId === 1) {
+    if (userFind.userTypeId === 2) {
         if (userFind.firstName === null) {
             return res.json(
                 responsefunc(
@@ -645,6 +647,7 @@ async function loginUser(req, res) {
 
 
 }
+
 
 
 
