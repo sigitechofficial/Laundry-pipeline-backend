@@ -1662,24 +1662,15 @@ async function customerServices(req, res) {
  * on Hold Conformation
  */
 async function onHoldConformation(req, res) {
-    const { serviceId, subCategoryId, bookingId, noOfItems, description } =
-        req.body;
+    let records = [];
 
-    let onHoldImg = [];
-    if (req.files) {
-        req.files.forEach(file => {
-            onHoldImg.push(file.path.replace(/\\/g, "/"));
-        });
-    }
+    // Parse incoming records safely
+        if (!req.body.records) {
+            throw new Error("Missing 'records' in request body.");
+        }
+        records = JSON.parse(req.body.records);
+        console.log("records===============================>>>>>>>>", records);
 
-    const createConformation = await OnHoldConfirmation.create({
-        serviceId,
-        subCategoryId,
-        bookingId,
-        noOfItems,
-        description,
-        onHoldImg,
-    });
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
@@ -1688,26 +1679,87 @@ async function onHoldConformation(req, res) {
     });
 
     const currentDate = new Date().toISOString().split("T")[0];
-    console.log(currentDate); // Example: "2025-01-28"
+    console.log("Current Date:", currentDate);
 
-    await booking.update(
-        {
-            bookingStatusId: 24,
-        },
-        { where: { id: bookingId } }
-    );
+    const responseData = [];
 
-    await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
-        bookingId: bookingId,
-        bookingStatusId: 24,
-    });
+    for (let i = 0; i < records.length; i++) {
+        const { serviceId, subCategoryId, bookingId, noOfItems, description } = records[i];
+
+        // Match the uploaded image by index, not from records[i].onHoldImg
+        let onHoldImg = "";
+        if (req.files?.onHoldImg?.[i]) {
+            console.log("Images get ==========================================>>>>")
+            onHoldImg = req.files.onHoldImg[i].path.replace(/\\/g, "/");
+        }
+
+        console.log("onHoldImg for record", i, "==>", onHoldImg);
+
+        // Store in DB
+        const createConformation = await OnHoldConfirmation.create({
+            serviceId,
+            subCategoryId,
+            bookingId,
+            noOfItems,
+            description,
+            onHoldImg,
+        });
+
+        console.log("createConformation record #", i, ":", createConformation?.dataValues);
+
+        await booking.update(
+            { bookingStatusId: 18 },
+            { where: { id: bookingId } }
+        );
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId,
+            bookingStatusId: 18,
+        });
+
+        responseData.push({
+            message: "Hold Confirmation Submitted",
+            record: createConformation,
+        });
+    }
 
     return res.json(
-        responsefunc("1", "Hold Conformation Submitted", { createConformation }, "")
+        responsefunc("1", "Hold Confirmation Submitted for All Records", { responseData }, "")
     );
 }
+
+/*
+ * Get Those Services Items Those Are Rejected 
+ */
+async function rejectedServiceItems(req,res) {
+    const{bookingId}=req.params
+
+
+    const rejectedItems=await OnHoldConfirmation.findAll({
+        where:{
+            bookingId:bookingId,
+            customerResponse:false
+        },
+        include:[
+            {
+                model:service,
+                attributes:['id','name']
+            },
+            {
+                model:subCategories,
+                attributes:['id','name','price']
+            }
+        ],
+        attributes:['id','noOfItems','description','serviceId','subCategoryId']
+    })
+
+
+    return res.json(responsefunc("1","Rejected Services Items",{rejectedItems},""))
+    
+}
+
 
 /*
  * Agent Update Status To issue resoved
@@ -2816,5 +2868,6 @@ module.exports = {
     getBookingHome,
     //-------------Get On Hold Options-------//
     getOnHoldOptions,
-    getCustomerServicesForOnHold
+    getCustomerServicesForOnHold,
+    rejectedServiceItems
 }

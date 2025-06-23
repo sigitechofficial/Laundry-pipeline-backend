@@ -269,7 +269,7 @@ router.patch(
     "/onHoldConformation",
     validateAccessToken,
     checkPermissions,
-    uploadonHoldImages.array("onHoldImg", 5),
+    uploadonHoldImages.fields([{ name: "onHoldImg", maxCount: 50 }]),
     asyncMiddleware(agentController.onHoldConformation)
 );
 //Agent Set onHold Order issue to resolved
@@ -454,5 +454,6 @@ router.get("/getOnHoldOptions", asyncMiddleware(agentController.getOnHoldOptions
 router.get("/getPermissions", asyncMiddleware(agentController.getPermissions));
 //Get getCustomerServicesForOnHold
 router.get("/getCustomerServicesForOnHold",validateAccessToken,checkPermissions,asyncMiddleware(agentController.getCustomerServicesForOnHold))
-
+// Get rejectedServiceItems
+router.get("/rejectedServiceItems/:bookingId",validateAccessToken,checkPermissions,asyncMiddleware(agentController.rejectedServiceItems))
 module.exports = router;
