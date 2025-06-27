@@ -21,7 +21,7 @@ const { users,
     serviceCategories,
     servicePreferences,
     countries,
-    cities} = require('../../models')
+    cities } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -41,7 +41,7 @@ const { literal, fn, col } = require('sequelize');
 const getdistance = require('../../utils/distanceCalculator');
 const { sendEvent } = require('../../socket_io');
 const { title } = require("process");
-
+const{confirmIntend,paymentIntentGet}=require('../stripe')
 
 
 //!------------------------Boooking Management-------------------------------//
@@ -86,8 +86,8 @@ async function createBooking(req, res) {
     let zoneId = findZone[0].id;
     let zoneUpfrontAmount = findZone[0].zoneMinimumAmount
     let zoneSeviceCharge = findZone[0].serviceCharge
-    let cityId=findZone[0].city.id
-    let countryId=findZone[0].city.country.id;
+    let cityId = findZone[0].city.id
+    let countryId = findZone[0].city.country.id;
     console.log("ðŸš€ ~ createBooking ~ findZone:==============================", zoneId);
     console.log("ðŸš€ ~ createBooking ~ findZone:------------------------------", zoneUpfrontAmount);
     console.log("ðŸš€ ~ createBooking ~ findZone:======================+++++++++", zoneSeviceCharge);
@@ -95,7 +95,7 @@ async function createBooking(req, res) {
     //return res.json(findZone)
 
     if (addNewAddress || !pickUpAddressId) {
-        userAddressId = await addressAdder(addNewAddress, pickUpAddress, "pickUp", userId, pickUpAddressId,cityId,countryId);
+        userAddressId = await addressAdder(addNewAddress, pickUpAddress, "pickUp", userId, pickUpAddressId, cityId, countryId);
         userPickUpAddressId = userAddressId;
     } else {
         userPickUpAddressId = pickUpAddressId;
@@ -243,6 +243,27 @@ async function createBooking(req, res) {
     return res.json(responsefunc("1", "Booking Created", {}, ""));
 }
 
+
+/*
+  * Payment Intent Confirm
+*/
+async function updateBookingUpfrontAmount(req,res) {
+    const{bookingId,IntentId}=req.body                                                          
+    
+    const intentDataGet=await paymentIntentGet(IntentId)
+
+    if(intentDataGet.status==='succeeded'){
+
+        await booking.update({
+            partialPayment:true
+        },{where:{id:bookingId}})
+    }else{
+        throw new customError("Intent Not Get")
+    }
+
+
+    return res.json(responsefunc("1","Payment Updated Sucessfully",{},""))
+}
 
 /*
   * Show Customer On Hold Reason
@@ -518,10 +539,27 @@ async function customerAddresses(req, res) {
         },
         attributes: ['id', 'title', 'streetAddress', 'province', 'district', 'addressType']
     })
-    
+
     return res.json(responsefunc("1", "Customer Addresses", customerAddresses, ""))
 }
 
+
+
+
+
+/*
+  *  Get Service Preferences
+*/
+async function getPrefrencesValues(req, res) {
+
+    const typeEnumValues = servicePreferences.rawAttributes.type.values;
+    const chooseTemperatureEnumValues = servicePreferences.rawAttributes.chooseTemperature.values;
+
+    console.log('Type Enum Values:', typeEnumValues);
+    console.log('Choose Temperature Enum Values:', chooseTemperatureEnumValues);
+
+    return res.json(responsefunc("1", "Data fetched", { type: typeEnumValues, chooseTemperature: chooseTemperatureEnumValues }, ""));
+}
 
 
 
@@ -870,9 +908,11 @@ module.exports = {
     allBookings,
     bookingDetailsById,
     customerResponseUpdate,
+    getPrefrencesValues,
     //---------Services----------//
     allServices,
     serviceDetail,
     //---Customer Addresses----//
-    customerAddresses
+    customerAddresses,
+    updateBookingUpfrontAmount
 }

@@ -83,7 +83,7 @@ const uploadonHoldImages = multer({
 
 //!-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------//
 
-//!------------------------------------------------------------Auth Module-----------------------------------------------------//
+//!---------------------------------------------------------------------------Auth Module-------------------------------------------------------------------------------------//
 //complete registration of Agent
 router.post(
     "/registerAgent",
@@ -136,7 +136,7 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
-//!------------------------------------Drawer-------------------------------//
+//!-----------------------------------------------------------Drawer-----------------------------------------------------------------------//
 //get Profile
 router.get(
     "/getUserProfile",
@@ -151,7 +151,7 @@ router.patch(
     asyncMiddleware(agentAuthController.updateUserProfile)
 );
 
-//!---------------------------Agent Address Module-------------//
+//!-------------------------------------------------------------Agent Address Module---------------------------------------------------//
 router.post(
     "/agentAddressAdd",
     asyncMiddleware(agentController.agentAddressAdd)
@@ -301,16 +301,21 @@ router.get(
     asyncMiddleware(agentController.invoiceDetailTab)
 );
 
-//Invoice Generate Status 
-router.patch("/bookingInvoiceGeneratedStatusUpdated/:bookingId", validateAccessToken, checkPermissions, asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated))
-//!--------------------------Agent Cancel Booking--------------------------------------------------------------------------//
+//Invoice Generate Status
+router.patch(
+    "/bookingInvoiceGeneratedStatusUpdated/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated)
+);
+//!--------------------------------------------------------Agent Cancel Booking-----------------------------------------------------------//
 //Agent Calcel Booking
 router.post(
     "/agentCancelBooking",
     validateAccessToken,
     asyncMiddleware(agentController.agentCancelBooking)
 );
-//!---------------------------Agent Driver-------------------------------------------------------------------------------//
+//!----------------------------------------------------------Agent Driver--------------------------------------------------------------//
 // Get All Agent Drivers
 router.get(
     "/agnetDrivers",
@@ -417,18 +422,18 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.serviceDetail)
 );
-//!--------------------------------------Customer Selected Services--------------------------------------------------//
+//!-------------------------------------------------------Customer Selected Services--------------------------------------------------//
 router.get(
     "/customerServices",
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.customerServices)
 );
-//!==============================Get countries && cities=============================//
+//!=======================================================Get countries && cities==================================================//
 router.get("/getCountries", asyncMiddleware(agentController.getCountries));
 router.get("/getCities", asyncMiddleware(agentController.getCities));
 
-//!------------------------------------Bussiness Information--------------------//
+//!----------------------------------------------------------Bussiness Information----------------------------------------------//
 router.get(
     "/getBussinessInforMation/:userId",
     asyncMiddleware(agentController.getBussinessInforMation)
@@ -447,13 +452,26 @@ router.patch(
     "/workingHoursUpdate/:userId",
     asyncMiddleware(agentAuthController.workingHoursUpdate)
 );
-//!-----------------------------------------OnHold Api---------------------------------//
+//!-----------------------------------------OnHold Api----------------------------------------------------------------------//
 //Get On Hold Options
-router.get("/getOnHoldOptions", asyncMiddleware(agentController.getOnHoldOptions));
+router.get(
+    "/getOnHoldOptions",
+    asyncMiddleware(agentController.getOnHoldOptions)
+);
 //Get Permissions
 router.get("/getPermissions", asyncMiddleware(agentController.getPermissions));
 //Get getCustomerServicesForOnHold
-router.get("/getCustomerServicesForOnHold",validateAccessToken,checkPermissions,asyncMiddleware(agentController.getCustomerServicesForOnHold))
+router.get(
+    "/getCustomerServicesForOnHold/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getCustomerServicesForOnHold)
+);
 // Get rejectedServiceItems
-router.get("/rejectedServiceItems/:bookingId",validateAccessToken,checkPermissions,asyncMiddleware(agentController.rejectedServiceItems))
+router.get(
+    "/rejectedServiceItems/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.rejectedServiceItems)
+);
 module.exports = router;

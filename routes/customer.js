@@ -73,4 +73,8 @@ router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(custo
 router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail
 router.get('/serviceDetail/:serviceId',validateAccessToken,asyncMiddleware(customerOtherController.serviceDetail))
+//Get Preferences
+router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getPrefrencesValues))
+//Get Intent 
+router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
 module.exports=router

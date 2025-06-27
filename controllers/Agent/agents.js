@@ -1228,7 +1228,9 @@ async function driverAddSerivces(req, res) {
             const existingRecords = await customerSelectedService.findAll({
                 where: {
                     bookingId,
-                    serviceId: service.serviceId
+                    serviceId: service.serviceId,
+                    categoryId:service.categoryId,
+                    subCategoryId:service.subCategoryId
                 }
             });
 
@@ -1314,6 +1316,79 @@ async function driverAddSerivces(req, res) {
     return res.json(responsefunc("1", "Agent/Driver Added Detail", {}, ""));
 }
 
+
+/*
+ *  Agent Update Invoice
+ */
+async function agentUpdateInvoice(req,res) {
+    const{bookingId,total,services}=req.body
+    
+    console.log("Req.body--------------------->",req.body)
+
+    const bookings = await booking.findByPk(bookingId);
+
+    if (!bookings) {
+        return res.status(404).json({
+            status: "0",
+            message: "Booking not found",
+            data: {},
+            error: "Booking not found"
+        });
+    }
+
+    for (let service of services) {
+        const { categoryId, serviceId, subCategoryId } = service;
+
+        
+        const updatedService = await customerSelectedService.update(
+            {
+                status:false
+            },
+            {
+                where: {
+                    serviceId: serviceId,
+                    bookingId: bookingId,
+                    subCategoryId:subCategoryId
+                    
+                }
+            }
+        );
+        
+        await booking.update({
+            orderAmount:total
+        },{where:{id:bookingId}})
+        
+        await billingDetails.update(
+        {
+            total,
+            discount: 0,
+            paymentStatus: "Pending",
+        },
+        { where: { bookingId: bookingId } }
+    );
+        
+
+        // if (updatedService[0] === 0) {
+        //     return res.status(400).json({
+        //         status: "0",
+        //         message: "Service update failed",
+        //         data: {},
+        //         error: "No matching service found or no updates were made"
+        //     });
+        // }
+        
+        
+    }
+
+
+    return res.status(200).json({
+        status: "1",
+        message: "Booking services updated successfully",
+        data: booking,
+        error: ""
+    }); 
+    
+}
 
 /*
  *  Invoice Creation
@@ -2573,7 +2648,6 @@ exports.printLabelData = async (req, res) => {
 /*
   * Get On Hold Options
 */
-
 async function getOnHoldOptions(req, res) {
 
     const getOptions = await onHoldOption.findAll({
@@ -2592,39 +2666,64 @@ async function getOnHoldOptions(req, res) {
   * Get Customer Services and SubCategories For onHold  
 */
 async function getCustomerServicesForOnHold(req, res) {
+    const { bookingId } = req.params;
 
-    const { bookingId } = req.params
-
+    // Fetch all customer services for the given bookingId
     const customerServicesFind = await customerSelectedService.findAll({
         where: {
             bookingId: bookingId,
+            status:true
         },
         include: [
             {
                 model: service,
                 attributes: ["id", "name"],
-                // include: [
-                //     {
-                //         model: servicePreferences,
-                //         required: false,
-                //         where: {
-                //             bookingId: bookingId
-                //         },
-                //         attributes: ['id', 'type', 'chooseTemperature', 'numberOfBags', 'preferencesServiceNameId', 'serviceId']
-                //     }
-                // ]
             },
             {
                 model: subCategories,
                 attributes: ["id", "name", "price"],
             },
         ],
-        attributes: ['categoryPrice', 'items']
+        attributes: ['categoryPrice', 'items'],
     });
+    
+    console.log("customerServicesFind===========>",customerServicesFind)
 
+    // Restructure the data to group subCategories under services
+    const groupedServices = customerServicesFind.reduce((acc, currentService) => {
+        // Check if the service already exists in the accumulator
+        let existingService = acc.find(service => service.service.id === currentService.service.id);
+        
+        if (existingService) {
+            // If the service exists, add the subCategory to the subCategories list
+            existingService.subCategories.push({
+                id: currentService.subCategory.id,
+                name: currentService.subCategory.name,
+                price: currentService.subCategory.price
+            });
+        } else {
+            // If the service doesn't exist, create a new entry
+            acc.push({
+                service: {
+                    id: currentService.service.id,
+                    name: currentService.service.name
+                },
+                categoryPrice: currentService.categoryPrice,
+                items: currentService.items,
+                subCategories: [
+                    {
+                        id: currentService.subCategory.id,
+                        name: currentService.subCategory.name,
+                        price: currentService.subCategory.price
+                    }
+                ]
+            });
+        }
+        return acc;
+    }, []);
 
-    return res.json(responsefunc("1","Services of Customer",{customerServicesFind},""))
-
+    // Return the grouped data in the response
+    return res.json(responsefunc("1", "Services of Customer", { customerServicesFind: groupedServices }, ""));
 }
 
 //!---------------Recurring Functions-------------------------//
@@ -2869,5 +2968,6 @@ module.exports = {
     //-------------Get On Hold Options-------//
     getOnHoldOptions,
     getCustomerServicesForOnHold,
-    rejectedServiceItems
+    rejectedServiceItems,
+    agentUpdateInvoice
 }
