@@ -77,4 +77,8 @@ router.get('/serviceDetail/:serviceId',validateAccessToken,asyncMiddleware(custo
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getPrefrencesValues))
 //Get Intent 
 router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
+//fetch Zone and Charges
+router.get('/fetchZoneAndCharges',validateAccessToken,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
+//Create Intent Using Stripe
+router.post('/createIntentUsingStripe',validateAccessToken,asyncMiddleware(customerOtherController.createIntentUsingStripe))
 module.exports=router
