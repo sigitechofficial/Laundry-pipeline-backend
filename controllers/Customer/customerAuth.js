@@ -242,9 +242,23 @@ async function registerCustomerWithOTP(req, res) {
    * verify OTp for SignUp
 */
 async function verifyOTpSignUp(req, res) {
-    const { otpId, OTP, userId } = req.body
+    const { otpId, OTP, userId,dvToken } = req.body
+    const userData = await users.findByPk(userId,{
+        include: {
+            model: deviceToken,
+            attributes: ['tokenId']
+        }
+    })
+    console.log("🚀 ~ verifyOTpSignUp ~ userData:", userData)
     if (OTP === '5678') {
-        const userData = await users.findByPk(userId)
+
+        if(!userData.deviceToken){
+            await deviceToken.create({
+                tokenId: dvToken,   
+                status: true,
+                userId: userData.id
+            })
+        }
         const userUpdate = await users.update({
             verifiedAt: new Date(),
         }, {
@@ -253,8 +267,35 @@ async function verifyOTpSignUp(req, res) {
             }
         })
 
-        return res.json(responsefunc("1", "OTP Verified", { userId }))
+        const accessToken = jwt.sign({
+            id: userData.id,
+            email: userData.email,
+            dvToken: dvToken,
+            userTypeId: userData.userTypeId
+        }, process.env.JWT_ACCESS_SECRET
+        )
+        redisCli.hSet(
+            `id-${userData.id}`,
+            dvToken,
+            accessToken
+        )
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/customer",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+        let output = VerifyOTPData(userData, accessToken, false);
+        return res.json(output)
     } else {
+        if(!userData.deviceToken){
+            await deviceToken.create({
+                tokenId: dvToken,
+                status: true,
+                userId: userData.id
+            })
+        }
         const otpData = await otpVerification.findByPk(otpId)
         if (!otpData) {
             throw new customError(
@@ -273,7 +314,27 @@ async function verifyOTpSignUp(req, res) {
                 id: userId
             }
         })
-        return res.json(responsefunc("1", "OTP verified", { userId }))
+        const accessToken = jwt.sign({
+            id: userData.id,
+            email: userData.email,
+            dvToken: dvToken,
+            userTypeId: userData.userTypeId
+        }, process.env.JWT_ACCESS_SECRET
+        )
+        redisCli.hSet(
+            `id-${userData.id}`,
+            dvToken,
+            accessToken
+        )
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/customer",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+        let output = VerifyOTPData(userData, accessToken, false);
+        return res.json(output)
     }
 
 }
@@ -1037,6 +1098,27 @@ let loginData = (userData, accessToken, isGuest) => {
     };
 };
 
+
+let VerifyOTPData = (userData, accessToken, isGuest) => {
+    return {
+        status: "1",
+        message: "OTP Verified successfully",
+        data: {
+            userId: `${userData.id}`,
+            firstName: `${userData.firstName}`,
+            lastName: `${userData.lastName}`,
+            email: `${userData.email}`,
+            accessToken: `${accessToken}`,
+            userTypeId: `${userData.userTypeId}`,
+            isGuest,
+            joinedOn: userData.dataValues.joinedOn
+                ? userData.dataValues.joinedOn
+                : "2025",
+            phoneNum: `${userData.phoneNum}`,
+        },
+        error: "",
+    };
+};
 
 
 

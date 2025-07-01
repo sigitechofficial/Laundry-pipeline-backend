@@ -1,7 +1,14 @@
 require("dotenv").config();
 const { STRIPE_PUBLISHABLE_KEY, STRIPE_SECRET_KEY } = process.env;
 const stripe = require("stripe")(STRIPE_SECRET_KEY);
-const customError = require("../../middlewares/customError");
+const customError = require("../middlewares/customError");
+
+
+// Amount to Cents
+function convertToCents(amount) {
+    return Math.round(amount * 100);
+}
+
 
 /*
  *   Create Customer

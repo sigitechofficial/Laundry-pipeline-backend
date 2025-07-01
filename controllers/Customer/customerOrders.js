@@ -182,8 +182,8 @@ async function createBooking(req, res) {
         hour12: false,
     });
     const currentDate = new Date().toISOString().split("T")[0];
-    console.log(currentDate); // Example: "2025-01-28"
-    console.log(currentTime); // Example: "14:35"
+    console.log(currentDate);
+    console.log(currentTime);
 
     const discount = 0;
     if (services && services.length > 0) {
@@ -267,8 +267,10 @@ async function createBooking(req, res) {
         zoneId,
         collectionDate,
         collectionTimeTo,
+        collectionTimeFrom,
         deliveryDate,
-        deliveryTimeTo
+        deliveryTimeTo,
+        deliveryTimeFrom
     );
 
     return res.json(responsefunc("1", "Booking Created", {}, ""));
@@ -817,6 +819,12 @@ async function bookingEventSentCheckTheShops(
     deliveryTimeTo,
     deliveryTimeFrom
 ) {
+    console.log(collectionTimeTo);
+    console.log(collectionTimeFrom);
+    console.log(deliveryDate);
+    console.log(deliveryTimeTo);
+    console.log(deliveryTimeFrom);
+
     let getShopsAndOwners = await addressDb.findAll({
         where: {
             zoneId: zoneId,
@@ -870,7 +878,7 @@ async function bookingEventSentCheckTheShops(
                 {
                     model: users,
                     as: "customer",
-                    attributes: ["firstName", "lastName", "email", "phoneNum"],
+                    attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
                 },
                 {
                     model: billingDetails,
@@ -960,10 +968,10 @@ async function bookingEventSentCheckTheShops(
             data: {
                 id: bookingDetails.id,
                 orderTrackId: bookingDetails.orderTrackId,
-                collectionDate,
+                collectionDate: new Date(collectionDate).toISOString(),
                 collectionTimeTo,
                 collectionTimeFrom,
-                deliveryDate,
+                deliveryDate: new Date(deliveryDate).toISOString(),
                 deliveryTimeTo,
                 deliveryTimeFrom,
                 driverInstructionOptions:
@@ -1001,14 +1009,6 @@ async function bookingEventSentCheckTheShops(
     }
 }
 
-// function getTimePlusMinutes(minutesToAdd = 40) {
-//     const now = new Date();
-//     now.setMinutes(now.getMinutes() + minutesToAdd);
-
-//     const hh = String(now.getHours()).padStart(2, '0');
-//     const mm = String(now.getMinutes()).padStart(2, '0');
-//     return `${hh}:${mm}`;
-// }
 
 function getTimePlusMinutes(mins = 40) {
     const dt = new Date(Date.now() + mins * 60000);
