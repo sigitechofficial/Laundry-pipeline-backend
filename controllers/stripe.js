@@ -1,7 +1,7 @@
 require("dotenv").config();
 const { STRIPE_PUBLISHABLE_KEY, STRIPE_SECRET_KEY } = process.env;
 const stripe = require("stripe")(STRIPE_SECRET_KEY);
-const customError = require("../middlewares/customError");
+const customError = require("../../middlewares/customError");
 
 /*
  *   Create Customer
@@ -46,7 +46,7 @@ async function createPaymentIntendForUpFrontPayments(
 
         return paymentIntent;
     } catch (error) {
-        throw new AppError(`${error.message} `, 200);
+        throw new customError(`${error.message} `, 200);
     }
 }
 
@@ -70,7 +70,7 @@ async function createPaymentIntend(amount, customerId, paymentMethodId) {
         )
         return confirmIntent.id
     } catch (error) {
-        throw new AppError(`${error.message} `, 200)
+        throw new customError(`${error.message} `, 200)
     }
 }
 
@@ -83,7 +83,7 @@ async function paymentIntentGet(paymentIntentId) {
         const paymentIntent = await stripe.paymentMethods.retrieve(paymentIntentId)
         return paymentIntent
     } catch (error) {
-        throw new AppError(`${error.message} `, 200)
+        throw new customError(`${error.message} `, 200)
     }
 }
 
@@ -99,7 +99,7 @@ async function confirmIntend(paymentIntentId, paymentMethodId) {
         })
         return confirmIntent
     } catch (error) {
-        throw new AppError(`${error.message} `, 200)
+        throw new customError(`${error.message} `, 200)
     }
 }
 
