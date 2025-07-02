@@ -43,7 +43,7 @@ const { literal, fn, col } = require("sequelize");
 const getdistance = require("../../utils/distanceCalculator");
 const { sendEvent } = require("../../socket_io");
 const { title } = require("process");
-const { confirmIntend, paymentIntentGet, createPaymentIntend } = require("../stripe");
+const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent } = require("../stripe");
 
 //!------------------------Boooking Management-------------------------------//
 /*
@@ -73,6 +73,8 @@ async function createBooking(req, res) {
         driverInstructionOptions,
         driverInstructionOptions1,
         preferencesArray,
+        paymentMethodId,
+        paymentIntentId,
     } = req.body;
 
     console.log("ðŸš€ ~ createBooking ~ req.body:", req.body);
@@ -160,6 +162,8 @@ async function createBooking(req, res) {
         driverInstructionOptions,
         driverInstructionOptions1,
         subTotal: 0,
+        paymentMethodId: paymentMethodId,
+        paymentIntentId: paymentIntentId,
     });
 
     const createPreferences = preferencesArray.map((preferences) => ({
@@ -257,6 +261,7 @@ async function createBooking(req, res) {
             orderAmount: total || 0,
             orderTrackId: ordertrackingNumber,
             orderExpireTime: fixTimeKey,
+            upfrontAmount: upfrontAmount,
         },
         { where: { id: bookingData.id } }
     );
@@ -282,7 +287,8 @@ async function createBooking(req, res) {
 async function updateBookingUpfrontAmount(req, res) {
     const { bookingId, IntentId } = req.query;
 
-    const intentDataGet = await paymentIntentGet(IntentId);
+    const intentDataGet = await getIntent(IntentId);
+    console.log("🚀 ~ updateBookingUpfrontAmount ~ intentDataGet:", intentDataGet)
 
     if (intentDataGet.status === "succeeded") {
         await booking.update(
@@ -621,7 +627,14 @@ async function fetchZoneAndCharges(req, res) {
 async function createIntentUsingStripe(req, res) {
     const { amount, customerId, paymentMethodId } = req.body;
     const intent = await createPaymentIntend(amount, customerId, paymentMethodId);
-    return res.json(responsefunc("1", "Intent Created", intent, ""));
+    console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
+    let intentData = {
+        intentId: intent.id,
+        paymentMethodId: paymentMethodId,
+        amount: amount,
+        customerId: customerId,
+    }
+    return res.json(responsefunc("1", "Intent Created", intentData, ""));
 }
 
 

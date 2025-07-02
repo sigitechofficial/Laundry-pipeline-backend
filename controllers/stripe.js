@@ -70,12 +70,7 @@ async function createPaymentIntend(amount, customerId, paymentMethodId) {
             customer: customerId,
             capture_method: 'manual',
         })
-        //Confirm
-        const confirmIntent = await stripe.paymentIntents.confirm(
-            paymentIntent.id,
-            { payment_method: paymentMethodId },
-        )
-        return confirmIntent.id
+        return paymentIntent.id
     } catch (error) {
         throw new customError(`${error.message} `, 200)
     }
@@ -83,11 +78,24 @@ async function createPaymentIntend(amount, customerId, paymentMethodId) {
 
 
 /*
- *   GET PaymenIntend
+ *   GET Payment Method
  */
 async function paymentIntentGet(paymentIntentId) {
     try {
         const paymentIntent = await stripe.paymentMethods.retrieve(paymentIntentId)
+        return paymentIntent
+    } catch (error) {
+        throw new customError(`${error.message} `, 200)
+    }
+}
+
+
+/*
+ *   GET PaymentIntent
+ */
+async function getIntent(paymentIntentId) {
+    try {
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId)
         return paymentIntent
     } catch (error) {
         throw new customError(`${error.message} `, 200)
@@ -130,5 +138,6 @@ module.exports = {
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
     paymentIntentGet,
-    confirmIntend
+    confirmIntend,
+    getIntent
 };

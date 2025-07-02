@@ -117,6 +117,75 @@ async function agentAddressAdd(req, res) {
     );
 }
 
+//!----------------------------------Agent Shop Address Edit-----------------------------//
+async function agentAddressEdit(req, res) {
+    const {
+        streetAddress,
+        district,
+        province,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        addressId,
+    } = req.body;
+
+    const agentId = req.user.id;
+
+    // Check if address exists for this user
+    const existingAddress = await addressDb.findOne({
+        where: {
+            addressType: "LaundaryShopAddress",
+            userId: agentId,
+        },
+    });
+
+    if (!existingAddress) {
+        throw new customError("No shop address found to edit. Please add an address first.");
+    }
+
+    const polygon = {
+        type: "Polygon",
+        coordinates: coordinates,
+    };
+
+    const fetchZones = await findZones(lat, lng);
+    console.log("🚀 ~ agentAddressEdit ~ fetchZones:", fetchZones[0].id);
+    console.log("🚀 ~ agentAddressEdit ~ fetchZones:", fetchZones[0].city.id);
+    console.log(
+        "🚀 ~ agentAddressEdit ~ fetchZones:",
+        fetchZones[0].city.country.id
+    );
+
+    // Update the existing address
+    const updatedAddress = await addressDb.update(
+        {
+            streetAddress,
+            district,
+            cityId: fetchZones[0].city.id,
+            province,
+            countryId: fetchZones[0].city.country.id,
+            lat,
+            lng,
+            coordinates: polygon,
+            zoneId: fetchZones[0].id,
+            addressType,
+        },
+        {
+            where: {
+                id: existingAddress.id,
+            },
+        }
+    );
+
+    // Fetch the updated address to return in response
+    const updatedAddressData = await addressDb.findByPk(existingAddress.id);
+
+    return res.json(
+        responsefunc("1", "Laundry Shop Address Updated Successfully", updatedAddressData,"")
+    );
+}
+
 /*
  * Get Agent Address
  */
@@ -2912,6 +2981,7 @@ function getNextHourTime(time) {
 module.exports = {
     //----------------------Agent Booking Related Api's--------------------//
     agentAddressAdd,
+    agentAddressEdit,
     getAgentOrder,
     orderDetailsById,
     getShopAddress,

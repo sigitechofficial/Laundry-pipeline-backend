@@ -77,7 +77,6 @@ module.exports = (sequelize, DataTypes) => {
     paymentConfirmed: {
       type:DataTypes.BOOLEAN,
     allowNull:true,
-    
   defaultValue:false
 },
     partialPayment: {
@@ -132,6 +131,14 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.STRING(500),
     allowNull:true
   },
+  paymentMethodId:{
+    type:DataTypes.STRING,
+    allowNull:true
+  },
+  paymentIntentId:{
+    type:DataTypes.STRING,
+    allowNull:true
+  }
   }, {
     sequelize,
     modelName: 'booking',

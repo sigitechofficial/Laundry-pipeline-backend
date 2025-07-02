@@ -74,6 +74,14 @@ module.exports = {
         type: DataTypes.STRING,
         allowNull: true
       },
+      paymentMethodId: {
+        type: DataTypes.STRING,
+        allowNull: true
+      },
+      paymentIntentId: {
+        type: DataTypes.STRING,
+        allowNull: true
+      }
     });
   },
   async down(queryInterface, Sequelize) {
