@@ -61,16 +61,15 @@ async function createPaymentIntendForUpFrontPayments(
 /*
  *   Create PaymentIntent
  */
-async function createPaymentIntend(amount, customerId, paymentMethodId) {
+async function createPaymentIntend(amount, customerId) {
     try {
         const paymentIntent = await stripe.paymentIntents.create({
             amount: convertToCents(amount),
             currency: 'usd',
-            payment_method: paymentMethodId,
             customer: customerId,
             capture_method: 'manual',
         })
-        return paymentIntent.id
+        return paymentIntent
     } catch (error) {
         throw new customError(`${error.message} `, 200)
     }

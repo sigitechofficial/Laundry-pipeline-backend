@@ -625,12 +625,12 @@ async function fetchZoneAndCharges(req, res) {
  *  Create Intent Using Stripe
  */
 async function createIntentUsingStripe(req, res) {
-    const { amount, customerId, paymentMethodId } = req.body;
-    const intent = await createPaymentIntend(amount, customerId, paymentMethodId);
+    const { amount, customerId } = req.body;
+    const intent = await createPaymentIntend(amount, customerId);
     console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
     let intentData = {
         intentId: intent.id,
-        paymentMethodId: paymentMethodId,
+        clientSecret: intent.client_secret,
         amount: amount,
         customerId: customerId,
     }

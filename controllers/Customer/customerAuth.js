@@ -17,112 +17,6 @@ const { create } = require('domain')
 
 //!-------------------Customer Auth---------------------//
 /*
-  *  Customer Register
-*/
-async function registerCustomerOTP(req, res) {
-    const { email } = req.body
-    const userExists = await users.findOne({
-        where: {
-            email: email,
-            deletedAt: {
-                [Op.is]: null
-            }
-        },
-        include: {
-            model: otpVerification
-        }
-    })
-
-    if (userExists && userExists.userTypeId === 3) {
-        throw new customError('Driver Already Exits')
-    }
-
-    if (userExists && userExists.userTypeId === 4) {
-        throw new customError('Agent Already Exists')
-    }
-
-    if (userExists) {
-        try {
-            if (userExists.verifiedAt != null) {
-                throw new customError('Trying to Login? User with this email alrady Exists')
-            }
-
-            let otp = otpGenerator.generate(4, {
-                lowerCaseAlphabets: false,
-                upperCaseAlphabets: false,
-                specialChars: true
-            })
-
-            otpMail({
-                type: 'RegisterOTP',
-                email: email,
-                OTP: otp
-            })
-
-            let dt = new Date()
-
-            if (!userExists.otpVerification) {
-                const otpData = await otpVerification.create({
-                    OTP: otp,
-                    reqAt: dt,
-                    userId: userExists.id
-
-                })
-
-                return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpData.id, userId: userExists.id }))
-
-            } else {
-                await otpVerification.update({
-                    OTP: otp,
-                    reqAt: dt
-                }, { where: { userId: userExists.id } })
-
-                let otpData = await otpVerification.findOne({
-                    where: {
-                        userId: userExists.id
-                    }
-                })
-
-                return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpData.id, userId: userExists.id }))
-            }
-
-
-        } catch (error) {
-            console.log("Error------>", error)
-        }
-    } else {
-        let userTypeId = 2
-        const userCreate = await users.create({
-            email,
-            userTypeId
-        })
-
-        let otp = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: true
-        })
-
-        otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: otp
-        })
-        let dt = new Date()
-
-        const otpCreatetion = await otpVerification.create({
-            OTP: otp,
-            reqAt: dt,
-            userId: userCreate.id
-        })
-        console.log("🚀 ~ registerCustomerOTP ~ otpCreatetion:", otpCreatetion)
-
-        return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpCreatetion.id, userId: userCreate.id }))
-    }
-}
-
-
-/*
   * Combine Register with OTP
 */
 async function registerCustomerWithOTP(req, res) {
@@ -1093,6 +987,7 @@ let loginData = (userData, accessToken, isGuest) => {
                 ? userData.dataValues.joinedOn
                 : "2023",
             phoneNum: `${userData.phoneNum}`,
+            stripeCustomerId: `${userData.stripeCustomerId}`,
         },
         error: "",
     };
@@ -1115,6 +1010,7 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
                 ? userData.dataValues.joinedOn
                 : "2025",
             phoneNum: `${userData.phoneNum}`,
+            stripeCustomerId: `${userData.stripeCustomerId}`,
         },
         error: "",
     };
