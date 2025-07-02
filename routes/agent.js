@@ -162,9 +162,9 @@ router.patch(
     asyncMiddleware(agentController.agentAddressEdit)
 );
 router.get(
-    "/getShopAddress",
+    "/getAgentAddress",
     validateAccessToken,
-    asyncMiddleware(agentController.getShopAddress)
+    asyncMiddleware(agentController.getAgentAddress)
 );
 
 router.get(

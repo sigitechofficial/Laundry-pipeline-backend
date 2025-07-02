@@ -187,7 +187,60 @@ async function agentAddressEdit(req, res) {
 }
 
 /*
- * Get Agent Address
+ * Get Agent Address - Simple Version
+ */
+async function getAgentAddress(req, res) {
+    const agentId = req.user.id;
+
+    const agentAddress = await addressDb.findOne({
+        where: {
+            userId: agentId,
+            addressType: "LaundaryShopAddress",
+        },
+        attributes: [
+            "id",
+            "streetAddress",
+            "district", 
+            "province",
+            "postalCode",
+            "lat",
+            "lng",
+            "coordinates",
+            "addressType",
+            "zoneId",
+            "cityId",
+            "countryId",
+            "status"
+        ],
+        include: [
+            {
+                model: countries,
+                attributes: ["id", "name", "shortName"],
+            },
+            {
+                model: cities,
+                attributes: ["id", "name"],
+            },
+            {
+                model: zone,
+                attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge"],
+            },
+        ],
+    });
+
+    if (!agentAddress) {
+        return res.json(
+            responsefunc("0", "No address found for this agent", {}, "")
+        );
+    }
+
+    return res.json(
+        responsefunc("1", "Agent Address Retrieved Successfully", agentAddress, "")
+    );
+}
+
+/*
+ * Get Agent Address - Complex Version with Business Info
  */
 
 async function getShopAddress(req, res) {
@@ -203,6 +256,7 @@ async function getShopAddress(req, res) {
                 model: addressDb,
                 where: {
                     addressType: "LaundaryShopAddress",
+                    userId: userId,
                 },
                 attributes: [
                     "streetAddress",
@@ -2982,6 +3036,7 @@ module.exports = {
     //----------------------Agent Booking Related Api's--------------------//
     agentAddressAdd,
     agentAddressEdit,
+    getAgentAddress,
     getAgentOrder,
     orderDetailsById,
     getShopAddress,
