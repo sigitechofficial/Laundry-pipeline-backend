@@ -865,6 +865,13 @@ async function agentBookingStatusOnTheWay(req, res) {
 
     const bookingfind = await booking.findOne({
         where: { id: bookingId },
+        include: [
+            {
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'stripeCustomerId'],
+            }
+        ]
     });
 
     if (!bookingfind) {
@@ -876,13 +883,14 @@ async function agentBookingStatusOnTheWay(req, res) {
     }
 
 
-    if (!bookingfind.paymentIntentId || !bookingfind.paymentMethodId) {
+    if (!bookingfind.customer.stripeCustomerId) {
         throw new customError("PaymentIntent or PaymentMethod not found for this booking");
     }
 
     const stripeResult = await confirmAndCapturePayment(
         bookingfind.paymentIntentId,
-        bookingfind.paymentMethodId
+        bookingfind.paymentMethodId,
+        bookingfind.customer.stripeCustomerId
     );
 
     console.log("ðŸš€ ~ agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);

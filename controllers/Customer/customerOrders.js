@@ -752,7 +752,8 @@ async function checkIfTimeSlotBooked(
     deliveryTimeFrom,
     deliveryTimeTo,
     collectionTimeFrom,
-    collectionTimeTo
+    collectionTimeTo,
+    zoneId
 ) {
     console.log("ðŸš€ ~ checkIfTimeSlotBooked ~ shopId:", shopId);
 
@@ -787,6 +788,9 @@ async function checkIfTimeSlotBooked(
             {
                 model: addressDb,
                 as: "laundryShop",
+                where:{
+                    zoneId:zoneId,
+                },
                 attributes: [
                     "title",
                     "customAddresstitle",
@@ -814,10 +818,10 @@ async function checkIfTimeSlotBooked(
         ],
     });
 
-    console.log(
-        "ðŸš€ ~ checkIfTimeSlotBooked ~ existingTimeSlots:",
-        existingTimeSlots
-    );
+    // console.log(
+    //     "ðŸš€ ~ checkIfTimeSlotBooked ~ existingTimeSlots:",
+    //     existingTimeSlots
+    // );
 
     return existingTimeSlots;
 }
@@ -874,7 +878,8 @@ async function bookingEventSentCheckTheShops(
             collectionTimeFrom,
             collectionDate,
             deliveryTimeTo,
-            deliveryTimeFrom
+            deliveryTimeFrom,
+            zoneId
         );
         console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
         if (!checkSlots || checkSlots.length === 0) {
@@ -1007,7 +1012,6 @@ async function bookingEventSentCheckTheShops(
                 dropOffAddressId: bookingDetails.dropOffAddressId || null,
                 laundryShopId: availableShops[0]?.id || null,
                 customerId: bookingDetails.customer.id,
-
                 pickupAddress: bookingDetails.pickupAddress || {},
                 customer: {
                     id: bookingDetails.customer.id,

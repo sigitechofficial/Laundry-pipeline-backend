@@ -122,17 +122,11 @@ async function confirmIntend(paymentIntentId, paymentMethodId) {
 /*
  *    Confirm PaymenIntend and Capture the Payment
  */
-async function confirmAndCapturePayment(paymentIntentId, paymentMethodId) {
+async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, customerId) {
+    console.log("customerId------->", customerId)
     try {
-        const confirmed = await stripe.paymentIntents.confirm(paymentIntentId, {
-            payment_method: paymentMethodId,
-        });
-
-        if (confirmed.status !== 'requires_capture') {
-            throw new customError(`Payment not authorized yet. Status: ${confirmed.status}`, 400);
-        }
-        
         const captured = await stripe.paymentIntents.capture(paymentIntentId);
+
         return captured;
     } catch (error) {
         throw new customError(`Stripe Error: ${error.message}`, 400);

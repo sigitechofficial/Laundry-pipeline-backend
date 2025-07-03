@@ -136,8 +136,8 @@ const intilizeSocketFunc = (server) => {
 
 const sendEvent = async (userId, eventData) => {
     try {
-        console.log(`Event data being sent:`, eventData);
-        console.log(`Event data being sent to:`, userId.toString());
+        //console.log(`Event data being sent:`, eventData);
+        //console.log(`Event data being sent to:`, userId.toString());
 
         socket_Instance
             .to(userId.toString())
