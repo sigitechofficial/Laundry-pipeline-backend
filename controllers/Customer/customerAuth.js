@@ -395,6 +395,7 @@ async function loginUser(req, res) {
             "userTypeId",
             "verifiedAt",
             "phoneNum",
+            "stripeCustomerId",
             [
                 sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                 "joinedOn",
@@ -457,6 +458,7 @@ async function loginUser(req, res) {
                 "userTypeId",
                 "verifiedAt",
                 "phoneNum",
+                "stripeCustomerId",
                 [
                     sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
@@ -497,7 +499,7 @@ async function loginUser(req, res) {
             httpOnly: true,
             secure: true,
             sameSite: "None",
-            path: "/agent",
+            path: "/customer",
             maxAge: 24 * 60 * 60 * 1000
         });
 
@@ -1023,7 +1025,7 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
 //!--------------------------Exports------------------------------------//
 
 module.exports = {
-    registerCustomerOTP,
+    registerCustomerWithOTP,
     verifyOTpSignUp,
     registerCustomer,
     loginUser,
@@ -1033,7 +1035,6 @@ module.exports = {
     logout,
     getUserProfile,
     updateUserProfile,
-    registerCustomerWithOTP,
     session,
     resendOTP
 }

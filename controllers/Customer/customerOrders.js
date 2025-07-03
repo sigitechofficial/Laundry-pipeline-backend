@@ -261,7 +261,7 @@ async function createBooking(req, res) {
             orderAmount: total || 0,
             orderTrackId: ordertrackingNumber,
             orderExpireTime: fixTimeKey,
-            upfrontAmount: upfrontAmount,
+            partialPayment: true,
         },
         { where: { id: bookingData.id } }
     );
@@ -892,6 +892,11 @@ async function bookingEventSentCheckTheShops(
                     model: users,
                     as: "customer",
                     attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+                },
+                {
+                    model: addressDb,
+                    as: "pickupAddress",
+                    attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
                 },
                 {
                     model: billingDetails,

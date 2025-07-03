@@ -57,6 +57,7 @@ const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
+const { confirmAndCapturePayment } = require("../stripe");
 
 //!----------------------------------Agent Shop Address Add-----------------------------//
 async function agentAddressAdd(req, res) {
@@ -182,7 +183,7 @@ async function agentAddressEdit(req, res) {
     const updatedAddressData = await addressDb.findByPk(existingAddress.id);
 
     return res.json(
-        responsefunc("1", "Laundry Shop Address Updated Successfully", updatedAddressData,"")
+        responsefunc("1", "Laundry Shop Address Updated Successfully", updatedAddressData, "")
     );
 }
 
@@ -200,7 +201,7 @@ async function getAgentAddress(req, res) {
         attributes: [
             "id",
             "streetAddress",
-            "district", 
+            "district",
             "province",
             "postalCode",
             "lat",
@@ -863,26 +864,35 @@ async function agentBookingStatusOnTheWay(req, res) {
     const { bookingId } = req.params;
 
     const bookingfind = await booking.findOne({
-        where: {
-            id: bookingId,
-        },
+        where: { id: bookingId },
     });
-    console.log("ðŸš€ ~ agentBookingStatusOnTheWay ~ bookingfind:", bookingfind);
-
-    //return res.json(bookingfind)
 
     if (!bookingfind) {
-        throw new customError(`Booking with this ${bookingId} not exists`);
+        throw new customError(`Booking with ID ${bookingId} not found`);
     }
 
     if (bookingfind.bookingStatusId !== 3) {
-        throw new customError("No driver is assigned to your booking Yet");
+        throw new customError("No driver is assigned to this booking yet");
+    }
+
+
+    if (!bookingfind.paymentIntentId || !bookingfind.paymentMethodId) {
+        throw new customError("PaymentIntent or PaymentMethod not found for this booking");
+    }
+
+    const stripeResult = await confirmAndCapturePayment(
+        bookingfind.paymentIntentId,
+        bookingfind.paymentMethodId
+    );
+
+    console.log("ðŸš€ ~ agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);
+
+    if (stripeResult.status !== 'succeeded') {
+        throw new customError(`Payment failed or incomplete. Current status: ${stripeResult.status}`);
     }
 
     await booking.update(
-        {
-            bookingStatusId: 4,
-        },
+        { bookingStatusId: 4 },
         { where: { id: bookingId } }
     );
 
@@ -895,14 +905,14 @@ async function agentBookingStatusOnTheWay(req, res) {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        bookingId: bookingId,
+        bookingId,
         date: currentDate,
         time: currentTime,
         bookingStatusId: 4,
     });
 
     return res.json(
-        responsefunc("1", "Booking Status Updated Sucesfully", {}, " ")
+        responsefunc("1", "Booking status updated and payment captured", {}, "")
     );
 }
 
@@ -1352,8 +1362,8 @@ async function driverAddSerivces(req, res) {
                 where: {
                     bookingId,
                     serviceId: service.serviceId,
-                    categoryId:service.categoryId,
-                    subCategoryId:service.subCategoryId
+                    categoryId: service.categoryId,
+                    subCategoryId: service.subCategoryId
                 }
             });
 
@@ -1443,10 +1453,10 @@ async function driverAddSerivces(req, res) {
 /*
  *  Agent Update Invoice
  */
-async function agentUpdateInvoice(req,res) {
-    const{bookingId,total,services}=req.body
-    
-    console.log("Req.body--------------------->",req.body)
+async function agentUpdateInvoice(req, res) {
+    const { bookingId, total, services } = req.body
+
+    console.log("Req.body--------------------->", req.body)
 
     const bookings = await booking.findByPk(bookingId);
 
@@ -1462,34 +1472,34 @@ async function agentUpdateInvoice(req,res) {
     for (let service of services) {
         const { categoryId, serviceId, subCategoryId } = service;
 
-        
+
         const updatedService = await customerSelectedService.update(
             {
-                status:false
+                status: false
             },
             {
                 where: {
                     serviceId: serviceId,
                     bookingId: bookingId,
-                    subCategoryId:subCategoryId
-                    
+                    subCategoryId: subCategoryId
+
                 }
             }
         );
-        
+
         await booking.update({
-            orderAmount:total
-        },{where:{id:bookingId}})
-        
+            orderAmount: total
+        }, { where: { id: bookingId } })
+
         await billingDetails.update(
-        {
-            total,
-            discount: 0,
-            paymentStatus: "Pending",
-        },
-        { where: { bookingId: bookingId } }
-    );
-        
+            {
+                total,
+                discount: 0,
+                paymentStatus: "Pending",
+            },
+            { where: { bookingId: bookingId } }
+        );
+
 
         // if (updatedService[0] === 0) {
         //     return res.status(400).json({
@@ -1499,8 +1509,8 @@ async function agentUpdateInvoice(req,res) {
         //         error: "No matching service found or no updates were made"
         //     });
         // }
-        
-        
+
+
     }
 
 
@@ -1509,8 +1519,8 @@ async function agentUpdateInvoice(req,res) {
         message: "Booking services updated successfully",
         data: booking,
         error: ""
-    }); 
-    
+    });
+
 }
 
 /*
@@ -1863,11 +1873,11 @@ async function onHoldConformation(req, res) {
     let records = [];
 
     // Parse incoming records safely
-        if (!req.body.records) {
-            throw new Error("Missing 'records' in request body.");
-        }
-        records = JSON.parse(req.body.records);
-        console.log("records===============================>>>>>>>>", records);
+    if (!req.body.records) {
+        throw new Error("Missing 'records' in request body.");
+    }
+    records = JSON.parse(req.body.records);
+    console.log("records===============================>>>>>>>>", records);
 
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -1931,31 +1941,31 @@ async function onHoldConformation(req, res) {
 /*
  * Get Those Services Items Those Are Rejected 
  */
-async function rejectedServiceItems(req,res) {
-    const{bookingId}=req.params
+async function rejectedServiceItems(req, res) {
+    const { bookingId } = req.params
 
 
-    const rejectedItems=await OnHoldConfirmation.findAll({
-        where:{
-            bookingId:bookingId,
-            customerResponse:false
+    const rejectedItems = await OnHoldConfirmation.findAll({
+        where: {
+            bookingId: bookingId,
+            customerResponse: false
         },
-        include:[
+        include: [
             {
-                model:service,
-                attributes:['id','name']
+                model: service,
+                attributes: ['id', 'name']
             },
             {
-                model:subCategories,
-                attributes:['id','name','price']
+                model: subCategories,
+                attributes: ['id', 'name', 'price']
             }
         ],
-        attributes:['id','noOfItems','description','serviceId','subCategoryId']
+        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId']
     })
 
 
-    return res.json(responsefunc("1","Rejected Services Items",{rejectedItems},""))
-    
+    return res.json(responsefunc("1", "Rejected Services Items", { rejectedItems }, ""))
+
 }
 
 
@@ -2795,7 +2805,7 @@ async function getCustomerServicesForOnHold(req, res) {
     const customerServicesFind = await customerSelectedService.findAll({
         where: {
             bookingId: bookingId,
-            status:true
+            status: true
         },
         include: [
             {
@@ -2809,14 +2819,14 @@ async function getCustomerServicesForOnHold(req, res) {
         ],
         attributes: ['categoryPrice', 'items'],
     });
-    
-    console.log("customerServicesFind===========>",customerServicesFind)
+
+    console.log("customerServicesFind===========>", customerServicesFind)
 
     // Restructure the data to group subCategories under services
     const groupedServices = customerServicesFind.reduce((acc, currentService) => {
         // Check if the service already exists in the accumulator
         let existingService = acc.find(service => service.service.id === currentService.service.id);
-        
+
         if (existingService) {
             // If the service exists, add the subCategory to the subCategories list
             existingService.subCategories.push({
