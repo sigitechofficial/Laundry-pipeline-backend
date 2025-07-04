@@ -68,6 +68,7 @@ async function createPaymentIntend(amount, customerId) {
             currency: 'usd',
             customer: customerId,
             capture_method: 'manual',
+            setup_future_usage: "off_session",
         })
         return paymentIntent
     } catch (error) {
@@ -133,8 +134,24 @@ async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, custom
     }
 }
 
-
-
+/*
+ *    Create PaymentIntent for Agent
+ */
+async function createPaymentIntentForAgent(newAmount, customerId, savedPaymentMethodId) {
+    try {
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: convertToCents(newAmount),
+            currency: 'usd',
+            customer: customerId,
+            payment_method: savedPaymentMethodId,
+            off_session: true,
+            confirm: true,
+        });
+        return paymentIntent
+    } catch (error) {
+        throw new customError(`${error.message} `, 200)
+    }
+}
 
 
 
@@ -151,5 +168,6 @@ module.exports = {
     paymentIntentGet,
     confirmIntend,
     getIntent,
-    confirmAndCapturePayment
+    confirmAndCapturePayment,
+    createPaymentIntentForAgent
 };

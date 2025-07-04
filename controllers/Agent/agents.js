@@ -57,7 +57,7 @@ const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
-const { confirmAndCapturePayment } = require("../stripe");
+const { confirmAndCapturePayment,createPaymentIntend,createPaymentIntentForAgent } = require("../stripe");
 
 //!----------------------------------Agent Shop Address Add-----------------------------//
 async function agentAddressAdd(req, res) {
@@ -1110,6 +1110,21 @@ async function reachedAtDeliveryShopStatus(req, res) {
 }
 
 
+/*
+ *  Create Intent Using Stripe
+ */
+async function createIntentUsingStripeForAgent(req, res) {
+    const { amount, customerId, savedPaymentMethodId } = req.body;
+    const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
+    console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
+    let intentData = {
+        intentId: intent.id,
+        amount: intent.amount,
+        customerId: customerId,
+    }
+    return res.json(responsefunc("1", "Intent Created", intentData, ""));
+}
+
 
 /*
  *   Laundry Status Updated Invoice Generated and Status goes to In-Procesing
@@ -1548,7 +1563,7 @@ async function invoiceCreation(req, res) {
             {
                 model: users,
                 as: "customer",
-                attributes: ["firstName", "lastName", "email", "phoneNum", "image"]
+                attributes: ["firstName", "lastName", "email", "phoneNum", "image", "stripeCustomerId"]
             },
             {
                 model: addressDb,
@@ -3112,5 +3127,7 @@ module.exports = {
     getOnHoldOptions,
     getCustomerServicesForOnHold,
     rejectedServiceItems,
-    agentUpdateInvoice
+    agentUpdateInvoice,
+    //-------------Stripe Intent Api-------//
+    createIntentUsingStripeForAgent
 }
