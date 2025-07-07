@@ -153,6 +153,19 @@ async function createPaymentIntentForAgent(newAmount, customerId, savedPaymentMe
     }
 }
 
+/*
+ *    Attach Payment Method to Customer
+ */
+async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
+    try {
+        const paymentMethod = await stripe.paymentMethods.attach(savedPaymentMethodId, {
+            customer: customerId,
+        }); 
+        return paymentMethod
+    } catch (error) {
+        throw new customError(`${error.message} `, 200)
+    }
+}
 
 
 
@@ -169,5 +182,6 @@ module.exports = {
     confirmIntend,
     getIntent,
     confirmAndCapturePayment,
-    createPaymentIntentForAgent
+    createPaymentIntentForAgent,
+    attachPaymentMethodToCustomer
 };

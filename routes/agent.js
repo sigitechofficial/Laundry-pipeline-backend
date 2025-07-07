@@ -427,6 +427,13 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.serviceDetail)
 );
+//Edit Service Status
+router.patch(
+    "/editServiceStatus",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.editServiceStatus)
+);
 //!-------------------------------------------------------Customer Selected Services--------------------------------------------------//
 router.get(
     "/customerServices",
@@ -478,5 +485,11 @@ router.get(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.rejectedServiceItems)
+);
+//!----------------------------------------------------------Stripe Intent Api----------------------------------------------------------//
+router.post(
+    "/createIntentUsingStripeForAgent",
+    validateAccessToken,
+    asyncMiddleware(agentController.createIntentUsingStripeForAgent)
 );
 module.exports = router;

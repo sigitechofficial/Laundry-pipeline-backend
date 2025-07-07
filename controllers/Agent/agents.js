@@ -677,7 +677,7 @@ async function agentBookingFilters(req, res) {
         where: {
             laundryShopId: addressFound.id,
             bookingStatusId: {
-                [Op.ne]: [1, 13]
+                [Op.notIn]: [1, 13, 17]
             }
         },
         attributes: [
@@ -1115,6 +1115,7 @@ async function reachedAtDeliveryShopStatus(req, res) {
  */
 async function createIntentUsingStripeForAgent(req, res) {
     const { amount, customerId, savedPaymentMethodId } = req.body;
+    console.log("Amount ------------------------>",amount)
     const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
     console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
     let intentData = {
@@ -1122,8 +1123,9 @@ async function createIntentUsingStripeForAgent(req, res) {
         amount: intent.amount,
         customerId: customerId,
     }
-    return res.json(responsefunc("1", "Intent Created", intentData, ""));
+    return res.json(responsefunc("1", "Intent Created", {}, ""));
 }
+
 
 
 /*
@@ -2607,6 +2609,33 @@ async function getAgentServices(req, res) {
 }
 
 /*
+ *  Edit Service Status
+*/
+async function editServiceStatus(req, res) {
+    const { serviceId, status } = req.body;
+    const agentId = req.user.id;
+
+    const serviceFind = await agentSelectServices.findOne({
+        where: {
+            id: serviceId,
+            agentServiceId: agentId
+        }
+    });
+
+    if (!serviceFind) {
+        throw new customError("Service Not Found");
+    }
+
+    await agentSelectServices.update({ status: status }, { where: { id: serviceId } });
+
+    return res.json(responsefunc("1", "Service Status Updated", {}, ""));
+}
+
+
+
+
+
+/*
   *  Specific Service Detail For the Customer
 */
 async function serviceDetail(req, res) {
@@ -2614,7 +2643,10 @@ async function serviceDetail(req, res) {
 
 
     const agentServiceFind = await agentSelectServices.findAll({
-        where: { agentServiceId: agentId },
+        where: {
+            agentServiceId: agentId,
+            status: true
+        },
         attributes: ['serviceId']
     });
 
@@ -3110,6 +3142,7 @@ module.exports = {
     //--------------------Agent Services------------//
     getAgentServices,
     serviceDetail,
+    editServiceStatus,
     //-------------------Customer Services-------//
     customerServices,
     //-----------Booking OnHold--------------//

@@ -43,7 +43,7 @@ const { literal, fn, col } = require("sequelize");
 const getdistance = require("../../utils/distanceCalculator");
 const { sendEvent } = require("../../socket_io");
 const { title } = require("process");
-const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent } = require("../stripe");
+const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPaymentMethodToCustomer } = require("../stripe");
 
 //!------------------------Boooking Management-------------------------------//
 /*
@@ -75,6 +75,7 @@ async function createBooking(req, res) {
         preferencesArray,
         paymentMethodId,
         paymentIntentId,
+        stripeCustomerId,
     } = req.body;
 
     console.log("ðŸš€ ~ createBooking ~ req.body:", req.body);
@@ -266,6 +267,10 @@ async function createBooking(req, res) {
         { where: { id: bookingData.id } }
     );
 
+    if (paymentMethodId && stripeCustomerId) {
+        await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
+    }
+
     let bookingId = bookingData.id;
     bookingEventSentCheckTheShops(
         bookingId,
@@ -434,26 +439,27 @@ async function allBookings(req, res) {
             customerId: userId,
         },
         include: [
-            {
-                model: users,
-                as: "customer",
-                attributes: ["firstName", "lastName", "email"],
-            },
-            {
-                model: addressDb,
-                as: "pickupAddress",
-                attributes: ["title", "streetAddress", "province", "addressType"],
-            },
-            {
-                model: addressDb,
-                as: "dropOffAddress",
-                attributes: ["title", "streetAddress", "province", "addressType"],
-            },
+            // {
+            //     model: users,
+            //     as: "customer",
+            //     attributes: ["firstName", "lastName", "email"],
+            // },
+            // {
+            //     model: addressDb,
+            //     as: "pickupAddress",
+            //     attributes: ["title", "streetAddress", "province", "addressType"],
+            // },
+            // {
+            //     model: addressDb,
+            //     as: "dropOffAddress",
+            //     attributes: ["title", "streetAddress", "province", "addressType"],
+            // },
             {
                 model: bookingStatus,
                 attributes: ["title", "description"],
             },
         ],
+        attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
     });
 
     return res.json(
