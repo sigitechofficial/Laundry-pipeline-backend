@@ -1147,8 +1147,16 @@ async function bookingInvoiceGeneratedStatusUpdated(req, res) {
     await booking.update(
         {
             bookingStatusId: 11,
+            paymentConfirmed: true,
         },
         { where: { id: bookingId } }
+    );
+
+    await billingDetails.update(
+        {
+            paymentStatus: "Paid",
+        },
+        { where: { bookingId: bookingId } }
     );
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -2590,7 +2598,6 @@ async function getAgentServices(req, res) {
     const findServices = await agentSelectServices.findAll({
         where: {
             agentServiceId: agentId,
-            status: true,
         },
         include: [
             {
@@ -2605,7 +2612,7 @@ async function getAgentServices(req, res) {
         ],
     });
 
-    return res.json(responsefunc("1", "Services Found", findServices, ""));
+    return res.json(responsefunc("1", "Services Found", {findServices}, ""));
 }
 
 /*
@@ -2617,7 +2624,7 @@ async function editServiceStatus(req, res) {
 
     const serviceFind = await agentSelectServices.findOne({
         where: {
-            id: serviceId,
+            serviceId: serviceId,
             agentServiceId: agentId
         }
     });
@@ -2626,10 +2633,11 @@ async function editServiceStatus(req, res) {
         throw new customError("Service Not Found");
     }
 
-    await agentSelectServices.update({ status: status }, { where: { id: serviceId } });
+    await agentSelectServices.update({ status: status }, { where: { serviceId: serviceId } });
 
     return res.json(responsefunc("1", "Service Status Updated", {}, ""));
 }
+
 
 
 
@@ -2914,6 +2922,16 @@ async function getCustomerServicesForOnHold(req, res) {
     return res.json(responsefunc("1", "Services of Customer", { customerServicesFind: groupedServices }, ""));
 }
 
+/*
+  *  Performance Dashboard
+*/
+
+
+
+
+
+
+
 //!---------------Recurring Functions-------------------------//
 
 let responsefunc = (status, message, data, error) => {
@@ -3094,6 +3112,7 @@ function getNextHourTime(time) {
         .toString()
         .padStart(2, "0")}`;
 }
+
 
 //!---------------------------------------------Exports----------------------------------------//
 
