@@ -492,4 +492,10 @@ router.post(
     validateAccessToken,
     asyncMiddleware(agentController.createIntentUsingStripeForAgent)
 );
+//!----------------------------------------------------------Performance Dashboard----------------------------------------------------------//
+router.get(
+    "/getPerformanceDashboard",
+    validateAccessToken,
+    asyncMiddleware(agentController.getPerformanceDashboard)
+);
 module.exports = router;

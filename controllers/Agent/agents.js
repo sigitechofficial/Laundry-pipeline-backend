@@ -2926,7 +2926,70 @@ async function getCustomerServicesForOnHold(req, res) {
   *  Performance Dashboard
 */
 
+async function getPerformanceDashboard(req, res) {
+    const agentId = req.user.id;
 
+        // Today's Summary
+        const today = new Date();
+        const startOfDay = new Date(today.setHours(0, 0, 0, 0));
+        const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+
+        const todaySummary = await booking.findAll({
+            where: {
+                laundryShopId: agentId,
+                createdAt: {
+                    [Op.between]: [startOfDay, endOfDay]
+                }
+            },
+            attributes: [
+                [sequelize.fn('COUNT', sequelize.col('id')), 'pickups'],
+                [sequelize.fn('SUM', sequelize.col('orderAmount')), 'earnings']
+            ]
+        });
+
+        // Delivery Type Split
+        const deliveryTypeSplit = await users.findAll({
+            where: { employeeOff: agentId, roleId: 6 },
+            attributes: [
+                [sequelize.fn('COUNT', sequelize.col('id')), 'totalDeliveries'],
+                [sequelize.literal(`SUM(CASE WHEN deliveryType = 'own' THEN 1 ELSE 0 END)`), 'ownDrivers'],
+                [sequelize.literal(`SUM(CASE WHEN deliveryType = '3rdParty' THEN 1 ELSE 0 END)`), 'thirdParty']
+            ]
+        });
+
+        // Driver Performance
+        const driverPerformance = await users.findAll({
+            where: { roleId: 6 }, // Assuming roleId 6 is for drivers
+            include: [{
+                model: booking,
+                attributes: [
+                    [sequelize.fn('COUNT', sequelize.col('driverId')), 'pickups'],
+                    [sequelize.fn('COUNT', sequelize.col('deliveryDriverId')), 'deliveries'],
+                    [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, collectionTimeFrom, actualCollectionTime))`), 'collectionTimeliness'],
+                    [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, deliveryTimeFrom, actualDeliveryTime))`), 'deliveryTimeliness']
+                ]
+            }]
+        });
+
+        // Commission Summary
+        const commissionSummary = await billingDetails.findAll({
+            where: { laundryShopId: agentId },
+            attributes: [
+                [sequelize.fn('SUM', sequelize.col('total')), 'agentSide'],
+                //[sequelize.fn('SUM', sequelize.col('thirdPartyCommission')), 'thirdPartySide']
+            ]
+        });
+
+        // Construct response
+        const response = {
+            todaySummary,
+            deliveryTypeSplit,
+            driverPerformance,
+            commissionSummary
+        };
+
+        return res.json(responsefunc("1", "Performance Dashboard Data", response, ""));
+}
 
 
 
@@ -3181,5 +3244,7 @@ module.exports = {
     rejectedServiceItems,
     agentUpdateInvoice,
     //-------------Stripe Intent Api-------//
-    createIntentUsingStripeForAgent
+    createIntentUsingStripeForAgent,
+    //-------------Performance Dashboard-------//
+    getPerformanceDashboard
 }

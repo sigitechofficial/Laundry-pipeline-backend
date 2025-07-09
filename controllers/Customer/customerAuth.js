@@ -402,14 +402,16 @@ async function loginUser(req, res) {
             ],
         ]
     })
-    //console.log("ðŸš€ ~ loginUser ~ userFind:", userFind)
-    console.log("ðŸš€ ~ loginUser ~ userFind:", userFind)
+    //console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind)
+    console.log("🚀 ~ loginUser ~ userFind:", userFind)
 
-    if (!userFind) {
+    if (!userFind && signedFrom===null) {
         throw new customError('User Not Exists with this email')
     }
 
     if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
+        
+        console.log("Going into this condition ----------------->>>")
 
         const createStripeCustomer = await stripe.createStripeCustomer(
             email
@@ -419,12 +421,14 @@ async function loginUser(req, res) {
             email,
             userTypeId: 2,
             verifiedAt: Date.now(),
-            stripeCustomerId: createStripeCustomer
+            status:true,
+            stripeCustomerId: createStripeCustomer,
+            signedFrom:signedFrom
         })
 
         const userId = createUser.id
 
-        return res.json(responsefunc('3', `User signed-In by${signedFrom}`, { userId }))
+        return res.json(responsefunc('3', `User signed-In by : ${signedFrom}`, { userId }))
     }
 
     if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
@@ -444,7 +448,6 @@ async function loginUser(req, res) {
             where: {
                 email: email,
                 userTypeId: 2,
-                deletedAt: { [Op.is]: null },
                 signedFrom
             },
             include: { model: deviceToken, attributes: ['tokenId'] },
@@ -466,7 +469,9 @@ async function loginUser(req, res) {
             ]
         })
         
-            if (!userFind) {
+        console.log("userFind------------>",userFind)
+        
+        if (!userFind) {
         throw new customError("User not found. Please ensure the correct email and sign-in method.");
     }
 
@@ -567,7 +572,7 @@ async function loginUser(req, res) {
 
 
     const dvTokenFound = userFind.deviceTokens.find((ele) => ele.tokenId === dvToken)
-    console.log("ðŸš€ ~ loginUser ~ dvTokenFound:", dvTokenFound)
+    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ dvTokenFound:", dvTokenFound)
     if (!dvTokenFound) {
         await deviceToken.create({
             tokenId: dvToken,
@@ -604,9 +609,6 @@ async function loginUser(req, res) {
 
 
 }
-
-
-
 
 
 /*

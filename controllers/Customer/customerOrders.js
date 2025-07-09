@@ -280,7 +280,8 @@ async function createBooking(req, res) {
         collectionTimeFrom,
         deliveryDate,
         deliveryTimeTo,
-        deliveryTimeFrom
+        deliveryTimeFrom,
+        services
     );
 
     return res.json(responsefunc("1", "Booking Created", {}, ""));
@@ -840,7 +841,8 @@ async function bookingEventSentCheckTheShops(
     collectionTimeFrom,
     deliveryDate,
     deliveryTimeTo,
-    deliveryTimeFrom
+    deliveryTimeFrom,
+    services
 ) {
     console.log(collectionTimeTo);
     console.log(collectionTimeFrom);
@@ -857,6 +859,18 @@ async function bookingEventSentCheckTheShops(
             {
                 model: users,
                 attributes: ["id", "firstName", "email", "lastName"],
+                include:[
+                    {
+                        model: agentSelectServices,
+                        as: "agentServices",
+                        where: {
+                            serviceId: {
+                                [Op.in]: services.map(service => service.serviceId)
+                            }
+                        },
+                        attributes: ['id']
+                    }
+                ],
                 include: [
                     {
                         model: bussinessInformation,

@@ -45,7 +45,7 @@ router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers
 //Session Api
 router.get("/session",validateAccessToken, asyncMiddleware(customerAuthControllers.session))
 //Resend OTP
-router.post('/resendOTP',validateAccessToken,asyncMiddleware(customerAuthControllers.resendOTP))
+router.post('/resendOTP',asyncMiddleware(customerAuthControllers.resendOTP))
 //!------------------------------------Drawer-------------------------------//
 //get Profile
 router.get('/getUserProfile',validateAccessToken,asyncMiddleware(customerAuthControllers.getUserProfile));
