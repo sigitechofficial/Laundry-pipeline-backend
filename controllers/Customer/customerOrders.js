@@ -22,6 +22,7 @@ const {
     serviceCategories,
     servicePreferences,
     countries,
+    agentSelectServices,
     cities,
 } = require("../../models");
 const sequelize = require("sequelize");

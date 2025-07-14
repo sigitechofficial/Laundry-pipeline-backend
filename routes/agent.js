@@ -313,6 +313,13 @@ router.patch(
     checkPermissions,
     asyncMiddleware(agentController.bookingInvoiceGeneratedStatusUpdated)
 );
+//Update Invoice
+router.patch(
+    "/updateInvoice",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.updateInvoice)
+);
 //!--------------------------------------------------------Agent Cancel Booking-----------------------------------------------------------//
 //Agent Calcel Booking
 router.post(
@@ -440,6 +447,13 @@ router.get(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.customerServices)
+);
+//Get Customer Services For Updating Invoice
+router.get(
+    "/getCustomerServicestoUpdateInvoice",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getCustomerServicestoUpdateInvoice)
 );
 //!=======================================================Get countries && cities==================================================//
 router.get("/getCountries", asyncMiddleware(agentController.getCountries));

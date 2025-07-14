@@ -1395,8 +1395,8 @@ async function driverAddSerivces(req, res) {
                 where: {
                     bookingId,
                     serviceId: service.serviceId,
-                    categoryId: service.categoryId,
-                    subCategoryId: service.subCategoryId
+                    subCategoryId: { [Op.is]: null },
+                    categoryId: { [Op.is]: null },
                 }
             });
 
@@ -2720,6 +2720,108 @@ async function serviceDetail(req, res) {
     return res.json(responsefunc("1", "Service Details", { ServiceCategoriesList }, ""));
 }
 
+/*
+  * Get Customer Services For Updating Invoice
+*/
+async function getCustomerServicestoUpdateInvoice(req, res) {
+    const { bookingId } = req.query;
+        const customerServices = await customerSelectedService.findAll({
+            where: {
+                bookingId: bookingId,
+                status: true
+            },
+            include: [
+                {
+                    model: service,
+                    attributes: ["id", "name"],
+                },
+                {
+                    model: categories,
+                    attributes: ["id", "name"],
+                },
+                {
+                    model: subCategories,
+                    attributes: ["id", "name", "price"],
+                },
+            ],
+            attributes: ['id', 'categoryPrice', 'items']
+        });
+
+        if (!customerServices || customerServices.length === 0) {
+            return res.json(
+                responsefunc(
+                    "1",
+                    "No Customer Selected Services",
+                    { customerServices: [], totalAmount: 0 },
+                    ""
+                )
+            );
+        }
+
+        // Calculate total
+        const totalAmount = customerServices.reduce((sum, item) => {
+            const price = parseFloat(item.categoryPrice) || 0;
+            return sum + price;
+        }, 0);
+
+        // Group services by service name
+        const groupedServices = customerServices.reduce((acc, item) => {
+            if (!item.service || !item.category || !item.subCategory) return acc;
+
+            const serviceName = item.service.name;
+
+            if (!acc[serviceName]) {
+                acc[serviceName] = {
+                    serviceName,
+                    serviceId: item.service.id,
+                    categories: []
+                };
+            }
+
+            const existingCategoryIndex = acc[serviceName].categories.findIndex(
+                category => category.name === item.category.name
+            );
+
+            const subCategory = {
+                id: item.subCategory.id,
+                name: item.subCategory.name,
+                price: item.subCategory.price
+            };
+
+            if (existingCategoryIndex === -1) {
+                acc[serviceName].categories.push({
+                    id: item.category.id,
+                    name: item.category.name,
+                    subCategories: [subCategory]
+                });
+            } else {
+                acc[serviceName].categories[existingCategoryIndex].subCategories.push(subCategory);
+            }
+
+            return acc;
+        }, {});
+
+        const formattedResponse = Object.values(groupedServices);
+
+        return res.json(
+            responsefunc(
+                "1",
+                "Customer Selected Services",
+                {
+                    customerServices: formattedResponse,
+                    totalAmount
+                },
+                ""
+            )
+        );
+    
+}
+
+
+
+
+
+
 //!------------------Get Countries && Cities------------------//
 async function getCountries(req, res) {
     const countriesFind = await countries.findAll();
@@ -2991,9 +3093,113 @@ async function getPerformanceDashboard(req, res) {
         return res.json(responsefunc("1", "Performance Dashboard Data", response, ""));
 }
 
+/*
+  * Update Invoice  
+*/
+async function updateInvoice(req, res) {
+    const { services, bookingId,total } = req.body;
+
+    if (!Array.isArray(services) || services.length === 0) {
+        throw new customError("Invalid request. Please provide an array of services.");
+    }
+
+    const currentTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    const currentDate = new Date().toISOString().split("T")[0];
+    console.log("Current Date:", currentDate);
+
+    if (services.length > 0) {
+        for (let service of services) {
+            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
+            total += itemTotalPrice;
+
+            const existingRecords = await customerSelectedService.findAll({
+                where: {
+                    bookingId,
+                    id:service.id,
+                    serviceId: service.serviceId,
+                    subCategoryId: service.subCategoryId,
+                    categoryId: service.categoryId,
+                }
+            });
+
+            let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
+
+            // 👇 fallback: update the first one with null subCategoryId
+            if (!matched) {
+                matched = existingRecords.find(r => r.subCategoryId === null);
+            }
+
+            if (matched) {
+                console.log(`✅ Updating existing record (id ${matched.id})`);
+                await matched.update({
+                    categoryId: service.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: service.subCategoryId,
+                    items: service.items,
+                    date: currentDate,
+                    time: currentTime
+                });
+            } else {
+                console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
+                await customerSelectedService.create({
+                    date: currentDate,
+                    time: currentTime,
+                    bookingId: bookingId,
+                    serviceId: service.serviceId,
+                    categoryId: service.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: service.subCategoryId,
+                    items: service.items
+                });
+            }
+        }
+    }
+
+    // const parsedServiceCharge = parseFloat(serviceCharge) || 0;
+    // const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+
+    // let subTotal = total;
+    // console.log("Sub-Total------->>>", subTotal);
+
+    // total += parsedServiceCharge;
+    // console.log("Total Before Zone Deduction:", total);
+
+    // total -= parsedZoneMinimum;
+
+    // // Round to 2 decimal places
+    // total = parseFloat(total.toFixed(2));
+    // subTotal = parseFloat(subTotal.toFixed(2));
+
+    // console.log("Final Total After Zone Deduction:", total);
+
+    // if (isNaN(total)) {
+    //     throw new Error("Calculated total is NaN. Please check your input values.");
+    // }
+
+    await billingDetails.update(
+        {
+            total,
+            discount: 0,
+            paymentStatus: "Pending",
+        },
+        { where: { bookingId: bookingId } }
+    );
 
 
+    await booking.update(
+        {
+            orderAmount: total,
+        },
+        { where: { id: bookingId } }
+    );
 
+    return res.json(responsefunc("1", "Invoice Updated", {}, ""));
+}
 
 //!---------------Recurring Functions-------------------------//
 
@@ -3205,6 +3411,7 @@ module.exports = {
     bookingDeliverToCustomer,
     invoiceDetailTab,
     bookingInvoiceGeneratedStatusUpdated,
+    updateInvoice,
     //----------------ClassifiedAs--------------//
     addClassifiedAs,
     getClassifiedAs,
@@ -3225,6 +3432,7 @@ module.exports = {
     getAgentServices,
     serviceDetail,
     editServiceStatus,
+    getCustomerServicestoUpdateInvoice,
     //-------------------Customer Services-------//
     customerServices,
     //-----------Booking OnHold--------------//
