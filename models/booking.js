@@ -35,7 +35,7 @@ module.exports = (sequelize, DataTypes) => {
       models.customerSelectedService.belongsTo(booking)
 
       //Relation with onHoldConformation model
-      booking.hasOne(models.OnHoldConfirmation)
+      booking.hasMany(models.OnHoldConfirmation)
       models.OnHoldConfirmation.belongsTo(booking)
 
       //Relation with model proofOfDeliveries

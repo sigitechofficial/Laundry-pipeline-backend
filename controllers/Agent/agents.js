@@ -57,7 +57,7 @@ const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
-const { confirmAndCapturePayment,createPaymentIntend,createPaymentIntentForAgent } = require("../stripe");
+const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent } = require("../stripe");
 
 //!----------------------------------Agent Shop Address Add-----------------------------//
 async function agentAddressAdd(req, res) {
@@ -70,6 +70,7 @@ async function agentAddressAdd(req, res) {
         coordinates,
         addressType,
         userId,
+        postalcode
     } = req.body;
 
     const findAgentShopAddress = await addressDb.findAll({
@@ -106,6 +107,7 @@ async function agentAddressAdd(req, res) {
         lat,
         lng,
         status: true,
+        postalcode,
         coordinates: polygon,
         userId: userId,
         zoneId: fetchZones[0].id,
@@ -114,7 +116,7 @@ async function agentAddressAdd(req, res) {
     });
 
     return res.json(
-        responsefunc("1", "Laundary Shhop Address Added", registerShop)
+        responsefunc("1", "Laundary Shhop Address Added", { registerShop }, "")
     );
 }
 
@@ -129,7 +131,11 @@ async function agentAddressEdit(req, res) {
         coordinates,
         addressType,
         addressId,
+        postalcode
     } = req.body;
+
+    console.log("req.body===================>>>", req.body)
+
 
     const agentId = req.user.id;
 
@@ -140,6 +146,9 @@ async function agentAddressEdit(req, res) {
             userId: agentId,
         },
     });
+
+    console.log("existingAddress===================>>>", existingAddress.id)
+
 
     if (!existingAddress) {
         throw new customError("No shop address found to edit. Please add an address first.");
@@ -171,6 +180,7 @@ async function agentAddressEdit(req, res) {
             coordinates: polygon,
             zoneId: fetchZones[0].id,
             addressType,
+            postalcode
         },
         {
             where: {
@@ -181,6 +191,8 @@ async function agentAddressEdit(req, res) {
 
     // Fetch the updated address to return in response
     const updatedAddressData = await addressDb.findByPk(existingAddress.id);
+
+    console.log("updatedAddressData===================>>>", updatedAddressData)
 
     return res.json(
         responsefunc("1", "Laundry Shop Address Updated Successfully", updatedAddressData, "")
@@ -333,7 +345,7 @@ async function getBookingHome(req, res) {
     const currentDate = new Date();
     currentDate.setSeconds(0, 0);
     const currentTimeString = currentDate.toTimeString().slice(0, 5);
-
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
@@ -341,6 +353,9 @@ async function getBookingHome(req, res) {
             zoneId: agentZone,
             orderExpireTime: {
                 [Op.gte]: currentTimeString
+            },
+            createdAt: {
+                [Op.gte]: twentyFourHoursAgo
             }
         },
         include: [
@@ -656,6 +671,8 @@ async function agentBookingFilters(req, res) {
     const addressFound = await addressDb.findOne({
         where: { userId: agentId },
     });
+
+    console.log("addressFound==========================>>", addressFound.id)
 
     if (!addressFound) {
         return res.json(responsefunc("0", "Address not found for agent", {}, ""));
@@ -1115,7 +1132,7 @@ async function reachedAtDeliveryShopStatus(req, res) {
  */
 async function createIntentUsingStripeForAgent(req, res) {
     const { amount, customerId, savedPaymentMethodId } = req.body;
-    console.log("Amount ------------------------>",amount)
+    console.log("Amount ------------------------>", amount)
     const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
     console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
     let intentData = {
@@ -1415,7 +1432,8 @@ async function driverAddSerivces(req, res) {
                     subCategoryId: service.subCategoryId,
                     items: service.items,
                     date: currentDate,
-                    time: currentTime
+                    time: currentTime,
+                    status: true
                 });
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
@@ -1427,7 +1445,8 @@ async function driverAddSerivces(req, res) {
                     categoryId: service.categoryId,
                     categoryPrice: itemTotalPrice,
                     subCategoryId: service.subCategoryId,
-                    items: service.items
+                    items: service.items,
+                    status: true
                 });
             }
         }
@@ -1492,6 +1511,14 @@ async function agentUpdateInvoice(req, res) {
     console.log("Req.body--------------------->", req.body)
 
     const bookings = await booking.findByPk(bookingId);
+    const currentTime = new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+
+    const currentDate = new Date().toISOString().split("T")[0];
+    console.log("Current Date:", currentDate);
 
     if (!bookings) {
         return res.status(404).json({
@@ -1521,8 +1548,30 @@ async function agentUpdateInvoice(req, res) {
         );
 
         await booking.update({
-            orderAmount: total
+            orderAmount: total,
+            bookingStatusId: 22
         }, { where: { id: bookingId } })
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId: bookingId,
+            bookingStatusId: 22,
+        });
+
+        await OnHoldConfirmation.update(
+            {
+                deleted: true
+            },
+            {
+                where: {
+                    serviceId: serviceId,
+                    bookingId: bookingId,
+                    subCategoryId: subCategoryId
+
+                }
+            }
+        )
 
         await billingDetails.update(
             {
@@ -1532,6 +1581,9 @@ async function agentUpdateInvoice(req, res) {
             },
             { where: { bookingId: bookingId } }
         );
+
+
+
 
 
         // if (updatedService[0] === 0) {
@@ -1634,9 +1686,14 @@ async function invoiceCreation(req, res) {
                     }
                 ],
                 attributes: [
-                    "date", "time", "categoryPrice", "bookingId",
+                    "id", "date", "time", "categoryPrice", "bookingId",
                     "categoryId", "serviceId", "subCategoryId", "items"
                 ]
+            },
+            {
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ["id", "description", "serviceId", "subCategoryId", "bookingId", "onHoldImg", "customerResponse"]
             },
             {
                 model: billingDetails,
@@ -1654,6 +1711,7 @@ async function invoiceCreation(req, res) {
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] }
     });
+
 
     // Handle no results case
     if (!invoiceDetails || invoiceDetails.length === 0) {
@@ -1801,6 +1859,7 @@ async function customerServices(req, res) {
     const customerServicesFind = await customerSelectedService.findAll({
         where: {
             bookingId: bookingId,
+            status: true
         },
         include: [
             {
@@ -1826,7 +1885,7 @@ async function customerServices(req, res) {
                 attributes: ["id", "name", "price"],
             },
         ],
-        attributes: ['categoryPrice', 'items']
+        attributes: ['id', 'categoryPrice', 'items']
     });
 
     if (!customerServicesFind || customerServicesFind.length === 0) {
@@ -1867,7 +1926,8 @@ async function customerServices(req, res) {
         const subCategory = {
             id: item.subCategory.id,
             name: item.subCategory.name,
-            price: item.subCategory.price
+            price: item.subCategory.price,
+            recordId: item.id
         };
 
         if (existingCategoryIndex === -1) {
@@ -1981,7 +2041,6 @@ async function rejectedServiceItems(req, res) {
     const rejectedItems = await OnHoldConfirmation.findAll({
         where: {
             bookingId: bookingId,
-            customerResponse: false
         },
         include: [
             {
@@ -1993,8 +2052,14 @@ async function rejectedServiceItems(req, res) {
                 attributes: ['id', 'name', 'price']
             }
         ],
-        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId']
+        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'deleted']
     })
+
+    console.log("rejectedItems======================....", rejectedItems[0].customerResponse)
+
+    if (rejectedItems[0].customerResponse === true && rejectedItems[0].deleted === true) {
+        return res.json(responsefunc("1", "Rejected Services Items", {}, ""))
+    }
 
 
     return res.json(responsefunc("1", "Rejected Services Items", { rejectedItems }, ""))
@@ -2020,7 +2085,7 @@ async function agentIssueResolved(req, res) {
 
     await booking.update(
         {
-            bookingStatusId: 19,
+            bookingStatusId: 11,
         },
         { where: { id: bookingId } }
     );
@@ -2033,12 +2098,14 @@ async function agentIssueResolved(req, res) {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
-    await bookingHistory.create({
+    const statusId = [11, 19];
+    const bookinghistories = statusId.map(statusId => ({
         date: currentDate,
         time: currentTime,
         bookingId: bookingId,
-        bookingStatusId: 19,
-    });
+        bookingStatusId: statusId
+    }))
+    await bookingHistory.bulkCreate(bookinghistories);
 
     return res.json(
         responsefunc("1", "Booking Status Updated Issue Resolved", {}, "")
@@ -2598,6 +2665,7 @@ async function getAgentServices(req, res) {
     const findServices = await agentSelectServices.findAll({
         where: {
             agentServiceId: agentId,
+            status: true
         },
         include: [
             {
@@ -2612,7 +2680,7 @@ async function getAgentServices(req, res) {
         ],
     });
 
-    return res.json(responsefunc("1", "Services Found", {findServices}, ""));
+    return res.json(responsefunc("1", "Services Found", { findServices }, ""));
 }
 
 /*
@@ -2725,98 +2793,164 @@ async function serviceDetail(req, res) {
 */
 async function getCustomerServicestoUpdateInvoice(req, res) {
     const { bookingId } = req.query;
-        const customerServices = await customerSelectedService.findAll({
-            where: {
-                bookingId: bookingId,
-                status: true
+    const customerServices = await customerSelectedService.findAll({
+        where: {
+            bookingId: bookingId,
+            status: true
+        },
+        include: [
+            {
+                model: service,
+                attributes: ["id", "name"],
             },
-            include: [
-                {
-                    model: service,
-                    attributes: ["id", "name"],
-                },
-                {
-                    model: categories,
-                    attributes: ["id", "name"],
-                },
-                {
-                    model: subCategories,
-                    attributes: ["id", "name", "price"],
-                },
-            ],
-            attributes: ['id', 'categoryPrice', 'items']
-        });
+            {
+                model: categories,
+                attributes: ["id", "name"],
+            },
+            {
+                model: subCategories,
+                attributes: ["id", "name", "price"],
+            },
+        ],
+        attributes: ['id', 'categoryPrice', 'items']
+    });
 
-        if (!customerServices || customerServices.length === 0) {
-            return res.json(
-                responsefunc(
-                    "1",
-                    "No Customer Selected Services",
-                    { customerServices: [], totalAmount: 0 },
-                    ""
-                )
-            );
-        }
-
-        // Calculate total
-        const totalAmount = customerServices.reduce((sum, item) => {
-            const price = parseFloat(item.categoryPrice) || 0;
-            return sum + price;
-        }, 0);
-
-        // Group services by service name
-        const groupedServices = customerServices.reduce((acc, item) => {
-            if (!item.service || !item.category || !item.subCategory) return acc;
-
-            const serviceName = item.service.name;
-
-            if (!acc[serviceName]) {
-                acc[serviceName] = {
-                    serviceName,
-                    serviceId: item.service.id,
-                    categories: []
-                };
-            }
-
-            const existingCategoryIndex = acc[serviceName].categories.findIndex(
-                category => category.name === item.category.name
-            );
-
-            const subCategory = {
-                id: item.subCategory.id,
-                name: item.subCategory.name,
-                price: item.subCategory.price
-            };
-
-            if (existingCategoryIndex === -1) {
-                acc[serviceName].categories.push({
-                    id: item.category.id,
-                    name: item.category.name,
-                    subCategories: [subCategory]
-                });
-            } else {
-                acc[serviceName].categories[existingCategoryIndex].subCategories.push(subCategory);
-            }
-
-            return acc;
-        }, {});
-
-        const formattedResponse = Object.values(groupedServices);
-
+    if (!customerServices || customerServices.length === 0) {
         return res.json(
             responsefunc(
                 "1",
-                "Customer Selected Services",
-                {
-                    customerServices: formattedResponse,
-                    totalAmount
-                },
+                "No Customer Selected Services",
+                { customerServices: [], totalAmount: 0 },
                 ""
             )
         );
-    
-}
+    }
 
+    // Calculate total
+    const totalAmount = customerServices.reduce((sum, item) => {
+        const price = parseFloat(item.categoryPrice) || 0;
+        return sum + price;
+    }, 0);
+
+    // Format each record
+    const formattedServices = customerServices.map(item => ({
+        id: item.id,
+        serviceName: item.service.name,
+        serviceId: item.service.id,
+        categoryId: item.category.id,
+        categoryName: item.category.name,
+        subCategoryId: item.subCategory.id,
+        subCategoryName: item.subCategory.name,
+        subCategoryPrice: item.subCategory.price,
+        categoryPrice: item.categoryPrice,
+        items: item.items
+    }));
+
+    return res.json(
+        responsefunc(
+            "1",
+            "Customer Selected Services",
+            {
+                customerServices: formattedServices,
+                totalAmount
+            },
+            ""
+        )
+    );
+}
+// async function getCustomerServicestoUpdateInvoice(req, res) {
+//     const { bookingId } = req.query;
+//     const customerServices = await customerSelectedService.findAll({
+//         where: {
+//             bookingId: bookingId,
+//             status: true
+//         },
+//         include: [
+//             {
+//                 model: service,
+//                 attributes: ["id", "name"],
+//             },
+//             {
+//                 model: categories,
+//                 attributes: ["id", "name"],
+//             },
+//             {
+//                 model: subCategories,
+//                 attributes: ["id", "name", "price"],
+//             },
+//         ],
+//         attributes: ['id', 'categoryPrice', 'items']
+//     });
+
+//     if (!customerServices || customerServices.length === 0) {
+//         return res.json(
+//             responsefunc(
+//                 "1",
+//                 "No Customer Selected Services",
+//                 { customerServices: [], totalAmount: 0 },
+//                 ""
+//             )
+//         );
+//     }
+
+//     // Calculate total
+//     const totalAmount = customerServices.reduce((sum, item) => {
+//         const price = parseFloat(item.categoryPrice) || 0;
+//         return sum + price;
+//     }, 0);
+
+//     // Group services by service name
+//     const groupedServices = customerServices.reduce((acc, item) => {
+//         if (!item.service || !item.category || !item.subCategory) return acc;
+
+//         const serviceName = item.service.name;
+
+//         if (!acc[serviceName]) {
+//             acc[serviceName] = {
+//                 id: item.id,
+//                 serviceName,
+//                 serviceId: item.service.id,
+//                 categories: []
+//             };
+//         }
+
+//         const existingCategoryIndex = acc[serviceName].categories.findIndex(
+//             category => category.name === item.category.name
+//         );
+
+//         const subCategory = {
+//             id: item.subCategory.id,
+//             name: item.subCategory.name,
+//             price: item.subCategory.price
+//         };
+
+//         if (existingCategoryIndex === -1) {
+//             acc[serviceName].categories.push({
+//                 id: item.category.id,
+//                 name: item.category.name,
+//                 subCategories: [subCategory]
+//             });
+//         } else {
+//             acc[serviceName].categories[existingCategoryIndex].subCategories.push(subCategory);
+//         }
+
+//         return acc;
+//     }, {});
+
+//     const formattedResponse = Object.values(groupedServices);
+
+//     return res.json(
+//         responsefunc(
+//             "1",
+//             "Customer Selected Services",
+//             {
+//                 customerServices: formattedResponse,
+//                 totalAmount
+//             },
+//             ""
+//         )
+//     );
+// }
 
 
 
@@ -3030,74 +3164,160 @@ async function getCustomerServicesForOnHold(req, res) {
 
 async function getPerformanceDashboard(req, res) {
     const agentId = req.user.id;
+    const { startDate, endDate } = req.query;
 
-        // Today's Summary
-        const today = new Date();
-        const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-        const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+    // 🕐 Normalize date range
+    let start = startDate ? new Date(startDate) : new Date();
+    let end = endDate ? new Date(endDate) : new Date();
 
-        const todaySummary = await booking.findAll({
+    if (!startDate || !endDate) {
+        start.setHours(0, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+    }
+
+    // 🕐 Compute comparison period
+    const durationInMs = end.getTime() - start.getTime();
+    console.log("durationInMs============>>>>>>>>>>>>>>>>>>", durationInMs)
+    const compStart = new Date(start.getTime() - durationInMs);
+    console.log("compStart===========================================>>>>>>", compStart)
+    const compEnd = new Date(start.getTime());
+    console.log("compEnd===========================================>>>>>>", compEnd)
+
+    // 🔍 Agent Shop Address
+    const findAgentShopAddress = await addressDb.findOne({
+        where: { userId: agentId },
+    });
+
+    // 🔹 Today's Summary
+    const todaySummaryRaw = await booking.findAll({
+        where: {
+            laundryShopId: findAgentShopAddress.id,
+            createdAt: {
+                [Op.between]: [start, end]
+            }
+        },
+        attributes: [
+            [sequelize.fn('COUNT', sequelize.col('id')), 'pickups'],
+            [sequelize.literal('ROUND(SUM(orderAmount), 2)'), 'earnings']
+        ],
+        raw: true
+    });
+
+    // 🔹 Comparison Period Summary
+    const comparisonSummary = await booking.findAll({
+        where: {
+            laundryShopId: findAgentShopAddress.id,
+            createdAt: {
+                [Op.between]: [compStart, compEnd]
+            }
+        },
+        attributes: [
+            [sequelize.literal('ROUND(SUM(orderAmount), 2)'), 'earnings']
+        ],
+        raw: true
+    });
+
+    console.log("comparisonSummary===========-----+++++++++++++++++++++++", comparisonSummary)
+
+    const earningsNow = parseFloat(todaySummaryRaw[0]?.earnings || 0);
+    const earningsPrev = parseFloat(comparisonSummary[0]?.earnings || 0);
+
+
+    const MAX_CHANGE = 200;
+
+    let earningsDiffPercent = 0;
+    if (earningsPrev > 0) {
+        const rawChange = ((earningsNow - earningsPrev) / earningsPrev) * 100;
+
+        // ✅ Scale it into 1–100 range
+        const scaled = (rawChange / MAX_CHANGE) * 100;
+
+        // Clamp result between 1 and 100
+        earningsDiffPercent = Math.min(Math.max(scaled, 1), 100);
+
+        // Round
+        earningsDiffPercent = parseFloat(earningsDiffPercent.toFixed(2));
+    }
+
+    const todaySummary = {
+        ...todaySummaryRaw[0],
+        earningsComparison: earningsDiffPercent
+    };
+
+    // 🔹 Delivery Type Split (Agent Drivers only)
+    const agentDriverIds = await users.findAll({
+        where: {
+            roleId: 6,
+            employeeOff: agentId
+        },
+        attributes: ['id'],
+        raw: true
+    });
+
+    const driverIds = agentDriverIds.map(d => d.id);
+
+    let deliveryWhere = {
+        [Op.or]: [
+            { deliveryDriverId: { [Op.in]: driverIds } },
+            { driverId: { [Op.in]: driverIds } }
+        ]
+    };
+
+    if (startDate && endDate) {
+        deliveryWhere.createdAt = {
+            [Op.between]: [start, end]
+        };
+    }
+
+    const agentDriversDeliveries = await booking.count({
+        where: deliveryWhere
+    });
+
+    // 🔹 Driver Performance
+    const driverPerformance = await users.findAll({
+        where: { employeeOff: agentId, roleId: 6 },
+        include: [{
+            model: booking,
+            as: 'driver',
+            attributes: [],
             where: {
-                laundryShopId: agentId,
                 createdAt: {
-                    [Op.between]: [startOfDay, endOfDay]
+                    [Op.between]: [start, end]
                 }
             },
-            attributes: [
-                [sequelize.fn('COUNT', sequelize.col('id')), 'pickups'],
-                [sequelize.fn('SUM', sequelize.col('orderAmount')), 'earnings']
-            ]
-        });
+            required: false
+        }],
+        attributes: [
+            'id', 'firstName', 'lastName',
+            [sequelize.fn('COUNT', sequelize.col('driver.id')), 'pickups'],
+            [sequelize.fn('COUNT', sequelize.col('driver.deliveryDriverId')), 'deliveries'],
+            [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, driver.collectionTimeTo, driver.collectionTimeFrom))`), 'collectionTimeliness'],
+            [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, driver.deliveryTimeTo, driver.deliveryTimeFrom))`), 'deliveryTimeliness']
+        ],
+        group: ['users.id']
+    });
 
-        // Delivery Type Split
-        const deliveryTypeSplit = await users.findAll({
-            where: { employeeOff: agentId, roleId: 6 },
-            attributes: [
-                [sequelize.fn('COUNT', sequelize.col('id')), 'totalDeliveries'],
-                [sequelize.literal(`SUM(CASE WHEN deliveryType = 'own' THEN 1 ELSE 0 END)`), 'ownDrivers'],
-                [sequelize.literal(`SUM(CASE WHEN deliveryType = '3rdParty' THEN 1 ELSE 0 END)`), 'thirdParty']
-            ]
-        });
+    // ✅ Final Response
+    const response = {
+        todaySummary,
+        deliveryTypeSplit: {
+            agentDriversDeliveries,
+            freelanceDriverDeliveries: 0
+        },
+        driverPerformance
+    };
 
-        // Driver Performance
-        const driverPerformance = await users.findAll({
-            where: { roleId: 6 }, // Assuming roleId 6 is for drivers
-            include: [{
-                model: booking,
-                attributes: [
-                    [sequelize.fn('COUNT', sequelize.col('driverId')), 'pickups'],
-                    [sequelize.fn('COUNT', sequelize.col('deliveryDriverId')), 'deliveries'],
-                    [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, collectionTimeFrom, actualCollectionTime))`), 'collectionTimeliness'],
-                    [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, deliveryTimeFrom, actualDeliveryTime))`), 'deliveryTimeliness']
-                ]
-            }]
-        });
-
-        // Commission Summary
-        const commissionSummary = await billingDetails.findAll({
-            where: { laundryShopId: agentId },
-            attributes: [
-                [sequelize.fn('SUM', sequelize.col('total')), 'agentSide'],
-                //[sequelize.fn('SUM', sequelize.col('thirdPartyCommission')), 'thirdPartySide']
-            ]
-        });
-
-        // Construct response
-        const response = {
-            todaySummary,
-            deliveryTypeSplit,
-            driverPerformance,
-            commissionSummary
-        };
-
-        return res.json(responsefunc("1", "Performance Dashboard Data", response, ""));
+    return res.json(responsefunc("1", "Performance Dashboard Data", response, ""));
 }
+
 
 /*
   * Update Invoice  
 */
 async function updateInvoice(req, res) {
-    const { services, bookingId,total } = req.body;
+    const { services, bookingId, total } = req.body;
+
+    console.log("Services==============================>>", services)
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new customError("Invalid request. Please provide an array of services.");
@@ -3114,13 +3334,13 @@ async function updateInvoice(req, res) {
 
     if (services.length > 0) {
         for (let service of services) {
-            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
-            total += itemTotalPrice;
+            let itemTotalPrice = parseFloat(service.categoryCharge || 0);
+            //total += itemTotalPrice;
 
             const existingRecords = await customerSelectedService.findAll({
                 where: {
                     bookingId,
-                    id:service.id,
+                    id: service.id,
                     serviceId: service.serviceId,
                     subCategoryId: service.subCategoryId,
                     categoryId: service.categoryId,
@@ -3142,7 +3362,8 @@ async function updateInvoice(req, res) {
                     subCategoryId: service.subCategoryId,
                     items: service.items,
                     date: currentDate,
-                    time: currentTime
+                    time: currentTime,
+                    status: service.status
                 });
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
@@ -3154,7 +3375,8 @@ async function updateInvoice(req, res) {
                     categoryId: service.categoryId,
                     categoryPrice: itemTotalPrice,
                     subCategoryId: service.subCategoryId,
-                    items: service.items
+                    items: service.items,
+                    status: service.status
                 });
             }
         }

@@ -29,114 +29,133 @@ const { stat } = require('fs')
 const stripe = require('../stripe')
 const { create } = require('domain');
 //!-------------------Agent Auth---------------------//
+
+
+
 /*
-  *  Agent Register
+  *  OTP && Registration
 */
-async function registerAgentOTP(req, res) {
-    const { email } = req.body
-    const userExists = await users.findOne({
+async function registerAgentWithOTP(req, res) {
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
+    console.log("Request Body:", req.body);
+
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    const userfind = await users.findOne({
         where: {
             email: email,
             deletedAt: {
                 [Op.is]: null
             }
         },
-        include: {
-            model: otpVerification
-        }
-    })
+        include: [{
+            model: otpVerification,
+            required: false,
+            attributes: ['OTP']
+        }, {
+            model: deviceToken,
+            required: false,
+            attributes: ['tokenId']
+        }],
+        attributes: [
+            "id",
+            "firstName",
+            "lastName",
+            "email",
+            "phoneNum",
+            "userTypeId",
+            "verifiedAt",
+            [
+                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+                "joinedOn",
+            ],
+        ],
+    });
 
-
-
-    if (userExists && userExists.userTypeId === 3) {
-        throw new customError('Driver Already Exits')
-    }
-
-    if (userExists && userExists.userTypeId === 2) {
-        throw new customError('Customer Already Exits')
-    }
-
-    if (userExists) {
-        try {
-            if (userExists.verifiedAt != null) {
-                throw new customError('Trying to Login? User with this email alrady Exists')
-            }
-
-            let otp = otpGenerator.generate(4, {
-                lowerCaseAlphabets: false,
-                upperCaseAlphabets: false,
-                specialChars: true
-            })
-
-            otpMail({
-                type: 'RegisterOTP',
-                email: email,
-                OTP: otp
-            })
-
-            let dt = new Date()
-
-            if (!userExists.otpVerification) {
-                const otpData = await otpVerification.create({
-                    OTP: otp,
-                    reqAt: dt,
-                    userId: userExists.id
-
-                })
-
-                return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpData.id, userId: userExists.id }))
-
-            } else {
-                await otpVerification.update({
-                    OTP: otp,
-                    reqAt: dt
-                }, { where: { userId: userExists.id } })
-
-                let otpData = await otpVerification.findOne({
-                    where: {
-                        userId: userExists.id
-                    }
-                })
-
-                return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpData.id, userId: userExists.id }))
-            }
-
-
-        } catch (error) {
-            console.log("Error------>", error)
-        }
+    if (userfind?.email === email && userfind?.userTypeId === 4) {
+        throw new customError('User Already Exists');
     } else {
-        let userTypeId = 4
+        let userTypeId = 4;
+        const hashedPassword = await bcrypt.hash(password, 8);
         const userCreate = await users.create({
             email,
-            userTypeId
-        })
+            firstName,
+            lastName,
+            phoneNum,
+            userTypeId,
+            password: hashedPassword,
+            status: true,
+            countryCode
+        });
 
-        let otp = otpGenerator.generate(4, {
+        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
+
+        const otp = otpGenerator.generate(4, {
             lowerCaseAlphabets: false,
             upperCaseAlphabets: false,
-            specialChars: true
-        })
+            specialChars: false
+        });
 
         otpMail({
             type: 'RegisterOTP',
             email: email,
             OTP: otp
-        })
-        let dt = new Date()
+        });
 
-        const otpCreatetion = await otpVerification.create({
+        let dt = new Date();
+
+        const otpCreation = await otpVerification.create({
             OTP: otp,
             reqAt: dt,
             userId: userCreate.id
-        })
-        console.log("ðŸš€ ~ registerCustomerOTP ~ otpCreatetion:", otpCreatetion)
+        });
 
-        return res.json(responsefunc("1", "OTP send sucessfully ", { otpId: otpCreatetion.id, userId: userCreate.id }))
+        await deviceToken.create({
+            tokenId: dvToken,
+            status: true,
+            userId: userCreate.id
+        });
+
+        await users.update({
+            stripeCustomerId: stripeCustomer,
+            image: profileImg,
+            countryId,
+            cityId
+        }, {
+            where: { id: userCreate.id }
+        });
+
+        // Generate access token
+        const accessToken = jwt.sign({
+            id: userCreate.id,
+            email: userCreate.email,
+            dvToken: dvToken,
+            userTypeId: userCreate.userTypeId
+        }, process.env.JWT_ACCESS_SECRET);
+
+        // Store access token in Redis
+        redisCli.hSet(
+            `id-${userCreate.id}`,
+            dvToken,
+            accessToken
+        );
+
+        // Set access token in cookies
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+
+        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id, accessToken }));
     }
 }
-
-
 
 /*
    * verify OTP for SignUp
@@ -259,231 +278,6 @@ async function resendOTP(req, res) {
 }
 
 
-
-/*
- * Register Agent 
-*/
-// async function registerAgent(req, res) {
-//     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
-//     console.log("ðŸš€ ~ registerCustomer ~ req.body:", req.body)
-
-//     let profileImg = null;
-//     if (req.file) {
-//         let tempProfileImg = req.file.path;
-//         profileImg = tempProfileImg.replace(/\\/g, "/");
-//     }
-
-//     const userfind = await users.findOne({
-//         where: {
-//             id: userId
-//         },
-//         include: [{
-//             model: otpVerification,
-//             required: false,
-//             attributes: ['OTP']
-//         }, {
-//             model: deviceToken,
-//             required: false,
-//             attributes: ['tokenId']
-//         }],
-//         attributes: [
-//             "id",
-//             "firstName",
-//             "lastName",
-//             "email",
-//             "phoneNum",
-//             "userTypeId",
-//             "verifiedAt",
-//             [
-//                 sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-//                 "joinedOn",
-//             ],
-//         ],
-//     })
-//     console.log("ðŸš€ ~ registerAgent ~ userfind:", userfind)
-
-
-//     if (userfind && userfind.userTypeId === 3) {
-//         throw new customError('Driver Cannot register from Here')
-//     }
-
-//     if (userfind && userfind.userTypeId === 2) {
-//         throw new customError('Customer Cannot Register from Here')
-//     }
-
-//     if (userfind.verifiedAt === null) {
-//         return res.json(responsefunc("2", "Please verify your OTP", {}, ""))
-//     }
-
-
-//     if (password !== confirmPassword) {
-//         throw new customError(" Passwords do not match. Please try again.")
-
-//     }
-
-//     const hashpass = await bcrypt.hash(password, 8)
-//     console.log("ðŸš€ ~ registerCustomer ~ hashpass:", hashpass)
-
-//     const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
-//     console.log("ðŸš€ ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
-
-//     await users.update({
-//         firstName,
-//         lastName,
-//         status: true,
-//         password: hashpass,
-//         dvToken,
-//         phoneNum,
-//         stripeCustomerId: stripeCustomer,
-//         image: profileImg,
-//         countryId,
-//         cityId
-//     }, {
-//         where: { id: userfind.id }
-//     })
-
-//     await deviceToken.create(({
-//         tokenId: dvToken,
-//         status: true,
-//         userId: userfind.id
-//     }))
-
-//     const accessToken = jwt.sign({
-//         id: userfind.id,
-//         email: userfind.email,
-//         dvToken: dvToken,
-//         userTypeId: userfind.userTypeId
-//     }, process.env.JWT_ACCESS_SECRET
-//     )
-
-//     redisCli.hSet(
-//         `id-${userfind.id}`,
-//         dvToken,
-//         accessToken
-//     )
-
-
-//     let outputObj = registerData(userfind, accessToken, false)
-
-//     return res.json(outputObj)
-
-// }
-
-/*
-  *  OTP && Registration
-*/
-async function registerAgentWithOTP(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email,countryCode } = req.body;
-    console.log("ðŸš€ ~ registerAgentWithOTP ~ req.body:", req.body);
-
-    let profileImg = null;
-    if (req.file) {
-        let tempProfileImg = req.file.path;
-        profileImg = tempProfileImg.replace(/\\/g, "/");
-    }
-
-    // Step 1: Check if the user exists based on email
-    const userfind = await users.findOne({
-        where: {
-            email: email,
-            deletedAt: {
-                [Op.is]: null
-            }
-        },
-        include: [{
-            model: otpVerification,
-            required: false,
-            attributes: ['OTP']
-        }, {
-            model: deviceToken,
-            required: false,
-            attributes: ['tokenId']
-        }],
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "phoneNum",
-            "userTypeId",
-            "verifiedAt",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ],
-    });
-
-    console.log("ðŸš€ ~ registerAgentWithOTP ~ userfind:", userfind);
-
-    if (userfind?.email === email && userfind?.userTypeId === 4) {
-        throw new customError('User Already Exists')
-    } else {
-
-        let userTypeId = 4;
-        const hashedPassword = await bcrypt.hash(password, 8)
-        const userCreate = await users.create({
-            email,
-            firstName,
-            lastName,
-            phoneNum,
-            userTypeId,
-            password: hashedPassword,
-            status: true,
-            countryCode
-        });
-
-
-        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        console.log("ðŸš€ ~ registerAgentWithOTP ~ stripeCustomer:", stripeCustomer);
-
-        // Generate OTP
-        const otp = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false
-        });
-
-        // Send OTP email
-        otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: otp
-        });
-
-        let dt = new Date();
-
-        // Save OTP verification data
-        const otpCreation = await otpVerification.create({
-            OTP: otp,
-            reqAt: dt,
-            userId: userCreate.id
-        });
-
-
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userCreate.id
-        });
-
-
-        await users.update({
-            stripeCustomerId: stripeCustomer,
-            image: profileImg,
-            countryId,
-            cityId
-        }, {
-            where: { id: userCreate.id }
-        });
-
-        console.log("ðŸš€ ~ registerAgentWithOTP ~ otpCreation:", otpCreation);
-
-        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id }));
-    }
-}
-
-
 /*
  * Agent Register Bussiness Information
 */
@@ -565,23 +359,40 @@ async function agentBusinessInfo(req, res) {
  * Agent  Bussiness Services Information Add
 */
 async function businesInfoAdded(req, res) {
-    const { userId } = req.params
-    const { services } = req.body
+    const { userId } = req.params;
+    const { services } = req.body;
 
 
+    const existingServices = await agentSelectServices.findAll({
+        where: { agentServiceId: userId,status:true },
+        attributes: ['serviceId']
+    });
 
-    const servicesSelect = services.map(service => ({
+    const existingServiceIds = new Set(existingServices.map(s => s.serviceId));
+
+    const duplicateServices = services
+        .filter(service => existingServiceIds.has(service.serviceId))
+        .map(service => service.serviceId);
+
+    if (duplicateServices.length > 0) {
+        throw new customError(
+            `Some services already exist for this agent.`,
+            `Duplicate serviceIds: [${duplicateServices.join(', ')}]`
+        );
+    }
+
+    const servicesToCreate = services.map(service => ({
         serviceId: service.serviceId,
         status: true,
         agentServiceId: userId
-    }))
-    console.log("ðŸš€ ~ agentBusinessInfo ~ servicesSelect:", servicesSelect)
+    }));
 
-    const serviceCreate = await agentSelectServices.bulkCreate(servicesSelect)
+    const serviceCreate = await agentSelectServices.bulkCreate(servicesToCreate);
 
-
-    return res.json(responsefunc("1", "Agent Services Added Sucessfully", { serviceCreate }, ""))
+    return res.json(responsefunc("1", "Agent Services Added Successfully", { serviceCreate }, ""));
 }
+
+
 
 /*
  *  Agent  Bussiness Working Hours Update
@@ -623,7 +434,7 @@ async function workingHoursUpdate(req, res) {
 */
 
 async function loginUser(req, res) {
-    const { email, password, signedFrom, dvToken } = req.body
+    const { email, password, signedFrom, dvToken } = req.body;
 
     const userFind = await users.findOne({
         where: {
@@ -668,7 +479,7 @@ async function loginUser(req, res) {
                 model: agentSelectServices,
                 as: 'agentServices',
                 attributes: ['serviceId', 'status'],
-            },
+            }
         ],
         attributes: [
             "id",
@@ -687,167 +498,33 @@ async function loginUser(req, res) {
                 "joinedOn",
             ],
         ]
-    })
-    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind)
+    });
+    
+    console.log("User Data ==============>>>",userFind)
 
-    // return res.json(userFind)
     if (!userFind) {
-        throw new customError("User not Exists with this credentials")
+        throw new customError("User not Exists with this credentials");
     }
+
     if (userFind?.classifiedAsId === 2) {
-        const passwordMatch = await bcrypt.compare(password, userFind.password)
+        const passwordMatch = await bcrypt.compare(password, userFind.password);
         if (!passwordMatch) {
-            throw new customError(
-                "Bad credentials",
-                "Please enter correct password to continue")
+            throw new customError("Bad credentials", "Please enter correct password to continue");
         }
     }
 
-    if (!userFind.addressDb || userFind.addressDb.length === 0) {
-
-
-        return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id, }, ""))
-    }
-
-    const services = userFind?.agentServices ?? [];
-    const agentInfo = userFind?.agentInfo ?? [];
-    const userMachineInfo = agentInfo?.[0]?.agentShopMachine ?? [];
-
-    let outObj = {
-        userId: userFind.id,
-        services: services,
-        agentInfo: agentInfo,
-        userMachineInfo: userMachineInfo,
-    };
-
-    // Check if required information is missing
-    if (
-        services.length === 0 ||
-        agentInfo.length === 0 ||
-        !agentInfo[0]?.shopName ||
-        !agentInfo[0]?.matchProfileOptions
-    ) {
-        return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
-    }
-
-
-
-    if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
-
-        const createStripeCustomer = await stripe.createStripeCustomer(
-            email
-        )
-
-        const createUser = await users.create({
-            email,
-            userTypeId: 4,
-            verifiedAt: Date.now(),
-            stripeCustomerId: createStripeCustomer
-
-        })
-
-        const userId = createUser.id
-
-        return res.json(responsefunc('3', `User signed-In by${signedFrom}`, { userId }))
-    }
-
-    if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
-        return res.json(
-            responsefunc(
-                "4",
-                "Social Login Required",
-                {},
-                `You have previously signed up using ${userFind.signedFrom}. Please log in using ${userFind.signedFrom}.`
-            )
-        );
-    }
-
-
-    if (signedFrom === 'google' || signedFrom === 'facebook' || signedFrom === 'apple') {
-        const userFind = await users.findOne({
-            where: {
-                email: email,
-                userTypeId: 2,
-                deletedAt: { [Op.is]: null }
-            },
-            include: { model: deviceToken, attributes: ['tokenId'] },
-            attributes: [
-                "id",
-                "firstName",
-                "lastName",
-                "email",
-                "password",
-                "status",
-                "userTypeId",
-                "verifiedAt",
-                "phoneNum",
-                [
-                    sequelize.fn("date_format", sequelize.col("createdAt"), "%Y"),
-                    "joinedOn",
-                ],
-            ]
-        })
-
-        if (!userFind.status) {
-            throw new customError('Blocked By admin Please contact admin to continue')
-        }
-
-        const dvTokenFound = userFind.deviceToken.find((ele) => ele.tokenId === dvToken)
-        if (!dvTokenFound) {
-            await deviceToken.create({
-                tokenId: dvToken,
-                status: true,
-                userId: userFind.id
-            })
-        }
-
-        const accessToken = jwt.sign({
-            id: userFind.id,
-            email: userFind.email,
-            dvToken: dvToken
-        }, process.env.JWT_ACCESS_SECRET);
-
-        redisCli.hSet(
-            `id-${userFind.id}`,
-            dvToken,
-            accessToken
-        )
-
-
-        const featureData = await features.findAll({
-            where: {
-                status: true,
-                featureOf: 'Agent Employee'
-            },
-            attributes: ['id', 'title']
-        })
-
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            path: "/agent",
-            maxAge: 24 * 60 * 60 * 1000
-        });
-
-
-        let output = loginData(userFind, accessToken, false, featureData);
-        return res.json(output);
-    }
-
+    // 📌 Check verification before anything else
     let otpId = 0;
-
     if (!userFind.status) {
-        throw new customError("Blocked by admin Please contact admin to continue")
+        throw new customError("Blocked by admin. Please contact admin to continue");
     } else {
         const otpData = await otpVerification.findOne(
             { where: { userId: userFind.id } },
             { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
         );
         if (!otpData && userFind.classifiedAsId === null) {
-            throw new customError("User Not Verifed", "user not verifeid by otp");
+            throw new customError("User Not Verified", "User not verified by OTP");
         }
-
         otpId = otpData?.id;
     }
 
@@ -862,68 +539,145 @@ async function loginUser(req, res) {
         );
     }
 
-    if (userFind.userTypeId === 4) {
-        if (userFind.firstName === null || !userFind.phoneNum) {
-            return res.json(
-                responsefunc(
-                    3,
-                    "Pending User Data",
-                    { userId: userFind.id },
-                    "Your first Name or Phone Number is Missing"
-                )
-            );
-        }
+    // 📌 Address check AFTER verification
+    if (!userFind.addressDb || userFind.addressDb.length === 0) {
+        return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id }, ""));
     }
 
-    if (userFind.userTypeId === 4) {
-        if (userFind.firstName === null) {
-            return res.json(
-                responsefunc(
-                    3,
-                    "Pending User Data",
-                    { userId: userFind.id },
-                    "Your first Name is Missing"
-                )
-            );
-        }
+    // 📌 Check agent info, machine info, and services
+    const services = userFind?.agentServices ?? [];
+    const agentInfo = userFind?.agentInfo ?? [];
+    const userMachineInfo = agentInfo?.[0]?.agentShopMachine ?? [];
+
+    let outObj = {
+        userId: userFind.id,
+        services: services,
+        agentInfo: agentInfo,
+        userMachineInfo: userMachineInfo,
+    };
+
+    if (
+        services.length === 0 ||
+        agentInfo.length === 0 ||
+        !agentInfo[0]?.shopName ||
+        !agentInfo[0]?.matchProfileOptions
+    ) {
+        return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
     }
 
-    const passwordMatch = await bcrypt.compare(password, userFind.password)
+    // 📌 Social login: Create if not found
+    if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
+        const createStripeCustomer = await stripe.createStripeCustomer(email);
+
+        const createUser = await users.create({
+            email,
+            userTypeId: 4,
+            verifiedAt: Date.now(),
+            stripeCustomerId: createStripeCustomer
+        });
+
+        return res.json(responsefunc('3', `User signed-In by ${signedFrom}`, { userId: createUser.id }));
+    }
+
+    // 📌 Warn if user previously used social login but is now using email/password
+    if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
+        return res.json(
+            responsefunc(
+                "4",
+                "Social Login Required",
+                {},
+                `You have previously signed up using ${userFind.signedFrom}. Please log in using ${userFind.signedFrom}.`
+            )
+        );
+    }
+
+    // 📌 Handle social login flow
+    if (["google", "facebook", "apple"].includes(signedFrom)) {
+        const socialUser = await users.findOne({
+            where: {
+                email: email,
+                userTypeId: 2,
+                deletedAt: { [Op.is]: null }
+            },
+            include: { model: deviceToken, attributes: ['tokenId'] },
+            attributes: [
+                "id", "firstName", "lastName", "email", "password",
+                "status", "userTypeId", "verifiedAt", "phoneNum",
+                [sequelize.fn("date_format", sequelize.col("createdAt"), "%Y"), "joinedOn"]
+            ]
+        });
+
+        if (!socialUser.status) {
+            throw new customError('Blocked by admin. Please contact admin to continue');
+        }
+
+        const dvTokenFound = socialUser.deviceToken.find(ele => ele.tokenId === dvToken);
+        if (!dvTokenFound) {
+            await deviceToken.create({ tokenId: dvToken, status: true, userId: socialUser.id });
+        }
+
+        const accessToken = jwt.sign({
+            id: socialUser.id,
+            email: socialUser.email,
+            dvToken: dvToken
+        }, process.env.JWT_ACCESS_SECRET);
+
+        redisCli.hSet(`id-${socialUser.id}`, dvToken, accessToken);
+
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+
+        const featureData = await features.findAll({
+            where: { status: true, featureOf: 'Agent Employee' },
+            attributes: ['id', 'title']
+        });
+
+        const output = loginData(socialUser, accessToken, false, featureData);
+        return res.json(output);
+    }
+
+    // 📌 Ensure basic profile info exists
+    if (userFind.userTypeId === 4 && (!userFind.firstName || !userFind.phoneNum)) {
+        return res.json(
+            responsefunc(
+                3,
+                "Pending User Data",
+                { userId: userFind.id },
+                "Your First Name or Phone Number is Missing"
+            )
+        );
+    }
+
+    // 📌 Password match
+    const passwordMatch = await bcrypt.compare(password, userFind.password);
     if (!passwordMatch) {
-        throw new customError(
-            "Bad credentials",
-            "Please enter correct password to continue")
+        throw new customError("Bad credentials", "Please enter correct password to continue");
     }
 
-
-    const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken)
-    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ dvTokenFound:", dvTokenFound)
+    // 📌 Device token check
+    const dvTokenFound = userFind.deviceToken?.find(ele => ele.tokenId === dvToken);
     if (!dvTokenFound) {
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userFind.id
-        })
+        await deviceToken.create({ tokenId: dvToken, status: true, userId: userFind.id });
     }
 
+    // 📌 Features fetch
     const featureData = await features.findAll({
-        where: {
-            status: true
-        },
+        where: { status: true },
         attributes: ['id', 'title']
-    })
+    });
 
     const accessToken = jwt.sign({
         id: userFind.id,
         email: userFind.email,
         dvToken: dvToken
-    }, process.env.JWT_ACCESS_SECRET)
+    }, process.env.JWT_ACCESS_SECRET);
 
-    redisCli.hSet(
-        `id-${userFind.id}`,
-        dvToken,
-        accessToken
-    )
+    redisCli.hSet(`id-${userFind.id}`, dvToken, accessToken);
 
     res.cookie("accessToken", accessToken, {
         httpOnly: true,
@@ -933,13 +687,10 @@ async function loginUser(req, res) {
         maxAge: 24 * 60 * 60 * 1000
     });
 
-
-
-    let output = loginData(userFind, accessToken, false, featureData);
+    const output = loginData(userFind, accessToken, false, featureData);
     return res.json(output);
-
-
 }
+
 
 
 
@@ -1129,17 +880,68 @@ async function logout(req, res) {
 */
 async function session(req, res) {
     const userId = req.user.id;
-    const { guestUser } = req.body;
+    const { guestUser,dvToken } = req.body;
     if (guestUser) throw new CustomException("Login failed", "");
-    const userData = await users.findByPk(userId, {
+
+    const userData = await users.findOne({
+        where: { id: userId },
+        include: [
+            {
+                model: deviceToken,
+                attributes: ['tokenId']
+            },
+            {
+                model: addressDb,
+                attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
+                include: [
+                    {
+                        model: zone,
+                        attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId', 'distanceUnitId'],
+                        include: [
+                            {
+                                model: units,
+                                as: 'currencyUnitZ',
+                                attributes: ['name', 'symbol']
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                model: bussinessInformation,
+                as: 'agentInfo',
+                attributes: ['id', 'shopName', 'matchProfileOptions'],
+                include: [
+                    {
+                        model: machineCount,
+                        as: 'agentShopMachine',
+                        attributes: ['id', 'total', 'machineId']
+                    }
+                ]
+            },
+            {
+                model: agentSelectServices,
+                as: 'agentServices',
+                attributes: ['serviceId', 'status'],
+            }
+        ],
         attributes: [
             "id",
             "firstName",
             "lastName",
             "email",
+            "password",
             "status",
+            "userTypeId",
+            "verifiedAt",
             "phoneNum",
-        ],
+            "classifiedAsId",
+            "roleId",
+            [
+                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+                "joinedOn",
+            ],
+        ]
     });
     if (!userData) {
         throw new customError(
@@ -1147,12 +949,86 @@ async function session(req, res) {
             "Please contact support for more information"
         );
     }
-    if (!userData?.status)
+
+    if (!userData.status) {
         throw new customError(
             "You are blocked by Admin",
             "Please contact support for more information"
         );
-    let output = loginData(userData, "", guestUser);
+    }
+
+    let otpId = 0;
+    if (!userData.status) {
+        throw new customError("Blocked by admin. Please contact admin to continue");
+    } else {
+        const otpData = await otpVerification.findOne(
+            { where: { userId: userData.id } },
+            { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
+        );
+        if (!otpData && userData.classifiedAsId === null) {
+            throw new customError("User Not Verified", "User not verified by OTP");
+        }
+        otpId = otpData?.id;
+    }
+
+    if (!userData.verifiedAt) {
+        return res.json(
+            responsefunc(
+                2,
+                "Pending email verification",
+                { userId: userData.id, otpId, email: userData.email },
+                "Please verify your email to continue"
+            )
+        );
+    }
+
+    // Check for address
+    if (!userData.addressDb || userData.addressDb.length === 0) {
+        return res.json(responsefunc("3", "Cannot proceed without adding an address", { userId: userData.id }, ""));
+    }
+
+    const services = userData?.agentServices ?? [];
+    const agentInfo = userData?.agentInfo ?? [];
+    const userMachineInfo = agentInfo?.[0]?.agentShopMachine ?? [];
+
+    let outObj = {
+        userId: userData.id,
+        services: services,
+        agentInfo: agentInfo,
+        userMachineInfo: userMachineInfo,
+    };
+
+    if (
+        services.length === 0 ||
+        agentInfo.length === 0 ||
+        !agentInfo[0]?.shopName ||
+        !agentInfo[0]?.matchProfileOptions
+    ) {
+        return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
+    }
+    
+    const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === dvToken);
+    if (!dvTokenFound) {
+        await deviceToken.create({ tokenId: dvToken, status: true, userId: userData.id });
+    }
+    
+    const accessToken = jwt.sign({
+        id: userData.id,
+        email: userData.email,
+        dvToken: dvToken
+    }, process.env.JWT_ACCESS_SECRET);
+
+    redisCli.hSet(`id-${userData.id}`, dvToken, accessToken);
+
+    res.cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        path: "/agent",
+        maxAge: 24 * 60 * 60 * 1000
+    });
+
+    let output = loginData(userData,accessToken, "", guestUser);
     return res.json(output);
 }
 
@@ -1293,7 +1169,7 @@ let loginData = (userData, accessToken, isGuest, features) => {
 
 
 module.exports = {
-    registerAgentOTP,
+    registerAgentWithOTP,
     verifyOTpSignUp,
     loginUser,
     forgetPasswordRequest,
@@ -1303,10 +1179,9 @@ module.exports = {
     updateUserProfile,
     changePasswordOTP,
     agentBusinessInfo,
-    registerAgentWithOTP,
     resendOTP,
     businesInfoAdded,
     workingHoursUpdate,
-    session
+    session,
 
 }

@@ -45,7 +45,7 @@ const getdistance = require("../../utils/distanceCalculator");
 const { sendEvent } = require("../../socket_io");
 const { title } = require("process");
 const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPaymentMethodToCustomer } = require("../stripe");
-
+const { sendNotification } = require("../../utils/notification");
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -667,6 +667,112 @@ async function getPrefrencesValues(req, res) {
     );
 }
 
+/*
+ * Get All On-Hold Bookings
+ */
+async function getOnHoldBookings(req, res) {
+    const { bookingId } = req.params;
+
+    try {
+        const onHoldBookings = await OnHoldConfirmation.findAll({
+            where: {
+                bookingId: bookingId,
+            },
+            include: [
+                {
+                    model: service,
+                    attributes: ['id', 'name']
+                },
+                {
+                    model: subCategories,
+                    attributes: ['id', 'name', 'price']
+                }
+            ],
+            attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+        });
+
+        if (!onHoldBookings || onHoldBookings.length === 0) {
+            return res.status(404).json(responsefunc("0", "No on-hold bookings found", {}, ""));
+        }
+
+        return res.json(responsefunc("1", "On-hold bookings retrieved successfully", { onHoldBookings }, ""));
+    } catch (error) {
+        console.error("Error fetching on-hold bookings:", error);
+        return res.status(500).json(responsefunc("0", "Internal server error", {}, ""));
+    }
+}
+
+
+
+/*
+ * Update Customer esponse for on hold booking
+ */
+async function updateCustomerResponseForOnHoldBooking(req, res) {
+    const { customerResponse,bookingId, onHoldId } = req.body;
+
+        const onHoldBooking = await OnHoldConfirmation.findOne({
+            where: { id: onHoldId, bookingId: bookingId }
+        });
+
+        if (!onHoldBooking) {
+            return res.status(404).json(responsefunc("0", "On-hold booking not found", {}, ""));
+        }
+
+        onHoldBooking.customerResponse = customerResponse;
+        onHoldBooking.responseConformation = true;
+        await onHoldBooking.save();
+
+        return res.json(responsefunc("1", "Customer response updated successfully", { onHoldBooking }, ""));
+}
+
+/*
+ * Get All Bookings with On-Hold Status for a Customer
+ */
+async function getOnHoldBookingsForCustomer(req, res) {
+    const customerId = req.user.id;
+
+    try {
+        const onHoldBookings = await booking.findAll({
+            where: {
+                customerId: customerId,
+                bookingStatusId: 18,
+            },
+            include: [
+                {
+                    model: OnHoldConfirmation,
+                    required: false,
+                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+                }
+            ],
+            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+        });
+
+        if (!onHoldBookings || onHoldBookings.length === 0) {
+            return res.status(404).json(responsefunc("0", "No on-hold bookings found for this customer", {}, ""));
+        }
+
+        return res.json(responsefunc("1", "On-hold bookings retrieved successfully", { onHoldBookings }, ""));
+    } catch (error) {
+        console.error("Error fetching on-hold bookings for customer:", error);
+        return res.status(500).json(responsefunc("0", "Internal server error", {}, ""));
+    }
+}
+
+
+/*
+ * Test Notification
+ */
+async function testNotification(req, res) {
+    const { userId, title, body, data } = req.body;
+
+    try {
+        await sendNotification(userId, title, body, data);
+        return res.json(responsefunc("1", "Test notification sent successfully", {}, ""));
+    } catch (error) {
+        console.error("Error sending test notification:", error);
+        return res.status(500).json(responsefunc("0", "Failed to send test notification", {}, ""));
+    }
+}
 //!---------------------------------Recurring functions------------------------>>>>>
 async function addressAdder(
     addNew,
@@ -1065,6 +1171,10 @@ function getTimePlusMinutes(mins = 40) {
 
 //!--------------------------------------------------------------------------------------------------------------->>>
 
+
+
+
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1079,5 +1189,9 @@ module.exports = {
     customerAddresses,
     updateBookingUpfrontAmount,
     fetchZoneAndCharges,
-    createIntentUsingStripe
+    createIntentUsingStripe,
+    getOnHoldBookings,
+    updateCustomerResponseForOnHoldBooking,
+    getOnHoldBookingsForCustomer,
+    testNotification
 };

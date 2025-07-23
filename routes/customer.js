@@ -81,4 +81,12 @@ router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(cus
 router.get('/fetchZoneAndCharges',validateAccessToken,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
 //Create Intent Using Stripe
 router.post('/createIntentUsingStripe',validateAccessToken,asyncMiddleware(customerOtherController.createIntentUsingStripe))
+// Route to get all on-hold bookings for a given booking ID
+router.get('/getOnHoldBookings/:bookingId', validateAccessToken,asyncMiddleware(customerOtherController.getOnHoldBookings));
+// Route to update customer response for on-hold booking
+router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken,asyncMiddleware(customerOtherController.updateCustomerResponseForOnHoldBooking));
+// Route to get all bookings with on-hold status for a specific customer
+router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware(customerOtherController.getOnHoldBookingsForCustomer));
+// Route to test sending notifications
+router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOtherController.testNotification));
 module.exports=router

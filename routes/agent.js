@@ -124,7 +124,7 @@ router.get(
 );
 
 //Agent Sesion Api
-router.get(
+router.post(
     "/session",
     validateAccessToken,
     asyncMiddleware(agentAuthController.session)
@@ -319,6 +319,13 @@ router.patch(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.updateInvoice)
+);
+//Update Invoice OnHold Status
+router.patch(
+    "/agentUpdateInvoice",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentUpdateInvoice)
 );
 //!--------------------------------------------------------Agent Cancel Booking-----------------------------------------------------------//
 //Agent Calcel Booking

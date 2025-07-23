@@ -30,7 +30,11 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.BOOLEAN,
       defaultValue:false
     },
-    conformation:{
+    deleted:{
+      type:DataTypes.BOOLEAN,
+      defaultValue:false
+    },
+    responseConformation:{
       type:DataTypes.BOOLEAN,
       defaultValue:false,
     }

@@ -18,6 +18,14 @@ module.exports = {
       description: {
         type: Sequelize.STRING
       },
+      deleted:{
+        type:Sequelize.BOOLEAN,
+        defaultValue:false
+      },
+      responseConformation:{
+        type:Sequelize.BOOLEAN,
+        defaultValue:false,
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
