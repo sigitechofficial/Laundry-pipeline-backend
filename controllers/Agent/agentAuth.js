@@ -28,14 +28,11 @@ const path = require('path')
 const { stat } = require('fs')
 const stripe = require('../stripe')
 const { create } = require('domain');
-//!-------------------Agent Auth---------------------//
 
+//!-------------------Agent Auth Controller---------------------//
 
-
-/*
-  *  OTP && Registration
-*/
-async function registerAgentWithOTP(req, res) {
+// OTP && Registration
+exports.registerAgentWithOTP = async (req, res) => {
     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
     console.log("Request Body:", req.body);
 
@@ -155,12 +152,10 @@ async function registerAgentWithOTP(req, res) {
 
         return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id, accessToken }));
     }
-}
+};
 
-/*
-   * verify OTP for SignUp
-*/
-async function verifyOTpSignUp(req, res) {
+// Verify OTP for SignUp
+exports.verifyOTpSignUp = async (req, res) => {
     const { otpId, OTP, userId } = req.body
     if (OTP === '5678') {
         const userData = await users.findByPk(userId)
@@ -217,18 +212,12 @@ async function verifyOTpSignUp(req, res) {
         let output = await bussinessWorkingHours.bulkCreate(dataMap)
         console.log("OutPut------------->", output);
 
-
         return res.json(responsefunc("1", "OTP verified", { userId }))
     }
+};
 
-}
-
-
-
-/* 
-   * Resend OTP
-*/
-async function resendOTP(req, res) {
+// Resend OTP
+exports.resendOTP = async (req, res) => {
     const { userId } = req.body;
     const userExist = await users.findByPk(userId);
 
@@ -274,20 +263,14 @@ async function resendOTP(req, res) {
         );
         res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
     }
+};
 
-}
-
-
-/*
- * Agent Register Bussiness Information
-*/
-
-async function agentBusinessInfo(req, res) {
+// Agent Register Business Information
+exports.agentBusinessInfo = async (req, res) => {
     const { shopName, matchProfileOptions, userId, otherText, machineryCount, serviceTimes } = req.body
 
-
     if (matchProfileOptions !== 'Other' && otherText) {
-        throw new customError('You cna Add this Field Only when Select Other Option')
+        throw new customError('You can Add this Field Only when Select Other Option')
     }
 
     if (matchProfileOptions === 'Other') {
@@ -298,14 +281,13 @@ async function agentBusinessInfo(req, res) {
             agentId: userId
         })
 
-
         const machinesCountCreate = machineryCount.map(ele => ({
             total: ele.total,
             status: true,
             machineId: ele.machineId,
             bussinessInformationId: agentInfo.id
         }))
-        console.log("ðŸš€ ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
+        console.log("🚀 ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
 
         await machineCount.bulkCreate(machinesCountCreate)
 
@@ -321,8 +303,7 @@ async function agentBusinessInfo(req, res) {
             bussinessInformationId: agentInfo.id
         }, { where: { id: userId } })
 
-
-        return res.json(responsefunc("1", "Bussiness Info Added Sucessfully", {}, ""))
+        return res.json(responsefunc("1", "Business Info Added Successfully", {}, ""))
     }
 
     const agentInfo = await bussinessInformation.create({
@@ -337,7 +318,7 @@ async function agentBusinessInfo(req, res) {
         machineId: ele.machineId,
         bussinessInformationId: agentInfo.id
     }))
-    console.log("ðŸš€ ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
+    console.log("🚀 ~ agentBusinessInfo ~ machinesCountCreate:", machinesCountCreate)
 
     await machineCount.bulkCreate(machinesCountCreate)
 
@@ -349,22 +330,16 @@ async function agentBusinessInfo(req, res) {
         })
     )
 
+    return res.json(responsefunc("1", "Business Info Added Successfully", {}, ""))
+};
 
-    return res.json(responsefunc("1", "Bussiness Info Added Sucessfully", {}, ""))
-
-}
-
-
-/*
- * Agent  Bussiness Services Information Add
-*/
-async function businesInfoAdded(req, res) {
+// Agent Business Services Information Add
+exports.businesInfoAdded = async (req, res) => {
     const { userId } = req.params;
     const { services } = req.body;
 
-
     const existingServices = await agentSelectServices.findAll({
-        where: { agentServiceId: userId,status:true },
+        where: { agentServiceId: userId, status: true },
         attributes: ['serviceId']
     });
 
@@ -390,20 +365,14 @@ async function businesInfoAdded(req, res) {
     const serviceCreate = await agentSelectServices.bulkCreate(servicesToCreate);
 
     return res.json(responsefunc("1", "Agent Services Added Successfully", { serviceCreate }, ""));
-}
+};
 
-
-
-/*
- *  Agent  Bussiness Working Hours Update
-*/
-async function workingHoursUpdate(req, res) {
-
+// Agent Business Working Hours Update
+exports.workingHoursUpdate = async (req, res) => {
     const { userId } = req.params
     const { bussinessWorkingDays } = req.body
 
     console.log(bussinessWorkingDays);
-
 
     for (const ele of bussinessWorkingDays) {
         await bussinessWorkingHours.update(
@@ -423,17 +392,11 @@ async function workingHoursUpdate(req, res) {
         console.log("Updating closeTime:", ele.closeTime);
     }
 
+    return res.json(responsefunc("1", "Business Days Updated", {}, ""))
+};
 
-    return res.json(responsefunc("1", "Bussiness Days Updated", {}, ""))
-
-}
-
-
-/*
- * Login Agent 
-*/
-
-async function loginUser(req, res) {
+// Login Agent
+exports.loginUser = async (req, res) => {
     const { email, password, signedFrom, dvToken } = req.body;
 
     const userFind = await users.findOne({
@@ -500,7 +463,7 @@ async function loginUser(req, res) {
         ]
     });
     
-    console.log("User Data ==============>>>",userFind)
+    console.log("User Data ==============>>>", userFind)
 
     if (!userFind) {
         throw new customError("User not Exists with this credentials");
@@ -513,7 +476,7 @@ async function loginUser(req, res) {
         }
     }
 
-    // 📌 Check verification before anything else
+    // Check verification before anything else
     let otpId = 0;
     if (!userFind.status) {
         throw new customError("Blocked by admin. Please contact admin to continue");
@@ -539,12 +502,12 @@ async function loginUser(req, res) {
         );
     }
 
-    // 📌 Address check AFTER verification
+    // Address check AFTER verification
     if (!userFind.addressDb || userFind.addressDb.length === 0) {
         return res.json(responsefunc("3", "Cannot login without adding an address", { userId: userFind.id }, ""));
     }
 
-    // 📌 Check agent info, machine info, and services
+    // Check agent info, machine info, and services
     const services = userFind?.agentServices ?? [];
     const agentInfo = userFind?.agentInfo ?? [];
     const userMachineInfo = agentInfo?.[0]?.agentShopMachine ?? [];
@@ -565,7 +528,7 @@ async function loginUser(req, res) {
         return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
     }
 
-    // 📌 Social login: Create if not found
+    // Social login: Create if not found
     if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
         const createStripeCustomer = await stripe.createStripeCustomer(email);
 
@@ -579,7 +542,7 @@ async function loginUser(req, res) {
         return res.json(responsefunc('3', `User signed-In by ${signedFrom}`, { userId: createUser.id }));
     }
 
-    // 📌 Warn if user previously used social login but is now using email/password
+    // Warn if user previously used social login but is now using email/password
     if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
         return res.json(
             responsefunc(
@@ -591,7 +554,7 @@ async function loginUser(req, res) {
         );
     }
 
-    // 📌 Handle social login flow
+    // Handle social login flow
     if (["google", "facebook", "apple"].includes(signedFrom)) {
         const socialUser = await users.findOne({
             where: {
@@ -641,7 +604,7 @@ async function loginUser(req, res) {
         return res.json(output);
     }
 
-    // 📌 Ensure basic profile info exists
+    // Ensure basic profile info exists
     if (userFind.userTypeId === 4 && (!userFind.firstName || !userFind.phoneNum)) {
         return res.json(
             responsefunc(
@@ -653,19 +616,19 @@ async function loginUser(req, res) {
         );
     }
 
-    // 📌 Password match
+    // Password match
     const passwordMatch = await bcrypt.compare(password, userFind.password);
     if (!passwordMatch) {
         throw new customError("Bad credentials", "Please enter correct password to continue");
     }
 
-    // 📌 Device token check
+    // Device token check
     const dvTokenFound = userFind.deviceToken?.find(ele => ele.tokenId === dvToken);
     if (!dvTokenFound) {
         await deviceToken.create({ tokenId: dvToken, status: true, userId: userFind.id });
     }
 
-    // 📌 Features fetch
+    // Features fetch
     const featureData = await features.findAll({
         where: { status: true },
         attributes: ['id', 'title']
@@ -689,15 +652,10 @@ async function loginUser(req, res) {
 
     const output = loginData(userFind, accessToken, false, featureData);
     return res.json(output);
-}
+};
 
-
-
-
-/*
-*   Forget Password
-*/
-async function forgetPasswordRequest(req, res) {
+// Forget Password
+exports.forgetPasswordRequest = async (req, res) => {
     const { email } = req.body;
     const userData = await users.findOne({
         where: {
@@ -708,7 +666,7 @@ async function forgetPasswordRequest(req, res) {
         include: { model: otpVerification, attributes: ["id"] },
         attributes: ["id"],
     });
-    console.log("ðŸš€ ~ forgetPasswordRequest ~ users:", userData)
+    console.log("🚀 ~ forgetPasswordRequest ~ users:", userData)
 
     // user not found
     if (!userData)
@@ -721,8 +679,6 @@ async function forgetPasswordRequest(req, res) {
         upperCaseAlphabets: false,
         specialChars: false,
     });
-    //return res.json(OTP)
-
 
     otpMail({
         type: 'ForgetPassword',
@@ -740,12 +696,11 @@ async function forgetPasswordRequest(req, res) {
                 }, { where: { userid: userData.id } }
             )
 
-            return res.json(responsefunc("1", "OTP Updated Sucessfully", { otpid: userData.otpVerification.id, userId: userData.id }))
+            return res.json(responsefunc("1", "OTP Updated Successfully", { otpid: userData.otpVerification.id, userId: userData.id }))
 
         } catch (error) {
             console.log("Error in updating OTP", error)
             throw new customError(`${error.message}`)
-
         }
     } else {
         try {
@@ -755,37 +710,19 @@ async function forgetPasswordRequest(req, res) {
                 userId: userData.id
             })
 
-            return res.json(responsefunc("1", "OTP sent Sucessfully for Password Reset", { otpId: otpSend.id, userId: userData.id }))
+            return res.json(responsefunc("1", "OTP sent Successfully for Password Reset", { otpId: otpSend.id, userId: userData.id }))
 
         } catch (error) {
             console.log("Error in updating OTP", error)
             throw new customError(`${error.message}`)
-
         }
     }
+};
 
-}
-
-
-
-/*
-   *       Verify OTP for changing password
-*/
-async function verifyOTPforPassword(req, res) {
+// Verify OTP for changing password
+exports.verifyOTPforPassword = async (req, res) => {
     const { otpId, OTP } = req.body;
-    // if (OTP === '5678') {
-    //     const userData = await users.findByPk(userId)
-    //     const userUpdate = await users.update({
-    //         verifiedAt: new Date(),
-    //     }, {
-    //         where: {
-    //             id: userId
-    //         }
-    //     })
-
-
-    //     return res.json(responsefunc("1", "OTP Verified", { userId }))
-    // }
+    
     const otpData = await otpVerification.findByPk(otpId, {
         attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
     });
@@ -805,12 +742,10 @@ async function verifyOTPforPassword(req, res) {
     return res.json(
         responsefunc("1", "OTP verified", { otpId, userId: otpData.userId }, "")
     );
-}
+};
 
-/*
-*           Change password in response to OTP
-*/
-async function changePasswordOTP(req, res) {
+// Change password in response to OTP
+exports.changePasswordOTP = async (req, res) => {
     const { userId, otpId, password } = req.body;
     const otpData = await otpVerification.findByPk(otpId, {
         attributes: ["id", "OTP", "verifiedAtForgetCase"],
@@ -842,13 +777,10 @@ async function changePasswordOTP(req, res) {
             ""
         )
     );
-}
+};
 
-/*
-*          8. Log out
-*/
-async function logout(req, res) {
-    //return res.json(req.user);
+// Log out
+exports.logout = async (req, res) => {
     // removing the device token from DB
     deviceToken.destroy({
         where: { tokenId: req.user.dvToken, userId: req.user.id },
@@ -872,15 +804,12 @@ async function logout(req, res) {
                 error: "There is some error logging out. Please try again",
             });
         });
-}
+};
 
-
-/*
-   * Session    
-*/
-async function session(req, res) {
+// Session
+exports.session = async (req, res) => {
     const userId = req.user.id;
-    const { guestUser,dvToken } = req.body;
+    const { guestUser, dvToken } = req.body;
     if (guestUser) throw new CustomException("Login failed", "");
 
     const userData = await users.findOne({
@@ -1028,23 +957,19 @@ async function session(req, res) {
         maxAge: 24 * 60 * 60 * 1000
     });
 
-    let output = loginData(userData,accessToken, "", guestUser);
+    let output = loginData(userData, accessToken, "", guestUser);
     return res.json(output);
-}
+};
 
-/*
-* Get User profile
-*/
-
-async function getUserProfile(req, res) {
-
+// Get User profile
+exports.getUserProfile = async (req, res) => {
     const userId = req.user.id
 
     const userData = await users.findOne({
         where: {
             id: userId
         },
-        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId','countryCode']
+        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
     })
 
     if (!userData) {
@@ -1052,18 +977,12 @@ async function getUserProfile(req, res) {
     }
 
     return res.json(responsefunc("1", "User Profile fetched", userData, ""))
+};
 
-}
-
-
-
-/*
-*  Update User profile
-*/
-
-async function updateUserProfile(req, res) {
+// Update User profile
+exports.updateUserProfile = async (req, res) => {
     const userId = req.user.id
-    const { firstName, lastName, email, isProfileImgChanged, phoneNum,countryCode } = req.body
+    const { firstName, lastName, email, isProfileImgChanged, phoneNum, countryCode } = req.body
 
     const userFind = await users.findOne({
         where: {
@@ -1076,7 +995,6 @@ async function updateUserProfile(req, res) {
         throw new customError("user Not Exists with this ID")
     }
 
-
     let tempProfileImg = "";
     let profileImage = "";
 
@@ -1086,7 +1004,6 @@ async function updateUserProfile(req, res) {
         } else {
             tempProfileImg = req.file.path;
             profileImage = tempProfileImg.replace(/\\/g, "/");
-
         }
     }
 
@@ -1097,29 +1014,24 @@ async function updateUserProfile(req, res) {
         email,
         countryCode,
         image: isProfileImgChanged === "true" ? profileImage : undefined,
-
     }, { where: { id: userId } })
 
-
     return res.json(
-        responsefunc("1", "User Profile Updated Sucessfully", {}, "")
+        responsefunc("1", "User Profile Updated Successfully", {}, "")
     )
+};
 
-}
-
-//!Recurring functions
-let responsefunc = (status, message, data, error) => {
+//! Helper functions
+const responsefunc = (status, message, data, error) => {
     return {
         status: `${status}`,
         message: `${message}`,
         data: data,
         error: `${error}`
-
     }
 }
 
-
-let registerData = (userData, accessToken, isGuest) => {
+const registerData = (userData, accessToken, isGuest) => {
     return {
         status: "1",
         message: "User Register successful",
@@ -1140,8 +1052,7 @@ let registerData = (userData, accessToken, isGuest) => {
     };
 };
 
-
-let loginData = (userData, accessToken, isGuest, features) => {
+const loginData = (userData, accessToken, isGuest, features) => {
     return {
         status: "1",
         message: "Login successful",
@@ -1164,24 +1075,3 @@ let loginData = (userData, accessToken, isGuest, features) => {
         error: "",
     };
 };
-
-
-
-
-module.exports = {
-    registerAgentWithOTP,
-    verifyOTpSignUp,
-    loginUser,
-    forgetPasswordRequest,
-    verifyOTPforPassword,
-    logout,
-    getUserProfile,
-    updateUserProfile,
-    changePasswordOTP,
-    agentBusinessInfo,
-    resendOTP,
-    businesInfoAdded,
-    workingHoursUpdate,
-    session,
-
-}

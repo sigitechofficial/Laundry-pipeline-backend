@@ -124,6 +124,15 @@ router.post('/addMachines', validateAccessToken, asyncMiddleware(adminController
 router.post('/AddServicePreferences', validateAccessToken, asyncMiddleware(adminController.AddServicePreferences))
 //Get Account Preferences
 router.get('/getAccountPreferences', validateAccessToken, asyncMiddleware(adminController.getAccountPreferences))
+//Add Preference Types
+router.post('/createPreferenceType', validateAccessToken, asyncMiddleware(adminController.createPreferenceType))
+//Add Preference Values
+router.post('/addPreferenceValues', validateAccessToken, asyncMiddleware(adminController.addPreferenceValues))
+//Add Service With Preferences
+router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
+//Get Preference Types
+router.get('/getPreferenceTypes', validateAccessToken, asyncMiddleware(adminController.getPreferenceTypes))
+
 //!----------------------------On Hold Options------------------------------------------------------------------//
 //On Hold Options Add
 router.post('/onHoldOptions', validateAccessToken, asyncMiddleware(adminController.onHoldOptions))

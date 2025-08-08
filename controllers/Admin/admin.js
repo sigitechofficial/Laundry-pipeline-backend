@@ -28,7 +28,10 @@ const { users,
     proofOfDeliveries,
     bussinessWorkingHours,
     features,
+    preferenceTypes,
+    preferenceValues,
     agentSelectServices,
+    serviceWithPreferences,
     serviceCategories } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
@@ -884,7 +887,7 @@ async function addEmployee(req, res) {
 
 
 
-    if (user.classifiedAsId === 2 ) {
+    if (user.classifiedAsId === 2) {
         await users.update({
             employeeOff: adminId
         }, { where: { id: adminId } })
@@ -1830,6 +1833,153 @@ async function getAccountPreferences(req, res) {
 
 }
 
+/*
+  * Add Preference Types
+*/
+async function createPreferenceType(req, res) {
+    const { name } = req.body
+
+    const findPreferenceType = await preferenceTypes.findOne({
+        where: {
+            name: name,
+            status: true
+        }
+    })
+
+    if (findPreferenceType) {
+        throw new customError('Preference Type Already Exists')
+    }
+
+    const createPreferenceType = await preferenceTypes.create({
+        name,
+        status: true
+    })
+
+    return res.json(responsefunc("1", "Preference Type Added", { createPreferenceType }, ""))
+
+}
+
+/*
+  * Add Preference Values
+*/
+async function addPreferenceValues(req, res) {
+    const { value, preferenceTypeId } = req.body;
+
+    if (!preferenceTypeId || !value || (Array.isArray(value) && value.length === 0)) {
+        return res.status(400).json(responsefunc("0", "Value(s) and preferenceTypeId are required", {}, ""));
+    }
+
+    const valuesToInsert = Array.isArray(value) ? value : [value];
+
+    const existingValues = await preferenceValues.findAll({
+        where: {
+            value: valuesToInsert,
+            preferenceTypeId: preferenceTypeId,
+            status: true
+        }
+    });
+
+    const existingValueSet = new Set(existingValues.map(v => v.value));
+
+    const newValues = valuesToInsert.filter(v => !existingValueSet.has(v));
+
+    if (newValues.length === 0) {
+        return res.status(400).json(responsefunc("0", "All preference values already exist", {}, ""));
+    }
+
+    const bulkData = newValues.map(v => ({
+        value: v,
+        preferenceTypeId,
+        status: true
+    }));
+
+    const createdValues = await preferenceValues.bulkCreate(bulkData);
+
+    return res.json(
+        responsefunc(
+            "1",
+            `${createdValues.length} Preference Value(s) Added`,
+            { createdValues },
+            ""
+        )
+    );
+}
+
+
+/*
+  * Add Service With Preferences
+*/
+async function addServiceWithPreferences(req, res) {
+    const { serviceId, preferenceTypeId } = req.body;
+
+    if (!preferenceTypeId || !serviceId || (Array.isArray(serviceId) && serviceId.length === 0)) {
+        return res.status(400).json(responsefunc("0", "preferenceTypeId and serviceId(s) are required", {}, ""));
+    }
+
+    const serviceIds = Array.isArray(serviceId) ? serviceId : [serviceId];
+
+    const existingMappings = await serviceWithPreferences.findAll({
+        where: {
+            preferenceTypeId,
+            serviceId: serviceIds,
+            status: true
+        }
+    });
+
+    const existingServiceIds = new Set(existingMappings.map(m => m.serviceId));
+
+    const newMappings = serviceIds
+        .filter(id => !existingServiceIds.has(id))
+        .map(id => ({
+            serviceId: id,
+            preferenceTypeId,
+            status: true
+        }));
+
+    if (newMappings.length === 0) {
+        return res.status(400).json(responsefunc("0", "All Services already mapped to this Preference", {}, ""));
+    }
+
+    const createdMappings = await serviceWithPreferences.bulkCreate(newMappings);
+
+    return res.json(
+        responsefunc(
+            "1",
+            `${createdMappings.length} Service(s) mapped to Preference`,
+            { createdMappings },
+            ""
+        )
+    );
+}
+
+
+/*
+  * Get Preference Types
+*/
+async function getPreferenceTypes(req, res) {
+    const getPreferenceTypes = await preferenceTypes.findAll({
+        where: {
+            status: true
+        },
+        include: [
+            {
+                model: preferenceValues,
+                as: 'preferenceValues',
+                where: {
+                    status: true
+                },
+                required: false,
+                order: [['id', 'DESC']],
+                attributes: ['id', 'value', 'status']
+            }
+        ],
+        attributes: ['id', 'name', 'status']
+    })
+    return res.json(responsefunc("1", "All Preference Types Fetched", getPreferenceTypes, ""))
+}
+
+
+
 //!------------------------On Hold Options-------------------//
 
 /*
@@ -2016,11 +2166,11 @@ function generateBarcodeforSubCategories(name, price, fileName) {
 
     JsBarcode(canvas, barcodeData, {
         format: "CODE128",
-        width: 3,         
-        height: 200,      
+        width: 3,
+        height: 200,
         displayValue: false,
         fontSize: 20,
-        margin: 20,  
+        margin: 20,
     });
 
     const buffer = canvas.toBuffer("image/png");
@@ -2068,6 +2218,10 @@ module.exports = {
     //------------Account Preferences-----------//
     AddServicePreferences,
     getAccountPreferences,
+    createPreferenceType,
+    addPreferenceValues,
+    addServiceWithPreferences,
+    getPreferenceTypes,
     //--------on Hold Option------------//
     onHoldOptions,
     customerOnHoldOptions,

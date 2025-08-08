@@ -58,6 +58,9 @@ const corsOptions = {
     if (origin === 'https://backendlaundary.fomino.ch') {
       return callback(null, true);
     }
+    if(origin === 'https://main.dwc10i0wbe49w.amplifyapp.com'){
+      return callback(null, true);  
+    }
 
     return callback(new Error('Not allowed by CORS'));
   },

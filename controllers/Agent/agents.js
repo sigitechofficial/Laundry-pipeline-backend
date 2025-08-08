@@ -58,9 +58,9 @@ const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent } = require("../stripe");
-
+const { sendNotification } = require("../../utils/notification");
 //!----------------------------------Agent Shop Address Add-----------------------------//
-async function agentAddressAdd(req, res) {
+exports.agentAddressAdd = async (req, res) => {
     const {
         streetAddress,
         district,
@@ -121,7 +121,7 @@ async function agentAddressAdd(req, res) {
 }
 
 //!----------------------------------Agent Shop Address Edit-----------------------------//
-async function agentAddressEdit(req, res) {
+exports.agentAddressEdit = async (req, res) => {
     const {
         streetAddress,
         district,
@@ -202,7 +202,7 @@ async function agentAddressEdit(req, res) {
 /*
  * Get Agent Address - Simple Version
  */
-async function getAgentAddress(req, res) {
+exports.getAgentAddress = async (req, res) => {
     const agentId = req.user.id;
 
     const agentAddress = await addressDb.findOne({
@@ -256,7 +256,7 @@ async function getAgentAddress(req, res) {
  * Get Agent Address - Complex Version with Business Info
  */
 
-async function getShopAddress(req, res) {
+exports.getShopAddress = async (req, res) => {
     const userId = req.user.id;
 
     const findAddress = await bussinessInformation.findOne({
@@ -318,7 +318,7 @@ async function getShopAddress(req, res) {
  * Get Agent Order Home Api
  */
 
-async function getBookingHome(req, res) {
+exports.getBookingHome = async (req, res) => {
     const agentId = req.user.id;
 
     const userData = await users.findOne({
@@ -424,7 +424,7 @@ async function getBookingHome(req, res) {
 /*
  * Get ALl Order of Agent
  */
-async function getAgentOrder(req, res) {
+exports.getAgentOrder = async (req, res) => {
     const agentId = req.user.id;
 
     const getShopAddress = await addressDb.findOne({
@@ -593,7 +593,7 @@ async function getAgentOrder(req, res) {
 /*
  * Specific Order Details
  */
-async function orderDetailsById(req, res) {
+exports.orderDetailsById = async (req, res) => {
     const { bookingId, orderTrackId } = req.query;
 
     let whereCondition = {};
@@ -663,7 +663,7 @@ async function orderDetailsById(req, res) {
  *  Agent booking Filters
  */
 
-async function agentBookingFilters(req, res) {
+exports.agentBookingFilters = async (req, res) => {
     const agentId = req.user.id;
 
     const { filterType } = req.query
@@ -775,7 +775,7 @@ async function agentBookingFilters(req, res) {
 
 
 
-async function invoiceDetailTab(req, res) {
+exports.invoiceDetailTab = async (req, res) => {
     const agentId = req.user.id;
 
 
@@ -877,7 +877,7 @@ async function invoiceDetailTab(req, res) {
 /*
  *   Agent Booking status Update to one the way
  */
-async function agentBookingStatusOnTheWay(req, res) {
+exports.agentBookingStatusOnTheWay = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingfind = await booking.findOne({
@@ -936,6 +936,15 @@ async function agentBookingStatusOnTheWay(req, res) {
         bookingStatusId: 4,
     });
 
+    const customerId=bookingfind.customerId;
+    let title="Driver On The Way";
+    let body="Your driver is on the way to the pickup location";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingfind.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(
         responsefunc("1", "Booking status updated and payment captured", {}, "")
     );
@@ -943,7 +952,8 @@ async function agentBookingStatusOnTheWay(req, res) {
 
 /*
  *   Agent Booking status Arrived
- */ async function driverStatusArrived(req, res) {
+ */ 
+exports.driverStatusArrived = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingfind = await booking.findOne({
@@ -981,6 +991,15 @@ async function agentBookingStatusOnTheWay(req, res) {
         bookingStatusId: 5,
         bookingId: bookingId,
     });
+
+    const customerId=bookingfind.customerId;
+    let title="Driver Arrived";
+    let body="Your driver has arrived at the pickup location";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingfind.driverId,
+    }
+    sendNotification(customerId,title,body,data);
     return res.json(
         responsefunc("1", "Booking Status Updated to Driver Arrived", {}, " ")
     );
@@ -989,7 +1008,7 @@ async function agentBookingStatusOnTheWay(req, res) {
 /*
  *   Driver/Agent Add pictures of pickup and delivery
  */
-async function AddPickupDeliveryProof(req, res) {
+exports.AddPickupDeliveryProof = async (req, res) => {
     const { noOfItems, note, bookingId, deliveryType } = req.body;
     console.log("ðŸš€ ~ AddPickupDeliveryProof ~ req.body:", req.body);
     const userId = req.user.id;
@@ -1042,7 +1061,7 @@ async function AddPickupDeliveryProof(req, res) {
  *   Agent PickingUp and Inspection Status Update
  */
 
-async function agentInspectionStatus(req, res) {
+exports.agentInspectionStatus = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingFind = await booking.findOne({
@@ -1079,6 +1098,15 @@ async function agentInspectionStatus(req, res) {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
+    const customerId=bookingFind.customerId;
+    let title="Driver Picked Up";
+    let body="Your driver has picked up your laundry";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingFind.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(
         responsefunc("1", "Booking PickingUp and Inspection Status Updated", {}, "")
     );
@@ -1087,7 +1115,7 @@ async function agentInspectionStatus(req, res) {
 /*
  *   Agent/Driver Reached to the Delivery Shop Status Update
  */
-async function reachedAtDeliveryShopStatus(req, res) {
+exports.reachedAtDeliveryShopStatus = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
@@ -1123,6 +1151,15 @@ async function reachedAtDeliveryShopStatus(req, res) {
         bookingStatusId: 8,
     });
 
+    const customerId=bookingCheck.customerId;
+    let title="Driver Reached At Laundry Shop";
+    let body="Your driver has reached at the laundry shop";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
 }
 
@@ -1130,7 +1167,7 @@ async function reachedAtDeliveryShopStatus(req, res) {
 /*
  *  Create Intent Using Stripe
  */
-async function createIntentUsingStripeForAgent(req, res) {
+exports.createIntentUsingStripeForAgent = async (req, res) => {
     const { amount, customerId, savedPaymentMethodId } = req.body;
     console.log("Amount ------------------------>", amount)
     const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
@@ -1148,7 +1185,7 @@ async function createIntentUsingStripeForAgent(req, res) {
 /*
  *   Laundry Status Updated Invoice Generated and Status goes to In-Procesing
  */
-async function bookingInvoiceGeneratedStatusUpdated(req, res) {
+exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
@@ -1194,6 +1231,15 @@ async function bookingInvoiceGeneratedStatusUpdated(req, res) {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
+    const customerId=bookingCheck.customerId;
+    let title="Laundry Invoice Generated";
+    let body="Your laundry invoice has been generated";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
 }
 
@@ -1201,7 +1247,7 @@ async function bookingInvoiceGeneratedStatusUpdated(req, res) {
 /*
  *   Laundry Status Updated That laundry is Washed
  */
-async function laundryWashCompleted(req, res) {
+exports.laundryWashCompleted = async (req, res) => {
     const { bookingId } = req.params;
 
 
@@ -1236,13 +1282,21 @@ async function laundryWashCompleted(req, res) {
         bookingStatusId: 12,
         bookingId: bookingId,
     });
+    const customerId=bookingCheck.customerId;
+    let title="Laundry Has Been Washed At Shop";
+    let body="Your laundry has been washed at the shop";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
     return res.json(responsefunc("1", "Laundry Has Been Washed At Shop", {}, ""));
 }
 
 /*
  *   Laundry Status Updated That Laundry is Out for Delivery to Customer
  */
-async function laundryDeliverToCustomer(req, res) {
+exports.laundryDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
 
     const driverId = req.query.driverId;
@@ -1282,6 +1336,15 @@ async function laundryDeliverToCustomer(req, res) {
         bookingStatusId: 13,
     });
 
+    const customerId=bookingCheck.customerId;
+    let title="Driver Out for Deliver Laundry to Customer";
+    let body="Your driver is out for deliver laundry to customer";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(
         responsefunc(
             "1",
@@ -1295,7 +1358,7 @@ async function laundryDeliverToCustomer(req, res) {
 /*
  *   Driver Reached at customer Destination
  */
-async function driverReachedForDelivery(req, res) {
+exports.driverReachedForDelivery = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
@@ -1330,13 +1393,22 @@ async function driverReachedForDelivery(req, res) {
         bookingStatusId: 14,
     });
 
+    const customerId=bookingCheck.customerId;
+    let title="Driver Reached at Customer Destination";
+    let body="Your driver has reached at the customer destination";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(responsefunc("1", "Driver reached for delivery", {}, ""));
 }
 
 /*
  *   Booking Deliver to Customer (Delivery)
  */
-async function bookingDeliverToCustomer(req, res) {
+exports.bookingDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
@@ -1373,6 +1445,15 @@ async function bookingDeliverToCustomer(req, res) {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
+    const customerId=bookingCheck.customerId;
+    let title="Laundry Delivered to Customer";
+    let body="Your laundry has been delivered to customer";
+    let data={
+        bookingId:bookingId,
+        driverId:bookingCheck.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
 
     return res.json(
         responsefunc("1", "Laundry Delivered to customer sucessfully", {}, "")
@@ -1385,7 +1466,7 @@ async function bookingDeliverToCustomer(req, res) {
  * Agent Add Services At the time of Invoice
  */
 
-async function driverAddSerivces(req, res) {
+exports.driverAddSerivces = async (req, res) => {
     const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
 
     if (!Array.isArray(services) || services.length === 0) {
@@ -1498,6 +1579,17 @@ async function driverAddSerivces(req, res) {
         { where: { id: bookingId } }
     );
 
+    const bookings =await booking.findByPk(bookingId);
+
+    const customerId=bookings.customerId;
+    let title="Agent/Driver Added Detail";
+    let body="Your agent/driver has added detail";
+    let data={
+        bookingId:bookingId,
+        driverId:bookings.driverId,
+    }
+    sendNotification(customerId,title,body,data);
+
     return res.json(responsefunc("1", "Agent/Driver Added Detail", {}, ""));
 }
 
@@ -1505,7 +1597,7 @@ async function driverAddSerivces(req, res) {
 /*
  *  Agent Update Invoice
  */
-async function agentUpdateInvoice(req, res) {
+exports.agentUpdateInvoice = async (req, res) => {
     const { bookingId, total, services } = req.body
 
     console.log("Req.body--------------------->", req.body)
@@ -1597,6 +1689,14 @@ async function agentUpdateInvoice(req, res) {
 
 
     }
+    const customerId=bookings.customerId;
+    let title="Agent/Driver Updated Invoice";
+    let body="Your agent/driver has updated invoice";
+    let data={
+        bookingId:bookingId,
+        driverId:bookings.driverId,
+    }
+    sendNotification(customerId,title,body,data);
 
 
     return res.status(200).json({
@@ -1611,7 +1711,7 @@ async function agentUpdateInvoice(req, res) {
 /*
  *  Invoice Creation
  */
-async function invoiceCreation(req, res) {
+exports.invoiceCreation = async (req, res) => {
     const bookingId = req.params.bookingId;
     console.log("bookingId", bookingId);
 
@@ -1853,7 +1953,7 @@ async function invoiceCreation(req, res) {
 //         )
 //     );
 // }
-async function customerServices(req, res) {
+exports.customerServices = async (req, res) => {
     const { bookingId } = req.query;
 
     const customerServicesFind = await customerSelectedService.findAll({
@@ -1962,7 +2062,7 @@ async function customerServices(req, res) {
 /*
  * on Hold Conformation
  */
-async function onHoldConformation(req, res) {
+exports.onHoldConformation = async (req, res) => {
     let records = [];
 
     // Parse incoming records safely
@@ -2034,7 +2134,7 @@ async function onHoldConformation(req, res) {
 /*
  * Get Those Services Items Those Are Rejected 
  */
-async function rejectedServiceItems(req, res) {
+exports.rejectedServiceItems = async (req, res) => {
     const { bookingId } = req.params
 
 
@@ -2070,7 +2170,7 @@ async function rejectedServiceItems(req, res) {
 /*
  * Agent Update Status To issue resoved
  */
-async function agentIssueResolved(req, res) {
+exports.agentIssueResolved = async (req, res) => {
     const { bookingId } = req.params;
 
     const bookingCheck = await booking.findOne({
@@ -2116,7 +2216,7 @@ async function agentIssueResolved(req, res) {
 /*
  *     All Agent Laundry Drivers
  */
-async function agnetDrivers(req, res) {
+exports.agnetDrivers = async (req, res) => {
     const agentId = req.user.id;
 
     const laundryShopFound = await bussinessInformation.findOne({
@@ -2177,7 +2277,7 @@ async function agnetDrivers(req, res) {
 /*
  *     Agent Assign Booking To Laundry Driver
  */
-async function agentAssignBookingToLaundryDriver(req, res) {
+exports.agentAssignBookingToLaundryDriver = async (req, res) => {
     const { driverId, bookingId } = req.body;
 
     const orderAssign = await booking.update(
@@ -2213,7 +2313,7 @@ async function agentAssignBookingToLaundryDriver(req, res) {
 /*
  * Agent pickup order BySelf
  */
-async function agentPickupOrderBySelf(req, res) {
+exports.agentPickupOrderBySelf = async (req, res) => {
     const agentId = req.user.id;
     const { bookingId } = req.query.bookingId;
 
@@ -2247,7 +2347,7 @@ async function agentPickupOrderBySelf(req, res) {
 }
 
 //!-----------------------------------Agent Cancel Booking------------------------------------//
-async function agentCancelBooking(req, res) {
+exports.agentCancelBooking = async (req, res) => {
     const { bookingId, reasonId, reasonText } = req.body;
 
     const getBookingData = await booking.findOne({
@@ -2294,7 +2394,7 @@ async function agentCancelBooking(req, res) {
  * Add Roles
  */
 
-async function addRole(req, res) {
+exports.addRole = async (req, res) => {
     const { name, permissionRole } = req.body;
 
     const checkExist = await roles.findOne({ where: { name } });
@@ -2318,7 +2418,7 @@ async function addRole(req, res) {
 /*
  * Update Roles
  */
-async function updateRoles(req, res) {
+exports.updateRoles = async (req, res) => {
     const { name, permissionRole, roleId } = req.body;
 
     if (!roleId) {
@@ -2362,7 +2462,7 @@ async function updateRoles(req, res) {
 /*
  * Get All Roles
  */
-async function getAllRoles(req, res) {
+exports.getAllRoles = async (req, res) => {
     const getRoles = await roles.findAll({
         where: {
             status: true,
@@ -2377,7 +2477,7 @@ async function getAllRoles(req, res) {
 /*
  * Get Permissions
  */
-async function getPermissions(req, res) {
+exports.getPermissions = async (req, res) => {
     const roleId = req.query.roleId;
     const getPermissions = await permissions.findAll({
         where: {
@@ -2402,7 +2502,7 @@ async function getPermissions(req, res) {
 /*
  * Add Classified
  */
-async function addClassifiedAs(req, res) {
+exports.addClassifiedAs = async (req, res) => {
     const { name } = req.body;
     const createData = await classifiedAs.create({
         name,
@@ -2413,7 +2513,7 @@ async function addClassifiedAs(req, res) {
 /*
  * Get ClassifiedAs
  */
-async function getClassifiedAs(req, res) {
+exports.getClassifiedAs = async (req, res) => {
     const findData = await classifiedAs.findAll({
         attributes: ["id", "name"],
     });
@@ -2426,7 +2526,7 @@ async function getClassifiedAs(req, res) {
 /*
  * Add Features
  */
-async function addfeatures(req, res) {
+exports.addfeatures = async (req, res) => {
     const { title, status, featureOf, key } = req.body;
 
     const titleFound = await features.findOne({
@@ -2452,7 +2552,7 @@ async function addfeatures(req, res) {
 /*
  * Get Features
  */
-async function getFeatures(req, res) {
+exports.getFeatures = async (req, res) => {
     const findFeature = await features.findAll({
         where: {
             status: true,
@@ -2468,7 +2568,7 @@ async function getFeatures(req, res) {
  * Add Employee
  */
 
-async function addEmployee(req, res) {
+exports.addEmployee = async (req, res) => {
     const {
         firstName,
         lastName,
@@ -2552,7 +2652,7 @@ async function addEmployee(req, res) {
 /*
  * Update Employee
  */
-async function updateEmployee(req, res) {
+exports.updateEmployee = async (req, res) => {
     const {
         firstName,
         lastName,
@@ -2614,7 +2714,7 @@ async function updateEmployee(req, res) {
 /*
  * Change Employee status
  */
-async function changeEmployeeStatus(req, res) {
+exports.changeEmployeeStatus = async (req, res) => {
     const { status, employeeId } = req.body;
 
     users.update(
@@ -2634,7 +2734,7 @@ async function changeEmployeeStatus(req, res) {
 /*
  * Get All Employee
  */
-async function getAllEmployees(req, res) {
+exports.getAllEmployees = async (req, res) => {
 
     const agentId = req.user.id
     const agentEmployee = await users.findAll({
@@ -2659,7 +2759,7 @@ async function getAllEmployees(req, res) {
  * Get Agent Services
  */
 
-async function getAgentServices(req, res) {
+exports.getAgentServices = async (req, res) => {
     const agentId = req.user.id;
 
     const findServices = await agentSelectServices.findAll({
@@ -2686,7 +2786,7 @@ async function getAgentServices(req, res) {
 /*
  *  Edit Service Status
 */
-async function editServiceStatus(req, res) {
+exports.editServiceStatus = async (req, res) => {
     const { serviceId, status } = req.body;
     const agentId = req.user.id;
 
@@ -2714,7 +2814,7 @@ async function editServiceStatus(req, res) {
 /*
   *  Specific Service Detail For the Customer
 */
-async function serviceDetail(req, res) {
+exports.serviceDetail = async (req, res) => {
     const agentId = req.user.id;
 
 
@@ -2791,7 +2891,7 @@ async function serviceDetail(req, res) {
 /*
   * Get Customer Services For Updating Invoice
 */
-async function getCustomerServicestoUpdateInvoice(req, res) {
+exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
     const { bookingId } = req.query;
     const customerServices = await customerSelectedService.findAll({
         where: {
@@ -2957,7 +3057,7 @@ async function getCustomerServicestoUpdateInvoice(req, res) {
 
 
 //!------------------Get Countries && Cities------------------//
-async function getCountries(req, res) {
+exports.getCountries = async (req, res) => {
     const countriesFind = await countries.findAll();
 
     let outObj = {
@@ -2967,7 +3067,7 @@ async function getCountries(req, res) {
     return res.json(responsefunc("1", "Countries Fetched", outObj, ""));
 }
 
-async function getCities(req, res) {
+exports.getCities = async (req, res) => {
     const getAllCities = await cities.findAll();
 
     let outObj = {
@@ -2978,7 +3078,7 @@ async function getCities(req, res) {
 }
 
 //!------------------Get Bussiness Information ------------------//
-async function getBussinessInforMation(req, res) {
+exports.getBussinessInforMation = async (req, res) => {
     const { userId } = req.params;
 
     const machineInfo = await machines.findAll();
@@ -3010,7 +3110,7 @@ async function getBussinessInforMation(req, res) {
     return res.json(responsefunc("1", "Information fetched", outObj, ""));
 }
 
-async function getBussinessWrkinghours(req, res) {
+exports.getBussinessWrkinghours = async (req, res) => {
     const { userId } = req.params;
 
     const bussinesWorkingHours = await bussinessWorkingHours.findAll({
@@ -3080,7 +3180,7 @@ exports.printLabelData = async (req, res) => {
 /*
   * Get On Hold Options
 */
-async function getOnHoldOptions(req, res) {
+exports.getOnHoldOptions = async (req, res) => {
 
     const getOptions = await onHoldOption.findAll({
         where: {
@@ -3097,7 +3197,7 @@ async function getOnHoldOptions(req, res) {
 /*
   * Get Customer Services and SubCategories For onHold  
 */
-async function getCustomerServicesForOnHold(req, res) {
+exports.getCustomerServicesForOnHold = async (req, res) => {
     const { bookingId } = req.params;
 
     // Fetch all customer services for the given bookingId
@@ -3162,7 +3262,7 @@ async function getCustomerServicesForOnHold(req, res) {
   *  Performance Dashboard
 */
 
-async function getPerformanceDashboard(req, res) {
+exports.getPerformanceDashboard = async (req, res) => {
     const agentId = req.user.id;
     const { startDate, endDate } = req.query;
 
@@ -3314,7 +3414,7 @@ async function getPerformanceDashboard(req, res) {
 /*
   * Update Invoice  
 */
-async function updateInvoice(req, res) {
+exports.updateInvoice = async (req, res) => {
     const { services, bookingId, total } = req.body;
 
     console.log("Services==============================>>", services)
@@ -3434,7 +3534,7 @@ let responsefunc = (status, message, data, error) => {
     };
 };
 
-async function findZones(lat, lng) {
+const findZones = async (lat, lng) => {
     const findZone = await zone.findAll({
         where: {
             status: true,
@@ -3469,7 +3569,7 @@ async function findZones(lat, lng) {
     return findZone;
 }
 
-async function getSlotBookings(laundryShopId) {
+const getSlotBookings = async (laundryShopId) => {
     console.log("Ã°Å¸Å¡â‚¬ ~ getSlotBookings ~ laundryShopId:", laundryShopId);
 
     const slots = [
@@ -3596,7 +3696,7 @@ async function getSlotBookings(laundryShopId) {
 }
 
 
-function getNextHourTime(time) {
+const getNextHourTime = (time) => {
     const [hour, minute] = time.split(":").map(Number);
     const nextHour = hour === 12 ? 1 : hour + 1;
     return `${nextHour.toString().padStart(2, "0")}:${minute
@@ -3605,76 +3705,4 @@ function getNextHourTime(time) {
 }
 
 
-//!---------------------------------------------Exports----------------------------------------//
-
-module.exports = {
-    //----------------------Agent Booking Related Api's--------------------//
-    agentAddressAdd,
-    agentAddressEdit,
-    getAgentAddress,
-    getAgentOrder,
-    orderDetailsById,
-    getShopAddress,
-    invoiceCreation,
-    agentCancelBooking,
-    agnetDrivers,
-    agentAssignBookingToLaundryDriver,
-    agentPickupOrderBySelf,
-    driverAddSerivces,
-    AddPickupDeliveryProof,
-    agentBookingStatusOnTheWay,
-    driverStatusArrived,
-    agentInspectionStatus,
-    reachedAtDeliveryShopStatus,
-    laundryWashCompleted,
-    laundryDeliverToCustomer,
-    agentBookingFilters,
-    driverReachedForDelivery,
-    bookingDeliverToCustomer,
-    invoiceDetailTab,
-    bookingInvoiceGeneratedStatusUpdated,
-    updateInvoice,
-    //----------------ClassifiedAs--------------//
-    addClassifiedAs,
-    getClassifiedAs,
-    //----------------------Features-----------//
-    addfeatures,
-    getFeatures,
-    //--------------------Roles--------------//
-    addRole,
-    updateRoles,
-    getAllRoles,
-    getPermissions,
-    //------------------------Employees-----------//
-    addEmployee,
-    updateEmployee,
-    changeEmployeeStatus,
-    getAllEmployees,
-    //--------------------Agent Services------------//
-    getAgentServices,
-    serviceDetail,
-    editServiceStatus,
-    getCustomerServicestoUpdateInvoice,
-    //-------------------Customer Services-------//
-    customerServices,
-    //-----------Booking OnHold--------------//
-    onHoldConformation,
-    agentIssueResolved,
-    //--------------Get coutries && cities----------//
-    getCountries,
-    getCities,
-    //-------------Get Bussines Information-------//
-    getBussinessInforMation,
-    getBussinessWrkinghours,
-    //-------------Agent Home Api------//
-    getBookingHome,
-    //-------------Get On Hold Options-------//
-    getOnHoldOptions,
-    getCustomerServicesForOnHold,
-    rejectedServiceItems,
-    agentUpdateInvoice,
-    //-------------Stripe Intent Api-------//
-    createIntentUsingStripeForAgent,
-    //-------------Performance Dashboard-------//
-    getPerformanceDashboard
-}
+//!---------------------------------------------Controllers Converted to Export Approach----------------------------------------//
