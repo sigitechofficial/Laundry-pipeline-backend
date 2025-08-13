@@ -41,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.DECIMAL(5,2),
     allowNull:true
   },
+  zoneAdminComission:{
+    type:DataTypes.INTEGER,
+    allowNull:true
+  },
   serviceCharge:{
     type:DataTypes.FLOAT,
     allowNull:true
@@ -48,6 +52,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'zone',
+    paranoid:true
   });
   return zone;
 };

@@ -26,6 +26,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
   },
+  zoneAdminCommission:{
+    type:DataTypes.DECIMAL(10,2),
+    allowNull:true
+  },
     serviceCharge: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,

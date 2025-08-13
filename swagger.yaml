@@ -27,8 +27,6 @@ tags:
   - name: Admin > Order Management
   - name: Admin > Service Management
   - name: Admin > Employee Management
-  - name: Driver
-  - name: Driver > Driver Auth
   - name: Agent
   - name: Agent > Auth
   - name: Agent > Agent Shop Address
@@ -1393,13 +1391,6 @@ paths:
           required: true
           schema:
             type: string
-      parameters:
-        - name: accessToken
-          in: cookie
-          description: The authentication cookie
-          required: true
-          schema:
-            type: string
       requestBody:
         content:
           multipart/form-data:
@@ -1535,12 +1526,6 @@ paths:
                 image:
                   type: string
                   format: binary
-      parameters:
-        - name: accessToken
-          in: header
-          schema:
-            type: string
-          example: '{{adminToken}}'
       responses:
         '200':
           description: Successful response
@@ -1558,12 +1543,6 @@ paths:
           required: true
           schema:
             type: string
-      parameters:
-        - name: accessToken
-          in: header
-          schema:
-            type: string
-          example: '{{adminToken}}'
       responses:
         '200':
           description: OK
@@ -1683,12 +1662,6 @@ paths:
                 vehicleId:
                   type: integer
                   example: '4'
-      parameters:
-        - name: accessToken
-          in: header
-          schema:
-            type: string
-          example: '{{adminToken}}'
       responses:
         '200':
           description: Successful response
@@ -1714,12 +1687,6 @@ paths:
               example:
                 status: true
                 vehicleId: 4
-      parameters:
-        - name: accessToken
-          in: header
-          schema:
-            type: string
-          example: '{{adminToken}}'
       responses:
         '200':
           description: Successful response
@@ -2152,7 +2119,7 @@ paths:
                       standard washing treatment.
                     onHoldOptionId: 2
                   - title: >-
-                      Your item has been flagged for possible risks (shrinking,
+                      Your item has been flagged for possible risks (shrinking
                       color bleeding, or pre-existing damage). Please review and
                       confirm how you would like us to proceed.
                     option: >-
@@ -4800,7 +4767,7 @@ paths:
                 data: {}
                 error: ""
         '400':
-          description: `otherText` provided without selecting "Other" as matchProfileOption
+          description: "otherText provided without selecting Other as matchProfileOption"
           content:
             application/json:
               example:
@@ -6460,3 +6427,2817 @@ paths:
                 message: "Internal server error"
                 data: {}
                 error: "Failed to update business working hours"
+
+# Missing Customer APIs
+  /customer/resendOTP:
+    post:
+      summary: Resend OTP to customer
+      description: Resends OTP to customer's email or phone for verification
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: john.doe@example.com
+                  description: Customer's email address
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "OTP sent successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid email"
+                data: {}
+
+  /customer/customerAddresses:
+    get:
+      summary: Get customer addresses
+      description: Retrieves all addresses associated with the logged-in customer
+      tags:
+        - Customer > User Profile
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Customer addresses retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Addresses retrieved successfully"
+                data:
+                  - id: 1
+                    address: "123 Main St"
+                    city: "London"
+                    country: "UK"
+                    isDefault: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /customer/getPrefrencesValues:
+    get:
+      summary: Get preferences values
+      description: Retrieves all available preference values for services
+      tags:
+        - Customer > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Preferences values retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Preferences retrieved successfully"
+                data:
+                  - id: 1
+                    name: "Fragrance"
+                    values:
+                      - "Lavender"
+                      - "Rose"
+                      - "Citrus"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /customer/updateBookingUpfrontAmount:
+    get:
+      summary: Update booking upfront amount
+      description: Updates the upfront payment amount for a booking
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: query
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking to update
+        - in: query
+          name: amount
+          required: true
+          schema:
+            type: number
+          description: New upfront amount
+      responses:
+        '200':
+          description: Booking amount updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Amount updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID or amount"
+                data: {}
+
+  /customer/fetchZoneAndCharges:
+    get:
+      summary: Fetch zone and charges
+      description: Retrieves zone information and associated charges
+      tags:
+        - Customer > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Zone and charges retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Zone and charges retrieved successfully"
+                data:
+                  zones:
+                    - id: 1
+                      name: "Zone A"
+                      charge: 5.00
+
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /customer/createIntentUsingStripe:
+    post:
+      summary: Create Stripe payment intent
+      description: Creates a Stripe payment intent for customer payments
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - bookingId
+              properties:
+                amount:
+                  type: number
+                  example: 25.50
+                  description: Payment amount
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: Booking ID
+      responses:
+        '200':
+          description: Payment intent created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Payment intent created"
+                data:
+                  clientSecret: "pi_xxx_secret_xxx"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid amount or booking ID"
+                data: {}
+
+  /customer/getOnHoldBookings/{bookingId}:
+    get:
+      summary: Get on-hold bookings for specific booking
+      description: Retrieves all on-hold bookings associated with a specific booking ID
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking
+      responses:
+        '200':
+          description: On-hold bookings retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "On-hold bookings retrieved successfully"
+                data:
+                  - id: 1
+                    reason: "Item damage"
+                    status: "pending"
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Booking not found"
+                data: {}
+
+  /customer/updateCustomerResponseForOnHoldBooking:
+    patch:
+      summary: Update customer response for on-hold booking
+      description: Updates customer's response for an on-hold booking
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+                - response
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking
+                response:
+                  type: string
+                  example: "Accept the damage"
+                  description: Customer's response
+      responses:
+        '200':
+          description: Response updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Response updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID or response"
+                data: {}
+
+  /customer/getOnHoldBookingsForCustomer:
+    get:
+      summary: Get all on-hold bookings for customer
+      description: Retrieves all on-hold bookings for the logged-in customer
+      tags:
+        - Customer > Booking Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: On-hold bookings retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "On-hold bookings retrieved successfully"
+                data:
+                  - bookingId: 123
+                    reason: "Item damage"
+                    status: "pending"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /customer/testNotification:
+    post:
+      summary: Test notification
+      description: Sends a test notification to the customer
+      tags:
+        - Customer > User Profile
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - message
+              properties:
+                message:
+                  type: string
+                  example: "Test notification message"
+                  description: Test notification message
+      responses:
+        '200':
+          description: Test notification sent successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Test notification sent"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid message"
+                data: {}
+
+# Missing Agent APIs
+  /agent/resendotp:
+    post:
+      summary: Resend OTP to agent
+      description: Resends OTP to agent's email or phone for verification
+      tags:
+        - Agent > Auth
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: agent@example.com
+                  description: Agent's email address
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "OTP sent successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid email"
+                data: {}
+
+  /agent/session:
+    post:
+      summary: Agent session
+      description: Validates agent session and returns user information
+      tags:
+        - Agent > Auth
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Session validated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Session valid"
+                data:
+                  id: 1
+                  email: "agent@example.com"
+                  name: "John Agent"
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid session"
+                data: {}
+
+  /agent/getUserProfile:
+    get:
+      summary: Get agent user profile
+      description: Retrieves the profile information of the logged-in agent
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Profile retrieved successfully"
+                data:
+                  id: 1
+                  firstName: "John"
+                  lastName: "Agent"
+                  email: "agent@example.com"
+                  phone: "+1234567890"
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/updateUserProfile:
+    patch:
+      summary: Update agent user profile
+      description: Updates the profile information of the logged-in agent
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firstName:
+                  type: string
+                  example: "John"
+                  description: Agent's first name
+                lastName:
+                  type: string
+                  example: "Agent"
+                  description: Agent's last name
+                phone:
+                  type: string
+                  example: "+1234567890"
+                  description: Agent's phone number
+                profileImage:
+                  type: string
+                  format: binary
+                  description: Profile image file
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Profile updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid profile data"
+                data: {}
+
+  /agent/agentAddressEdit:
+    patch:
+      summary: Edit agent address
+      description: Updates the address information for the agent
+      tags:
+        - Agent > Agent Shop Address
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - address
+                - cityId
+                - countryId
+              properties:
+                address:
+                  type: string
+                  example: "456 Business Ave"
+                  description: Agent's business address
+                cityId:
+                  type: integer
+                  example: 1
+                  description: City ID
+                countryId:
+                  type: integer
+                  example: 1
+                  description: Country ID
+      responses:
+        '200':
+          description: Address updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Address updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid address data"
+                data: {}
+
+  /agent/getAgentAddress:
+    get:
+      summary: Get agent address
+      description: Retrieves the address information for the logged-in agent
+      tags:
+        - Agent > Agent Shop Address
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Address retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Address retrieved successfully"
+                data:
+                  address: "456 Business Ave"
+                  city: "London"
+                  country: "UK"
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/getBookingHome:
+    get:
+      summary: Get booking home
+      description: Retrieves booking information for the agent's home dashboard
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Booking home data retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Booking home data retrieved successfully"
+                data:
+                  pendingOrders: 5
+                  completedOrders: 25
+                  totalRevenue: 1250.00
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/acceptOrder:
+    post:
+      summary: Accept order
+      description: Allows agent to accept a specific order
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking to accept
+      responses:
+        '200':
+          description: Order accepted successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Order accepted successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/getAllServices:
+    get:
+      summary: Get all services
+      description: Retrieves all available services
+      tags:
+        - Agent > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      responses:
+        '200':
+          description: Services retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Services retrieved successfully"
+                data:
+                  - id: 1
+                    name: "Dry Cleaning"
+                    price: 15.00
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+
+  /agent/onHoldConformation:
+    patch:
+      summary: On hold confirmation
+      description: Confirms an order is on hold with reason and images
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - bookingId
+                - reason
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking
+                reason:
+                  type: string
+                  example: "Item damage found"
+                  description: Reason for putting on hold
+                onHoldImg:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: Images supporting the on-hold reason
+      responses:
+        '200':
+          description: Order put on hold successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Order put on hold successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID or reason"
+                data: {}
+
+  /agent/agentIssueResolved/{bookingId}:
+    patch:
+      summary: Agent issue resolved
+      description: Marks an on-hold issue as resolved
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking
+      responses:
+        '200':
+          description: Issue resolved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Issue resolved successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/driverReachedForDelivery/{bookingId}:
+    patch:
+      summary: Driver reached for delivery
+      description: Updates status when driver reaches customer for delivery
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Driver reached for delivery"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/bookingDeliverToCustomer/{bookingId}:
+    patch:
+      summary: Booking deliver to customer
+      description: Marks booking as delivered to customer
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking
+      responses:
+        '200':
+          description: Booking delivered successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Booking delivered to customer"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/invoiceDetailTab:
+    get:
+      summary: Invoice detail tab
+      description: Retrieves invoice details for the agent
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Invoice details retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Invoice details retrieved successfully"
+                data:
+                  - id: 1
+                    bookingId: 123
+                    amount: 25.50
+                    status: "paid"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/bookingInvoiceGeneratedStatusUpdated/{bookingId}:
+    patch:
+      summary: Booking invoice generated status updated
+      description: Updates the invoice generated status for a booking
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: ID of the booking
+      responses:
+        '200':
+          description: Invoice status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Invoice status updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/updateInvoice:
+    patch:
+      summary: Update invoice
+      description: Updates invoice details
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+                - amount
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking
+                amount:
+                  type: number
+                  example: 30.00
+                  description: Updated invoice amount
+      responses:
+        '200':
+          description: Invoice updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Invoice updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid invoice data"
+                data: {}
+
+  /agent/agentUpdateInvoice:
+    patch:
+      summary: Agent update invoice
+      description: Updates invoice on-hold status
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+                - onHoldStatus
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking
+                onHoldStatus:
+                  type: boolean
+                  example: true
+                  description: On-hold status for invoice
+      responses:
+        '200':
+          description: Invoice on-hold status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Invoice on-hold status updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid invoice data"
+                data: {}
+
+  /agent/agentPickupOrderBySelf:
+    patch:
+      summary: Agent pickup order by self
+      description: Assigns order pickup to the agent themselves
+      tags:
+        - Agent > Agent Drivers
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - bookingId
+              properties:
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: ID of the booking
+      responses:
+        '200':
+          description: Order assigned to agent successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Order assigned to agent successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/getAllRoles:
+    get:
+      summary: Get all roles
+      description: Retrieves all roles available for agents
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Roles retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Roles retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "Driver"
+                    description: "Responsible for pickup and delivery"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/updateRoles:
+    patch:
+      summary: Update roles
+      description: Updates an existing role
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - title
+                - description
+              properties:
+                id:
+                  type: integer
+                  example: 1
+                  description: Role ID
+                title:
+                  type: string
+                  example: "Senior Driver"
+                  description: Updated role title
+                description:
+                  type: string
+                  example: "Senior driver with additional responsibilities"
+                  description: Updated role description
+      responses:
+        '200':
+          description: Role updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Role updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid role data"
+                data: {}
+
+  /agent/addClassifiedAs:
+    post:
+      summary: Add classified as
+      description: Creates a new classification for employees
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+              properties:
+                title:
+                  type: string
+                  example: "Full-time"
+                  description: Classification title
+      responses:
+        '200':
+          description: Classification created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Classification created successfully"
+                data:
+                  id: 1
+                  title: "Full-time"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid classification data"
+                data: {}
+
+  /agent/getClassifiedAs:
+    get:
+      summary: Get classified as
+      description: Retrieves all classifications
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Classifications retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Classifications retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "Full-time"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/addfeatures:
+    post:
+      summary: Add features
+      description: Creates a new feature for the system
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+                - featureOf
+              properties:
+                title:
+                  type: string
+                  example: "View Orders"
+                  description: Feature title
+                featureOf:
+                  type: string
+                  example: "Agent"
+                  description: Feature belongs to (Admin/Agent/Driver)
+      responses:
+        '200':
+          description: Feature created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Feature created successfully"
+                data:
+                  id: 1
+                  title: "View Orders"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid feature data"
+                data: {}
+
+  /agent/getFeatures:
+    get:
+      summary: Get features
+      description: Retrieves all features available in the system
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Features retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Features retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "View Orders"
+                    featureOf: "Agent"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/addEmployee:
+    post:
+      summary: Add employee
+      description: Adds a new employee to the agent's business
+      tags:
+        - Agent > Add Employee
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - phone
+                - roleId
+              properties:
+                firstName:
+                  type: string
+                  example: "John"
+                  description: Employee's first name
+                lastName:
+                  type: string
+                  example: "Doe"
+                  description: Employee's last name
+                email:
+                  type: string
+                  format: email
+                  example: "john.doe@example.com"
+                  description: Employee's email address
+                phone:
+                  type: string
+                  example: "+1234567890"
+                  description: Employee's phone number
+                roleId:
+                  type: integer
+                  example: 1
+                  description: Role ID for the employee
+                profileImage:
+                  type: string
+                  format: binary
+                  description: Profile image file
+      responses:
+        '200':
+          description: Employee added successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee added successfully"
+                data:
+                  id: 1
+                  firstName: "John"
+                  lastName: "Doe"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid employee data"
+                data: {}
+
+  /agent/updateEmployee:
+    patch:
+      summary: Update employee
+      description: Updates an existing employee's information
+      tags:
+        - Agent > Add Employee
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - id
+                - firstName
+                - lastName
+                - email
+                - phone
+              properties:
+                id:
+                  type: integer
+                  example: 1
+                  description: Employee ID
+                firstName:
+                  type: string
+                  example: "John"
+                  description: Employee's first name
+                lastName:
+                  type: string
+                  example: "Doe"
+                  description: Employee's last name
+                email:
+                  type: string
+                  format: email
+                  example: "john.doe@example.com"
+                  description: Employee's email address
+                phone:
+                  type: string
+                  example: "+1234567890"
+                  description: Employee's phone number
+                profileImage:
+                  type: string
+                  format: binary
+                  description: Profile image file
+      responses:
+        '200':
+          description: Employee updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid employee data"
+                data: {}
+
+  /agent/updateEmployeeStatus:
+    patch:
+      summary: Update employee status
+      description: Updates the status of an employee (active/inactive)
+      tags:
+        - Agent > Add Employee
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employeeId
+                - status
+              properties:
+                employeeId:
+                  type: integer
+                  example: 1
+                  description: Employee ID
+                status:
+                  type: boolean
+                  example: true
+                  description: Employee status (true for active, false for inactive)
+      responses:
+        '200':
+          description: Employee status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employee status updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid employee ID or status"
+                data: {}
+
+  /agent/getAllEmployees:
+    get:
+      summary: Get all employees
+      description: Retrieves all employees for the agent's business
+      tags:
+        - Agent > Add Employee
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Employees retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Employees retrieved successfully"
+                data:
+
+                    id: 1
+                    firstName: "John"
+                    lastName: "Doe"
+                    email: "john.doe@example.com"
+                    status: "active"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/getAgentServices:
+    get:
+      summary: Get agent services
+      description: Retrieves all services offered by the agent
+      tags:
+        - Agent > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Agent services retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Agent services retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "Dry Cleaning"
+                    price: 15.00
+                    status: "active"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /agent/serviceDetail:
+    get:
+      summary: Service detail
+      description: Retrieves detailed information about a specific service
+      tags:
+        - Agent > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: query
+          name: serviceId
+          required: true
+          schema:
+            type: integer
+          description: Service ID
+      responses:
+        '200':
+          description: Service details retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Service details retrieved successfully"
+                data:
+                  id: 1
+                  name: "Dry Cleaning"
+                  price: 15.00
+                  description: "Professional dry cleaning service"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid service ID"
+                data: {}
+
+  /agent/editServiceStatus:
+    patch:
+      summary: Edit service status
+      description: Updates the status of a service (active/inactive)
+      tags:
+        - Agent > Services
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - serviceId
+                - status
+              properties:
+                serviceId:
+                  type: integer
+                  example: 1
+                  description: Service ID
+                status:
+                  type: boolean
+                  example: true
+                  description: Service status (true for active, false for inactive)
+      responses:
+        '200':
+          description: Service status updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Service status updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid service ID or status"
+                data: {}
+
+  /agent/getCustomerServicestoUpdateInvoice:
+    get:
+      summary: Get customer services to update invoice
+      description: Retrieves customer services for invoice updates
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: query
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: Booking ID
+      responses:
+        '200':
+          description: Customer services retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Customer services retrieved successfully"
+                data:
+
+                    id: 1
+                    serviceName: "Dry Cleaning"
+                    quantity: 2
+                    price: 15.00
+
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/getCountries:
+    get:
+      summary: Get countries
+      description: Retrieves all available countries
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      responses:
+        '200':
+          description: Countries retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Countries retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "United Kingdom"
+                    shortName: "UK"
+
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+
+  /agent/getCities:
+    get:
+      summary: Get cities
+      description: Retrieves all available cities
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      responses:
+        '200':
+          description: Cities retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Cities retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "London"
+                    countryId: 1
+
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+
+  /agent/getBussinessInforMation/{userId}:
+    get:
+      summary: Get business information
+      description: Retrieves business information for a specific user
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        '200':
+          description: Business information retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Business information retrieved successfully"
+                data:
+                  businessName: "Clean Laundry"
+                  address: "123 Business St"
+                  phone: "+1234567890"
+
+        '404':
+          description: Business information not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Business information not found"
+                data: {}
+
+  /agent/getBussinessWrkinghours/{userId}:
+    get:
+      summary: Get business working hours
+      description: Retrieves working hours for a specific business
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        '200':
+          description: Working hours retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Working hours retrieved successfully"
+                data:
+
+                    dayOfWeek: "Monday"
+                    openTime: "09:00"
+                    closeTime: "17:00"
+                    status: true
+
+
+        '404':
+          description: Working hours not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Working hours not found"
+                data: {}
+
+  /agent/businesInfoAdded/{userId}:
+    post:
+      summary: Business info added
+      description: Adds business information for a specific user
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - businessName
+                - address
+                - phone
+              properties:
+                businessName:
+                  type: string
+                  example: "Clean Laundry"
+                  description: Business name
+                address:
+                  type: string
+                  example: "123 Business St"
+                  description: Business address
+                phone:
+                  type: string
+                  example: "+1234567890"
+                  description: Business phone number
+      responses:
+        '200':
+          description: Business information added successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Business information added successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid business information"
+                data: {}
+
+  /agent/getOnHoldOptions:
+    get:
+      summary: Get on hold options
+      description: Retrieves all available on-hold options
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      responses:
+        '200':
+          description: On-hold options retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "On-hold options retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "Item Damage"
+                    description: "Item found damaged during inspection"
+
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+
+  /agent/getPermissions:
+    get:
+      summary: Get permissions
+      description: Retrieves all available permissions
+      tags:
+        - Agent > Add Roles,Permissions && ClassifiedAs
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: false
+          schema:
+            type: string
+          description: Optional access token cookie
+      responses:
+        '200':
+          description: Permissions retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Permissions retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "View Orders"
+                    description: "Permission to view orders"
+
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Internal server error"
+                data: {}
+
+  /agent/getCustomerServicesForOnHold/{bookingId}:
+    get:
+      summary: Get customer services for on hold
+      description: Retrieves customer services that are on hold
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: Booking ID
+      responses:
+        '200':
+          description: Customer services for on hold retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Customer services for on hold retrieved successfully"
+                data:
+
+                    id: 1
+                    serviceName: "Dry Cleaning"
+                    reason: "Item damage found"
+
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/rejectedServiceItems/{bookingId}:
+    get:
+      summary: Rejected service items
+      description: Retrieves rejected service items for a booking
+      tags:
+        - Agent > Agent Put Booking On Hold
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bookingId
+          required: true
+          schema:
+            type: integer
+          description: Booking ID
+      responses:
+        '200':
+          description: Rejected service items retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Rejected service items retrieved successfully"
+                data:
+
+                    id: 1
+                    serviceName: "Dry Cleaning"
+                    reason: "Item not suitable for dry cleaning"
+
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid booking ID"
+                data: {}
+
+  /agent/createIntentUsingStripeForAgent:
+    post:
+      summary: Create intent using Stripe for agent
+      description: Creates a Stripe payment intent for agent payments
+      tags:
+        - Agent > Agent Handle Booking
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - bookingId
+              properties:
+                amount:
+                  type: number
+                  example: 25.50
+                  description: Payment amount
+                bookingId:
+                  type: integer
+                  example: 123
+                  description: Booking ID
+      responses:
+        '200':
+          description: Payment intent created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Payment intent created"
+                data:
+                  clientSecret: "pi_xxx_secret_xxx"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid amount or booking ID"
+                data: {}
+
+  /agent/getPerformanceDashboard:
+    get:
+      summary: Get performance dashboard
+      description: Retrieves performance metrics for the agent's dashboard
+      tags:
+        - Agent > Agent Business
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Performance dashboard data retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Performance dashboard data retrieved successfully"
+                data:
+                  totalOrders: 150
+                  completedOrders: 120
+                  pendingOrders: 30
+                  totalRevenue: 2500.00
+                  averageRating: 4.5
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+# Missing Admin APIs
+  /admin/serviceCategoriesAssign:
+    post:
+      summary: Assign service to categories
+      description: Assigns a service to specific categories
+      tags:
+        - Admin > Create Services, Categories && SubCategories
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - serviceId
+                - categoryIds
+              properties:
+                serviceId:
+                  type: integer
+                  example: 1
+                  description: ID of the service
+                categoryIds:
+                  type: array
+                  items:
+                    type: integer
+                  example: [1, 2, 3]
+                  description: Array of category IDs
+      responses:
+        '200':
+          description: Service assigned to categories successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Service assigned successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid service or category IDs"
+                data: {}
+
+  /admin/getPreferenceTypes:
+    get:
+      summary: Get preference types
+      description: Retrieves all preference types available in the system
+      tags:
+        - Admin > Account Preferences
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Preference types retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Preference types retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "Fragrance"
+                    description: "Laundry fragrance preferences"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /admin/AddLaundryRoles:
+    post:
+      summary: Add laundry roles
+      description: Creates a new role for laundry service employees
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+                - description
+              properties:
+                title:
+                  type: string
+                  example: "Driver"
+                  description: Role title
+                description:
+                  type: string
+                  example: "Responsible for pickup and delivery"
+                  description: Role description
+      responses:
+        '200':
+          description: Role created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Role created successfully"
+                data:
+                  id: 1
+                  title: "Driver"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid role data"
+                data: {}
+
+  /admin/updateRoles:
+    put:
+      summary: Update roles
+      description: Updates an existing role
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - title
+                - description
+              properties:
+                id:
+                  type: integer
+                  example: 1
+                  description: Role ID
+                title:
+                  type: string
+                  example: "Senior Driver"
+                  description: Updated role title
+                description:
+                  type: string
+                  example: "Senior driver with additional responsibilities"
+                  description: Updated role description
+      responses:
+        '200':
+          description: Role updated successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Role updated successfully"
+                data: {}
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid role data"
+                data: {}
+
+  /admin/getAllRoles:
+    get:
+      summary: Get all roles
+      description: Retrieves all roles in the system
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Roles retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Roles retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "Driver"
+                    description: "Responsible for pickup and delivery"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /admin/addClassifiedAs:
+    post:
+      summary: Add classified as
+      description: Creates a new classification for employees
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+              properties:
+                title:
+                  type: string
+                  example: "Full-time"
+                  description: Classification title
+      responses:
+        '200':
+          description: Classification created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Classification created successfully"
+                data:
+                  id: 1
+                  title: "Full-time"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid classification data"
+                data: {}
+
+  /admin/getClassifiedAs:
+    get:
+      summary: Get classified as
+      description: Retrieves all classifications
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Classifications retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Classifications retrieved successfully"
+                data:
+
+                    id: 1
+                    title: "Full-time"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /admin/addfeatures:
+    post:
+      summary: Add features
+      description: Creates a new feature for the system
+      tags:
+        - Admin > Employee Management
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+                - featureOf
+              properties:
+                title:
+                  type: string
+                  example: "View Orders"
+                  description: Feature title
+                featureOf:
+                  type: string
+                  example: "Agent"
+                  description: Feature belongs to (Admin/Agent/Driver)
+      responses:
+        '200':
+          description: Feature created successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Feature created successfully"
+                data:
+                  id: 1
+                  title: "View Orders"
+
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Invalid feature data"
+                data: {}
+
+  /admin/getShopInformation:
+    get:
+      summary: Get shop information
+      description: Retrieves summary information about all shops
+      tags:
+        - Admin > Get Laundary Shops
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Shop information retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Shop information retrieved successfully"
+                data:
+                  totalShops: 10
+                  activeShops: 8
+                  inactiveShops: 2
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /admin/getShopsData:
+    get:
+      summary: Get shops data
+      description: Retrieves detailed data for all shops
+      tags:
+        - Admin > Get Laundary Shops
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+      responses:
+        '200':
+          description: Shops data retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Shops data retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "Clean Laundry"
+                    status: "active"
+                    address: "123 Main St"
+
+
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Unauthorized access"
+                data: {}
+
+  /admin/singleShopData/{Id}:
+    get:
+      summary: Get single shop data
+      description: Retrieves detailed information for a specific shop
+      tags:
+        - Admin > Get Laundary Shops
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: Id
+          required: true
+          schema:
+            type: integer
+          description: Shop ID
+      responses:
+        '200':
+          description: Shop data retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Shop data retrieved successfully"
+                data:
+                  id: 1
+                  name: "Clean Laundry"
+                  status: "active"
+                  address: "123 Main St"
+                  phone: "+1234567890"
+
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Shop not found"
+                data: {}
+
+  /admin/getShopEmployees/{bussinessId}:
+    get:
+      summary: Get shop employees
+      description: Retrieves all employees for a specific shop
+      tags:
+        - Admin > Get Laundary Shops
+      parameters:
+        - in: cookie
+          name: accessToken
+          required: true
+          schema:
+            type: string
+          description: Access token cookie for authentication
+        - in: path
+          name: bussinessId
+          required: true
+          schema:
+            type: integer
+          description: Business/Shop ID
+      responses:
+        '200':
+          description: Shop employees retrieved successfully
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Shop employees retrieved successfully"
+                data:
+
+                    id: 1
+                    name: "John Doe"
+                    role: "Driver"
+                    status: "active"
+
+
+        '404':
+          description: Shop not found
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Shop not found"
+                data: {}

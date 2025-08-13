@@ -1482,6 +1482,26 @@ exports.driverAddSerivces = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
     console.log("Current Date:", currentDate);
 
+    // Fetch booking with zone information
+    const bookings = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: zone,
+                attributes: ['id', 'name', 'zoneAdminComission']
+            }
+        ]
+    });
+
+    if (!bookings) {
+        throw new customError("Booking not found");
+    }
+
+    // Get zone information directly from booking
+    const zoneData = bookings.zone;
+    if (!zoneData) {
+        throw new customError("Zone information not found for this booking");
+    }
+
     let total = 0;
 
     if (services.length > 0) {
@@ -1544,9 +1564,17 @@ exports.driverAddSerivces = async (req, res) => {
 
     total -= parsedZoneMinimum;
 
+    // Calculate zone admin commission
+    const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
+    const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
+    
+    console.log("Zone Admin Commission %%%%%%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommission);
+    console.log("Zone Admin Commission Amount%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommissionAmount);
+
     // Round to 2 decimal places
     total = parseFloat(total.toFixed(2));
     subTotal = parseFloat(subTotal.toFixed(2));
+    const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
 
     console.log("Final Total After Zone Deduction:", total);
 
@@ -1559,6 +1587,7 @@ exports.driverAddSerivces = async (req, res) => {
             total,
             discount: 0,
             paymentStatus: "Pending",
+            zoneAdminCommission: finalZoneAdminCommissionAmount, // Store zone admin commission
         },
         { where: { bookingId: bookingId } }
     );
@@ -1579,16 +1608,14 @@ exports.driverAddSerivces = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    const bookings =await booking.findByPk(bookingId);
-
-    const customerId=bookings.customerId;
-    let title="Agent/Driver Added Detail";
-    let body="Your agent/driver has added detail";
-    let data={
-        bookingId:bookingId,
-        driverId:bookings.driverId,
+    const customerId = bookings.customerId;
+    let title = "Agent/Driver Added Detail";
+    let body = "Your agent/driver has added detail";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookings.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return res.json(responsefunc("1", "Agent/Driver Added Detail", {}, ""));
 }

@@ -708,21 +708,39 @@ async function getOnHoldBookings(req, res) {
  * Update Customer esponse for on hold booking
  */
 async function updateCustomerResponseForOnHoldBooking(req, res) {
-    const { customerResponse,bookingId, onHoldId } = req.body;
+    const { responses, bookingId } = req.body;
 
-        const onHoldBooking = await OnHoldConfirmation.findOne({
-            where: { id: onHoldId, bookingId: bookingId }
-        });
+    
+    if (!Array.isArray(responses)) {
+        return res.status(400).json(responsefunc("0", "Responses must be an array", {}, ""));
+    }
 
-        if (!onHoldBooking) {
-            return res.status(404).json(responsefunc("0", "On-hold booking not found", {}, ""));
+        const updatedResponses = [];
+
+        for (const response of responses) {
+            const { customerResponse, onHoldId } = response;
+
+            
+            if (!customerResponse || !onHoldId) {
+                return res.status(400).json(responsefunc("0", "Each response must contain customerResponse and onHoldId", {}, ""));
+            }
+
+            const onHoldBooking = await OnHoldConfirmation.findOne({
+                where: { id: onHoldId, bookingId: bookingId }
+            });
+
+            if (!onHoldBooking) {
+                return res.status(404).json(responsefunc("0", `On-hold booking not found for onHoldId: ${onHoldId}`, {}, ""));
+            }
+
+            onHoldBooking.customerResponse = customerResponse;
+            onHoldBooking.responseConformation = true;
+            await onHoldBooking.save();
+
+            updatedResponses.push(onHoldBooking);
         }
 
-        onHoldBooking.customerResponse = customerResponse;
-        onHoldBooking.responseConformation = true;
-        await onHoldBooking.save();
-
-        return res.json(responsefunc("1", "Customer response updated successfully", { onHoldBooking }, ""));
+        return res.json(responsefunc("1", "Customer responses updated successfully", { updatedResponses }, ""));
 }
 
 /*

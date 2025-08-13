@@ -1476,7 +1476,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge,zoneAdminComission } = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1492,6 +1492,7 @@ async function addZones(req, res) {
         currencyUnitId,
         distanceUnitId,
         serviceCharge,
+        zoneAdminComission:zoneAdminComission?zoneAdminComission:20
     })
 
     return res.json(responsefunc("1", "Zone Added Sucessfully", zoneCreate, ""))
@@ -2089,65 +2090,6 @@ async function getOnHoldCustomerOptions(req, res) {
     return res.json(responsefunc("1", "All Options Fetched", optionsFound, ""))
 
 }
-
-
-
-
-/*
-  * Add On Hold Customer Options && On Hold Options synchronously
-*/
-async function createOnHoldOptionsAndCustomerOptions(req, res) {
-    try {
-        const { option, customerOptions } = req.body; // Receive customerOptions separately
-
-        if (!Array.isArray(option) || option.length === 0 || !Array.isArray(customerOptions) || customerOptions.length === 0) {
-            throw new customError("Invalid input: Expected non-empty arrays for both options and customerOptions.");
-        }
-
-        if (option.length !== customerOptions.length) {
-            throw new customError("Mismatch: option array and customerOptions array must have the same length.");
-        }
-
-        const optionValues = option.map(item => item.option);
-        console.log("🚀 ~ optionValues:", optionValues);
-
-        const existingOptions = await onHoldOption.findAll({
-            where: { option: optionValues }
-        });
-
-        if (existingOptions.length > 0) {
-            throw new customError("Some Options Already Exist");
-        }
-
-        const createdOnHoldOptions = await onHoldOption.bulkCreate(
-            option.map(opt => ({
-                option: opt.option,
-                status: true
-            })),
-            { returning: true }
-        );
-
-        console.log("🚀 ~ createdOnHoldOptions:", createdOnHoldOptions);
-
-
-        const customerOptionsData = customerOptions.map((custOpt, index) => ({
-            option: custOpt.option,
-            onHoldOptionId: createdOnHoldOptions[index].id,
-            status: true
-        }));
-
-        const createdOnHoldCustomerOptions = await onHoldCustomerOption.bulkCreate(customerOptionsData);
-
-        return res.json(responsefunc("1", "On Hold Options and Customer Options Created", {
-            onHoldOptions: createdOnHoldOptions,
-            onHoldCustomerOptions: createdOnHoldCustomerOptions
-        }, ""));
-    } catch (error) {
-        console.error("🚀 ~ Error in createOnHoldOptionsAndCustomerOptions:", error);
-        return res.status(500).json(responsefunc("0", error.message, null, ""));
-    }
-}
-
 
 
 //!===================================================Recurring functions=======================================//

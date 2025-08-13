@@ -29,8 +29,7 @@ if (process.env.NODE_ENV === 'development') {
   origin = "https://testlaundaryb.fomino.ch";
   swaggerUrl = "https://testlaundaryb.fomino.ch";
 } else if (process.env.NODE_ENV === 'production') {
-  origin = "http://localhost:3000";
-  //origin = 'http://localhost:62966/'
+  origin = "https://backendlaundary.fomino.ch";
   swaggerUrl = "https://backendlaundary.fomino.ch";
 }
 // === CORS config ===
