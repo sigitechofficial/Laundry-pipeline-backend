@@ -93,10 +93,21 @@ router.get('/getCountries', validateAccessToken, asyncMiddleware(adminController
 router.post('/addCities', validateAccessToken, asyncMiddleware(adminController.addCities))
 //Get Cities
 router.get('/getCities', validateAccessToken, asyncMiddleware(adminController.getCities))
+//!---------------------------------------Zones-----------------------------------------//
 //Add Zones
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))
 // Get Zones
 router.get('/getZones', validateAccessToken, asyncMiddleware(adminController.getZones))
+//Delete Zone
+router.delete('/delete-zone', validateAccessToken, asyncMiddleware(adminController.deleteZone))
+//Update Zone
+router.patch('/updateZone/:zoneId', validateAccessToken, asyncMiddleware(adminController.updateZone))
+//!---------------------------------------Units-----------------------------------------//
+//Get Units
+router.get('/getUnitsDistanceAndCurrency', validateAccessToken, asyncMiddleware(adminController.getUnitsDistanceAndCurrency))
+//Get All Units
+router.get('/getAllUnits', validateAccessToken, asyncMiddleware(adminController.getAllUnits))
+//!---------------------------------------Services,Categories,SubCategories-----------------------------------------//
 //Create Service 
 router.post("/AddServices", validateAccessToken, uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.AddServices))
 //create categories 
@@ -111,6 +122,10 @@ router.get('/getServices', validateAccessToken, asyncMiddleware(adminController.
 router.get('/getSubcategories', validateAccessToken, asyncMiddleware(adminController.getSubcategories))
 //Assign Service to Categories
 router.post('/serviceCategoriesAssign', validateAccessToken, asyncMiddleware(adminController.serviceCategoriesAssign))
+
+//!---------------------------------------Admin Dashboard-----------------------------------------//
+router.get('/adminDashboard', validateAccessToken, asyncMiddleware(adminController.adminDashboard))
+
 
 //!---------------------------------------Cancel Api---------------------------------------------------------------//
 //Create cancel booking reasons

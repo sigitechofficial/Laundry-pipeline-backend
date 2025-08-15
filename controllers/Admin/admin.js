@@ -32,6 +32,8 @@ const { users,
     preferenceValues,
     agentSelectServices,
     serviceWithPreferences,
+    units,
+    billingDetails,
     serviceCategories } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
@@ -57,7 +59,140 @@ const { registerCustomer } = require("../Customer/customerAuth");
 const { createCanvas } = require("canvas")
 const JsBarcode = require("jsbarcode")
 const fs = require("fs")
-const path = require("path")
+const path = require("path");
+const geolib = require('geolib');
+
+//!----------------------------------Admin Dashboard-----------------------------------------//
+async function adminDashboard(req, res) {
+    try {
+        const revenue = await billingDetails.sum("zoneAdminCommission", {
+            where: {
+                zoneAdminCommission: {
+                    [Op.ne]: null,
+                },
+            },
+        });
+
+        const totalBookings = await booking.count();
+        const totalUsers = await users.count();
+
+        const totalCustomer = await users.count({
+            where: {
+                userTypeId: 2,
+                status: true,
+            },
+        });
+
+        const totalAgent = await users.count({
+            where: {
+                userTypeId: 4,
+            },
+        });
+
+        const totalAgentActive = await users.count({
+            where: {
+                userTypeId: 4,
+                status: true,
+            },
+        });
+
+
+        const completedBookings = await booking.findAll({
+            where: {
+                bookingStatusId: 17,
+            },
+            include: [
+                {
+                    model: bookingHistory,
+                    where: {
+                        bookingStatusId: 17,
+                    },
+                    required: true,
+                },
+            ],
+        });
+
+        let totalCompletionTime = 0;
+        let completedCount = 0;
+
+        for (const bookingItem of completedBookings) {
+            const creationHistory = await bookingHistory.findOne({
+                where: {
+                    bookingId: bookingItem.id,
+                    bookingStatusId: 1,
+                },
+            });
+
+            const completionHistory = await bookingHistory.findOne({
+                where: {
+                    bookingId: bookingItem.id,
+                    bookingStatusId: 17,
+                },
+            });
+
+            if (creationHistory && completionHistory) {
+                const creationDateTime = new Date(`${creationHistory.date} ${creationHistory.time}`);
+                const completionDateTime = new Date(`${completionHistory.date} ${completionHistory.time}`);
+
+                const timeDiff = completionDateTime - creationDateTime;
+                totalCompletionTime += timeDiff;
+                completedCount++;
+            }
+        }
+
+        const averageCompletionTimeHours =
+            completedCount > 0 ? totalCompletionTime / completedCount / (1000 * 60 * 60) : 0;
+
+        const acceptedByAgents = await booking.count({
+            where: {
+                driverId: {
+                    [Op.ne]: null,
+                },
+            },
+        });
+
+        //return res.json(acceptedByAgents)
+
+        const assignedToAgents = await booking.count({
+            where: {
+                deliveryDriverId: {
+                    [Op.ne]: null,
+                },
+            },
+        });
+
+
+        const agentAcceptanceRate =
+            assignedToAgents > 0
+                ? Math.round((acceptedByAgents / assignedToAgents) * 100) / 100
+                : 0;
+
+        // Final response object
+        const outObj = {
+            adminRevenue: revenue,
+            totalBookings: totalBookings,
+            totalUsers: totalUsers,
+            totalCustomers: totalCustomer,
+            totalAgents: totalAgent,
+            totalAgentActive: totalAgentActive,
+            averageOrderCompletionTimeHours: Math.round(averageCompletionTimeHours * 100) / 100,
+            completedOrdersCount: completedCount,
+            agentAcceptanceRate: agentAcceptanceRate,
+        };
+
+        return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
+    } catch (error) {
+        console.error("Dashboard Error:", error);
+        return res.status(500).json(responsefunc("0", "Something went wrong", {}, error.message));
+    }
+}
+
+
+
+
+
+
+
 //!----------------------------------Customer Management-----------------------------------------//
 
 /*
@@ -853,7 +988,7 @@ async function getAdminEmployess(req, res) {
  *  Add Admin Employee
 */
 async function addEmployee(req, res) {
-    const { firstName, lastName, email, password, phoneNum, roleId } = req.body
+    const { firstName, lastName, email, password, phoneNum, roleId,zoneId } = req.body
 
     const adminId = req.user.id
 
@@ -882,19 +1017,23 @@ async function addEmployee(req, res) {
         classifiedAsId: 2,
         roleId: roleId,
         verifiedAt: Date.now()
-
     })
 
-
-
-    if (user.classifiedAsId === 2) {
+    if (user.roleId === 7) {
         await users.update({
             employeeOff: adminId
         }, { where: { id: adminId } })
 
+        await zone.update({
+            zoneAdminId: user.id
+        }, { where: { id: zoneId } })
+    }
 
 
-        const zoneId = adminAddress.zoneId
+    if (user.roleId === 6) {
+        await users.update({
+            employeeOff: adminId
+        }, { where: { id: adminId } })
     }
 
     return res.json(responsefunc("1", "Employee Added Sucessfully", user, ""))
@@ -1476,7 +1615,7 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge,zoneAdminComission } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body
 
     const polygon = {
         type: 'Polygon',
@@ -1492,7 +1631,7 @@ async function addZones(req, res) {
         currencyUnitId,
         distanceUnitId,
         serviceCharge,
-        zoneAdminComission:zoneAdminComission?zoneAdminComission:20
+        zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
     })
 
     return res.json(responsefunc("1", "Zone Added Sucessfully", zoneCreate, ""))
@@ -1505,13 +1644,156 @@ async function addZones(req, res) {
 */
 
 async function getZones(req, res) {
+    const zones = await zone.findAll({
+        include: [
+            {
+                model: cities,
+                attributes: ['name'],
+            },
+            {
+                model: units,
+                as: 'distanceUnitZ',
+                attributes: ['name', 'symbol'],
+            },
+            {
+                model: units,
+                as: 'currencyUnitZ',
+                attributes: ['name', 'symbol'],
+            },
+            {
+                model: users,
+                as: 'zoneAdmin',
+                attributes: ['firstName', 'lastName'],
+            }
+        ]
+    });
 
-    const getZones = await zone.findAll()
+    const shopCounts = await addressDb.findAll({
+        where: { addressType: 'laundaryShopAddress' },
+        attributes: ['zoneId'],
+        group: ['zoneId'],
+        raw: true,
+        logging: false,
+        attributes: [
+            'zoneId',
+            [require('sequelize').fn('COUNT', '*'), 'shopCount']
+        ]
+    });
 
-    return res.json(responsefunc("1", "All Zones Fetched Sucessfully", getZones, ""))
+    const shopMap = shopCounts.reduce((acc, curr) => {
+        acc[curr.zoneId] = parseInt(curr.shopCount, 10);
+        return acc;
+    }, {});
+
+    const shapedZones = zones.map(zone => {
+        const radius = calculateZoneRadius(zone.coordinates); // in km
+
+        return {
+            zoneId: zone.id,
+            zoneName: zone.name,
+            cityName: zone.city?.name || "",
+            zoneMinimumAmount: zone.zoneMinimumAmount,
+            zoneCoordinates: zone.coordinates,
+            serviceCharge: zone.serviceCharge,
+            zoneAdminCommission: `${zone.zoneAdminCommission}%`,
+            currencyUnit: zone.currencyUnitZ ? `${zone.currencyUnitZ.name} (${zone.currencyUnitZ.symbol})` : "",
+            distanceUnit: zone.distanceUnitZ ? `${zone.distanceUnitZ.name} (${zone.distanceUnitZ.symbol})` : "",
+            radius: `${radius} km`,
+            adminName: zone.zoneAdmin
+                ? `${zone.zoneAdmin.firstName || ''} ${zone.zoneAdmin.lastName || ''}`.trim()
+                : '',
+            totalShops: shopMap[zone.id] || 0
+        };
+    });
+
+    return res.json(
+        responsefunc("1", "All Zones Fetched Successfully", shapedZones, "")
+    );
+
 
 }
 
+
+/*
+ * Update Zone
+*/
+
+async function updateZone(req, res) {
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body
+    const { zoneId } = req.params;
+
+    const zoneToUpdate = await zone.findOne({
+        where: { id: zoneId }
+    })
+
+    if (!zoneToUpdate) {
+        return res.status(404).json(responsefunc("0", "Zone not found", {}, ""));
+    }
+
+    const polygon = {
+        type: 'Polygon',
+        coordinates: coordinates
+    }
+
+    const updateZone = await zone.update({
+        name,
+        coordinates: polygon,
+        cityId,
+        zoneMinimumAmount,
+        currencyUnitId,
+        distanceUnitId,
+        serviceCharge,
+        zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
+    }, { where: { id: zoneId } })
+
+    return res.json(responsefunc("1", "Zone Updated Successfully", updateZone, ""))
+
+
+}
+
+
+
+
+
+
+
+/*
+ * Delete Zone
+*/
+async function deleteZone(req, res) {
+    const { zoneId } = req.query;
+
+    if (!zoneId) {
+        return res.status(400).json(responsefunc("0", "zoneId is required", {}, ""));
+    }
+
+    const zoneToDelete = await zone.destroy({ where: { id: zoneId } });
+
+    if (!zoneToDelete) {
+        return res.status(404).json(responsefunc("0", "Zone not found", {}, ""));
+    }
+
+
+    return res.json(responsefunc("1", "Zone deleted successfully (soft delete)", {}, ""));
+}
+
+
+//!-----------------------Units Management--------------------//
+async function getUnitsDistanceAndCurrency(req, res) {
+    const getUnits = await units.findAll({
+        where: {
+            type: {
+                [Op.or]: ['distance', 'currency']
+            }
+        },
+        attributes: ['id', 'name', 'symbol', 'type', 'status']
+    })
+    return res.json(responsefunc("1", "All Units Fetched", getUnits, ""))
+}
+async function getAllUnits(req, res) {
+    const getUnits = await units.findAll()
+    return res.json(responsefunc("1", "All Units Fetched", getUnits, ""))
+}
 //!-----------------------Add Services,Categories and SubCategories --------------------//
 /*
 
@@ -2129,8 +2411,23 @@ function generateBarcodeforSubCategories(name, price, fileName) {
 }
 
 
+function calculateZoneRadius(polygon) {
+    if (!polygon || !polygon.coordinates || !polygon.coordinates[0]) return 0;
+
+    const points = polygon.coordinates[0].map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+
+    const center = geolib.getCenter(points);
+    const maxDistance = Math.max(...points.map(point => geolib.getDistance(center, point))); // in meters
+
+    return (maxDistance / 1000).toFixed(2); // return km
+}
+
+
+
 //!-------------------Exports----------------//
 module.exports = {
+    //-------------Admin Dashboard--------//
+    adminDashboard,
     //-------------Vehicles--------//
     addVehicle,
     //-------------Countries,Cities--------//
@@ -2141,6 +2438,10 @@ module.exports = {
     //-------------Add Zones--------//
     addZones,
     getZones,
+    deleteZone,
+    updateZone,
+    //-------------Units--------//
+    getUnitsDistanceAndCurrency,
     //-------------Categories,SubCategories--------//
     AddCategories,
     addSubCategories,
@@ -2150,6 +2451,9 @@ module.exports = {
     //-------------Services--------//
     getAllServices,
     AddServices,
+    //-------------Units--------//
+    getUnitsDistanceAndCurrency,
+    getAllUnits,
     //-------------Cancel Booking--------//
     cancelBooking,
     getCancelBookingReasons,

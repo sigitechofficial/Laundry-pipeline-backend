@@ -124,7 +124,7 @@ async function registerCustomerWithOTP(req, res) {
             where: { id: userCreate.id }
         });
 
-        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id }));
+        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id,stripeCustomerId:stripeCustomer }));
     }
 }
 

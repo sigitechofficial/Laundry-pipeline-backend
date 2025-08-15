@@ -65,7 +65,6 @@ const corsOptions = {
   },
   credentials: true, 
 };
-console.log("corsOptions------------->>>>>",corsOptions.origin)
 
 // === Apply middleware ===
 app.use(cors(corsOptions));
