@@ -20,6 +20,7 @@ const { users,
     onHoldOption,
     onHoldCustomerOption,
     addressDb,
+    bookingHistory,
     customerSelectedService,
     OnHoldConfirmation,
     bookingStatus,
@@ -199,32 +200,57 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-
     const findCustomers = await users.findAll({
         where: {
-            userTypeId: 2
+            userTypeId: 2,  // Ensuring we're fetching only customers
         },
         attributes: [
             'id',
             'firstName',
             'lastName',
+            'email',
             'phoneNum',
             'status',
-            [sequelize.fn('COUNT', sequelize.col('customer.id')), 'bookingCount']
-        ],
-        include: [
-            {
-                model: booking,
-                as: 'customer',
-                attributes: []
-            }
-        ],
-        group: ['users.id']
-    })
+            [
+                sequelize.literal(`(
+            SELECT COUNT(*) 
+            FROM bookings 
+            WHERE bookings.customerId = users.id
+          )`),
+                'bookingCount'
+            ],
+            [
+                sequelize.literal(`(
+            SELECT COALESCE(SUM(orderAmount), 0) 
+            FROM bookings 
+            WHERE bookings.customerId = users.id
+          )`),
+                'totalAmountSpent'
+            ],
+            [
+                sequelize.literal(`(
+            SELECT MAX(createdAt) 
+            FROM bookings 
+            WHERE bookings.customerId = users.id
+          )`),
+                'lastBookingDate'
+            ]
+        ]
+    });
 
+    // Format the last booking date and totalAmountSpent
+    const formattedCustomers = findCustomers.map(customer => {
+        const customerData = customer.toJSON(); // Convert to plain object
+        return {
+            ...customerData,
+            lastBookingDate: customerData.lastBookingDate
+                ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
+                : null,
+            totalAmountSpent: customerData.totalAmountSpent.toFixed(2) // Limit to 2 decimals
+        };
+    });
 
-    return res.json(responsefunc("1", "All Customer Details", findCustomers, ""))
-
+    return res.json(responsefunc("1", "All Customer Details", formattedCustomers, ""));
 }
 
 /*
@@ -300,70 +326,207 @@ async function customerCount(req, res) {
 */
 
 async function specificCustomerDetails(req, res) {
-    const { customerId } = req.params
-
-    const bookingsFind = await booking.findAll({
-        where: {
-            customerId: customerId,
-        },
-        include: [
-            {
-                model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice']
-            },
-            {
-                model: OnHoldConfirmation,
-                required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-            },
-            {
-                model: addressDb,
-                as: 'laundryShop',
-                include: {
-                    model: bussinessInformation,
-                    attributes: ['shopName']
+    const { customerId } = req.params;
+    const [bookingsFind, userInfo] = await Promise.all([
+        booking.findAll({
+            where: { customerId },
+            include: [
+                {
+                    model: customerSelectedService,
+                    include: [
+                        {
+                            model:service,
+                            attributes:['name']
+                }
+                    ],
+                    attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
                 },
-                attributes: ['id']
+                {
+                    model: OnHoldConfirmation,
+                    required: false,
+                    attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId'],
+                },
+                {
+                    model: addressDb,
+                    as: 'laundryShop',
+                    include: {
+                        model: bussinessInformation,
+                        attributes: ['shopName'],
+                    },
+                    attributes: ['id'],
+                },
+                {
+                    model: bookingStatus,
+                    attributes: ['title', 'description'],
+                },
+                {
+                    model:users,
+                    as:'driver',
+                    attributes:['id','firstName','lastName','email']
+                },
+                {
+                    model:users,
+                    as:'deliveryDriver',
+                    attributes:['id','firstName','lastName','email']
+                }
+            ],
+            order: [['id', 'DESC']],
+            attributes: {
+                exclude: [
+                    'updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId',
+                    'driverInstructionOptions', 'driverInstructionOptions1', 'paymentConfirmed',
+                    'partialPayment', 'subTotal', 'frequency', 'onHoldReason', 'OnHoldOtherReason',
+                    'paymentMethodId', 'paymentIntentId', 'pickupAddresId', 'dropOffAddressId', 'tipId'
+                ],
             },
-            {
-                model: bookingStatus,
-                attributes: ['title', 'description']
-            }
-        ],
-        order: [['id', 'DESC']],
-        attributes: {
-            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-        }
-    })
-    console.log("🚀 ~ specificCustomerDetails ~ bookingsFind:", bookingsFind)
+        }),
 
-    const userInfo = await addressDb.findAll({
-        where: {
-            userId: customerId
-        },
-        include: [{
-            model: users,
-            attributes: ['id', 'firstName', 'lastName', 'email']
-        }],
-        order: [
-            ['createdAt', 'DESC']
-        ],
-        limit: 1,
-        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'status', 'addressType', 'userId']
-    })
 
-    const bookingIds = bookingsFind.map((ids) => ({
-        bookingIDS: ids.id
-    }))
-    console.log("🚀 ~ bookingIds ~ bookingIds:", bookingIds)
+        addressDb.findOne({
+            where: { userId: customerId },
+            include: [
+                {
+                    model: users,
+                    attributes: ['id', 'firstName', 'lastName', 'email'],
+                },
+            ],
+            order: [['createdAt', 'DESC']],
+            attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'status', 'addressType', 'userId'],
+        }),
+    ]);
 
-    let output = {
+
+    const bookingIds = bookingsFind.map((booking) => ({
+        bookingIDS: booking.id,
+    }));
+
+
+    const output = {
         bookingDetails: bookingsFind,
-        userDetails: userInfo
+        userDetails: userInfo ? userInfo.toJSON() : {},
+    };
+
+    return res.json(responsefunc("1", "Customer Order Details", output, ""));
+}
+
+
+/*
+  * Update Customer Details
+*/
+async function updateCustomer(req, res) {
+    const { customerId } = req.params;
+    const { firstName, lastName, email, phoneNum, status } = req.body;
+
+    // Check if customer exists
+    const customerExists = await users.findOne({
+        where: {
+            id: customerId,
+            userTypeId: 2 // Ensure it's a customer
+        }
+    });
+
+    if (!customerExists) {
+        throw new customError("Customer not found", "Please provide a valid customer ID");
     }
 
-    return res.json(responsefunc("1", "Custome Order Details", output, ""))
+    // Check if email is being changed and if it already exists
+    if (email && email !== customerExists.email) {
+        const emailExists = await users.findOne({
+            where: {
+                email: email,
+                id: { [Op.ne]: customerId },
+                userTypeId: 2
+            }
+        });
+
+        if (emailExists) {
+            throw new customError("Email already exists", "Please use a different email address");
+        }
+    }
+
+    // Update customer details
+    const updateData = {};
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+    if (email) updateData.email = email;
+    if (phoneNum) updateData.phoneNum = phoneNum;
+    if (status !== undefined) updateData.status = status;
+
+    const updatedCustomer = await users.update(updateData, {
+        where: {
+            id: customerId,
+            userTypeId: 2
+        }
+    });
+
+    if (updatedCustomer[0] === 0) {
+        throw new customError("Failed to update customer", "No changes were made");
+    }
+
+    // Get updated customer data
+    const updatedCustomerData = await users.findOne({
+        where: {
+            id: customerId,
+            userTypeId: 2
+        },
+        attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
+    });
+
+    return res.json(responsefunc("1", "Customer updated successfully", updatedCustomerData, ""));
 }
+
+
+/*
+  * Delete Customer
+*/
+async function deleteCustomer(req, res) {
+    const { customerId } = req.params;
+
+    // Check if customer exists
+    const customerExists = await users.findOne({
+        where: {
+            id: customerId,
+            userTypeId: 2 // Ensure it's a customer
+        }
+    });
+
+    if (!customerExists) {
+        throw new customError("Customer not found", "Please provide a valid customer ID");
+    }
+
+    // Check if customer has any active bookings
+    const activeBookings = await booking.count({
+        where: {
+            customerId: customerId,
+            bookingStatusId: {
+                [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
+            }
+        }
+    });
+
+    if (activeBookings > 0) {
+        throw new customError("Cannot delete customer", `Customer has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
+    }
+
+    // Soft delete the customer (set status to false instead of hard delete)
+    const deletedCustomer = await users.update(
+        { status: false },
+        {
+            where: {
+                id: customerId,
+                userTypeId: 2
+            }
+        }
+    );
+
+    if (deletedCustomer[0] === 0) {
+        throw new customError("Failed to delete customer", "No changes were made");
+    }
+
+    return res.json(responsefunc("1", "Customer deleted successfully", { customerId }, ""));
+}
+
+
 //!----------------------------------------------------Drivers Management--------------------------------------->>
 /* 
  *  Drivers Count
@@ -391,10 +554,19 @@ async function countTotalDrivers(req, res) {
         }
     })
 
+    const blockDrivers = await users.count({
+        where: {
+            status: false,
+            classifiedAsId: 1,
+            roleId: 6
+        }
+    })
+
     let outObj = {
         totalDrivers: driverCount,
         shopAgentDrivers: shopAgentDrivers,
-        availableDrivers: availableDrivers
+        availableDrivers: availableDrivers,
+        blockDrivers: blockDrivers
     }
 
     return res.json(responsefunc("1", "All Counts Fetched", outObj, ""))
@@ -406,39 +578,108 @@ async function countTotalDrivers(req, res) {
 */
 async function allDriverMiniDetails(req, res) {
 
-    const findDriver = await booking.findAll({
+    const findDrivers = await users.findAll({
         where: {
-            driverId: {
-                [Op.ne]: null
-            },
-            deliveryDriverId: {
-                [Op.ne]: null
-            }
+            roleId: 6,
+            classifiedAsId: 1,
+            status: true
         },
         attributes: [
-            'driverId',
-            [sequelize.fn('COUNT', sequelize.col('driverId')), 'DriverPickUpOrders'],
-            [sequelize.fn('COUNT', sequelize.col('deliveryDriverId')), 'DriverDeliveryOrders'],
+            'id', 
+            'firstName', 
+            'lastName', 
+            'email', 
+            'userTypeId', 
+            'classifiedAsId', 
+            'roleId',
+            'status',
+            'createdAt'
         ],
         include: [
             {
-                model: users,
-                as: 'driver',
-                where: {
-                    status: true
-                },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'classifiedAsId', 'roleId'],
-                include: [
-                    {
-                        model: roles,
-                        attributes: ['name']
-                    }
-                ]
+                model: roles,
+                attributes: ['name']
             }
-        ],
-        group: ['driverId', 'deliveryDriverId'],
-    })
-    return res.json(responsefunc("1", "Drivers Details fetched", findDriver, ""))
+        ]
+    });
+
+    // Get booking counts for each driver
+    const driversWithBookingCounts = await Promise.all(
+        findDrivers.map(async (driver) => {
+            const driverId = driver.id;
+            
+            // Get pickup orders count
+            const pickupOrdersCount = await booking.count({
+                where: {
+                    driverId: driverId
+                }
+            });
+
+            // Get delivery orders count
+            const deliveryOrdersCount = await booking.count({
+                where: {
+                    deliveryDriverId: driverId
+                }
+            });
+
+            // Get total orders count
+            const totalOrdersCount = await booking.count({
+                where: {
+                    [Op.or]: [
+                        { driverId: driverId },
+                        { deliveryDriverId: driverId }
+                    ]
+                }
+            });
+
+            // Get completed orders count
+            const completedOrdersCount = await booking.count({
+                where: {
+                    [Op.or]: [
+                        { driverId: driverId },
+                        { deliveryDriverId: driverId }
+                    ],
+                    bookingStatusId: 17 // Completed status
+                }
+            });
+
+            // Get pending orders count
+            const pendingOrdersCount = await booking.count({
+                where: {
+                    [Op.or]: [
+                        { driverId: driverId },
+                        { deliveryDriverId: driverId }
+                    ],
+                    bookingStatusId: {
+                        [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed
+                    }
+                }
+            });
+
+            // Get driver earnings from completed orders
+            const driverEarnings = await booking.sum('orderAmount', {
+                where: {
+                    [Op.or]: [
+                        { driverId: driverId },
+                        { deliveryDriverId: driverId }
+                    ],
+                    bookingStatusId: 17 // Only completed orders
+                }
+            });
+
+            return {
+                ...driver.toJSON(),
+                DriverPickUpOrders: pickupOrdersCount,
+                DriverDeliveryOrders: deliveryOrdersCount,
+                totalOrders: totalOrdersCount,
+                completedOrders: completedOrdersCount,
+                pendingOrders: pendingOrdersCount,
+                driverEarnings: parseFloat((driverEarnings || 0).toFixed(2))
+            };
+        })
+    );
+
+    return res.json(responsefunc("1", "Drivers Details fetched", driversWithBookingCounts, ""));
 }
 
 
@@ -494,6 +735,11 @@ async function specificdriverDetail(req, res) {
         ],
         attributes: ['laundaryShopId']
     })
+
+    // Check if driver exists in driverInZones table
+    if (!userInfo) {
+        throw new customError("Driver not found", "Driver does not exist in the system");
+    }
 
     const findBooking = await booking.findAll({
         where: {
@@ -988,7 +1234,7 @@ async function getAdminEmployess(req, res) {
  *  Add Admin Employee
 */
 async function addEmployee(req, res) {
-    const { firstName, lastName, email, password, phoneNum, roleId,zoneId } = req.body
+    const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = req.body
 
     const adminId = req.user.id
 
@@ -2477,6 +2723,8 @@ module.exports = {
     getAllCustomers,
     customerCount,
     specificCustomerDetails,
+    updateCustomer,
+    deleteCustomer,
     //-----------Driver Management----------//
     countTotalDrivers,
     allDriverMiniDetails,

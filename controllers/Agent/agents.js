@@ -2658,6 +2658,12 @@ exports.addEmployee = async (req, res) => {
             },
         });
 
+        const businessInfo = await bussinessInformation.findOne({
+            where: {
+                agentId: agentId,
+            },
+        });
+
         const zoneId = agentAddress.zoneId;
         const shopAddressId = agentAddress.id;
         const countryId = agentAddress.countryId
@@ -2667,8 +2673,8 @@ exports.addEmployee = async (req, res) => {
         await driverInZones.create({
             driverId: driverId,
             zoneId: zoneId,
-            shopAddressId: shopAddressId,
-            countryId: countryId,
+            laundaryShopId: businessInfo ? businessInfo.id : null,
+            countryId: countryId,                                                                                                                                                                                                                                                                                                                                                                                                                                    
             cityId: cityId,
         });
     }

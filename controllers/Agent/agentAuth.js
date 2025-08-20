@@ -273,12 +273,20 @@ exports.agentBusinessInfo = async (req, res) => {
         throw new customError('You can Add this Field Only when Select Other Option')
     }
 
+    // Get agent's address information
+    const agentAddress = await addressDb.findOne({
+        where: {
+            userId: userId,
+        },
+    });
+
     if (matchProfileOptions === 'Other') {
         const agentInfo = await bussinessInformation.create({
             shopName,
             matchProfileOptions,
             otherText,
-            agentId: userId
+            agentId: userId,
+            shopAddressId: agentAddress ? agentAddress.id : null
         })
 
         const machinesCountCreate = machineryCount.map(ele => ({
@@ -309,7 +317,8 @@ exports.agentBusinessInfo = async (req, res) => {
     const agentInfo = await bussinessInformation.create({
         shopName,
         matchProfileOptions,
-        agentId: userId
+        agentId: userId,
+        shopAddressId: agentAddress ? agentAddress.id : null
     })
 
     const machinesCountCreate = machineryCount.map(ele => ({

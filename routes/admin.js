@@ -164,6 +164,10 @@ router.get('/getAllCustomers', validateAccessToken, asyncMiddleware(adminControl
 router.get('/customerCount', validateAccessToken, asyncMiddleware(adminController.customerCount))
 //Get Sepecific customer Details 
 router.get('/specificCustomerDetails/:customerId', validateAccessToken, asyncMiddleware(adminController.specificCustomerDetails))
+//Update Customer
+router.patch('/updateCustomer/:customerId', validateAccessToken, asyncMiddleware(adminController.updateCustomer))
+//Delete Customer
+router.delete('/deleteCustomer/:customerId', validateAccessToken, asyncMiddleware(adminController.deleteCustomer))
 //!-----------------------------Driver Management------------------------------//
 //Drivers Count Api
 router.get('/countTotalDrivers', validateAccessToken, asyncMiddleware(adminController.countTotalDrivers))
