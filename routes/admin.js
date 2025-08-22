@@ -177,6 +177,8 @@ router.get('/allDriverMiniDetails', validateAccessToken, asyncMiddleware(adminCo
 router.patch('/driverStatusChange/:driverId', validateAccessToken, asyncMiddleware(adminController.driverStatusChange))
 //Specific Drive Details
 router.get('/specificdriverDetail/:driverId', validateAccessToken, asyncMiddleware(adminController.specificdriverDetail))
+//Update Driver
+router.patch('/updateDriver/:driverId', validateAccessToken, asyncMiddleware(adminController.updateDriver))
 
 //!-----------------------------Order Management------------------------------//
 //Get Order Count
@@ -189,6 +191,10 @@ router.get('/pendingOrders', validateAccessToken, asyncMiddleware(adminControlle
 router.get('/allCancelOrders', validateAccessToken, asyncMiddleware(adminController.allCancelOrders))
 //Get All Completed Orders
 router.get('/completeOrders', validateAccessToken, asyncMiddleware(adminController.completeOrders))
+//Get Single Order for Editing
+router.get('/getOrderForEdit/:orderId', validateAccessToken, asyncMiddleware(adminController.getOrderForEdit))
+//Edit Order
+router.patch('/editOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.editOrder))
 
 
 //!-----------------------------Service Management------------------------------//
@@ -200,6 +206,8 @@ router.post('/addServiceTypes', validateAccessToken, uploadcategoryImage.single(
 router.get('/getSubCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.getSubCategories))
 //Add Service Items
 router.post('/addServiceItems', validateAccessToken, asyncMiddleware(adminController.addServiceItems))
+//Get Services and Categories for Order Edit
+router.get('/getServicesAndCategoriesForOrderEdit', validateAccessToken, asyncMiddleware(adminController.getServicesAndCategoriesForOrderEdit))
 
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
 //Add Roles

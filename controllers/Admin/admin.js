@@ -335,9 +335,9 @@ async function specificCustomerDetails(req, res) {
                     model: customerSelectedService,
                     include: [
                         {
-                            model:service,
-                            attributes:['name']
-                }
+                            model: service,
+                            attributes: ['name']
+                        }
                     ],
                     attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
                 },
@@ -360,14 +360,14 @@ async function specificCustomerDetails(req, res) {
                     attributes: ['title', 'description'],
                 },
                 {
-                    model:users,
-                    as:'driver',
-                    attributes:['id','firstName','lastName','email']
+                    model: users,
+                    as: 'driver',
+                    attributes: ['id', 'firstName', 'lastName', 'email']
                 },
                 {
-                    model:users,
-                    as:'deliveryDriver',
-                    attributes:['id','firstName','lastName','email']
+                    model: users,
+                    as: 'deliveryDriver',
+                    attributes: ['id', 'firstName', 'lastName', 'email']
                 }
             ],
             order: [['id', 'DESC']],
@@ -585,12 +585,12 @@ async function allDriverMiniDetails(req, res) {
             status: true
         },
         attributes: [
-            'id', 
-            'firstName', 
-            'lastName', 
-            'email', 
-            'userTypeId', 
-            'classifiedAsId', 
+            'id',
+            'firstName',
+            'lastName',
+            'email',
+            'userTypeId',
+            'classifiedAsId',
             'roleId',
             'status',
             'createdAt'
@@ -607,7 +607,7 @@ async function allDriverMiniDetails(req, res) {
     const driversWithBookingCounts = await Promise.all(
         findDrivers.map(async (driver) => {
             const driverId = driver.id;
-            
+
             // Get pickup orders count
             const pickupOrdersCount = await booking.count({
                 where: {
@@ -700,6 +700,8 @@ async function driverStatusChange(req, res) {
     return res.json(responsefunc("1", "Driver Status Updated", driverStatusChange, ""))
 
 }
+
+
 
 /* 
  *   Specific Driver Detail  
@@ -806,6 +808,81 @@ async function specificdriverDetail(req, res) {
 
 }
 
+/*
+ * Update Driver
+*/
+async function updateDriver(req, res) {
+    const { driverId } = req.params;
+    const { firstName, lastName, email, phoneNum, status } = req.body;
+
+    // Check if driver exists
+    const driverExists = await users.findOne({
+        where: {
+            id: driverId,
+            roleId: 6, // Ensure it's a driver
+            classifiedAsId: 1
+        }
+    });
+
+    if (!driverExists) {
+        throw new customError("Driver not found", "Please provide a valid driver ID");
+    }
+
+    // Check if email is being changed and if it already exists
+    if (email && email !== driverExists.email) {
+        const emailExists = await users.findOne({
+            where: {
+                email: email,
+                id: { [Op.ne]: driverId },
+                roleId: 6,
+                classifiedAsId: 1
+            }
+        });
+
+        if (emailExists) {
+            throw new customError("Email already exists", "Please use a different email address");
+        }
+    }
+
+    // Update driver details
+    const updateData = {};
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+    if (email) updateData.email = email;
+    if (phoneNum) updateData.phoneNum = phoneNum;
+    if (status !== undefined) updateData.status = status;
+
+    const updatedDriver = await users.update(updateData, {
+        where: {
+            id: driverId,
+            roleId: 6,
+            classifiedAsId: 1
+        }
+    });
+
+    if (updatedDriver[0] === 0) {
+        throw new customError("Failed to update driver", "No changes were made");
+    }
+
+    // Get updated driver data
+    const updatedDriverData = await users.findOne({
+        where: {
+            id: driverId,
+            roleId: 6,
+            classifiedAsId: 1
+        },
+        attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+        include: [
+            {
+                model: roles,
+                attributes: ['name']
+            }
+        ]
+    });
+
+    return res.json(responsefunc("1", "Driver updated successfully", updatedDriverData, ""));
+}
+
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
 
 /* 
@@ -843,269 +920,297 @@ async function ordersCount(req, res) {
 
 
 /*
-  * All Order Details 
+  * All Order Details - Optimized Version
 */
 async function allOrderDetails(req, res) {
 
-    const bookingsFind = await booking.findAll({
-        include: [
-            {
-                model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                include: [
-                    {
-                        model: service,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: categories,
-                        attributes: ['id', 'name']
-                    }
-                ]
-            },
-            {
-                model: OnHoldConfirmation,
-                required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-            },
-            {
-                model: addressDb,
-                as: 'laundryShop',
-                include: {
-                    model: bussinessInformation,
-                    attributes: ['shopName']
-                },
-                attributes: ['id']
-            },
-            {
-                model: bookingStatus,
-                attributes: ['title', 'description']
-            }
-        ],
-        order: [['id', 'ASC']],
-        attributes: {
-            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-        }
-    })
 
-    let outObj = {
-        orerDetails: bookingsFind
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+
+    const statusFilter = req.query.status;
+    const dateFilter = req.query.date;
+
+
+    let whereClause = {};
+    if (statusFilter) {
+        whereClause.bookingStatusId = statusFilter;
+    }
+    if (dateFilter) {
+        whereClause.createdAt = {
+            [Op.gte]: new Date(dateFilter),
+            [Op.lt]: new Date(new Date(dateFilter).getTime() + 24 * 60 * 60 * 1000)
+        };
     }
 
+    const result = await getOptimizedBookings(whereClause, page, limit);
 
+    let outObj = {
+        orderDetails: result.bookings,
+        pagination: result.pagination
+    };
 
-    return res.json(responsefunc("1", "All booking Details Fetched", outObj, ""))
+    return res.json(responsefunc("1", "All booking Details Fetched", outObj, ""));
 }
 
 
 
 /*
-  * Pending Orders
+  * Pending Orders - Optimized Version
 */
 async function pendingOrders(req, res) {
-    const bookingsFind = await booking.findAll({
-        where: {
-            bookingStatusId: {
-                [Op.ne]: [17, 23]
-            }
-        },
-        include: [
-            {
-                model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                include: [
-                    {
-                        model: service,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: categories,
-                        attributes: ['id', 'name']
-                    }
-                ]
-            },
-            {
-                model: OnHoldConfirmation,
-                required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-            },
-            {
-                model: addressDb,
-                as: 'laundryShop',
-                include: {
-                    model: bussinessInformation,
-                    attributes: ['shopName']
-                },
-                attributes: ['id']
-            },
-            {
-                model: bookingStatus,
-                attributes: ['title', 'description']
-            }
-        ],
-        order: [['id', 'ASC']],
-        attributes: {
-            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-        }
-    })
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
 
-    const pendingOrdersCount = await booking.count({
-        where: {
-            bookingStatusId: {
-                [Op.ne]: [17, 23]
-            }
+    const whereClause = {
+        bookingStatusId: {
+            [Op.ne]: [17, 23]
         }
-    })
+    };
+
+    const result = await getOptimizedBookings(whereClause, page, limit);
 
     let outObj = {
-        orerDetails: bookingsFind,
-        pendingOrdersCount: pendingOrdersCount
-    }
+        orderDetails: result.bookings,
+        pendingOrdersCount: result.totalCount,
+        pagination: result.pagination
+    };
 
-
-    return res.json(responsefunc("1", "All Pending Orders", outObj, ""))
-
+    return res.json(responsefunc("1", "All Pending Orders", outObj, ""));
 }
 
 
 
 
 /*
-  * Cancel Orders
+  * Cancel Orders - Optimized Version
 */
 async function allCancelOrders(req, res) {
 
-    const bookingsFind = await booking.findAll({
-        where: {
-            bookingStatusId: {
-                [Op.eq]: [19]
-            }
-        },
-        include: [
-            {
-                model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                include: [
-                    {
-                        model: service,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: categories,
-                        attributes: ['id', 'name']
-                    }
-                ]
-            },
-            {
-                model: OnHoldConfirmation,
-                required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-            },
-            {
-                model: addressDb,
-                as: 'laundryShop',
-                include: {
-                    model: bussinessInformation,
-                    attributes: ['shopName']
-                },
-                attributes: ['id']
-            },
-            {
-                model: bookingStatus,
-                attributes: ['title', 'description']
-            }
-        ],
-        order: [['id', 'ASC']],
-        attributes: {
-            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-        }
-    })
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
 
-    const cancelOrdersCount = await booking.count({
-        where: {
-            bookingStatusId: {
-                [Op.eq]: [19]
-            }
+    const whereClause = {
+        bookingStatusId: {
+            [Op.eq]: [19]
         }
-    })
+    };
+
+    const result = await getOptimizedBookings(whereClause, page, limit);
 
     let outObj = {
-        cancelOrers: bookingsFind,
-        cancelBookingCount: cancelOrdersCount
-    }
+        cancelOrders: result.bookings,
+        cancelBookingCount: result.totalCount,
+        pagination: result.pagination
+    };
 
+    return res.json(responsefunc("1", "All Cancel Orders Details", outObj, ""));
 
-    return res.json(responsefunc("1", "All Cancel Orders Details", outObj, ""))
 }
 
 
 
 
 /*
-  * Complete Orders
+  * Complete Orders - Optimized Version
 */
-
 async function completeOrders(req, res) {
-    const bookingsFind = await booking.findAll({
-        where: {
-            bookingStatusId: {
-                [Op.eq]: [17]
-            }
-        },
-        include: [
-            {
-                model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                include: [
-                    {
-                        model: service,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: categories,
-                        attributes: ['id', 'name']
-                    }
-                ]
-            },
-            {
-                model: OnHoldConfirmation,
-                required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-            },
-            {
-                model: addressDb,
-                as: 'laundryShop',
-                include: {
-                    model: bussinessInformation,
-                    attributes: ['shopName']
-                },
-                attributes: ['id']
-            },
-            {
-                model: bookingStatus,
-                attributes: ['title', 'description']
-            }
-        ],
-        order: [['id', 'ASC']],
-        attributes: {
-            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-        }
-    })
 
-    const completedOrdersCount = await booking.count({
-        where: {
-            bookingStatusId: {
-                [Op.eq]: [17]
-            }
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const whereClause = {
+        bookingStatusId: {
+            [Op.eq]: [17]
         }
-    })
+    };
+
+    const result = await getOptimizedBookings(whereClause, page, limit);
 
     let outObj = {
-        allCompletedOrders: bookingsFind,
-        completedOrdersCount: completedOrdersCount
-    }
+        allCompletedOrders: result.bookings,
+        completedOrdersCount: result.totalCount,
+        pagination: result.pagination
+    };
 
-    return res.json(responsefunc("1", "All Completed Orders", outObj, ""))
+    return res.json(responsefunc("1", "All Completed Orders", outObj, ""));
+
+}
+
+/*
+  * Edit Order - Comprehensive Order Management
+*/
+async function editOrder(req, res) {
+        const { orderId } = req.params;
+        const {
+            orderTrackId,
+            collectionDate,
+            collectionTimeFrom,
+            collectionTimeTo,
+            deliveryDate,
+            deliveryTimeFrom,
+            deliveryTimeTo,
+            driverInstructionOptions,
+            driverInstructionOptions1,
+            driverInstruction,
+            totalItems,
+            orderAmount,
+            subTotal,
+            frequency,
+            bookingStatusId,
+            services,
+            billingDetails
+        } = req.body;
+
+        const orderExists = await booking.findOne({
+            where: { id: orderId },
+            include: [
+                {
+                    model: customerSelectedService,
+                    include: [
+                        { model: service, attributes: ['id', 'name'] },
+                        { model: categories, attributes: ['id', 'name'] }
+                    ]
+                },
+                { model: billingDetails }
+            ]
+        });
+
+        if (!orderExists) {
+            return res.status(404).json(responsefunc("0", "Order not found", {}, "Invalid order ID"));
+        }
+
+        // Update basic order fields
+        const orderUpdateData = {
+            orderTrackId, collectionDate, collectionTimeFrom, collectionTimeTo,
+            deliveryDate, deliveryTimeFrom, deliveryTimeTo,
+            driverInstructionOptions, driverInstructionOptions1, driverInstruction,
+            totalItems, orderAmount, subTotal, frequency, bookingStatusId
+        };
+
+        await booking.update(orderUpdateData, { where: { id: orderId } });
+
+        // Update services
+        if (Array.isArray(services)) {
+            await customerSelectedService.destroy({ where: { bookingId: orderId } });
+
+            const serviceData = services.map(s => ({
+                bookingId: orderId,
+                serviceId: s.serviceId,
+                categoryId: s.categoryId,
+                date: s.date || new Date(),
+                time: s.time || new Date().toTimeString().slice(0, 8),
+                items: s.items || 1,
+                servicePrice: s.servicePrice || 0,
+                categoryPrice: s.categoryPrice || 0,
+                status: s.status !== undefined ? s.status : true
+            }));
+
+            await customerSelectedService.bulkCreate(serviceData);
+        }
+
+        // Update billing details
+        if (billingDetails) {
+            const billingUpdateData = {
+                upfrontAmount: billingDetails.upfrontAmount,
+                discount: billingDetails.discount,
+                total: billingDetails.total,
+                zoneAdminCommission: billingDetails.zoneAdminCommission,
+                serviceCharge: billingDetails.serviceCharge,
+                categoryCharge: billingDetails.categoryCharge,
+                pickupDriverEarning: billingDetails.pickupDriverEarning,
+                deliveryDriverEarning: billingDetails.deliveryDriverEarning,
+                paymentStatus: billingDetails.paymentStatus
+            };
+
+            const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
+
+            if (existingBilling) {
+                await billingDetails.update(billingUpdateData, { where: { bookingId: orderId } });
+            } else {
+                await billingDetails.create({ bookingId: orderId, ...billingUpdateData });
+            }
+        }
+
+        // Fetch updated order
+        const updatedOrder = await booking.findOne({
+            where: { id: orderId },
+            include: [
+                {
+                    model: customerSelectedService,
+                    include: [
+                        { model: service, attributes: ['id', 'name'] },
+                        { model: categories, attributes: ['id', 'name'] }
+                    ]
+                },
+                { model: billingDetails },
+                { model: bookingStatus, attributes: ['id', 'title', 'description'] },
+                { model: addressDb, as: 'pickupAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] },
+                { model: addressDb, as: 'dropOffAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] }
+            ]
+        });
+
+        return res.json(responsefunc("1", "Order updated successfully", updatedOrder, ""));
+    
+}
+
+/*
+  * Get Single Order Details for Editing
+*/
+async function getOrderForEdit(req, res) {
+        const { orderId } = req.params;
+
+        const orderDetails = await booking.findOne({
+            where: { id: orderId },
+            include: [
+                {
+                    model: customerSelectedService,
+                    include: [
+                        { model: service, attributes: ['id', 'name'] },
+                        { model: categories, attributes: ['id', 'name'] }
+                    ]
+                },
+                {
+                    model: billingDetails
+                },
+                {
+                    model: bookingStatus,
+                    attributes: ['id', 'title', 'description']
+                },
+                {
+                    model: addressDb,
+                    as: 'pickupAddress',
+                    attributes: ['id', 'title', 'streetAddress', 'district', 'province']
+                },
+                {
+                    model: addressDb,
+                    as: 'dropOffAddress',
+                    attributes: ['id', 'title', 'streetAddress', 'district', 'province']
+                },
+                {
+                    model: users,
+                    as: 'customer',
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                },
+                {
+                    model: users,
+                    as: 'driver',
+                    attributes: ['id', 'firstName', 'lastName', 'email']
+                },
+                {
+                    model: users,
+                    as: 'deliveryDriver',
+                    attributes: ['id', 'firstName', 'lastName', 'email']
+                }
+            ]
+        });
+
+        if (!orderDetails) {
+            throw new customError("Order not found", "Please provide a valid order ID");
+        }
+
+        return res.json(responsefunc("1", "Order details fetched successfully", orderDetails, ""));
 
 }
 
@@ -1186,6 +1291,46 @@ async function getSubCategories(req, res) {
     }
 
     return res.json(responsefunc("1", "All Items fetched", outObj, ""))
+
+}
+
+/*
+  * Get All Services and Categories for Order Edit
+*/
+async function getServicesAndCategoriesForOrderEdit(req, res) {
+
+        const [services, categories] = await Promise.all([
+            service.findAll({
+                where: { status: true },
+                attributes: ['id', 'name', 'description'],
+                include: [
+                    {
+                        model: categories,
+                        through: { model: serviceCategories },
+                        attributes: ['id', 'name'],
+                        where: { status: true }
+                    }
+                ]
+            }),
+            categories.findAll({
+                where: { status: true },
+                attributes: ['id', 'name', 'description'],
+                include: [
+                    {
+                        model: subCategories,
+                        attributes: ['id', 'name', 'price'],
+                        where: { status: true }
+                    }
+                ]
+            })
+        ]);
+
+        const outObj = {
+            services: services,
+            categories: categories
+        };
+
+        return res.json(responsefunc("1", "Services and Categories fetched successfully", outObj, ""));
 
 }
 
@@ -2630,6 +2775,79 @@ let responsefunc = (status, message, data, error) => {
     }
 }
 
+// Helper function for optimized booking queries
+async function getOptimizedBookings(whereClause, page = 1, limit = 50) {
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    const totalCount = await booking.count({ where: whereClause });
+
+    // Get bookings with optimized includes
+    const bookings = await booking.findAll({
+        where: whereClause,
+        include: [
+            {
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
+                    {
+                        model: service,
+                        attributes: ['id', 'name', 'status']
+                    },
+                    {
+                        model: categories,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
+            },
+            {
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
+                },
+                attributes: ['id']
+            },
+            {
+                model: bookingStatus,
+                attributes: ['title', 'description']
+            }
+        ],
+        order: [['id', 'DESC']],
+        limit: limit,
+        offset: offset,
+        attributes: {
+            exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+        },
+        logging: false,
+        benchmark: false
+    });
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    return {
+        bookings,
+        totalCount,
+        pagination: {
+            currentPage: page,
+            totalPages: totalPages,
+            totalRecords: totalCount,
+            recordsPerPage: limit,
+            hasNextPage: hasNextPage,
+            hasPrevPage: hasPrevPage
+        }
+    };
+}
+
 function generateBarcodeforSubCategories(name, price, fileName) {
     const canvas = createCanvas(800, 300); // Wider + taller canvas
     const barcodeData = `${name.replace(/\s/g, '')}-${price}`;
@@ -2730,17 +2948,21 @@ module.exports = {
     allDriverMiniDetails,
     driverStatusChange,
     specificdriverDetail,
+    updateDriver,
     //----------Order Management------------//
     ordersCount,
     allOrderDetails,
     pendingOrders,
     allCancelOrders,
     completeOrders,
+    editOrder,
+    getOrderForEdit,
     //----------Service Management---------//
     getAdminServicesWithCategories,
     addServiceTypes,
     getSubCategories,
     addServiceItems,
+    getServicesAndCategoriesForOrderEdit,
     //----------Employee Management---------//
     getAdminEmployess,
     addEmployee,
