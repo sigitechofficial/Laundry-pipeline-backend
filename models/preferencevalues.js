@@ -10,7 +10,15 @@ module.exports = (sequelize, DataTypes) => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      
+      //Relation with bookingPreference Model
+      preferenceValues.hasMany(models.bookingPreference,{
+        foreignKey: 'preferenceValueId',
+        as: 'bookingPreferences'
+      })
+      models.bookingPreference.belongsTo(preferenceValues,{
+        foreignKey: 'preferenceValueId',
+        as: 'bookingPreferences'
+      })
     }
   }
   preferenceValues.init({

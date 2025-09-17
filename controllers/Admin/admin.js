@@ -1299,39 +1299,47 @@ async function getSubCategories(req, res) {
 */
 async function getServicesAndCategoriesForOrderEdit(req, res) {
 
-        const [services, categories] = await Promise.all([
-            service.findAll({
-                where: { status: true },
-                attributes: ['id', 'name', 'description'],
-                include: [
-                    {
-                        model: categories,
-                        through: { model: serviceCategories },
-                        attributes: ['id', 'name'],
-                        where: { status: true }
-                    }
-                ]
-            }),
-            categories.findAll({
-                where: { status: true },
-                attributes: ['id', 'name', 'description'],
-                include: [
-                    {
-                        model: subCategories,
-                        attributes: ['id', 'name', 'price'],
-                        where: { status: true }
-                    }
-                ]
-            })
-        ]);
+       
+    const services = await service.findAll({
+        where: { status: true },
+        attributes: ['id', 'name', 'description']
+    });
 
-        const outObj = {
-            services: services,
-            categories: categories
-        };
+  
+    const categoriesData = await categories.findAll({
+        where: { status: true },
+        attributes: ['id', 'name', 'description'],
+        include: [
+            {
+                model: subCategories,
+                attributes: ['id', 'name', 'price'],
+                where: { status: true }
+            }
+        ]
+    });
 
-        return res.json(responsefunc("1", "Services and Categories fetched successfully", outObj, ""));
+ 
+    const serviceCategoriesData = await serviceCategories.findAll({
+        where: { status: true },
+        include: [
+            {
+                model: service,
+                attributes: ['id', 'name']
+            },
+            {
+                model: categories,
+                attributes: ['id', 'name']
+            }
+        ]
+    });
 
+    const outObj = {
+        services: services,
+        categories: categoriesData,
+        serviceCategories: serviceCategoriesData
+    };
+
+    return res.json(responsefunc("1", "Services and Categories fetched successfully", outObj, ""));
 }
 
 
