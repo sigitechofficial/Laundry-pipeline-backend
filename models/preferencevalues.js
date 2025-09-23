@@ -11,14 +11,8 @@ module.exports = (sequelize, DataTypes) => {
      */
     static associate(models) {
       //Relation with bookingPreference Model
-      preferenceValues.hasMany(models.bookingPreference,{
-        foreignKey: 'preferenceValueId',
-        as: 'bookingPreferences'
-      })
-      models.bookingPreference.belongsTo(preferenceValues,{
-        foreignKey: 'preferenceValueId',
-        as: 'bookingPreferences'
-      })
+      preferenceValues.hasMany(models.bookingPreference)
+      models.bookingPreference.belongsTo(preferenceValues)
     }
   }
   preferenceValues.init({

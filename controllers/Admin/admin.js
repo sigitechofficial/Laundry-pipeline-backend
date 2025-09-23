@@ -42,7 +42,18 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 const redisCli = require('../../redis/redis')
 const otpGenerator = require('otp-generator')
-const customError = require('../../middlewares/customError')
+// Keep original customError for backward compatibility
+const customError = require('../../middlewares/customError');
+
+// Admin-specific error handling
+const { 
+    AdminValidationError, 
+    AdminNotFoundError, 
+    AdminUnauthorizedError, 
+    AdminConflictError 
+} = require('../../middlewares/adminErrorHandler');
+const AdminResponseHelper = require('../../utils/adminResponseHelper');
+const { adminAsyncHandler } = require('../../middlewares/adminErrorHandler');
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const { stat } = require('fs')
@@ -63,128 +74,27 @@ const fs = require("fs")
 const path = require("path");
 const geolib = require('geolib');
 
+// Import services
+const {
+    dashboardService,
+    customerService,
+    driverService,
+    orderService,
+    serviceManagementService,
+    dataService,
+    shopManagementService,
+    employeeManagementService
+} = require('../../services/Admin');
+
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
     try {
-        const revenue = await billingDetails.sum("zoneAdminCommission", {
-            where: {
-                zoneAdminCommission: {
-                    [Op.ne]: null,
-                },
-            },
-        });
-
-        const totalBookings = await booking.count();
-        const totalUsers = await users.count();
-
-        const totalCustomer = await users.count({
-            where: {
-                userTypeId: 2,
-                status: true,
-            },
-        });
-
-        const totalAgent = await users.count({
-            where: {
-                userTypeId: 4,
-            },
-        });
-
-        const totalAgentActive = await users.count({
-            where: {
-                userTypeId: 4,
-                status: true,
-            },
-        });
-
-
-        const completedBookings = await booking.findAll({
-            where: {
-                bookingStatusId: 17,
-            },
-            include: [
-                {
-                    model: bookingHistory,
-                    where: {
-                        bookingStatusId: 17,
-                    },
-                    required: true,
-                },
-            ],
-        });
-
-        let totalCompletionTime = 0;
-        let completedCount = 0;
-
-        for (const bookingItem of completedBookings) {
-            const creationHistory = await bookingHistory.findOne({
-                where: {
-                    bookingId: bookingItem.id,
-                    bookingStatusId: 1,
-                },
-            });
-
-            const completionHistory = await bookingHistory.findOne({
-                where: {
-                    bookingId: bookingItem.id,
-                    bookingStatusId: 17,
-                },
-            });
-
-            if (creationHistory && completionHistory) {
-                const creationDateTime = new Date(`${creationHistory.date} ${creationHistory.time}`);
-                const completionDateTime = new Date(`${completionHistory.date} ${completionHistory.time}`);
-
-                const timeDiff = completionDateTime - creationDateTime;
-                totalCompletionTime += timeDiff;
-                completedCount++;
-            }
-        }
-
-        const averageCompletionTimeHours =
-            completedCount > 0 ? totalCompletionTime / completedCount / (1000 * 60 * 60) : 0;
-
-        const acceptedByAgents = await booking.count({
-            where: {
-                driverId: {
-                    [Op.ne]: null,
-                },
-            },
-        });
-
-        //return res.json(acceptedByAgents)
-
-        const assignedToAgents = await booking.count({
-            where: {
-                deliveryDriverId: {
-                    [Op.ne]: null,
-                },
-            },
-        });
-
-
-        const agentAcceptanceRate =
-            assignedToAgents > 0
-                ? Math.round((acceptedByAgents / assignedToAgents) * 100) / 100
-                : 0;
-
-        // Final response object
-        const outObj = {
-            adminRevenue: revenue,
-            totalBookings: totalBookings,
-            totalUsers: totalUsers,
-            totalCustomers: totalCustomer,
-            totalAgents: totalAgent,
-            totalAgentActive: totalAgentActive,
-            averageOrderCompletionTimeHours: Math.round(averageCompletionTimeHours * 100) / 100,
-            completedOrdersCount: completedCount,
-            agentAcceptanceRate: agentAcceptanceRate,
-        };
-
-        return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
+        const outObj = await dashboardService.getDashboardData();
+        //return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
+        return AdminResponseHelper.success(res, "Admin Dashboard Data", outObj);
     } catch (error) {
         console.error("Dashboard Error:", error);
-        return res.status(500).json(responsefunc("0", "Something went wrong", {}, error.message));
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
 }
 
@@ -200,123 +110,26 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-    const findCustomers = await users.findAll({
-        where: {
-            userTypeId: 2,  // Ensuring we're fetching only customers
-        },
-        attributes: [
-            'id',
-            'firstName',
-            'lastName',
-            'email',
-            'phoneNum',
-            'status',
-            [
-                sequelize.literal(`(
-            SELECT COUNT(*) 
-            FROM bookings 
-            WHERE bookings.customerId = users.id
-          )`),
-                'bookingCount'
-            ],
-            [
-                sequelize.literal(`(
-            SELECT COALESCE(SUM(orderAmount), 0) 
-            FROM bookings 
-            WHERE bookings.customerId = users.id
-          )`),
-                'totalAmountSpent'
-            ],
-            [
-                sequelize.literal(`(
-            SELECT MAX(createdAt) 
-            FROM bookings 
-            WHERE bookings.customerId = users.id
-          )`),
-                'lastBookingDate'
-            ]
-        ]
-    });
-
-    // Format the last booking date and totalAmountSpent
-    const formattedCustomers = findCustomers.map(customer => {
-        const customerData = customer.toJSON(); // Convert to plain object
-        return {
-            ...customerData,
-            lastBookingDate: customerData.lastBookingDate
-                ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
-                : null,
-            totalAmountSpent: customerData.totalAmountSpent.toFixed(2) // Limit to 2 decimals
-        };
-    });
-
-    return res.json(responsefunc("1", "All Customer Details", formattedCustomers, ""));
+    try {
+        const formattedCustomers = await customerService.getAllCustomers();
+        return AdminResponseHelper.success(res, "All Customer Details", formattedCustomers);
+    } catch (error) {
+        console.error("Get All Customers Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 /*
    * Customers Count
 */
 async function customerCount(req, res) {
-
-    const customerCount = await users.count({
-        where: {
-            userTypeId: 2
-        }
+    try {
+        const outObj = await customerService.getCustomerCount();
+        return AdminResponseHelper.success(res, "All Customer Count", outObj);
+    } catch (error) {
+        console.error("Customer Count Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-    )
-    console.log("🚀 ~ customerCount ~ customerCount:", customerCount)
-
-
-    const fourDayAgo = new Date();
-    console.log("🚀 ~ customerCount ~ fouDayAgo:", fourDayAgo)
-    fourDayAgo.setDate(fourDayAgo.getDate() - 4)
-
-
-    const recentCustomer = await users.count({
-        where: {
-            userTypeId: 2,
-            createdAt: {
-                [Op.gte]: fourDayAgo
-            }
-        }
-    })
-
-    const activeUser = await users.count({
-        where: {
-            status: true,
-            userTypeId: 2
-        }
-    })
-
-    const repeatCustomers = await booking.findAll({
-        attributes: [
-            'customerId',
-            [sequelize.fn('COUNT', sequelize.col('customerId')), 'RepeatingCustomerCount']
-        ],
-        group: ['customerId'],
-        having: sequelize.literal('COUNT(customerId) > 1'),
-        order: [[sequelize.fn('COUNT', sequelize.col('customerId')), 'DESC']],
-        include: [
-            {
-                model: users,
-                as: 'customer',
-                attributes: ['id', 'email', 'firstName', 'lastName']
-            }
-        ]
-    })
-
-    const repeatCustomersCount = repeatCustomers.length
-
-
-    let outObj = {
-        TotalCustomer: customerCount,
-        NewCustomers: recentCustomer,
-        activeUser: activeUser,
-        RepeatedCustomers: repeatCustomersCount
-
-    }
-
-    return res.json(responsefunc("1", "All Customer Count", outObj, ""))
 }
 
 
@@ -324,89 +137,15 @@ async function customerCount(req, res) {
 /*
   * Specific Customer Details
 */
-
 async function specificCustomerDetails(req, res) {
-    const { customerId } = req.params;
-    const [bookingsFind, userInfo] = await Promise.all([
-        booking.findAll({
-            where: { customerId },
-            include: [
-                {
-                    model: customerSelectedService,
-                    include: [
-                        {
-                            model: service,
-                            attributes: ['name']
-                        }
-                    ],
-                    attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                },
-                {
-                    model: OnHoldConfirmation,
-                    required: false,
-                    attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId'],
-                },
-                {
-                    model: addressDb,
-                    as: 'laundryShop',
-                    include: {
-                        model: bussinessInformation,
-                        attributes: ['shopName'],
-                    },
-                    attributes: ['id'],
-                },
-                {
-                    model: bookingStatus,
-                    attributes: ['title', 'description'],
-                },
-                {
-                    model: users,
-                    as: 'driver',
-                    attributes: ['id', 'firstName', 'lastName', 'email']
-                },
-                {
-                    model: users,
-                    as: 'deliveryDriver',
-                    attributes: ['id', 'firstName', 'lastName', 'email']
-                }
-            ],
-            order: [['id', 'DESC']],
-            attributes: {
-                exclude: [
-                    'updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId',
-                    'driverInstructionOptions', 'driverInstructionOptions1', 'paymentConfirmed',
-                    'partialPayment', 'subTotal', 'frequency', 'onHoldReason', 'OnHoldOtherReason',
-                    'paymentMethodId', 'paymentIntentId', 'pickupAddresId', 'dropOffAddressId', 'tipId'
-                ],
-            },
-        }),
-
-
-        addressDb.findOne({
-            where: { userId: customerId },
-            include: [
-                {
-                    model: users,
-                    attributes: ['id', 'firstName', 'lastName', 'email'],
-                },
-            ],
-            order: [['createdAt', 'DESC']],
-            attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'status', 'addressType', 'userId'],
-        }),
-    ]);
-
-
-    const bookingIds = bookingsFind.map((booking) => ({
-        bookingIDS: booking.id,
-    }));
-
-
-    const output = {
-        bookingDetails: bookingsFind,
-        userDetails: userInfo ? userInfo.toJSON() : {},
-    };
-
-    return res.json(responsefunc("1", "Customer Order Details", output, ""));
+    try {
+        const { customerId } = req.params;
+        const output = await customerService.getSpecificCustomerDetails(customerId);
+        return AdminResponseHelper.success(res, "Customer Order Details", output);
+    } catch (error) {
+        console.error("Specific Customer Details Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -417,6 +156,11 @@ async function updateCustomer(req, res) {
     const { customerId } = req.params;
     const { firstName, lastName, email, phoneNum, status } = req.body;
 
+    // Validation
+    if (!customerId || isNaN(customerId)) {
+        throw new AdminValidationError('Invalid customer ID provided');
+    }
+
     // Check if customer exists
     const customerExists = await users.findOne({
         where: {
@@ -426,7 +170,7 @@ async function updateCustomer(req, res) {
     });
 
     if (!customerExists) {
-        throw new customError("Customer not found", "Please provide a valid customer ID");
+        throw new AdminNotFoundError('Customer not found');
     }
 
     // Check if email is being changed and if it already exists
@@ -440,7 +184,7 @@ async function updateCustomer(req, res) {
         });
 
         if (emailExists) {
-            throw new customError("Email already exists", "Please use a different email address");
+            throw new AdminConflictError('Email already exists');
         }
     }
 
@@ -460,7 +204,7 @@ async function updateCustomer(req, res) {
     });
 
     if (updatedCustomer[0] === 0) {
-        throw new customError("Failed to update customer", "No changes were made");
+        throw new AdminValidationError('No changes were made');
     }
 
     // Get updated customer data
@@ -472,7 +216,7 @@ async function updateCustomer(req, res) {
         attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
     });
 
-    return res.json(responsefunc("1", "Customer updated successfully", updatedCustomerData, ""));
+    return AdminResponseHelper.success(res, "Customer updated successfully", updatedCustomerData);
 }
 
 
@@ -523,7 +267,7 @@ async function deleteCustomer(req, res) {
         throw new customError("Failed to delete customer", "No changes were made");
     }
 
-    return res.json(responsefunc("1", "Customer deleted successfully", { customerId }, ""));
+    return AdminResponseHelper.success(res, "Customer deleted successfully", { customerId });
 }
 
 
@@ -532,44 +276,13 @@ async function deleteCustomer(req, res) {
  *  Drivers Count
 */
 async function countTotalDrivers(req, res) {
-    const driverCount = await users.count({
-        where: {
-            roleId: 6,
-            classifiedAsId: 1
-        }
-    })
-
-    const shopAgentDrivers = await users.count({
-        where: {
-            roleId: 6,
-            classifiedAsId: 1
-        }
-    })
-
-    const availableDrivers = await users.count({
-        where: {
-            status: true,
-            classifiedAsId: 1,
-            roleId: 6
-        }
-    })
-
-    const blockDrivers = await users.count({
-        where: {
-            status: false,
-            classifiedAsId: 1,
-            roleId: 6
-        }
-    })
-
-    let outObj = {
-        totalDrivers: driverCount,
-        shopAgentDrivers: shopAgentDrivers,
-        availableDrivers: availableDrivers,
-        blockDrivers: blockDrivers
+    try {
+        const outObj = await driverService.getDriverCount();
+        return AdminResponseHelper.success(res, "All Counts Fetched", outObj);
+    } catch (error) {
+        console.error("Driver Count Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-    return res.json(responsefunc("1", "All Counts Fetched", outObj, ""))
 }
 
 
@@ -577,109 +290,13 @@ async function countTotalDrivers(req, res) {
  *  All Drivers Detail 
 */
 async function allDriverMiniDetails(req, res) {
-
-    const findDrivers = await users.findAll({
-        where: {
-            roleId: 6,
-            classifiedAsId: 1,
-            status: true
-        },
-        attributes: [
-            'id',
-            'firstName',
-            'lastName',
-            'email',
-            'userTypeId',
-            'classifiedAsId',
-            'roleId',
-            'status',
-            'createdAt'
-        ],
-        include: [
-            {
-                model: roles,
-                attributes: ['name']
-            }
-        ]
-    });
-
-    // Get booking counts for each driver
-    const driversWithBookingCounts = await Promise.all(
-        findDrivers.map(async (driver) => {
-            const driverId = driver.id;
-
-            // Get pickup orders count
-            const pickupOrdersCount = await booking.count({
-                where: {
-                    driverId: driverId
-                }
-            });
-
-            // Get delivery orders count
-            const deliveryOrdersCount = await booking.count({
-                where: {
-                    deliveryDriverId: driverId
-                }
-            });
-
-            // Get total orders count
-            const totalOrdersCount = await booking.count({
-                where: {
-                    [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
-                    ]
-                }
-            });
-
-            // Get completed orders count
-            const completedOrdersCount = await booking.count({
-                where: {
-                    [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
-                    ],
-                    bookingStatusId: 17 // Completed status
-                }
-            });
-
-            // Get pending orders count
-            const pendingOrdersCount = await booking.count({
-                where: {
-                    [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
-                    ],
-                    bookingStatusId: {
-                        [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed
-                    }
-                }
-            });
-
-            // Get driver earnings from completed orders
-            const driverEarnings = await booking.sum('orderAmount', {
-                where: {
-                    [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
-                    ],
-                    bookingStatusId: 17 // Only completed orders
-                }
-            });
-
-            return {
-                ...driver.toJSON(),
-                DriverPickUpOrders: pickupOrdersCount,
-                DriverDeliveryOrders: deliveryOrdersCount,
-                totalOrders: totalOrdersCount,
-                completedOrders: completedOrdersCount,
-                pendingOrders: pendingOrdersCount,
-                driverEarnings: parseFloat((driverEarnings || 0).toFixed(2))
-            };
-        })
-    );
-
-    return res.json(responsefunc("1", "Drivers Details fetched", driversWithBookingCounts, ""));
+    try {
+        const driversWithBookingCounts = await driverService.getAllDriversWithStats();
+        return AdminResponseHelper.success(res, "Drivers Details fetched", driversWithBookingCounts);
+    } catch (error) {
+        console.error("All Drivers Details Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -697,7 +314,7 @@ async function driverStatusChange(req, res) {
         }
     })
 
-    return res.json(responsefunc("1", "Driver Status Updated", driverStatusChange, ""))
+    return AdminResponseHelper.success(res, "Driver Status Updated", driverStatusChange);
 
 }
 
@@ -804,7 +421,7 @@ async function specificdriverDetail(req, res) {
     }
 
 
-    return res.json(responsefunc("1", `All booking Fetched for Driver id:${driverId}`, outObj, ""))
+    return AdminResponseHelper.success(res, `All booking Fetched for Driver id:${driverId}`, outObj);
 
 }
 
@@ -880,7 +497,7 @@ async function updateDriver(req, res) {
         ]
     });
 
-    return res.json(responsefunc("1", "Driver updated successfully", updatedDriverData, ""));
+    return AdminResponseHelper.success(res, "Driver updated successfully", updatedDriverData);
 }
 
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
@@ -889,33 +506,13 @@ async function updateDriver(req, res) {
  *  All Orders Counts
 */
 async function ordersCount(req, res) {
-
-
-    const allOrderCount = await booking.count()
-
-    const completedOrder = await booking.count({
-        where: {
-            bookingStatusId: 17
-        }
-    })
-
-    const onHoldOrders = await booking.count({
-        where: {
-            bookingStatusId: {
-                [Op.or]: [18, 24]
-            }
-        }
-    })
-    console.log("🚀 ~ ordersCount ~ onHoldOrders:", onHoldOrders)
-
-    let outObj = {
-        allOrderCount: allOrderCount,
-        completedOrders: completedOrder,
-        onHoldOrders: onHoldOrders
-
+    try {
+        const outObj = await orderService.getOrderCount();
+        return AdminResponseHelper.success(res, "All Order Count", outObj);
+    } catch (error) {
+        console.error("Orders Count Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-    return res.json(responsefunc("1", "All Order Count", outObj, ""))
 }
 
 
@@ -923,35 +520,22 @@ async function ordersCount(req, res) {
   * All Order Details - Optimized Version
 */
 async function allOrderDetails(req, res) {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const statusFilter = req.query.status;
+        const dateFilter = req.query.date;
 
+        const filters = {};
+        if (statusFilter) filters.status = statusFilter;
+        if (dateFilter) filters.date = dateFilter;
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-
-
-    const statusFilter = req.query.status;
-    const dateFilter = req.query.date;
-
-
-    let whereClause = {};
-    if (statusFilter) {
-        whereClause.bookingStatusId = statusFilter;
+        const outObj = await orderService.getAllOrderDetails(filters, page, limit);
+        return AdminResponseHelper.success(res, "All booking Details Fetched", outObj);
+    } catch (error) {
+        console.error("All Order Details Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-    if (dateFilter) {
-        whereClause.createdAt = {
-            [Op.gte]: new Date(dateFilter),
-            [Op.lt]: new Date(new Date(dateFilter).getTime() + 24 * 60 * 60 * 1000)
-        };
-    }
-
-    const result = await getOptimizedBookings(whereClause, page, limit);
-
-    let outObj = {
-        orderDetails: result.bookings,
-        pagination: result.pagination
-    };
-
-    return res.json(responsefunc("1", "All booking Details Fetched", outObj, ""));
 }
 
 
@@ -960,24 +544,15 @@ async function allOrderDetails(req, res) {
   * Pending Orders - Optimized Version
 */
 async function pendingOrders(req, res) {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-
-    const whereClause = {
-        bookingStatusId: {
-            [Op.ne]: [17, 23]
-        }
-    };
-
-    const result = await getOptimizedBookings(whereClause, page, limit);
-
-    let outObj = {
-        orderDetails: result.bookings,
-        pendingOrdersCount: result.totalCount,
-        pagination: result.pagination
-    };
-
-    return res.json(responsefunc("1", "All Pending Orders", outObj, ""));
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const outObj = await orderService.getPendingOrders(page, limit);
+        return AdminResponseHelper.success(res, "All Pending Orders", outObj);
+    } catch (error) {
+        console.error("Pending Orders Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -992,9 +567,9 @@ async function allCancelOrders(req, res) {
     const limit = parseInt(req.query.limit) || 20;
 
     const whereClause = {
-        bookingStatusId: {
+            bookingStatusId: {
             [Op.eq]: [19]
-        }
+            }
     };
 
     const result = await getOptimizedBookings(whereClause, page, limit);
@@ -1005,7 +580,7 @@ async function allCancelOrders(req, res) {
         pagination: result.pagination
     };
 
-    return res.json(responsefunc("1", "All Cancel Orders Details", outObj, ""));
+    return AdminResponseHelper.success(res, "All Cancel Orders Details", outObj);
 
 }
 
@@ -1021,7 +596,7 @@ async function completeOrders(req, res) {
     const limit = parseInt(req.query.limit) || 20;
 
     const whereClause = {
-        bookingStatusId: {
+            bookingStatusId: {
             [Op.eq]: [17]
         }
     };
@@ -1034,7 +609,7 @@ async function completeOrders(req, res) {
         pagination: result.pagination
     };
 
-    return res.json(responsefunc("1", "All Completed Orders", outObj, ""));
+    return AdminResponseHelper.success(res, "All Completed Orders", outObj);
 
 }
 
@@ -1065,10 +640,10 @@ async function editOrder(req, res) {
 
         const orderExists = await booking.findOne({
             where: { id: orderId },
-            include: [
-                {
-                    model: customerSelectedService,
-                    include: [
+        include: [
+            {
+                model: customerSelectedService,
+                include: [
                         { model: service, attributes: ['id', 'name'] },
                         { model: categories, attributes: ['id', 'name'] }
                     ]
@@ -1078,7 +653,7 @@ async function editOrder(req, res) {
         });
 
         if (!orderExists) {
-            return res.status(404).json(responsefunc("0", "Order not found", {}, "Invalid order ID"));
+            return AdminResponseHelper.notFound(res, "Order not found", "Invalid order ID");
         }
 
         // Update basic order fields
@@ -1151,7 +726,7 @@ async function editOrder(req, res) {
             ]
         });
 
-        return res.json(responsefunc("1", "Order updated successfully", updatedOrder, ""));
+        return AdminResponseHelper.success(res, "Order updated successfully", updatedOrder);
     
 }
 
@@ -1163,10 +738,10 @@ async function getOrderForEdit(req, res) {
 
         const orderDetails = await booking.findOne({
             where: { id: orderId },
-            include: [
-                {
-                    model: customerSelectedService,
-                    include: [
+        include: [
+            {
+                model: customerSelectedService,
+                include: [
                         { model: service, attributes: ['id', 'name'] },
                         { model: categories, attributes: ['id', 'name'] }
                     ]
@@ -1182,9 +757,9 @@ async function getOrderForEdit(req, res) {
                     model: addressDb,
                     as: 'pickupAddress',
                     attributes: ['id', 'title', 'streetAddress', 'district', 'province']
-                },
-                {
-                    model: addressDb,
+            },
+            {
+                model: addressDb,
                     as: 'dropOffAddress',
                     attributes: ['id', 'title', 'streetAddress', 'district', 'province']
                 },
@@ -1210,7 +785,7 @@ async function getOrderForEdit(req, res) {
             throw new customError("Order not found", "Please provide a valid order ID");
         }
 
-        return res.json(responsefunc("1", "Order details fetched successfully", orderDetails, ""));
+        return AdminResponseHelper.success(res, "Order details fetched successfully", orderDetails);
 
 }
 
@@ -1220,28 +795,14 @@ async function getOrderForEdit(req, res) {
 /*
   * Get Admin Service Types
 */
-
 async function getAdminServicesWithCategories(req, res) {
-
-    const countAndService = await subCategories.findAll({
-        attributes: [
-            'id',
-            [sequelize.fn('COUNT', sequelize.col('categoryId')), 'categorySubItemCount']
-        ],
-        include: [
-            {
-                model: categories,
-                attributes: ['id', 'name', 'status', 'image']
-            }
-        ],
-        group: ['categoryId'],
-    })
-
-    const outObj = {
-        serviceTypes: countAndService
+    try {
+        const outObj = await serviceManagementService.getAdminServicesWithCategories();
+        return AdminResponseHelper.success(res, "All Services with Count Fetched", outObj);
+    } catch (error) {
+        console.error("Admin Services with Categories Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-    return res.json(responsefunc("1", "All Services with Count Fetched", outObj, ""))
 }
 
 
@@ -1265,7 +826,7 @@ async function addServiceTypes(req, res) {
         image: CategoryImg,
     })
 
-    return res.json(responsefunc("1", "Service Type Added Sucessfully", category))
+    return AdminResponseHelper.success(res, "Service Type Added Successfully", category);
 
 
 }
@@ -1277,21 +838,14 @@ async function addServiceTypes(req, res) {
 */
 
 async function getSubCategories(req, res) {
-    const { categoryId } = req.params
-
-    const findData = await subCategories.findAll({
-        where: {
-            categoryId: categoryId
-        },
-        attributes: ['id', 'name', 'price', 'status']
-    })
-
-    let outObj = {
-        serviceTypesItems: findData
+    try {
+        const { categoryId } = req.params;
+        const outObj = await serviceManagementService.getSubCategories(categoryId);
+        return AdminResponseHelper.success(res, "All Items fetched", outObj);
+    } catch (error) {
+        console.error("Get SubCategories Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-    return res.json(responsefunc("1", "All Items fetched", outObj, ""))
-
 }
 
 /*
@@ -1339,7 +893,7 @@ async function getServicesAndCategoriesForOrderEdit(req, res) {
         serviceCategories: serviceCategoriesData
     };
 
-    return res.json(responsefunc("1", "Services and Categories fetched successfully", outObj, ""));
+    return AdminResponseHelper.success(res, "Services and Categories fetched successfully", outObj);
 }
 
 
@@ -1356,7 +910,7 @@ async function addServiceItems(req, res) {
         status: true
     })
 
-    return res.json(responsefunc("1", "SubCategory", createSubCategory, ""))
+    return AdminResponseHelper.success(res, "SubCategory Added Successfully", createSubCategory);
 }
 
 //!----------------------------------------------------Employee Management--------------------------------------->>
@@ -1379,7 +933,7 @@ async function getAdminEmployess(req, res) {
     }
 
 
-    return res.json(responsefunc("1", "Admin Employess", outObj, ""))
+    return AdminResponseHelper.success(res, "Admin Employees", outObj);
 
 }
 
@@ -1435,7 +989,7 @@ async function addEmployee(req, res) {
         }, { where: { id: adminId } })
     }
 
-    return res.json(responsefunc("1", "Employee Added Sucessfully", user, ""))
+    return AdminResponseHelper.success(res, "Employee Added Successfully", user);
 
 }
 
@@ -1480,7 +1034,7 @@ async function updateEmployee(req, res) {
     }
 
 
-    return res.json(responsefunc("1", "Employee Updated Sucesfully", {}, ""))
+    return AdminResponseHelper.success(res, "Employee Updated Successfully", {});
 }
 
 
@@ -1498,7 +1052,7 @@ async function changeEmployeeStatus(req, res) {
         }
     })
 
-    return res.json(responsefunc("1", "Employee Status Updated", {}, ""))
+    return AdminResponseHelper.success(res, "Employee Status Updated", {});
 
 }
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
@@ -1548,7 +1102,7 @@ async function addRole(req, res) {
     });
     await permissions.bulkCreate(bulkArray);
 
-    return res.json(responsefunc("1", "Role and Permission Added Sucesfully", {}, ""))
+    return AdminResponseHelper.success(res, "Role and Permission Added Successfully", {});
 
 }
 
@@ -1595,7 +1149,7 @@ async function updateRoles(req, res) {
     // Bulk insert new permissions
     await permissions.bulkCreate(bulkArray);
 
-    return res.json(responsefunc("1", "Role updated", {}, ""));
+    return AdminResponseHelper.success(res, "Role updated", {});
 
 }
 
@@ -1613,7 +1167,7 @@ async function getAllRoles(req, res) {
         attributes: ['id', 'name', 'status']
     })
 
-    return res.json(responsefunc("1", "Get All Roles", getRoles, " "))
+    return AdminResponseHelper.success(res, "Get All Roles", getRoles);
 
 }
 
@@ -1625,7 +1179,7 @@ async function addClassifiedAs(req, res) {
     const createData = await classifiedAs.create({
         name
     })
-    return res.json(responsefunc("1", "Added the classified As", createData, ""))
+    return AdminResponseHelper.success(res, "Added the classified As", createData);
 
 }
 
@@ -1639,7 +1193,7 @@ async function getClassifiedAs(req, res) {
         attributes: ['id', 'name']
     })
 
-    return res.json(responsefunc("1", "Fetched All ClassifiedAs Roles", findData, " "))
+    return AdminResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
 
 }
 
@@ -1669,7 +1223,7 @@ async function addfeatures(req, res) {
         featureOf,
         key
     })
-    return res.json(responsefunc("1", "Feature Added", createFeatures, ""))
+    return AdminResponseHelper.success(res, "Feature Added", createFeatures);
 
 }
 
@@ -1687,7 +1241,7 @@ async function getFeatures(req, res) {
         attributes: ['id', 'name', 'status']
     })
 
-    return res.json(responsefunc("1", "All Features Fetched", findFeature, " "))
+    return AdminResponseHelper.success(res, "All Features Fetched", findFeature);
 
 }
 
@@ -1698,49 +1252,13 @@ async function getFeatures(req, res) {
    * Shop Counts
 */
 async function getShopInformation(req, res) {
-
-    const fourDayAgo = new Date();
-    fourDayAgo.setDate(fourDayAgo.getDate() - 4)
-
-
-    const getShopsCount = await addressDb.count({
-        where: {
-            addressType: 'LaundaryShopAddress'
-        }
-    })
-
-    const newRegisterShops = await addressDb.count({
-        where: {
-            status: true,
-            createdAt: {
-                [Op.gte]: fourDayAgo
-            }
-        }
-    })
-
-    const activeShops = await addressDb.count({
-        where: {
-            addressType: 'LaundaryShopAddress',
-            status: true
-        }
-    })
-
-    const inActiveShops = await addressDb.count({
-        where: {
-            addressType: 'LaundaryShopAddress',
-            status: false
-        }
-    })
-
-    let outObj = {
-        getShopsCount: getShopsCount,
-        newRegisterShops: newRegisterShops,
-        activeShops: activeShops,
-        inActiveShops: inActiveShops
+    try {
+        const outObj = await shopManagementService.getShopInformation();
+        return AdminResponseHelper.success(res, "Shops Information Fetched", outObj);
+    } catch (error) {
+        console.error("Shop Information Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-
-    return res.json(responsefunc("1", "Shops Information Fetched", outObj, ""))
 }
 
 
@@ -1748,164 +1266,27 @@ async function getShopInformation(req, res) {
    * All Shops Data
 */
 async function shopsData(req, res) {
-    const getShopData = await bussinessInformation.findAll({
-        include: [
-            {
-                model: users,
-                as: 'businessInfo',
-                attributes: [
-                    'firstName',
-                    'lastName',
-                    'email',
-                    'phoneNum',
-                    'userTypeId',
-                    [
-                        sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
-                        'TotalEmployees',
-                    ]
-                ],
-                include: [
-                    {
-                        model: bussinessWorkingHours,
-                        where: {
-                            status: true
-                        },
-                        attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
-                    [
-                        sequelize.literal(
-                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                        ),
-                        'TotalBookingCount',
-                    ],
-                    [
-                        sequelize.literal(
-                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (12))`
-                        ),
-                        'PendingBookingCount',
-                    ],
-                    [
-                        sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                        ),
-                        'TotalRevenue',
-                    ]
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ['id', 'name', 'shortName', 'image', 'status']
-                    },
-                    {
-                        model: cities,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: zone,
-                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
-                    }
-                ]
-            }
-        ],
-        attributes: ['id', 'shopName', 'matchProfileOptions', "otherText", 'shopAddressId', 'agentId']
-    })
-
-    let outObj = {
-        AllShopsData: getShopData
+    try {
+        const outObj = await shopManagementService.getShopsData();
+        return AdminResponseHelper.success(res, "Shop Information Data", outObj);
+    } catch (error) {
+        console.error("Shops Data Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-
-
-    return res.json(responsefunc("1", "Shop Information Data", outObj, ""))
-
 }
 
 /*
    * Single Shops Data
 */
 async function singleShopData(req, res) {
-    const { Id } = req.params
-
-    const shopData = await bussinessInformation.findOne({
-        where: {
-            id: Id
-        },
-        include: [
-            {
-                model: users,
-                as: 'businessInfo',
-                attributes: [
-                    'id',
-                    'firstName',
-                    'lastName',
-                    'email',
-                    [
-                        sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
-                        'TotalEmployees',
-                    ]
-                ],
-                include: [
-                    {
-                        model: bussinessWorkingHours,
-                        where: {
-                            status: true
-                        },
-                        attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
-                    },
-                    {
-                        model: agentSelectServices,
-                        as: 'agentServices',
-                        attributes: ['id'],
-                        include: [
-                            {
-                                model: service,
-                                attributes: ['id', 'name']
-                            }
-                        ]
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
-                    [
-                        sequelize.literal(
-                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                        ),
-                        'TotalBookingCount',
-                    ],
-                    [
-                        sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                        ),
-                        'TotalRevenue',
-                    ]
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ['id', 'name', 'shortName', 'image', 'status']
-                    },
-                    {
-                        model: cities,
-                        attributes: ['id', 'name', 'status']
-                    },
-                    {
-                        model: zone,
-                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
-                    }
-                ]
-            }
-        ]
-    })
-
-    return res.json(responsefunc("1", "Single Shop Data", shopData, ""))
-
+    try {
+        const { Id } = req.params;
+        const shopData = await shopManagementService.getSingleShopData(Id);
+        return AdminResponseHelper.success(res, "Single Shop Data", shopData);
+    } catch (error) {
+        console.error("Single Shop Data Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -1913,29 +1294,14 @@ async function singleShopData(req, res) {
    * Get Shop Employees
 */
 async function getShopEmployees(req, res) {
-    const { bussinessId } = req.params
-
-    const findEmployees = await bussinessInformation.findOne({
-        where: {
-            id: bussinessId
-        },
-        include: [
-            {
-                model: users,
-                as: 'businessInfo',
-                attributes: [
-                    'id'
-                    [
-                    sequelize.literal(`(SELECT * FROM users WHERE users.employeeOff = businessInfo.Id)`),
-                    'EmployeeData'
-                    ]
-                ]
-            }
-        ]
-    })
-
-    return res.json(responsefunc("1", "Employee Data Fetched", findEmployees, ""))
-
+    try {
+        const { bussinessId } = req.params;
+        const findEmployees = await shopManagementService.getShopEmployees(bussinessId);
+        return AdminResponseHelper.success(res, "Employee Data Fetched", findEmployees);
+    } catch (error) {
+        console.error("Get Shop Employees Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -1960,20 +1326,21 @@ async function addCountries(req, res) {
         status: true
     })
 
-    return res.json(responsefunc("1", "Country Added Sucessfully", countryCreate, ""))
+    return AdminResponseHelper.success(res, "Country Added Successfully", countryCreate);
 
 }
 
 /*
    * Get Countries
 */
-
 async function getCountries(req, res) {
-
-    const getCountry = await countries.findAll()
-
-    return res.json(responsefunc("1", "All Countries fetched", getCountry, ""))
-
+    try {
+        const getCountry =dataService.getCountries();
+        return AdminResponseHelper.success(res, "All Countries fetched", getCountry);
+    } catch (error) {
+        console.error("Get Countries Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -1992,20 +1359,21 @@ async function addCities(req, res) {
         countryId
     })
 
-    return res.json(responsefunc("1", "City Added Sucessfully", addCity, ""))
+    return AdminResponseHelper.success(res, "City Added Successfully", addCity);
 
 }
 
 /*
    * Get Cities
 */
-
 async function getCities(req, res) {
-
-    const getCities = await cities.findAll()
-
-    return res.json(responsefunc("1", "All Cities Fetched", getCities, ""))
-
+    try {
+        const getCities =dataService.getCities();
+        return AdminResponseHelper.success(res, "All Cities Fetched", getCities);
+    } catch (error) {
+        console.error("Get Cities Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -2033,7 +1401,7 @@ async function addZones(req, res) {
         zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
     })
 
-    return res.json(responsefunc("1", "Zone Added Sucessfully", zoneCreate, ""))
+    return AdminResponseHelper.success(res, "Zone Added Successfully", zoneCreate);
 
 }
 
@@ -2043,73 +1411,13 @@ async function addZones(req, res) {
 */
 
 async function getZones(req, res) {
-    const zones = await zone.findAll({
-        include: [
-            {
-                model: cities,
-                attributes: ['name'],
-            },
-            {
-                model: units,
-                as: 'distanceUnitZ',
-                attributes: ['name', 'symbol'],
-            },
-            {
-                model: units,
-                as: 'currencyUnitZ',
-                attributes: ['name', 'symbol'],
-            },
-            {
-                model: users,
-                as: 'zoneAdmin',
-                attributes: ['firstName', 'lastName'],
-            }
-        ]
-    });
-
-    const shopCounts = await addressDb.findAll({
-        where: { addressType: 'laundaryShopAddress' },
-        attributes: ['zoneId'],
-        group: ['zoneId'],
-        raw: true,
-        logging: false,
-        attributes: [
-            'zoneId',
-            [require('sequelize').fn('COUNT', '*'), 'shopCount']
-        ]
-    });
-
-    const shopMap = shopCounts.reduce((acc, curr) => {
-        acc[curr.zoneId] = parseInt(curr.shopCount, 10);
-        return acc;
-    }, {});
-
-    const shapedZones = zones.map(zone => {
-        const radius = calculateZoneRadius(zone.coordinates); // in km
-
-        return {
-            zoneId: zone.id,
-            zoneName: zone.name,
-            cityName: zone.city?.name || "",
-            zoneMinimumAmount: zone.zoneMinimumAmount,
-            zoneCoordinates: zone.coordinates,
-            serviceCharge: zone.serviceCharge,
-            zoneAdminCommission: `${zone.zoneAdminCommission}%`,
-            currencyUnit: zone.currencyUnitZ ? `${zone.currencyUnitZ.name} (${zone.currencyUnitZ.symbol})` : "",
-            distanceUnit: zone.distanceUnitZ ? `${zone.distanceUnitZ.name} (${zone.distanceUnitZ.symbol})` : "",
-            radius: `${radius} km`,
-            adminName: zone.zoneAdmin
-                ? `${zone.zoneAdmin.firstName || ''} ${zone.zoneAdmin.lastName || ''}`.trim()
-                : '',
-            totalShops: shopMap[zone.id] || 0
-        };
-    });
-
-    return res.json(
-        responsefunc("1", "All Zones Fetched Successfully", shapedZones, "")
-    );
-
-
+    try {
+        const shapedZones = dataService.getZones();
+        return AdminResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
+    } catch (error) {
+        console.error("Get Zones Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -2126,7 +1434,7 @@ async function updateZone(req, res) {
     })
 
     if (!zoneToUpdate) {
-        return res.status(404).json(responsefunc("0", "Zone not found", {}, ""));
+        return AdminResponseHelper.notFound(res, "Zone not found");
     }
 
     const polygon = {
@@ -2145,7 +1453,7 @@ async function updateZone(req, res) {
         zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
     }, { where: { id: zoneId } })
 
-    return res.json(responsefunc("1", "Zone Updated Successfully", updateZone, ""))
+    return AdminResponseHelper.success(res, "Zone Updated Successfully", updateZone);
 
 
 }
@@ -2163,35 +1471,38 @@ async function deleteZone(req, res) {
     const { zoneId } = req.query;
 
     if (!zoneId) {
-        return res.status(400).json(responsefunc("0", "zoneId is required", {}, ""));
+        return AdminResponseHelper.validationError(res, "zoneId is required");
     }
 
     const zoneToDelete = await zone.destroy({ where: { id: zoneId } });
 
     if (!zoneToDelete) {
-        return res.status(404).json(responsefunc("0", "Zone not found", {}, ""));
+        return AdminResponseHelper.notFound(res, "Zone not found");
     }
 
 
-    return res.json(responsefunc("1", "Zone deleted successfully (soft delete)", {}, ""));
+    return AdminResponseHelper.success(res, "Zone deleted successfully (soft delete)", {});;
 }
 
 
 //!-----------------------Units Management--------------------//
 async function getUnitsDistanceAndCurrency(req, res) {
-    const getUnits = await units.findAll({
-        where: {
-            type: {
-                [Op.or]: ['distance', 'currency']
-            }
-        },
-        attributes: ['id', 'name', 'symbol', 'type', 'status']
-    })
-    return res.json(responsefunc("1", "All Units Fetched", getUnits, ""))
+    try {
+        const getUnits = dataService.getUnitsDistanceAndCurrency();
+        return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
+    } catch (error) {
+        console.error("Get Units Distance And Currency Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 async function getAllUnits(req, res) {
-    const getUnits = await units.findAll()
-    return res.json(responsefunc("1", "All Units Fetched", getUnits, ""))
+    try {
+        const getUnits = dataService.getAllUnits();
+        return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
+    } catch (error) {
+        console.error("Get All Units Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 //!-----------------------Add Services,Categories and SubCategories --------------------//
 /*
@@ -2200,26 +1511,29 @@ async function getAllUnits(req, res) {
 
 */
 async function AddServices(req, res) {
-    const { name, description } = req.body
+    try {
+        const { name, description } = req.body;
 
-    let serviceImg = null;
+        let serviceImg = null;
 
-    if (req.file) {
+        if (req.file) {
+            let tempImage = req.file.path;
+            serviceImg = tempImage.replace(/\\/g, "/");
+        }
 
-        let tempImage = req.file.path;
-        serviceImg = tempImage.replace(/\\/g, "/")
+        const serviceData = {
+            name,
+            description,
+            image: serviceImg,
+        };
 
+        const serviceCreate = await serviceManagementService.addService(serviceData);
+
+        return AdminResponseHelper.success(res, "Services Added Successfully", serviceCreate);
+    } catch (error) {
+        console.error("Add Services Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
-
-    const serviceCreate = await service.create({
-        name,
-        description,
-        image: serviceImg,
-    })
-
-
-    return res.json(responsefunc("1", "Services Added Sucessfully", serviceCreate, ""))
-
 }
 
 
@@ -2227,13 +1541,13 @@ async function AddServices(req, res) {
 *  Get All Services
 */
 async function getAllServices(req, res) {
-
-    const getServices = await service.findAll({
-        where: {
-            status: true,
-        }
-    })
-    return res.json(responsefunc("1", "All Services", { services: getServices }, ""))
+    try {
+        const result = serviceManagementService.getAllServices();
+        return AdminResponseHelper.success(res, "All Services", result);
+    } catch (error) {
+        console.error("Get All Services Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 /*
@@ -2251,13 +1565,15 @@ async function AddCategories(req, res) {
 
     }
 
-    const category = await categories.create({
+    const categoryData = {
         name,
         description,
         image: CategoryImg,
-    })
+    }
 
-    return res.json(responsefunc("1", "Category Added Sucessfully", category))
+    const category = await serviceManagementService.addCategory(categoryData);
+
+    return AdminResponseHelper.success(res, "Category Added Successfully", category);
 
 }
 
@@ -2266,11 +1582,13 @@ async function AddCategories(req, res) {
   * Get All Categories
 */
 async function getCategories(req, res) {
-
-    const getCategories = await categories.findAll()
-
-    return res.json(responsefunc("1", "All Categories Fetched", getCategories, ""))
-
+    try {
+        const getCategories = serviceManagementService.getCategories();
+        return AdminResponseHelper.success(res, "All Categories Fetched", getCategories);
+    } catch (error) {
+        console.error("Get Categories Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -2300,7 +1618,7 @@ async function serviceCategoriesAssign(req, res) {
     const newCategoryIds = categoryId.filter(id => !existingCategoryIds.includes(id));
 
     if (newCategoryIds.length === 0) {
-        return res.json(responsefunc("0", "All selected categories are already assigned to the service.", {}, ""));
+        return AdminResponseHelper.validationError(res, "All selected categories are already assigned to the service.");
     }
 
 
@@ -2313,7 +1631,7 @@ async function serviceCategoriesAssign(req, res) {
 
     const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
 
-    return res.json(responsefunc("1", "Service assigned to categories successfully.", { createData }, ""));
+    return AdminResponseHelper.success(res, "Service assigned to categories successfully.", { createData });
 }
 
 
@@ -2347,7 +1665,7 @@ async function addSubCategories(req, res) {
         throw new customError("There is error in the request")
     }
 
-    return res.json(responsefunc("1", "SubCategories Added Sucessfully", createSubCategories, ""))
+    return AdminResponseHelper.success(res, "SubCategories Added Successfully", createSubCategories);
 
 }
 
@@ -2356,10 +1674,13 @@ async function addSubCategories(req, res) {
   * Get SubCategories
 */
 async function getSubcategories(req, res) {
-
-    const getSubcategories = await subCategories.findAll()
-
-    return res.json(responsefunc("1", "All SubCategories Fetched", getSubcategories, ""))
+    try {
+        const getSubcategories = serviceManagementService.getSubcategories();
+        return AdminResponseHelper.success(res, "All SubCategories Fetched", getSubcategories);
+    } catch (error) {
+        console.error("Get Subcategories Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 //!-----------------------------------Driver && Vechicles------------------------------------------->>
@@ -2406,7 +1727,7 @@ async function addVehicle(req, res) {
         weightCapacity,
         volumeCapacity,
     });
-    return res.json(responsefunc("1", "Vehicle added", created, ""));
+    return AdminResponseHelper.success(res, "Vehicle added", created);
 }
 
 //!----------------------------------Cancel Booking Reasons---------------------------------//
@@ -2418,7 +1739,7 @@ async function cancelBooking(req, res) {
     const reasonCreate = await reason.create({
         cancelReason
     })
-    return res.json(responsefunc("1", "Reason Added ", reasonCreate, ""))
+    return AdminResponseHelper.success(res, "Reason Added", reasonCreate);
 
 }
 
@@ -2428,11 +1749,13 @@ async function cancelBooking(req, res) {
 */
 
 async function getCancelBookingReasons(req, res) {
-    const getBooking = await reason.findAll({
-        attributes: ['id', 'cancelReason']
-    })
-    return res.json(responsefunc("1", "All Cancel Booking reasons fetched", getBooking, " "))
-
+    try {
+        const getBooking = dataService.getCancelBookingReasons();
+        return AdminResponseHelper.success(res, "All Cancel Booking reasons fetched", getBooking);
+    } catch (error) {
+        console.error("Get Cancel Booking Reasons Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
@@ -2443,7 +1766,7 @@ async function laundryRoles(req, res) {
         status
     })
 
-    return res.json(responsefunc("1", "Roles Added SucessFully", roleCreation, " "))
+    return AdminResponseHelper.success(res, "Roles Added Successfully", roleCreation);
 
 }
 
@@ -2470,7 +1793,7 @@ async function addMachines(req, res) {
         name,
         status: true
     })
-    return res.json(responsefunc("1", "Machine Added", createMachine, " "))
+    return AdminResponseHelper.success(res, "Machine Added", createMachine);
 
 }
 
@@ -2499,20 +1822,20 @@ async function AddServicePreferences(req, res) {
         status: true
     })
 
-    return res.json(responsefunc("1", "Service Preferences Added Sucessfully", createPreferences, ""))
+    return AdminResponseHelper.success(res, "Service Preferences Added Successfully", createPreferences);
 }
 
 /*
   * Get Account Preferences
 */
 async function getAccountPreferences(req, res) {
-
-    const preFind = await preferencesServiceName.findAll({
-        attributes: ['title', 'status']
-    })
-
-    return res.json(responsefunc("1", "All Account Preferences Fetched", preFind, ""))
-
+    try {
+        const preFind = dataService.getAccountPreferences();
+        return AdminResponseHelper.success(res, "All Account Preferences Fetched", preFind);
+    } catch (error) {
+        console.error("Get Account Preferences Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 /*
@@ -2537,7 +1860,7 @@ async function createPreferenceType(req, res) {
         status: true
     })
 
-    return res.json(responsefunc("1", "Preference Type Added", { createPreferenceType }, ""))
+    return AdminResponseHelper.success(res, "Preference Type Added", { createPreferenceType });
 
 }
 
@@ -2548,7 +1871,7 @@ async function addPreferenceValues(req, res) {
     const { value, preferenceTypeId } = req.body;
 
     if (!preferenceTypeId || !value || (Array.isArray(value) && value.length === 0)) {
-        return res.status(400).json(responsefunc("0", "Value(s) and preferenceTypeId are required", {}, ""));
+        return AdminResponseHelper.validationError(res, "Value(s) and preferenceTypeId are required");
     }
 
     const valuesToInsert = Array.isArray(value) ? value : [value];
@@ -2566,7 +1889,7 @@ async function addPreferenceValues(req, res) {
     const newValues = valuesToInsert.filter(v => !existingValueSet.has(v));
 
     if (newValues.length === 0) {
-        return res.status(400).json(responsefunc("0", "All preference values already exist", {}, ""));
+        return AdminResponseHelper.validationError(res, "All preference values already exist");
     }
 
     const bulkData = newValues.map(v => ({
@@ -2595,7 +1918,7 @@ async function addServiceWithPreferences(req, res) {
     const { serviceId, preferenceTypeId } = req.body;
 
     if (!preferenceTypeId || !serviceId || (Array.isArray(serviceId) && serviceId.length === 0)) {
-        return res.status(400).json(responsefunc("0", "preferenceTypeId and serviceId(s) are required", {}, ""));
+        return AdminResponseHelper.validationError(res, "preferenceTypeId and serviceId(s) are required");
     }
 
     const serviceIds = Array.isArray(serviceId) ? serviceId : [serviceId];
@@ -2619,7 +1942,7 @@ async function addServiceWithPreferences(req, res) {
         }));
 
     if (newMappings.length === 0) {
-        return res.status(400).json(responsefunc("0", "All Services already mapped to this Preference", {}, ""));
+        return AdminResponseHelper.validationError(res, "All Services already mapped to this Preference");
     }
 
     const createdMappings = await serviceWithPreferences.bulkCreate(newMappings);
@@ -2639,25 +1962,13 @@ async function addServiceWithPreferences(req, res) {
   * Get Preference Types
 */
 async function getPreferenceTypes(req, res) {
-    const getPreferenceTypes = await preferenceTypes.findAll({
-        where: {
-            status: true
-        },
-        include: [
-            {
-                model: preferenceValues,
-                as: 'preferenceValues',
-                where: {
-                    status: true
-                },
-                required: false,
-                order: [['id', 'DESC']],
-                attributes: ['id', 'value', 'status']
-            }
-        ],
-        attributes: ['id', 'name', 'status']
-    })
-    return res.json(responsefunc("1", "All Preference Types Fetched", getPreferenceTypes, ""))
+    try {
+        const getPreferenceTypes = await dataService.getPreferenceTypes();
+        return AdminResponseHelper.success(res, "All Preference Types Fetched", getPreferenceTypes);
+    } catch (error) {
+        console.error("Get Preference Types Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -2691,7 +2002,7 @@ async function onHoldOptions(req, res) {
         }))
     );
 
-    return res.json(responsefunc("1", "on Hold Options Created", optionsCreate, ""))
+    return AdminResponseHelper.success(res, "on Hold Options Created", optionsCreate);
 
 
 }
@@ -2702,16 +2013,13 @@ async function onHoldOptions(req, res) {
 */
 
 async function getOnHoldOptions(req, res) {
-
-    const getOptions = await onHoldOption.findAll({
-        where: {
-            status: true
-        },
-        attributes: ['id', 'option', 'status']
-    })
-
-    return res.json(responsefunc("1", "All on Hold Options Fetched", getOptions, ""))
-
+    try {
+        const getOptions = await dataService.getOnHoldOptions();
+        return AdminResponseHelper.success(res, "All on Hold Options Fetched", getOptions);
+    } catch (error) {
+        console.error("Get On Hold Options Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 
@@ -2748,7 +2056,7 @@ async function customerOnHoldOptions(req, res) {
     )
 
 
-    return res.json(responsefunc("1", "Customer Hold Option", optionsCreate, ""))
+    return AdminResponseHelper.success(res, "Customer Hold Option", optionsCreate);
 }
 
 
@@ -2756,20 +2064,13 @@ async function customerOnHoldOptions(req, res) {
   * Get On Hold Customer Options
 */
 async function getOnHoldCustomerOptions(req, res) {
-
-    const optionsFound = await onHoldCustomerOption.findAll({
-        include: [{
-            model: onHoldOption,
-            where: {
-                status: true
-            },
-            attributes: ['id', 'option', 'status']
-        }],
-        attributes: ['id', 'option', 'title', 'conformationText', 'notConfirmText', 'onHoldOptionId']
-    })
-
-    return res.json(responsefunc("1", "All Options Fetched", optionsFound, ""))
-
+    try {
+        const optionsFound = dataService.getOnHoldCustomerOptions();
+        return AdminResponseHelper.success(res, "All Options Fetched", optionsFound);
+    } catch (error) {
+        console.error("Get On Hold Customer Options Error:", error);
+        return AdminResponseHelper.error(res, "Something went wrong", error.message);
+    }
 }
 
 

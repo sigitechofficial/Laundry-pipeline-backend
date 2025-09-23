@@ -20,14 +20,8 @@ module.exports = (sequelize, DataTypes) => {
       models.preferenceValues.belongsTo(preferenceTypes)
 
       //Relation with bookingPreference Model
-      preferenceTypes.hasMany(models.bookingPreference,{
-        foreignKey: 'preferenceTypeId',
-        as: 'bookingPreferences'
-      })
-      models.bookingPreference.belongsTo(preferenceTypes,{
-        foreignKey: 'preferenceTypeId',
-        as: 'bookingPreferences'
-      })
+      preferenceTypes.hasMany(models.bookingPreference)
+      models.bookingPreference.belongsTo(preferenceTypes)
     }
   }
   preferenceTypes.init({

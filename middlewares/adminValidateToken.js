@@ -27,7 +27,7 @@ module.exports=async function validateAccessToken(req,res,next) {
         
     } catch (error) {
         return res.status(403).json({
-            status:'0',
+            status:'403',
             message:"Access Denied",
             data:{error},
             error:'You are not Admin to access it'
