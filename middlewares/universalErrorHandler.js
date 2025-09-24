@@ -1,12 +1,12 @@
 const { StatusCodes, ReasonPhrases } = require('http-status-codes');
 
 /**
- * Custom HTTP Error Class with proper status codes
+ * Universal HTTP Error Class with proper status codes
  */
-class HttpError extends Error {
+class UniversalHttpError extends Error {
     constructor(message, statusCode = StatusCodes.INTERNAL_SERVER_ERROR, details = null) {
         super(message);
-        this.name = 'HttpError';
+        this.name = 'UniversalHttpError';
         this.statusCode = statusCode;
         this.details = details;
         this.isOperational = true;
@@ -16,51 +16,51 @@ class HttpError extends Error {
 }
 
 /**
- * Predefined error types with proper status codes
+ * Universal error types with proper status codes
  */
-class ValidationError extends HttpError {
+class ValidationError extends UniversalHttpError {
     constructor(message, details = null) {
         super(message, StatusCodes.BAD_REQUEST, details);
         this.name = 'ValidationError';
     }
 }
 
-class NotFoundError extends HttpError {
+class NotFoundError extends UniversalHttpError {
     constructor(message = 'Resource not found', details = null) {
         super(message, StatusCodes.NOT_FOUND, details);
         this.name = 'NotFoundError';
     }
 }
 
-class UnauthorizedError extends HttpError {
+class UnauthorizedError extends UniversalHttpError {
     constructor(message = 'Unauthorized access', details = null) {
         super(message, StatusCodes.UNAUTHORIZED, details);
         this.name = 'UnauthorizedError';
     }
 }
 
-class ForbiddenError extends HttpError {
+class ForbiddenError extends UniversalHttpError {
     constructor(message = 'Access forbidden', details = null) {
         super(message, StatusCodes.FORBIDDEN, details);
         this.name = 'ForbiddenError';
     }
 }
 
-class ConflictError extends HttpError {
+class ConflictError extends UniversalHttpError {
     constructor(message = 'Resource conflict', details = null) {
         super(message, StatusCodes.CONFLICT, details);
         this.name = 'ConflictError';
     }
 }
 
-class UnprocessableEntityError extends HttpError {
+class UnprocessableEntityError extends UniversalHttpError {
     constructor(message = 'Unprocessable entity', details = null) {
         super(message, StatusCodes.UNPROCESSABLE_ENTITY, details);
         this.name = 'UnprocessableEntityError';
     }
 }
 
-class TooManyRequestsError extends HttpError {
+class TooManyRequestsError extends UniversalHttpError {
     constructor(message = 'Too many requests', details = null) {
         super(message, StatusCodes.TOO_MANY_REQUESTS, details);
         this.name = 'TooManyRequestsError';
@@ -68,20 +68,28 @@ class TooManyRequestsError extends HttpError {
 }
 
 /**
- * Enhanced error handler middleware
+ * Universal error handler middleware
  */
-const errorHandler = (err, req, res, next) => {
+const universalErrorHandler = (err, req, res, next) => {
     let error = { ...err };
     error.message = err.message;
 
-    // Log error for debugging
-    console.error('Error:', {
+    // Determine context (admin, customer, driver, etc.)
+    const context = req.route?.path?.includes('/admin') ? 'Admin' : 
+                   req.route?.path?.includes('/customer') ? 'Customer' :
+                   req.route?.path?.includes('/driver') ? 'Driver' :
+                   req.route?.path?.includes('/agent') ? 'Agent' : 'General';
+
+    // Log error for debugging with context
+    console.error(`${context} Error:`, {
         message: err.message,
         statusCode: err.statusCode || StatusCodes.INTERNAL_SERVER_ERROR,
         stack: err.stack,
         url: req.originalUrl,
         method: req.method,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        userId: req.user?.id || 'unknown',
+        context: context
     });
 
     // Handle different error types
@@ -101,23 +109,47 @@ const errorHandler = (err, req, res, next) => {
     }
 
     if (err.name === 'JsonWebTokenError') {
-        const message = 'Invalid token';
+        const message = context === 'Admin' ? 'Invalid admin token' : 'Invalid token';
         error = new UnauthorizedError(message);
     }
 
     if (err.name === 'TokenExpiredError') {
-        const message = 'Token expired';
+        const message = context === 'Admin' ? 'Admin token expired' : 'Token expired';
         error = new UnauthorizedError(message);
+    }
+
+    // Handle admin-specific errors
+    if (err.name && err.name.startsWith('Admin')) {
+        // Convert admin errors to universal errors
+        switch (err.name) {
+            case 'AdminValidationError':
+                error = new ValidationError(err.message);
+                break;
+            case 'AdminNotFoundError':
+                error = new NotFoundError(err.message);
+                break;
+            case 'AdminUnauthorizedError':
+                error = new UnauthorizedError(err.message);
+                break;
+            case 'AdminForbiddenError':
+                error = new ForbiddenError(err.message);
+                break;
+            case 'AdminConflictError':
+                error = new ConflictError(err.message);
+                break;
+            default:
+                error = new UniversalHttpError(err.message, err.statusCode);
+        }
     }
 
     // Determine status code
     const statusCode = error.statusCode || StatusCodes.INTERNAL_SERVER_ERROR;
     const message = error.message || ReasonPhrases.INTERNAL_SERVER_ERROR;
 
-    // Prepare response
+    // Prepare response based on context
     const response = {
         status: statusCode >= 400 ? '0' : '1',
-        message: statusCode >= 500 ? 'Internal Server Error' : message,
+        //message: statusCode >= 500 ? 'Internal Server Error' : message,
         data: {},
         error: statusCode >= 500 ? 'Something went wrong' : message,
         statusCode: statusCode,
@@ -139,17 +171,30 @@ const errorHandler = (err, req, res, next) => {
 };
 
 /**
- * 404 handler for undefined routes
+ * Universal 404 handler for undefined routes
  */
-const notFoundHandler = (req, res, next) => {
-    const error = new NotFoundError(`Route ${req.originalUrl} not found`);
+const universalNotFoundHandler = (req, res, next) => {
+    const context = req.originalUrl.includes('/admin') ? 'Admin' : 
+                   req.originalUrl.includes('/customer') ? 'Customer' :
+                   req.originalUrl.includes('/driver') ? 'Driver' :
+                   req.originalUrl.includes('/agent') ? 'Agent' : 'General';
+    
+    const error = new NotFoundError(`${context} route ${req.originalUrl} not found`);
     next(error);
 };
 
-
+/**
+ * Universal async error wrapper
+ */
+const universalAsyncHandler = (fn) => {
+    return (req, res, next) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
+};
 
 module.exports = {
-    HttpError,
+    // Error Classes
+    UniversalHttpError,
     ValidationError,
     NotFoundError,
     UnauthorizedError,
@@ -157,7 +202,12 @@ module.exports = {
     ConflictError,
     UnprocessableEntityError,
     TooManyRequestsError,
-    errorHandler,
-    notFoundHandler,
+    
+    // Middleware Functions
+    universalErrorHandler,
+    universalNotFoundHandler,
+    universalAsyncHandler,
+    
+    // Status Codes
     StatusCodes
 };

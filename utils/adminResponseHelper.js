@@ -16,9 +16,9 @@ class AdminResponseHelper {
         const response = {
             status: '1',
             message: message,
+            statusCode: statusCode,
             data: data,
             error: '',
-            statusCode: statusCode,
             timestamp: new Date().toISOString()
         };
 
@@ -42,9 +42,9 @@ class AdminResponseHelper {
         const response = {
             status: '0',
             message: message,
+            statusCode: statusCode,
             data: {},
             error: error,
-            statusCode: statusCode,
             timestamp: new Date().toISOString()
         };
 

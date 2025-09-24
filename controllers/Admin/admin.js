@@ -45,15 +45,14 @@ const otpGenerator = require('otp-generator')
 // Keep original customError for backward compatibility
 const customError = require('../../middlewares/customError');
 
-// Admin-specific error handling
+// Universal error handling
 const { 
-    AdminValidationError, 
-    AdminNotFoundError, 
-    AdminUnauthorizedError, 
-    AdminConflictError 
-} = require('../../middlewares/adminErrorHandler');
+    ValidationError, 
+    NotFoundError, 
+    UnauthorizedError, 
+    ConflictError 
+} = require('../../middlewares/universalErrorHandler');
 const AdminResponseHelper = require('../../utils/adminResponseHelper');
-const { adminAsyncHandler } = require('../../middlewares/adminErrorHandler');
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const { stat } = require('fs')
@@ -158,7 +157,7 @@ async function updateCustomer(req, res) {
 
     // Validation
     if (!customerId || isNaN(customerId)) {
-        throw new AdminValidationError('Invalid customer ID provided');
+        throw new ValidationError('Invalid customer ID provided');
     }
 
     // Check if customer exists
@@ -170,7 +169,7 @@ async function updateCustomer(req, res) {
     });
 
     if (!customerExists) {
-        throw new AdminNotFoundError('Customer not found');
+        throw new NotFoundError('Customer not found');
     }
 
     // Check if email is being changed and if it already exists
@@ -184,7 +183,7 @@ async function updateCustomer(req, res) {
         });
 
         if (emailExists) {
-            throw new AdminConflictError('Email already exists');
+            throw new ConflictError('Email already exists');
         }
     }
 
@@ -204,7 +203,7 @@ async function updateCustomer(req, res) {
     });
 
     if (updatedCustomer[0] === 0) {
-        throw new AdminValidationError('No changes were made');
+        throw new ValidationError('No changes were made');
     }
 
     // Get updated customer data
@@ -1335,7 +1334,7 @@ async function addCountries(req, res) {
 */
 async function getCountries(req, res) {
     try {
-        const getCountry =dataService.getCountries();
+        const getCountry =await dataService.getCountries();
         return AdminResponseHelper.success(res, "All Countries fetched", getCountry);
     } catch (error) {
         console.error("Get Countries Error:", error);
@@ -1368,7 +1367,7 @@ async function addCities(req, res) {
 */
 async function getCities(req, res) {
     try {
-        const getCities =dataService.getCities();
+        const getCities =await dataService.getCities();
         return AdminResponseHelper.success(res, "All Cities Fetched", getCities);
     } catch (error) {
         console.error("Get Cities Error:", error);
@@ -1412,7 +1411,7 @@ async function addZones(req, res) {
 
 async function getZones(req, res) {
     try {
-        const shapedZones = dataService.getZones();
+        const shapedZones = await dataService.getZones();
         return AdminResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
     } catch (error) {
         console.error("Get Zones Error:", error);
@@ -1488,7 +1487,7 @@ async function deleteZone(req, res) {
 //!-----------------------Units Management--------------------//
 async function getUnitsDistanceAndCurrency(req, res) {
     try {
-        const getUnits = dataService.getUnitsDistanceAndCurrency();
+        const getUnits = await dataService.getUnitsDistanceAndCurrency();
         return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
     } catch (error) {
         console.error("Get Units Distance And Currency Error:", error);
@@ -1497,7 +1496,7 @@ async function getUnitsDistanceAndCurrency(req, res) {
 }
 async function getAllUnits(req, res) {
     try {
-        const getUnits = dataService.getAllUnits();
+        const getUnits = await dataService.getAllUnits();
         return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
     } catch (error) {
         console.error("Get All Units Error:", error);
@@ -1542,7 +1541,8 @@ async function AddServices(req, res) {
 */
 async function getAllServices(req, res) {
     try {
-        const result = serviceManagementService.getAllServices();
+        const result = await serviceManagementService.getAllServices();
+        console.log("🚀 ~ getAllServices ~ result:", result)
         return AdminResponseHelper.success(res, "All Services", result);
     } catch (error) {
         console.error("Get All Services Error:", error);
@@ -1583,7 +1583,7 @@ async function AddCategories(req, res) {
 */
 async function getCategories(req, res) {
     try {
-        const getCategories = serviceManagementService.getCategories();
+        const getCategories = await serviceManagementService.getCategories();
         return AdminResponseHelper.success(res, "All Categories Fetched", getCategories);
     } catch (error) {
         console.error("Get Categories Error:", error);
@@ -1675,7 +1675,7 @@ async function addSubCategories(req, res) {
 */
 async function getSubcategories(req, res) {
     try {
-        const getSubcategories = serviceManagementService.getSubcategories();
+        const getSubcategories = await serviceManagementService.getSubcategories();
         return AdminResponseHelper.success(res, "All SubCategories Fetched", getSubcategories);
     } catch (error) {
         console.error("Get Subcategories Error:", error);

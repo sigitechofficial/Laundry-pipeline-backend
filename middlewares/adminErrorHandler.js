@@ -111,7 +111,6 @@ const adminErrorHandler = (err, req, res, next) => {
     // Prepare response
     const response = {
         status: statusCode >= 400 ? '0' : '1',
-        message: statusCode >= 500 ? 'Internal Server Error' : message,
         data: {},
         error: statusCode >= 500 ? 'Something went wrong' : message,
         statusCode: statusCode,

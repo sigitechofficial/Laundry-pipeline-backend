@@ -16,7 +16,7 @@ const adminRouter = require('./routes/admin');
 const driverRouter = require('./routes/driver');
 const agentRouter = require('./routes/agent');
 const error = require('./middlewares/error');
-const { errorHandler, notFoundHandler } = require('./middlewares/httpErrorHandler');
+const { universalErrorHandler, universalNotFoundHandler, universalAsyncHandler } = require('./middlewares/universalErrorHandler');
 
 const server = http.createServer(app);
 
@@ -95,9 +95,9 @@ app.use('/Public', express.static('./Public'));
 
 // === Error handler ===
 // Error handling middleware
-app.use(notFoundHandler); // Handle 404 routes
-app.use(errorHandler);   // Handle all other errors
-app.use(error);          // Fallback to original error handler
+app.use(universalNotFoundHandler); // Handle 404 routes
+app.use(universalErrorHandler);   // Handle all other errors
+//app.use(error);          // Fallback to original error handler
 
 // === Sockets ===
 intilizeSocketFunc(server);

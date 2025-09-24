@@ -1,34 +1,17 @@
 require("dotenv").config();
-const { users,
-    userType,
-    booking,
-    otpVerification,
-    deviceToken,
-    vehicleType,
-    countries,
-    cities,
-    zone,
-    features } = require('../../models')
-const sequelize = require('sequelize')
-const { Op } = require('sequelize')
-const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
-var JSbarcode = require('jsbarcode')
-const redisCli = require('../../redis/redis')
-const otpGenerator = require('otp-generator')
-const customError = require('../../middlewares/customError')
-const otpMail = require('../../helper/otpMail')
-const error = require('../../middlewares/error')
-const path = require('path')
-const { stat } = require('fs')
-const stripe = require('../stripe')
-const {
-    currentAppUnitsId,
-    unitsConversion,
-    unitsSymbolsAndRates,
-    convertToBaseUnits,
-} = require('../../utils/unitsManagement');
-const { type } = require("os");
+
+// Admin-specific error handling
+const { 
+    AdminValidationError, 
+    AdminNotFoundError, 
+    AdminUnauthorizedError, 
+    AdminConflictError 
+} = require('../../middlewares/adminErrorHandler');
+const AdminResponseHelper = require('../../utils/adminResponseHelper');
+const { adminAsyncHandler } = require('../../middlewares/adminErrorHandler');
+
+// Import services
+const { authService } = require('../../services/Admin');
 
 
 
@@ -41,77 +24,21 @@ const { type } = require("os");
 async function signIn(req, res) {
     const { email, password, dvToken } = req.body;
 
-    // Find the admin data based on email, status, and classifiedAId
-    const adminData = await users.findOne({
-        where: {
-            email,
-            status: true,
-            userTypeId: 1
-        },
-    });
-
-    console.log("🚀 ~ signIn ~ adminData:", adminData);
-
-    if (!adminData) {
-        throw new customError("User not found", "Please enter valid data");
+    // Basic validation only
+    if (!email || !password) {
+        return AdminResponseHelper.validationError(res, "Email and password are required");
     }
 
-    const match = await bcrypt.compare(password, adminData.password);
-    if (!match) {
-        throw new customError(
-            "Bad credentials",
-            "Please enter the correct password to continue"
-        );
-    }
-
-    if (dvToken) {
-        await users.update({ dvToken }, { where: { id: adminData.id } });
-    }
-
-    const featureData = await features.findAll({
-        where: {
-            status: true,
-            featureOf: 'Admin'
-        },
-        attributes: ['id', 'title']
-    })
-
-    const zoneAdminFind = await zone.findOne({
-        where: {
-            zoneAdminId: adminData.id
-        },
-        attributes: ['id', 'name']
-    })
-
-    const zoneId = zoneAdminFind?.id
-    console.log("🚀 ~ signIn ~ zoneId:", zoneId)
-
-
-
-    const payload = {
-        id: adminData.id,
-        email: adminData.email,
-        dvToken: dvToken,
-        zoneId: zoneId || "",
+    const signInData = {
+        email,
+        password,
+        dvToken
     };
 
+    const output = await authService.adminSignIn(signInData);
 
-    const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
-
-    // Add the admin's online clients to the Redis database
-    redisCli.hSet(`tsh${adminData.id}`, dvToken, accessToken);
-
-
-    const output = {
-        id: adminData.id,
-        name: adminData.name,
-        email: adminData.email,
-        accessToken,
-        userName: adminData.companyName,
-        featureData: featureData
-    };
-
-    res.cookie("accessToken", accessToken, {
+    // Set HTTP-only cookie
+    res.cookie("accessToken", output.accessToken, {
         httpOnly: true,
         secure: true,
         sameSite: "None",
@@ -119,23 +46,35 @@ async function signIn(req, res) {
         maxAge: 24 * 60 * 60 * 1000
     });
 
-
-    return res.json(responsefunc("1", "Login Successful", output, ""));
+    return AdminResponseHelper.success(res, "Login Successful", output);
 }
 
 
 
-//!Recurring functions
-let responsefunc = (status, message, data, error) => {
-    return {
-        status: `${status}`,
-        message: `${message}`,
-        data: data,
-        error: `${error}`
+
+
+/*
+ *        Admin SignOut
+ */
+async function signOut(req, res) {
+    const { adminId, dvToken } = req.body;
+
+    // Basic validation only
+    if (!adminId || !dvToken) {
+        return AdminResponseHelper.validationError(res, "Admin ID and device token are required");
     }
-}
 
+    await authService.adminSignOut(adminId, dvToken);
+
+    // Clear the cookie
+    res.clearCookie("accessToken", {
+        path: "/admin"
+    });
+
+    return AdminResponseHelper.success(res, "Sign out successful", {});
+}
 
 module.exports = {
-    signIn
+    signIn,
+    signOut
 }
