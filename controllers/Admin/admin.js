@@ -1962,16 +1962,21 @@ async function addServiceWithPreferences(req, res) {
   * Get Preference Types
 */
 async function getPreferenceTypes(req, res) {
-    try {
         const getPreferenceTypes = await dataService.getPreferenceTypes();
         return AdminResponseHelper.success(res, "All Preference Types Fetched", getPreferenceTypes);
-    } catch (error) {
-        console.error("Get Preference Types Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    
 }
 
 
+/*
+  * Get Preferences And Services Data
+*/
+async function servicesAndPreferencesData(req,res) {
+    const {serviceId}=req.params
+    const getData=await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId)
+    return AdminResponseHelper.success(res,"All Preferences and Services Data Fetched",getData)
+    
+}
 
 //!------------------------On Hold Options-------------------//
 
@@ -2241,6 +2246,7 @@ module.exports = {
     addPreferenceValues,
     addServiceWithPreferences,
     getPreferenceTypes,
+    servicesAndPreferencesData,
     //--------on Hold Option------------//
     onHoldOptions,
     customerOnHoldOptions,

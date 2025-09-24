@@ -147,6 +147,8 @@ router.post('/addPreferenceValues', validateAccessToken, asyncMiddleware(adminCo
 router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
 //Get Preference Types
 router.get('/getPreferenceTypes', validateAccessToken, asyncMiddleware(adminController.getPreferenceTypes))
+//Get Preferences && Services Data 
+router.get("/servicesAndPreferencesData/:serviceId",validateAccessToken,asyncMiddleware(adminController.servicesAndPreferencesData))
 
 //!----------------------------On Hold Options------------------------------------------------------------------//
 //On Hold Options Add

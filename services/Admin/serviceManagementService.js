@@ -1,5 +1,19 @@
-const { subCategories, categories, service, serviceCategories } = require('../../models');
+const {
+    subCategories,
+    categories,
+    service,
+    serviceCategories,
+    preferenceTypes,
+    preferenceValues,
+    serviceWithPreferences } = require('../../models');
 const sequelize = require('sequelize');
+
+const {
+    ValidationError,
+    NotFoundError,
+    UnauthorizedError,
+    ConflictError
+} = require('../../middlewares/universalErrorHandler');
 
 class ServiceManagementService {
     /**
@@ -150,7 +164,7 @@ class ServiceManagementService {
     async addService(serviceData) {
         try {
             const { name, description, image } = serviceData;
-            
+
             const serviceCreate = await service.create({
                 name,
                 description,
@@ -178,6 +192,72 @@ class ServiceManagementService {
         } catch (error) {
             throw new Error(`Add category error: ${error.message}`);
         }
+    }
+
+
+    /**
+     * Get all preference types && service details, Categories, SubCategories
+     * @returns {outObj} List of all preference types && service details
+     */
+
+    async getAllPreferenceTypesAndServiceDetails(serviceId) {
+        console.log("Service Id ====>",serviceId)
+        const preferencesData = await serviceWithPreferences.findAll({
+            where: {
+                serviceId: serviceId
+            },
+            include: [
+                {
+                    model: preferenceTypes,
+                    attributes: ['name'],
+                    include: [
+                        {
+                            model: preferenceValues,
+                            attributes: ['value']
+                        },
+                    ]
+                }
+            ],
+            logging: console.log 
+        })
+
+        console.log("preferencesData======================>>>>>>",preferencesData)
+
+        if (!preferencesData) {
+            throw new NotFoundError('Preference Data Not Found')
+        }
+
+        const serviceCategoriesData = await serviceCategories.findAll({
+            where: {
+                serviceId: serviceId
+            },
+            include: [
+                {
+                    model: categories,
+                    where: {
+                        status: true
+                    },
+                    attributes: ['name', 'description'],
+                    include: [
+                        {
+                            model: subCategories,
+                            attributes: ['name', 'price', 'status', 'description']
+                        }
+                    ]
+                }
+            ]
+        })
+
+        if (!serviceCategoriesData) {
+            throw new NotFoundError('Service Categories Data Not Found')
+        }
+
+        let outObj = {
+            preferencesData: preferencesData,
+            serviceCategoriesData: serviceCategoriesData
+        }
+
+        return outObj
     }
 
 }
