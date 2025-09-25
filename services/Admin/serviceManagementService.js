@@ -353,6 +353,124 @@ class ServiceManagementService {
         return editService;
     }
 
+    /**
+     * Assign services to categories
+     * @param {number} serviceId - Service ID
+     * @param {Array} categoryIds - Array of category IDs
+     * @returns {Object} Assignment result
+     */
+    async assignServiceToCategories(serviceId, categoryIds) {
+        try {
+            if (!serviceId || !categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
+                throw new ValidationError('Invalid input. Please provide serviceId and an array of categoryIds.');
+            }
+
+            const existingAssignments = await serviceCategories.findAll({
+                where: {
+                    serviceId,
+                    categoryId: { [sequelize.Op.in]: categoryIds },
+                    status: true
+                },
+                attributes: ['categoryId']
+            });
+
+            const existingCategoryIds = existingAssignments.map(item => item.categoryId);
+            const newCategoryIds = categoryIds.filter(id => !existingCategoryIds.includes(id));
+
+            if (newCategoryIds.length === 0) {
+                throw new ValidationError('All selected categories are already assigned to the service.');
+            }
+
+            const serviceCategoriesData = newCategoryIds.map(id => ({
+                serviceId: serviceId,
+                categoryId: id,
+                status: true
+            }));
+
+            const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
+            return createData;
+        } catch (error) {
+            if (error instanceof ValidationError) {
+                throw error;
+            }
+            throw new Error(`Assign service to categories error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Add subcategories with barcode generation
+     * @param {Array} subCategoryData - Array of subcategory data
+     * @param {Function} generateBarcodeFunction - Function to generate barcode
+     * @returns {Array} Created subcategories
+     */
+    async addSubCategoriesWithBarcode(subCategoryData, generateBarcodeFunction) {
+        try {
+            const processedData = subCategoryData.map((cat) => {
+                const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
+                const barcodePath = generateBarcodeFunction(cat.name, cat.price, fileName);
+
+                return {
+                    ...cat,
+                    status: true,
+                    barCode: barcodePath
+                };
+            });
+
+            const createSubCategories = await subCategories.bulkCreate(processedData);
+
+            if (!createSubCategories) {
+                throw new Error('There is error in the request');
+            }
+
+            return createSubCategories;
+        } catch (error) {
+            throw new Error(`Add subcategories with barcode error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get service categories assignments
+     * @param {number} serviceId - Service ID
+     * @returns {Array} Service categories assignments
+     */
+    async getServiceCategories(serviceId) {
+        try {
+            const serviceCategoriesData = await serviceCategories.findAll({
+                where: { serviceId },
+                include: [
+                    {
+                        model: categories,
+                        attributes: ['id', 'name', 'description']
+                    }
+                ]
+            });
+            return serviceCategoriesData;
+        } catch (error) {
+            throw new Error(`Get service categories error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Remove service from categories
+     * @param {number} serviceId - Service ID
+     * @param {Array} categoryIds - Array of category IDs to remove
+     * @returns {Object} Removal result
+     */
+    async removeServiceFromCategories(serviceId, categoryIds) {
+        try {
+            const removedAssignments = await serviceCategories.destroy({
+                where: {
+                    serviceId,
+                    categoryId: { [sequelize.Op.in]: categoryIds }
+                }
+            });
+
+            return { message: 'Service removed from categories successfully', removedCount: removedAssignments };
+        } catch (error) {
+            throw new Error(`Remove service from categories error: ${error.message}`);
+        }
+    }
+
 
 }
 

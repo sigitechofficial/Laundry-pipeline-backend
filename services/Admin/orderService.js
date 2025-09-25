@@ -290,6 +290,140 @@ class OrderService {
             throw new Error(`Get order for edit service error: ${error.message}`);
         }
     }
+
+    /**
+     * Edit order - Comprehensive order management
+     * @param {number} orderId - Order ID
+     * @param {Object} orderData - Order update data
+     * @returns {Object} Updated order data
+     */
+    async editOrder(orderId, orderData) {
+        try {
+            const {
+                orderTrackId,
+                collectionDate,
+                collectionTimeFrom,
+                collectionTimeTo,
+                deliveryDate,
+                deliveryTimeFrom,
+                deliveryTimeTo,
+                driverInstructionOptions,
+                driverInstructionOptions1,
+                driverInstruction,
+                totalItems,
+                orderAmount,
+                subTotal,
+                frequency,
+                bookingStatusId,
+                services,
+                billingDetails
+            } = orderData;
+
+            // Check if order exists
+            const orderExists = await booking.findOne({
+                where: { id: orderId },
+                include: [
+                    {
+                        model: customerSelectedService,
+                        include: [
+                            { model: service, attributes: ['id', 'name'] },
+                            { model: categories, attributes: ['id', 'name'] }
+                        ]
+                    },
+                    { model: billingDetails }
+                ]
+            });
+
+            if (!orderExists) {
+                throw new Error('Order not found');
+            }
+
+            // Update basic order fields
+            const orderUpdateData = {
+                orderTrackId,
+                collectionDate,
+                collectionTimeFrom,
+                collectionTimeTo,
+                deliveryDate,
+                deliveryTimeFrom,
+                deliveryTimeTo,
+                driverInstructionOptions,
+                driverInstructionOptions1,
+                driverInstruction,
+                totalItems,
+                orderAmount,
+                subTotal,
+                frequency,
+                bookingStatusId
+            };
+
+            await booking.update(orderUpdateData, { where: { id: orderId } });
+
+            // Update services
+            if (Array.isArray(services)) {
+                await customerSelectedService.destroy({ where: { bookingId: orderId } });
+
+                const serviceData = services.map(s => ({
+                    bookingId: orderId,
+                    serviceId: s.serviceId,
+                    categoryId: s.categoryId,
+                    date: s.date || new Date(),
+                    time: s.time || new Date().toTimeString().slice(0, 8),
+                    items: s.items || 1,
+                    servicePrice: s.servicePrice || 0,
+                    categoryPrice: s.categoryPrice || 0,
+                    status: s.status !== undefined ? s.status : true
+                }));
+
+                await customerSelectedService.bulkCreate(serviceData);
+            }
+
+            // Update billing details
+            if (billingDetails) {
+                const billingUpdateData = {
+                    upfrontAmount: billingDetails.upfrontAmount,
+                    discount: billingDetails.discount,
+                    total: billingDetails.total,
+                    zoneAdminCommission: billingDetails.zoneAdminCommission,
+                    serviceCharge: billingDetails.serviceCharge,
+                    categoryCharge: billingDetails.categoryCharge,
+                    pickupDriverEarning: billingDetails.pickupDriverEarning,
+                    deliveryDriverEarning: billingDetails.deliveryDriverEarning,
+                    paymentStatus: billingDetails.paymentStatus
+                };
+
+                const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
+
+                if (existingBilling) {
+                    await billingDetails.update(billingUpdateData, { where: { bookingId: orderId } });
+                } else {
+                    await billingDetails.create({ bookingId: orderId, ...billingUpdateData });
+                }
+            }
+
+            // Fetch updated order
+            const updatedOrder = await booking.findOne({
+                where: { id: orderId },
+                include: [
+                    {
+                        model: customerSelectedService,
+                        include: [
+                            { model: service, attributes: ['id', 'name'] },
+                            { model: categories, attributes: ['id', 'name'] }
+                        ]
+                    },
+                    { model: billingDetails },
+                    { model: bookingStatus, attributes: ['id', 'title', 'description'] },
+                    { model: addressDb, as: 'pickupAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] },
+                    { model: addressDb, as: 'dropOffAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] }
+                ]
+            });
+
+            return updatedOrder;
+        } catch (error) {
+            throw new Error(`Edit order service error: ${error.message}`);
+        }
+    }
 }
 
 module.exports = new OrderService();

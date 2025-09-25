@@ -210,6 +210,131 @@ class CustomerService {
             throw new Error(`Specific customer details service error: ${error.message}`);
         }
     }
+
+    /**
+     * Update customer details
+     * @param {number} customerId - Customer ID
+     * @param {Object} updateData - Customer update data
+     * @returns {Object} Updated customer data
+     */
+    async updateCustomer(customerId, updateData) {
+        try {
+            const { firstName, lastName, email, phoneNum, status } = updateData;
+
+            // Check if customer exists
+            const customerExists = await users.findOne({
+                where: {
+                    id: customerId,
+                    userTypeId: 2 // Ensure it's a customer
+                }
+            });
+
+            if (!customerExists) {
+                throw new Error('Customer not found');
+            }
+
+            // Check if email is being changed and if it already exists
+            if (email && email !== customerExists.email) {
+                const emailExists = await users.findOne({
+                    where: {
+                        email: email,
+                        id: { [Op.ne]: customerId },
+                        userTypeId: 2
+                    }
+                });
+
+                if (emailExists) {
+                    throw new Error('Email already exists');
+                }
+            }
+
+            // Update customer details
+            const updateFields = {};
+            if (firstName) updateFields.firstName = firstName;
+            if (lastName) updateFields.lastName = lastName;
+            if (email) updateFields.email = email;
+            if (phoneNum) updateFields.phoneNum = phoneNum;
+            if (status !== undefined) updateFields.status = status;
+
+            const updatedCustomer = await users.update(updateFields, {
+                where: {
+                    id: customerId,
+                    userTypeId: 2
+                }
+            });
+
+            if (updatedCustomer[0] === 0) {
+                throw new Error('No changes were made');
+            }
+
+            // Get updated customer data
+            const updatedCustomerData = await users.findOne({
+                where: {
+                    id: customerId,
+                    userTypeId: 2
+                },
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
+            });
+
+            return updatedCustomerData;
+        } catch (error) {
+            throw new Error(`Update customer service error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Delete customer (soft delete)
+     * @param {number} customerId - Customer ID
+     * @returns {Object} Deletion result
+     */
+    async deleteCustomer(customerId) {
+        try {
+            // Check if customer exists
+            const customerExists = await users.findOne({
+                where: {
+                    id: customerId,
+                    userTypeId: 2 // Ensure it's a customer
+                }
+            });
+
+            if (!customerExists) {
+                throw new Error('Customer not found');
+            }
+
+            // Check if customer has any active bookings
+            const activeBookings = await booking.count({
+                where: {
+                    customerId: customerId,
+                    bookingStatusId: {
+                        [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
+                    }
+                }
+            });
+
+            if (activeBookings > 0) {
+                throw new Error(`Customer has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
+            }
+
+            // Soft delete the customer (set status to false)
+            const deletedCustomer = await users.update(
+                { status: false },
+                {
+                    where: {
+                        id: customerId,
+                        userTypeId: 2
+                    }
+                }
+            );
+
+            if (deletedCustomer[0] === 0) {
+                throw new Error('Failed to delete customer');
+            }
+
+            return { customerId, message: 'Customer deleted successfully' };
+        } catch (error) {
+            throw new Error(`Delete customer service error: ${error.message}`);
+        }
+    }
 }
 
 module.exports = new CustomerService();

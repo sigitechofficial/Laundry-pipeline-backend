@@ -264,6 +264,113 @@ class DriverService {
             throw new Error(`Specific driver details service error: ${error.message}`);
         }
     }
+
+    /**
+     * Change driver status
+     * @param {number} driverId - Driver ID
+     * @param {boolean} status - New status
+     * @returns {Object} Status change result
+     */
+    async changeDriverStatus(driverId, status) {
+        try {
+            const driverStatusChange = await users.update({
+                status: status
+            }, {
+                where: {
+                    id: driverId
+                }
+            });
+
+            if (driverStatusChange[0] === 0) {
+                throw new Error('Driver not found or no changes made');
+            }
+
+            return { driverId, status, message: 'Driver status updated successfully' };
+        } catch (error) {
+            throw new Error(`Change driver status service error: ${error.message}`);
+        }
+    }
+
+    /**
+     * Update driver details
+     * @param {number} driverId - Driver ID
+     * @param {Object} updateData - Driver update data
+     * @returns {Object} Updated driver data
+     */
+    async updateDriver(driverId, updateData) {
+        try {
+            const { firstName, lastName, email, phoneNum, status } = updateData;
+
+            // Check if driver exists
+            const driverExists = await users.findOne({
+                where: {
+                    id: driverId,
+                    roleId: 6, // Ensure it's a driver
+                    classifiedAsId: 1
+                }
+            });
+
+            if (!driverExists) {
+                throw new Error('Driver not found');
+            }
+
+            // Check if email is being changed and if it already exists
+            if (email && email !== driverExists.email) {
+                const emailExists = await users.findOne({
+                    where: {
+                        email: email,
+                        id: { [Op.ne]: driverId },
+                        roleId: 6,
+                        classifiedAsId: 1
+                    }
+                });
+
+                if (emailExists) {
+                    throw new Error('Email already exists');
+                }
+            }
+
+            // Update driver details
+            const updateFields = {};
+            if (firstName) updateFields.firstName = firstName;
+            if (lastName) updateFields.lastName = lastName;
+            if (email) updateFields.email = email;
+            if (phoneNum) updateFields.phoneNum = phoneNum;
+            if (status !== undefined) updateFields.status = status;
+
+            const updatedDriver = await users.update(updateFields, {
+                where: {
+                    id: driverId,
+                    roleId: 6,
+                    classifiedAsId: 1
+                }
+            });
+
+            if (updatedDriver[0] === 0) {
+                throw new Error('No changes were made');
+            }
+
+            // Get updated driver data
+            const updatedDriverData = await users.findOne({
+                where: {
+                    id: driverId,
+                    roleId: 6,
+                    classifiedAsId: 1
+                },
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+                include: [
+                    {
+                        model: roles,
+                        attributes: ['name']
+                    }
+                ]
+            });
+
+            return updatedDriverData;
+        } catch (error) {
+            throw new Error(`Update driver service error: ${error.message}`);
+        }
+    }
 }
 
 module.exports = new DriverService();

@@ -83,19 +83,20 @@ const {
     dataService,
     shopManagementService,
     prefrencesServices,
-    employeeManagementService
+    employeeManagementService,
+    zoneManagementService,
+    vehicleManagementService,
+    roleManagementService,
+    featureManagementService,
+    locationManagementService
 } = require('../../services/Admin');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
-    try {
+    
         const outObj = await dashboardService.getDashboardData();
         //return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
         return AdminResponseHelper.success(res, "Admin Dashboard Data", outObj);
-    } catch (error) {
-        console.error("Dashboard Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -110,26 +111,17 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-    try {
         const formattedCustomers = await customerService.getAllCustomers();
         return AdminResponseHelper.success(res, "All Customer Details", formattedCustomers);
-    } catch (error) {
-        console.error("Get All Customers Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    
 }
 
 /*
    * Customers Count
 */
 async function customerCount(req, res) {
-    try {
         const outObj = await customerService.getCustomerCount();
         return AdminResponseHelper.success(res, "All Customer Count", outObj);
-    } catch (error) {
-        console.error("Customer Count Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -138,14 +130,9 @@ async function customerCount(req, res) {
   * Specific Customer Details
 */
 async function specificCustomerDetails(req, res) {
-    try {
         const { customerId } = req.params;
         const output = await customerService.getSpecificCustomerDetails(customerId);
         return AdminResponseHelper.success(res, "Customer Order Details", output);
-    } catch (error) {
-        console.error("Specific Customer Details Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -155,68 +142,10 @@ async function specificCustomerDetails(req, res) {
 async function updateCustomer(req, res) {
     const { customerId } = req.params;
     const { firstName, lastName, email, phoneNum, status } = req.body;
-
-    // Validation
-    if (!customerId || isNaN(customerId)) {
-        throw new ValidationError('Invalid customer ID provided');
-    }
-
-    // Check if customer exists
-    const customerExists = await users.findOne({
-        where: {
-            id: customerId,
-            userTypeId: 2 // Ensure it's a customer
-        }
-    });
-
-    if (!customerExists) {
-        throw new NotFoundError('Customer not found');
-    }
-
-    // Check if email is being changed and if it already exists
-    if (email && email !== customerExists.email) {
-        const emailExists = await users.findOne({
-            where: {
-                email: email,
-                id: { [Op.ne]: customerId },
-                userTypeId: 2
-            }
-        });
-
-        if (emailExists) {
-            throw new ConflictError('Email already exists');
-        }
-    }
-
-    // Update customer details
-    const updateData = {};
-    if (firstName) updateData.firstName = firstName;
-    if (lastName) updateData.lastName = lastName;
-    if (email) updateData.email = email;
-    if (phoneNum) updateData.phoneNum = phoneNum;
-    if (status !== undefined) updateData.status = status;
-
-    const updatedCustomer = await users.update(updateData, {
-        where: {
-            id: customerId,
-            userTypeId: 2
-        }
-    });
-
-    if (updatedCustomer[0] === 0) {
-        throw new ValidationError('No changes were made');
-    }
-
-    // Get updated customer data
-    const updatedCustomerData = await users.findOne({
-        where: {
-            id: customerId,
-            userTypeId: 2
-        },
-        attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
-    });
-
-    return AdminResponseHelper.success(res, "Customer updated successfully", updatedCustomerData);
+    
+    const updateData = { firstName, lastName, email, phoneNum, status };
+    const result = await customerService.updateCustomer(customerId, updateData);
+    return AdminResponseHelper.success(res, "Customer updated successfully", result);
 }
 
 
@@ -225,49 +154,8 @@ async function updateCustomer(req, res) {
 */
 async function deleteCustomer(req, res) {
     const { customerId } = req.params;
-
-    // Check if customer exists
-    const customerExists = await users.findOne({
-        where: {
-            id: customerId,
-            userTypeId: 2 // Ensure it's a customer
-        }
-    });
-
-    if (!customerExists) {
-        throw new customError("Customer not found", "Please provide a valid customer ID");
-    }
-
-    // Check if customer has any active bookings
-    const activeBookings = await booking.count({
-        where: {
-            customerId: customerId,
-            bookingStatusId: {
-                [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
-            }
-        }
-    });
-
-    if (activeBookings > 0) {
-        throw new customError("Cannot delete customer", `Customer has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
-    }
-
-    // Soft delete the customer (set status to false instead of hard delete)
-    const deletedCustomer = await users.update(
-        { status: false },
-        {
-            where: {
-                id: customerId,
-                userTypeId: 2
-            }
-        }
-    );
-
-    if (deletedCustomer[0] === 0) {
-        throw new customError("Failed to delete customer", "No changes were made");
-    }
-
-    return AdminResponseHelper.success(res, "Customer deleted successfully", { customerId });
+    const result = await customerService.deleteCustomer(customerId);
+    return AdminResponseHelper.success(res, "Customer deleted successfully", result);
 }
 
 
@@ -276,13 +164,8 @@ async function deleteCustomer(req, res) {
  *  Drivers Count
 */
 async function countTotalDrivers(req, res) {
-    try {
         const outObj = await driverService.getDriverCount();
         return AdminResponseHelper.success(res, "All Counts Fetched", outObj);
-    } catch (error) {
-        console.error("Driver Count Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -290,13 +173,8 @@ async function countTotalDrivers(req, res) {
  *  All Drivers Detail 
 */
 async function allDriverMiniDetails(req, res) {
-    try {
         const driversWithBookingCounts = await driverService.getAllDriversWithStats();
         return AdminResponseHelper.success(res, "Drivers Details fetched", driversWithBookingCounts);
-    } catch (error) {
-        console.error("All Drivers Details Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -304,18 +182,9 @@ async function allDriverMiniDetails(req, res) {
  *  All Drivers Detail 
 */
 async function driverStatusChange(req, res) {
-    const { driverId } = req.params
-
-    const driverStatusChange = await users.update({
-        status: false
-    }, {
-        where: {
-            id: driverId
-        }
-    })
-
-    return AdminResponseHelper.success(res, "Driver Status Updated", driverStatusChange);
-
+    const { driverId } = req.params;
+    const result = await driverService.changeDriverStatus(driverId, false);
+    return AdminResponseHelper.success(res, "Driver Status Updated", result);
 }
 
 
@@ -324,105 +193,9 @@ async function driverStatusChange(req, res) {
  *   Specific Driver Detail  
 */
 async function specificdriverDetail(req, res) {
-    const { driverId } = req.params
-
-    const userInfo = await driverInZones.findOne({
-        where: {
-            driverId: driverId,
-        },
-        include: [
-            {
-                model: users,
-                as: 'driverInZone',
-                attributes: ['id', 'firstName', 'lastName', 'email'],
-                include: [
-                    {
-                        model: roles,
-                        attributes: ['name']
-                    }
-                ]
-            },
-            {
-                model: bussinessInformation,
-                as: 'laundaryDriver',
-                attributes: ['shopName', 'shopAddressId'],
-                include: [{
-                    model: addressDb,
-                    attributes: ['streetAddress', 'province', 'district', 'addressType']
-                }]
-            },
-        ],
-        attributes: ['laundaryShopId']
-    })
-
-    // Check if driver exists in driverInZones table
-    if (!userInfo) {
-        throw new customError("Driver not found", "Driver does not exist in the system");
-    }
-
-    const findBooking = await booking.findAll({
-        where: {
-            driverId: driverId,
-            [Op.or]: [
-                { driverId: driverId },
-                { deliveryDriverId: driverId }
-            ]
-        },
-        include: [
-            {
-                model: proofOfDeliveries,
-                attributes: ['id', 'imgUpload', 'noOfItems', 'bookingId', 'userId']
-            },
-            {
-                model: addressDb,
-                as: 'pickupAddress',
-                attributes: ['title', 'streetAddress', 'district', 'province', 'addressType']
-            },
-            {
-                model: addressDb,
-                as: 'dropOffAddress',
-                attributes: ['title', 'streetAddress', 'district', 'province', 'addressType']
-            }
-        ],
-        attributes: {
-            exclude: ['createdAt', 'updatedAt', 'onHoldReason', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId', 'OnHoldOtherReasons']
-        }
-    })
-
-    const driverTotalOrders = await booking.count({
-        where: {
-            driverId: driverId,
-            [Op.or]: [
-                { driverId: driverId },
-                { deliveryDriverId: driverId }
-            ]
-        }
-    })
-
-    const pendingOrder = await booking.count({
-        where: {
-            bookingStatusId: {
-                [Op.ne]: 11
-            },
-            [Op.or]: [
-                { driverId: driverId },
-                { deliveryDriverId: driverId }
-            ]
-
-        }
-    })
-
-    let outObj = {
-        userInformation: userInfo,
-        driverBookings: findBooking,
-        totalOrders: driverTotalOrders,
-        pendingOrders: pendingOrder
-
-    }
-
-
-    return AdminResponseHelper.success(res, `All booking Fetched for Driver id:${driverId}`, outObj);
-
+    const { driverId } = req.params;
+    const result = await driverService.getSpecificDriverDetails(driverId);
+    return AdminResponseHelper.success(res, `All booking Fetched for Driver id:${driverId}`, result);
 }
 
 /*
@@ -431,73 +204,10 @@ async function specificdriverDetail(req, res) {
 async function updateDriver(req, res) {
     const { driverId } = req.params;
     const { firstName, lastName, email, phoneNum, status } = req.body;
-
-    // Check if driver exists
-    const driverExists = await users.findOne({
-        where: {
-            id: driverId,
-            roleId: 6, // Ensure it's a driver
-            classifiedAsId: 1
-        }
-    });
-
-    if (!driverExists) {
-        throw new customError("Driver not found", "Please provide a valid driver ID");
-    }
-
-    // Check if email is being changed and if it already exists
-    if (email && email !== driverExists.email) {
-        const emailExists = await users.findOne({
-            where: {
-                email: email,
-                id: { [Op.ne]: driverId },
-                roleId: 6,
-                classifiedAsId: 1
-            }
-        });
-
-        if (emailExists) {
-            throw new customError("Email already exists", "Please use a different email address");
-        }
-    }
-
-    // Update driver details
-    const updateData = {};
-    if (firstName) updateData.firstName = firstName;
-    if (lastName) updateData.lastName = lastName;
-    if (email) updateData.email = email;
-    if (phoneNum) updateData.phoneNum = phoneNum;
-    if (status !== undefined) updateData.status = status;
-
-    const updatedDriver = await users.update(updateData, {
-        where: {
-            id: driverId,
-            roleId: 6,
-            classifiedAsId: 1
-        }
-    });
-
-    if (updatedDriver[0] === 0) {
-        throw new customError("Failed to update driver", "No changes were made");
-    }
-
-    // Get updated driver data
-    const updatedDriverData = await users.findOne({
-        where: {
-            id: driverId,
-            roleId: 6,
-            classifiedAsId: 1
-        },
-        attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
-        include: [
-            {
-                model: roles,
-                attributes: ['name']
-            }
-        ]
-    });
-
-    return AdminResponseHelper.success(res, "Driver updated successfully", updatedDriverData);
+    
+    const updateData = { firstName, lastName, email, phoneNum, status };
+    const result = await driverService.updateDriver(driverId, updateData);
+    return AdminResponseHelper.success(res, "Driver updated successfully", result);
 }
 
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
@@ -506,13 +216,8 @@ async function updateDriver(req, res) {
  *  All Orders Counts
 */
 async function ordersCount(req, res) {
-    try {
         const outObj = await orderService.getOrderCount();
         return AdminResponseHelper.success(res, "All Order Count", outObj);
-    } catch (error) {
-        console.error("Orders Count Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -520,7 +225,6 @@ async function ordersCount(req, res) {
   * All Order Details - Optimized Version
 */
 async function allOrderDetails(req, res) {
-    try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const statusFilter = req.query.status;
@@ -532,10 +236,6 @@ async function allOrderDetails(req, res) {
 
         const outObj = await orderService.getAllOrderDetails(filters, page, limit);
         return AdminResponseHelper.success(res, "All booking Details Fetched", outObj);
-    } catch (error) {
-        console.error("All Order Details Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -544,15 +244,10 @@ async function allOrderDetails(req, res) {
   * Pending Orders - Optimized Version
 */
 async function pendingOrders(req, res) {
-    try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const outObj = await orderService.getPendingOrders(page, limit);
         return AdminResponseHelper.success(res, "All Pending Orders", outObj);
-    } catch (error) {
-        console.error("Pending Orders Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -617,176 +312,19 @@ async function completeOrders(req, res) {
   * Edit Order - Comprehensive Order Management
 */
 async function editOrder(req, res) {
-        const { orderId } = req.params;
-        const {
-            orderTrackId,
-            collectionDate,
-            collectionTimeFrom,
-            collectionTimeTo,
-            deliveryDate,
-            deliveryTimeFrom,
-            deliveryTimeTo,
-            driverInstructionOptions,
-            driverInstructionOptions1,
-            driverInstruction,
-            totalItems,
-            orderAmount,
-            subTotal,
-            frequency,
-            bookingStatusId,
-            services,
-            billingDetails
-        } = req.body;
-
-        const orderExists = await booking.findOne({
-            where: { id: orderId },
-        include: [
-            {
-                model: customerSelectedService,
-                include: [
-                        { model: service, attributes: ['id', 'name'] },
-                        { model: categories, attributes: ['id', 'name'] }
-                    ]
-                },
-                { model: billingDetails }
-            ]
-        });
-
-        if (!orderExists) {
-            return AdminResponseHelper.notFound(res, "Order not found", "Invalid order ID");
-        }
-
-        // Update basic order fields
-        const orderUpdateData = {
-            orderTrackId, collectionDate, collectionTimeFrom, collectionTimeTo,
-            deliveryDate, deliveryTimeFrom, deliveryTimeTo,
-            driverInstructionOptions, driverInstructionOptions1, driverInstruction,
-            totalItems, orderAmount, subTotal, frequency, bookingStatusId
-        };
-
-        await booking.update(orderUpdateData, { where: { id: orderId } });
-
-        // Update services
-        if (Array.isArray(services)) {
-            await customerSelectedService.destroy({ where: { bookingId: orderId } });
-
-            const serviceData = services.map(s => ({
-                bookingId: orderId,
-                serviceId: s.serviceId,
-                categoryId: s.categoryId,
-                date: s.date || new Date(),
-                time: s.time || new Date().toTimeString().slice(0, 8),
-                items: s.items || 1,
-                servicePrice: s.servicePrice || 0,
-                categoryPrice: s.categoryPrice || 0,
-                status: s.status !== undefined ? s.status : true
-            }));
-
-            await customerSelectedService.bulkCreate(serviceData);
-        }
-
-        // Update billing details
-        if (billingDetails) {
-            const billingUpdateData = {
-                upfrontAmount: billingDetails.upfrontAmount,
-                discount: billingDetails.discount,
-                total: billingDetails.total,
-                zoneAdminCommission: billingDetails.zoneAdminCommission,
-                serviceCharge: billingDetails.serviceCharge,
-                categoryCharge: billingDetails.categoryCharge,
-                pickupDriverEarning: billingDetails.pickupDriverEarning,
-                deliveryDriverEarning: billingDetails.deliveryDriverEarning,
-                paymentStatus: billingDetails.paymentStatus
-            };
-
-            const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
-
-            if (existingBilling) {
-                await billingDetails.update(billingUpdateData, { where: { bookingId: orderId } });
-            } else {
-                await billingDetails.create({ bookingId: orderId, ...billingUpdateData });
-            }
-        }
-
-        // Fetch updated order
-        const updatedOrder = await booking.findOne({
-            where: { id: orderId },
-            include: [
-                {
-                    model: customerSelectedService,
-                    include: [
-                        { model: service, attributes: ['id', 'name'] },
-                        { model: categories, attributes: ['id', 'name'] }
-                    ]
-                },
-                { model: billingDetails },
-                { model: bookingStatus, attributes: ['id', 'title', 'description'] },
-                { model: addressDb, as: 'pickupAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] },
-                { model: addressDb, as: 'dropOffAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] }
-            ]
-        });
-
-        return AdminResponseHelper.success(res, "Order updated successfully", updatedOrder);
-    
+    const { orderId } = req.params;
+    const orderData = req.body;
+    const result = await orderService.editOrder(orderId, orderData);
+    return AdminResponseHelper.success(res, "Order updated successfully", result);
 }
 
 /*
   * Get Single Order Details for Editing
 */
 async function getOrderForEdit(req, res) {
-        const { orderId } = req.params;
-
-        const orderDetails = await booking.findOne({
-            where: { id: orderId },
-        include: [
-            {
-                model: customerSelectedService,
-                include: [
-                        { model: service, attributes: ['id', 'name'] },
-                        { model: categories, attributes: ['id', 'name'] }
-                    ]
-                },
-                {
-                    model: billingDetails
-                },
-                {
-                    model: bookingStatus,
-                    attributes: ['id', 'title', 'description']
-                },
-                {
-                    model: addressDb,
-                    as: 'pickupAddress',
-                    attributes: ['id', 'title', 'streetAddress', 'district', 'province']
-            },
-            {
-                model: addressDb,
-                    as: 'dropOffAddress',
-                    attributes: ['id', 'title', 'streetAddress', 'district', 'province']
-                },
-                {
-                    model: users,
-                    as: 'customer',
-                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
-                },
-                {
-                    model: users,
-                    as: 'driver',
-                    attributes: ['id', 'firstName', 'lastName', 'email']
-                },
-                {
-                    model: users,
-                    as: 'deliveryDriver',
-                    attributes: ['id', 'firstName', 'lastName', 'email']
-                }
-            ]
-        });
-
-        if (!orderDetails) {
-            throw new customError("Order not found", "Please provide a valid order ID");
-        }
-
-        return AdminResponseHelper.success(res, "Order details fetched successfully", orderDetails);
-
+    const { orderId } = req.params;
+    const result = await orderService.getOrderForEdit(orderId);
+    return AdminResponseHelper.success(res, "Order details fetched successfully", result);
 }
 
 
@@ -796,13 +334,10 @@ async function getOrderForEdit(req, res) {
   * Get Admin Service Types
 */
 async function getAdminServicesWithCategories(req, res) {
-    try {
+    
         const outObj = await serviceManagementService.getAdminServicesWithCategories();
         return AdminResponseHelper.success(res, "All Services with Count Fetched", outObj);
-    } catch (error) {
-        console.error("Admin Services with Categories Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    
 }
 
 
@@ -838,14 +373,11 @@ async function addServiceTypes(req, res) {
 */
 
 async function getSubCategories(req, res) {
-    try {
+    
         const { categoryId } = req.params;
         const outObj = await serviceManagementService.getSubCategories(categoryId);
         return AdminResponseHelper.success(res, "All Items fetched", outObj);
-    } catch (error) {
-        console.error("Get SubCategories Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 /*
@@ -1063,47 +595,9 @@ async function changeEmployeeStatus(req, res) {
 
 async function addRole(req, res) {
     const { name, permissionRole } = req.body;
-
-    const checkExist = await roles.findOne({ where: { name } });
-    if (checkExist) {
-        throw new customError("Same role exists", "Please try another name");
-    }
-    const newRole = await roles.create({ name, status: true });
-    let bulkArray = [];
-    permissionRole.map((ele) => {
-        if (ele.permissions.create === true) {
-            bulkArray.push({
-                permissionType: "create",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.read === true) {
-            bulkArray.push({
-                permissionType: "read",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.update === true) {
-            bulkArray.push({
-                permissionType: "update",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-        if (ele.permissions.delete === true) {
-            bulkArray.push({
-                permissionType: "delete",
-                featureId: ele.id,
-                roleId: newRole.id,
-            });
-        }
-    });
-    await permissions.bulkCreate(bulkArray);
-
-    return AdminResponseHelper.success(res, "Role and Permission Added Successfully", {});
-
+    const roleData = { name, permissionRole };
+    const result = await roleManagementService.addRole(roleData);
+    return AdminResponseHelper.success(res, "Role and Permission Added Successfully", result);
 }
 
 
@@ -1111,46 +605,10 @@ async function addRole(req, res) {
    * Update Roles
 */
 async function updateRoles(req, res) {
-
     const { name, permissionRole, roleId } = req.body;
-
-    // Check if the role name already exists
-    const checkExist = await roles.findOne({
-        where: { name, id: { [Op.not]: roleId } },
-    });
-
-    if (checkExist) {
-        throw new customError("Same role exists", "Please try another name");
-    }
-
-
-    await roles.update({ name, status: true }, { where: { id: roleId } });
-
-    await permissions.destroy({ where: { roleId } });
-
-
-    const bulkArray = permissionRole.flatMap((ele) => {
-        const permissions = [];
-        if (ele.permissions.create) {
-            permissions.push({ permissionType: "create", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.read) {
-            permissions.push({ permissionType: "read", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.update) {
-            permissions.push({ permissionType: "update", featureId: ele.id, roleId });
-        }
-        if (ele.permissions.delete) {
-            permissions.push({ permissionType: "delete", featureId: ele.id, roleId });
-        }
-        return permissions;
-    });
-
-    // Bulk insert new permissions
-    await permissions.bulkCreate(bulkArray);
-
-    return AdminResponseHelper.success(res, "Role updated", {});
-
+    const updateData = { name, permissionRole };
+    const result = await roleManagementService.updateRole(roleId, updateData);
+    return AdminResponseHelper.success(res, "Role updated", result);
 }
 
 
@@ -1158,29 +616,18 @@ async function updateRoles(req, res) {
   * Get All Roles
 */
 async function getAllRoles(req, res) {
-
-
-    const getRoles = await roles.findAll({
-        where: {
-            status: true
-        },
-        attributes: ['id', 'name', 'status']
-    })
-
+    const getRoles = await roleManagementService.getAllRoles();
     return AdminResponseHelper.success(res, "Get All Roles", getRoles);
-
 }
 
 /*
    * Add Classified
 */
 async function addClassifiedAs(req, res) {
-    const { name } = req.body
-    const createData = await classifiedAs.create({
-        name
-    })
-    return AdminResponseHelper.success(res, "Added the classified As", createData);
-
+    const { name } = req.body;
+    const classifiedData = { name };
+    const result = await featureManagementService.addClassifiedAs(classifiedData);
+    return AdminResponseHelper.success(res, "Added the classified As", result);
 }
 
 
@@ -1188,13 +635,8 @@ async function addClassifiedAs(req, res) {
    * Get ClassifiedAs
 */
 async function getClassifiedAs(req, res) {
-
-    const findData = await classifiedAs.findAll({
-        attributes: ['id', 'name']
-    })
-
+    const findData = await featureManagementService.getClassifiedAs();
     return AdminResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
-
 }
 
 
@@ -1203,28 +645,10 @@ async function getClassifiedAs(req, res) {
    * Add Features
 */
 async function addfeatures(req, res) {
-    const { title, status, featureOf, key } = req.body
-
-    const titleFound = await features.findOne({
-        where: {
-            title: title,
-            key: key
-        }
-    })
-
-    if (titleFound) {
-        throw new customError("Feature Alreay Exists")
-
-    }
-
-    const createFeatures = await features.create({
-        title,
-        status,
-        featureOf,
-        key
-    })
-    return AdminResponseHelper.success(res, "Feature Added", createFeatures);
-
+    const { title, status, featureOf, key } = req.body;
+    const featureData = { title, status, featureOf, key };
+    const result = await featureManagementService.addFeature(featureData);
+    return AdminResponseHelper.success(res, "Feature Added", result);
 }
 
 
@@ -1232,17 +656,8 @@ async function addfeatures(req, res) {
    * Get Features
 */
 async function getFeatures(req, res) {
-
-
-    const findFeature = await features.findAll({
-        where: {
-            status: true
-        },
-        attributes: ['id', 'name', 'status']
-    })
-
+    const findFeature = await featureManagementService.getFeatures();
     return AdminResponseHelper.success(res, "All Features Fetched", findFeature);
-
 }
 
 
@@ -1252,13 +667,10 @@ async function getFeatures(req, res) {
    * Shop Counts
 */
 async function getShopInformation(req, res) {
-    try {
+
         const outObj = await shopManagementService.getShopInformation();
         return AdminResponseHelper.success(res, "Shops Information Fetched", outObj);
-    } catch (error) {
-        console.error("Shop Information Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
@@ -1266,27 +678,21 @@ async function getShopInformation(req, res) {
    * All Shops Data
 */
 async function shopsData(req, res) {
-    try {
+
         const outObj = await shopManagementService.getShopsData();
         return AdminResponseHelper.success(res, "Shop Information Data", outObj);
-    } catch (error) {
-        console.error("Shops Data Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 /*
    * Single Shops Data
 */
 async function singleShopData(req, res) {
-    try {
+
         const { Id } = req.params;
         const shopData = await shopManagementService.getSingleShopData(Id);
         return AdminResponseHelper.success(res, "Single Shop Data", shopData);
-    } catch (error) {
-        console.error("Single Shop Data Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
@@ -1294,14 +700,11 @@ async function singleShopData(req, res) {
    * Get Shop Employees
 */
 async function getShopEmployees(req, res) {
-    try {
+
         const { bussinessId } = req.params;
         const findEmployees = await shopManagementService.getShopEmployees(bussinessId);
         return AdminResponseHelper.success(res, "Employee Data Fetched", findEmployees);
-    } catch (error) {
-        console.error("Get Shop Employees Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
@@ -1310,37 +713,25 @@ async function getShopEmployees(req, res) {
  *  Add Countries
 */
 async function addCountries(req, res) {
-    const { name, shortName } = req.body
+    const { name, shortName } = req.body;
 
     let flagImg = null;
-
     if (req.file) {
         let tempImage = req.file.path;
-        flagImg = tempImage.replace(/\\/g, "/")
+        flagImg = tempImage.replace(/\\/g, "/");
     }
 
-    const countryCreate = await countries.create({
-        name,
-        shortName,
-        image: flagImg,
-        status: true
-    })
-
-    return AdminResponseHelper.success(res, "Country Added Successfully", countryCreate);
-
+    const countryData = { name, code: shortName, image: flagImg };
+    const result = await locationManagementService.addCountry(countryData);
+    return AdminResponseHelper.success(res, "Country Added Successfully", result);
 }
 
 /*
    * Get Countries
 */
 async function getCountries(req, res) {
-    try {
-        const getCountry =await dataService.getCountries();
-        return AdminResponseHelper.success(res, "All Countries fetched", getCountry);
-    } catch (error) {
-        console.error("Get Countries Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    const getCountry = await locationManagementService.getCountries();
+    return AdminResponseHelper.success(res, "All Countries fetched", getCountry);
 }
 
 
@@ -1349,31 +740,18 @@ async function getCountries(req, res) {
 */
 
 async function addCities(req, res) {
-    const { name, lat, lng, countryId } = req.body
-
-    const addCity = await cities.create({
-        name,
-        lat,
-        lng,
-        status: true,
-        countryId
-    })
-
-    return AdminResponseHelper.success(res, "City Added Successfully", addCity);
-
+    const { name, lat, lng, countryId } = req.body;
+    const cityData = { name, lat, lng, countryId };
+    const result = await locationManagementService.addCity(cityData);
+    return AdminResponseHelper.success(res, "City Added Successfully", result);
 }
 
 /*
    * Get Cities
 */
 async function getCities(req, res) {
-    try {
-        const getCities =await dataService.getCities();
-        return AdminResponseHelper.success(res, "All Cities Fetched", getCities);
-    } catch (error) {
-        console.error("Get Cities Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    const getCities = await locationManagementService.getCities();
+    return AdminResponseHelper.success(res, "All Cities Fetched", getCities);
 }
 
 
@@ -1382,27 +760,26 @@ async function getCities(req, res) {
 */
 
 async function addZones(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
 
     const polygon = {
         type: 'Polygon',
         coordinates: coordinates
-    }
+    };
 
-    const zoneCreate = await zone.create({
+    const zoneData = {
         name,
         coordinates: polygon,
-        status: true,
         cityId,
         zoneMinimumAmount,
         currencyUnitId,
         distanceUnitId,
         serviceCharge,
         zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
-    })
+    };
 
+    const zoneCreate = await zoneManagementService.addZone(zoneData);
     return AdminResponseHelper.success(res, "Zone Added Successfully", zoneCreate);
-
 }
 
 
@@ -1411,13 +788,8 @@ async function addZones(req, res) {
 */
 
 async function getZones(req, res) {
-    try {
-        const shapedZones = await dataService.getZones();
-        return AdminResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
-    } catch (error) {
-        console.error("Get Zones Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+    const shapedZones = await zoneManagementService.getZones();
+    return AdminResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
 }
 
 
@@ -1426,23 +798,15 @@ async function getZones(req, res) {
 */
 
 async function updateZone(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
     const { zoneId } = req.params;
-
-    const zoneToUpdate = await zone.findOne({
-        where: { id: zoneId }
-    })
-
-    if (!zoneToUpdate) {
-        return AdminResponseHelper.notFound(res, "Zone not found");
-    }
 
     const polygon = {
         type: 'Polygon',
         coordinates: coordinates
-    }
+    };
 
-    const updateZone = await zone.update({
+    const updateData = {
         name,
         coordinates: polygon,
         cityId,
@@ -1451,11 +815,10 @@ async function updateZone(req, res) {
         distanceUnitId,
         serviceCharge,
         zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
-    }, { where: { id: zoneId } })
+    };
 
+    const updateZone = await zoneManagementService.updateZone(zoneId, updateData);
     return AdminResponseHelper.success(res, "Zone Updated Successfully", updateZone);
-
-
 }
 
 
@@ -1474,35 +837,23 @@ async function deleteZone(req, res) {
         return AdminResponseHelper.validationError(res, "zoneId is required");
     }
 
-    const zoneToDelete = await zone.destroy({ where: { id: zoneId } });
-
-    if (!zoneToDelete) {
-        return AdminResponseHelper.notFound(res, "Zone not found");
-    }
-
-
-    return AdminResponseHelper.success(res, "Zone deleted successfully (soft delete)", {});;
+    const result = await zoneManagementService.deleteZone(zoneId);
+    return AdminResponseHelper.success(res, "Zone deleted successfully (soft delete)", result);
 }
 
 
 //!-----------------------Units Management--------------------//
 async function getUnitsDistanceAndCurrency(req, res) {
-    try {
+
         const getUnits = await dataService.getUnitsDistanceAndCurrency();
         return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
-    } catch (error) {
-        console.error("Get Units Distance And Currency Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 async function getAllUnits(req, res) {
-    try {
+
         const getUnits = await dataService.getAllUnits();
         return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
-    } catch (error) {
-        console.error("Get All Units Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 //!-----------------------Add Services,Categories and SubCategories --------------------//
 /*
@@ -1511,7 +862,7 @@ async function getAllUnits(req, res) {
 
 */
 async function AddServices(req, res) {
-    try {
+
         const { name, description } = req.body;
 
         let serviceImg = null;
@@ -1530,10 +881,6 @@ async function AddServices(req, res) {
         const serviceCreate = await serviceManagementService.addService(serviceData);
 
         return AdminResponseHelper.success(res, "Services Added Successfully", serviceCreate);
-    } catch (error) {
-        console.error("Add Services Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
 }
 
 
@@ -1541,14 +888,11 @@ async function AddServices(req, res) {
 *  Get All Services
 */
 async function getAllServices(req, res) {
-    try {
+
         const result = await serviceManagementService.getAllServices();
         console.log("🚀 ~ getAllServices ~ result:", result)
         return AdminResponseHelper.success(res, "All Services", result);
-    } catch (error) {
-        console.error("Get All Services Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
@@ -1614,13 +958,10 @@ async function AddCategories(req, res) {
   * Get All Categories
 */
 async function getCategories(req, res) {
-    try {
+
         const getCategories = await serviceManagementService.getCategories();
         return AdminResponseHelper.success(res, "All Categories Fetched", getCategories);
-    } catch (error) {
-        console.error("Get Categories Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 /*
@@ -1725,13 +1066,10 @@ async function addSubCategories(req, res) {
   * Get SubCategories
 */
 async function getSubcategories(req, res) {
-    try {
+
         const getSubcategories = await serviceManagementService.getSubcategories();
         return AdminResponseHelper.success(res, "All SubCategories Fetched", getSubcategories);
-    } catch (error) {
-        console.error("Get Subcategories Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 /*
@@ -1762,45 +1100,30 @@ async function deleteSubCategories(req, res) {
 */
 
 async function addVehicle(req, res) {
-    let { title, baseRate, perUnitRate, weightCapacity, volumeCapacity } =
-        req.body;
+    let { title, baseRate, perUnitRate, weightCapacity, volumeCapacity } = req.body;
+    
     const appUnitId = await currentAppUnitsId();
     const units = await unitsSymbolsAndRates(appUnitId);
-    weightCapacity = convertToBaseUnits(
-        weightCapacity,
-        units.conversionRate.weight
-    );
-    volumeCapacity = convertToBaseUnits(
-        volumeCapacity,
-        units.conversionRate.length
-    );
-    const vehicleExist = await vehicleType.findOne({
-        where: { title, status: true },
-    });
-    if (vehicleExist)
-        throw new CustomException(
-            "A vehicle with the same name already exists",
-            " Please try some other name"
-        );
-    // check on image
+    weightCapacity = convertToBaseUnits(weightCapacity, units.conversionRate.weight);
+    volumeCapacity = convertToBaseUnits(volumeCapacity, units.conversionRate.length);
+    
     let imagePath = "";
     if (req.file) {
         let tmpPath = req.file.path;
         imagePath = tmpPath.replace(/\\/g, "/");
-        // getting units
-    } else {
-        imagePath = ""; // throw new CustomException('Image not uploaded', 'Please upload image');
     }
-    const created = await vehicleType.create({
+    
+    const vehicleData = {
         title,
-        status: true,
-        image: imagePath,
         baseRate,
         perUnitRate,
         weightCapacity,
         volumeCapacity,
-    });
-    return AdminResponseHelper.success(res, "Vehicle added", created);
+        image: imagePath
+    };
+    
+    const result = await vehicleManagementService.addVehicle(vehicleData);
+    return AdminResponseHelper.success(res, "Vehicle added", result);
 }
 
 //!----------------------------------Cancel Booking Reasons---------------------------------//
@@ -1822,13 +1145,10 @@ async function cancelBooking(req, res) {
 */
 
 async function getCancelBookingReasons(req, res) {
-    try {
+
         const getBooking = dataService.getCancelBookingReasons();
         return AdminResponseHelper.success(res, "All Cancel Booking reasons fetched", getBooking);
-    } catch (error) {
-        console.error("Get Cancel Booking Reasons Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
@@ -1902,13 +1222,10 @@ async function AddServicePreferences(req, res) {
   * Get Account Preferences
 */
 async function getAccountPreferences(req, res) {
-    try {
+
         const preFind = dataService.getAccountPreferences();
         return AdminResponseHelper.success(res, "All Account Preferences Fetched", preFind);
-    } catch (error) {
-        console.error("Get Account Preferences Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 /*
@@ -2129,13 +1446,10 @@ async function onHoldOptions(req, res) {
 */
 
 async function getOnHoldOptions(req, res) {
-    try {
+
         const getOptions = await dataService.getOnHoldOptions();
         return AdminResponseHelper.success(res, "All on Hold Options Fetched", getOptions);
-    } catch (error) {
-        console.error("Get On Hold Options Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
@@ -2180,13 +1494,10 @@ async function customerOnHoldOptions(req, res) {
   * Get On Hold Customer Options
 */
 async function getOnHoldCustomerOptions(req, res) {
-    try {
+
         const optionsFound = dataService.getOnHoldCustomerOptions();
         return AdminResponseHelper.success(res, "All Options Fetched", optionsFound);
-    } catch (error) {
-        console.error("Get On Hold Customer Options Error:", error);
-        return AdminResponseHelper.error(res, "Something went wrong", error.message);
-    }
+
 }
 
 
