@@ -7,6 +7,7 @@ const dataService = require('./dataService');
 const shopManagementService = require('./shopManagementService');
 const employeeManagementService = require('./employeeManagementService');
 const authService = require('./authService');
+const prefrencesServices=require('./prefrencesServices');
 
 module.exports = {
     dashboardService,
@@ -17,5 +18,6 @@ module.exports = {
     dataService,
     shopManagementService,
     employeeManagementService,
-    authService
+    authService,
+    prefrencesServices
 };

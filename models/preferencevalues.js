@@ -28,6 +28,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'preferenceValues',
+    paranoid:true
   });
   return preferenceValues;
 };

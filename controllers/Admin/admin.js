@@ -82,6 +82,7 @@ const {
     serviceManagementService,
     dataService,
     shopManagementService,
+    prefrencesServices,
     employeeManagementService
 } = require('../../services/Admin');
 
@@ -1550,6 +1551,35 @@ async function getAllServices(req, res) {
     }
 }
 
+
+/*
+  * Delete Services
+*/
+async function deleteServices(req, res) {
+    const { serviceId } = req.params;
+    const deleteService = await serviceManagementService.deleteService(serviceId);
+    return AdminResponseHelper.success(res, "Service Deleted Successfully", deleteService);
+}
+
+
+/*
+  * Edit Services
+*/
+async function editServices(req,res){
+    const { serviceId } = req.params;
+    const { name, description } = req.body;
+
+    let serviceImg = null;
+
+        if (req.file) {
+            let tempImage = req.file.path;
+            serviceImg = tempImage.replace(/\\/g, "/");
+        }
+    const editService = await serviceManagementService.editService(serviceId, name, description, serviceImg);
+    return AdminResponseHelper.success(res, "Service Edited Successfully", editService);
+}
+
+
 /*
   * Add Categories
 */
@@ -1578,6 +1608,8 @@ async function AddCategories(req, res) {
 }
 
 
+
+
 /*
   * Get All Categories
 */
@@ -1591,6 +1623,15 @@ async function getCategories(req, res) {
     }
 }
 
+/*
+* 
+*/
+async function editCategories(req, res) {
+    const { categoryId } = req.params;
+    const { name, description } = req.body;
+    const editCategory = await serviceManagementService.editCategories(categoryId, name, description);
+    return AdminResponseHelper.success(res, "Category Edited Successfully", editCategory);
+}
 
 /*
   * Assign Services to Categories
@@ -1682,6 +1723,18 @@ async function getSubcategories(req, res) {
         return AdminResponseHelper.error(res, "Something went wrong", error.message);
     }
 }
+
+/*
+  * Edit SubCategories
+*/
+
+async function editSubCategories(req, res) {
+    const { subCategoryId } = req.params;
+    const { name, price } = req.body;
+    const editSubCategory = await serviceManagementService.editSubcategories(subCategoryId, name, price);
+    return AdminResponseHelper.success(res, "SubCategory Edited Successfully", editSubCategory);
+}
+
 
 //!-----------------------------------Driver && Vechicles------------------------------------------->>
 /* 
@@ -1865,6 +1918,25 @@ async function createPreferenceType(req, res) {
 }
 
 /*
+ * Edit Preference Type
+*/
+async function editPreferenceType(req, res) {
+    const { preferenceTypeId } = req.params;
+    const { name } = req.body;
+    const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name);
+    return AdminResponseHelper.success(res, "Preference Type Edited", editPreferenceType);
+}
+
+/*
+ * Delete Preference Type
+*/
+async function deletePreferenceTypeController(req, res) {
+    const { preferenceTypeId } = req.params;
+    const deletePreferenceType = await prefrencesServices.deletePreferenceType(preferenceTypeId);
+    return AdminResponseHelper.success(res, "Preference Type Deleted", deletePreferenceType);
+}
+
+/*
   * Add Preference Values
 */
 async function addPreferenceValues(req, res) {
@@ -1910,6 +1982,25 @@ async function addPreferenceValues(req, res) {
     );
 }
 
+/*
+ * Edit Preference Values
+*/
+async function editPreferenceValuesController(req, res) {
+    const { preferenceValueId } = req.params;
+    const { value } = req.body;
+    const editPreferenceValuesData = await prefrencesServices.editPreferenceValues(preferenceValueId, value);
+    return AdminResponseHelper.success(res, "Preference Values Edited", editPreferenceValuesData);
+}
+
+
+/*
+ * Delete Preference Values
+*/
+async function deletePreferenceValuesController(req, res) {
+    const { preferenceValueId } = req.params;
+    const deletePreferenceValuesData = await prefrencesServices.deletePreferenceValues(preferenceValueId);
+    return AdminResponseHelper.success(res, "Preference Values Deleted", deletePreferenceValuesData);
+}
 
 /*
   * Add Service With Preferences
@@ -2226,9 +2317,13 @@ module.exports = {
     getCategories,
     getSubcategories,
     serviceCategoriesAssign,
+    editSubCategories,
+    editCategories,
     //-------------Services--------//
     getAllServices,
     AddServices,
+    deleteServices,
+    editServices,
     //-------------Units--------//
     getUnitsDistanceAndCurrency,
     getAllUnits,
@@ -2240,10 +2335,12 @@ module.exports = {
     //-------------Machinery--------//
     addMachines,
     //------------Account Preferences-----------//
-    AddServicePreferences,
-    getAccountPreferences,
+    editPreferenceType,
+    deletePreferenceTypeController,
     createPreferenceType,
     addPreferenceValues,
+    editPreferenceValuesController,
+    deletePreferenceValuesController,
     addServiceWithPreferences,
     getPreferenceTypes,
     servicesAndPreferencesData,

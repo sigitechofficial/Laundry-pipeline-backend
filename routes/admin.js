@@ -110,16 +110,24 @@ router.get('/getAllUnits', validateAccessToken, asyncMiddleware(adminController.
 //!---------------------------------------Services,Categories,SubCategories-----------------------------------------//
 //Create Service 
 router.post("/AddServices", validateAccessToken, uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.AddServices))
+//Edit Service
+router.patch('/editServices/:serviceId', validateAccessToken,uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.editServices))
+//Delete Service
+router.delete('/deleteServices/:serviceId', validateAccessToken, asyncMiddleware(adminController.deleteServices))
 //create categories 
 router.post('/addCategory', validateAccessToken, uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.AddCategories))
 //create SubCategories
 router.post('/addSubCategories', validateAccessToken, asyncMiddleware(adminController.addSubCategories))
 //get categories
 router.get('/getcategories', validateAccessToken, asyncMiddleware(adminController.getCategories))
+//Edit Categories
+router.patch('/editCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.editCategories))
 //get Services
 router.get('/getServices', validateAccessToken, asyncMiddleware(adminController.getAllServices))
 //get SubCategories
 router.get('/getSubcategories', validateAccessToken, asyncMiddleware(adminController.getSubcategories))
+//Edit SubCategories
+router.patch('/editSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.editSubCategories))
 //Assign Service to Categories
 router.post('/serviceCategoriesAssign', validateAccessToken, asyncMiddleware(adminController.serviceCategoriesAssign))
 
@@ -135,18 +143,22 @@ router.get('/getCancelReasons', validateAccessToken, asyncMiddleware(adminContro
 //!-------------------------Machinery-----------------------------------------------------------------------------//
 router.post('/addMachines', validateAccessToken, asyncMiddleware(adminController.addMachines))
 //!-------------------------Account Preferences------------------------------------------------------------------//
-//Add Account Preferences
-router.post('/AddServicePreferences', validateAccessToken, asyncMiddleware(adminController.AddServicePreferences))
-//Get Account Preferences
-router.get('/getAccountPreferences', validateAccessToken, asyncMiddleware(adminController.getAccountPreferences))
 //Add Preference Types
 router.post('/createPreferenceType', validateAccessToken, asyncMiddleware(adminController.createPreferenceType))
-//Add Preference Values
-router.post('/addPreferenceValues', validateAccessToken, asyncMiddleware(adminController.addPreferenceValues))
-//Add Service With Preferences
-router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
 //Get Preference Types
 router.get('/getPreferenceTypes', validateAccessToken, asyncMiddleware(adminController.getPreferenceTypes))
+//Edit Preference Type
+router.patch('/editPreferenceType/:preferenceTypeId', validateAccessToken, asyncMiddleware(adminController.editPreferenceType))
+//Delete Preference Type
+router.delete('/deletePreferenceType/:preferenceTypeId', validateAccessToken, asyncMiddleware(adminController.deletePreferenceTypeController))
+//Add Preference Values
+router.post('/addPreferenceValues', validateAccessToken, asyncMiddleware(adminController.addPreferenceValues))
+//Edit Preference Values
+router.patch('/editPreferenceValues/:preferenceValueId', validateAccessToken, asyncMiddleware(adminController.editPreferenceValuesController))
+//Delete Preference Values
+router.delete('/deletePreferenceValues/:preferenceValueId', validateAccessToken, asyncMiddleware(adminController.deletePreferenceValuesController))
+//Add Service With Preferences
+router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
 //Get Preferences && Services Data 
 router.get("/servicesAndPreferencesData/:serviceId",validateAccessToken,asyncMiddleware(adminController.servicesAndPreferencesData))
 

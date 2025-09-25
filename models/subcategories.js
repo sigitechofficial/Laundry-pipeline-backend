@@ -47,6 +47,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'subCategories',
+    paranoid:true
   });
   return subCategories;
 };

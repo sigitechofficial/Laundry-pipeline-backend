@@ -44,6 +44,22 @@ class ServiceManagementService {
         }
     }
 
+
+    /**
+     * Edit Subcategories
+     * @param {number} subCategoryId - Subcategory ID
+     * @param {string} name - Subcategory name
+     * @param {string} price - Subcategory price
+     * @returns {Object} Edited subcategory data
+     */
+    async editSubcategories(subCategoryId, name, price) {
+        const editSubcategory = await subCategories.update({ name, price }, { where: { id: subCategoryId } });
+        if (!editSubcategory) {
+            throw new NotFoundError('Subcategory Not Found')
+        }
+        return editSubcategory;
+    }
+
     /**
      * Get subcategories by category ID
      * @param {number} categoryId - Category ID
@@ -144,6 +160,21 @@ class ServiceManagementService {
     }
 
     /**
+     * Edit Categories
+     * @param {number} categoryId - Category ID
+     * @param {string} name - Category name
+     * @param {string} description - Category description
+     * @returns {Object} Edited category data
+     */
+    async editCategories(categoryId, name, description) {
+        const editCategory = await categories.update({ name, description }, { where: { id: categoryId } });
+        if (!editCategory) {
+            throw new NotFoundError('Category Not Found')
+        }
+        return editCategory;
+    }
+
+    /**
      * Get all subcategories
      * @returns {Array} List of all subcategories
      */
@@ -195,7 +226,7 @@ class ServiceManagementService {
     }
 
 
-    /**
+    /** 
      * Get all preference types && service details, Categories, SubCategories
      * @returns {outObj} List of all preference types && service details
      */
@@ -259,6 +290,42 @@ class ServiceManagementService {
 
         return outObj
     }
+
+
+    /** 
+     * @params {serviceId} Delete Services
+     * @returns {Object} Deleted service data
+     */
+
+    async deleteService(serviceId) {
+        
+            const deleteService = await service.destroy({ where: { serviceId: serviceId } });
+            if (!deleteService) {
+                throw new NotFoundError('Service Not Found')
+            }
+            return deleteService;
+    }
+
+    /**
+     * Edit Services
+     * @param {number} serviceId - Service ID
+     * @param {string} name - Service name
+     * @param {string} description - Service description
+     * @returns {Object} Edited service data
+     */
+    async editService(serviceId, name, description, serviceImg) {
+        const editService = await service.update({ 
+            name, 
+            description,
+            image: serviceImg 
+        }, 
+            { where: { serviceId: serviceId } });
+        if (!editService) {
+            throw new NotFoundError('Service Not Found')
+        }
+        return editService;
+    }
+
 
 }
 
