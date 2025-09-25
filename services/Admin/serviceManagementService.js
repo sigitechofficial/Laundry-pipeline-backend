@@ -173,6 +173,18 @@ class ServiceManagementService {
         }
         return editCategory;
     }
+    /**
+     * Delete Categories
+     * @param {number} categoryId - Category ID
+     * @returns {Object} Deleted category data
+     */
+    async deleteCategories(categoryId) {
+        const deleteCategory = await categories.destroy({ where: { id: categoryId } });
+        if (!deleteCategory) {
+            throw new NotFoundError('Category Not Found')
+        }
+        return deleteCategory;
+    }
 
     /**
      * Get all subcategories

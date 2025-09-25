@@ -1624,7 +1624,7 @@ async function getCategories(req, res) {
 }
 
 /*
-* 
+  * Edit Categories
 */
 async function editCategories(req, res) {
     const { categoryId } = req.params;
@@ -1632,6 +1632,16 @@ async function editCategories(req, res) {
     const editCategory = await serviceManagementService.editCategories(categoryId, name, description);
     return AdminResponseHelper.success(res, "Category Edited Successfully", editCategory);
 }
+
+/*
+  * Delete Categories
+*/
+async function deleteCategories(req, res) {
+    const { categoryId } = req.params;
+    const deleteCategory = await serviceManagementService.deleteCategories(categoryId);
+    return AdminResponseHelper.success(res, "Category Deleted Successfully", deleteCategory);
+}
+
 
 /*
   * Assign Services to Categories
@@ -2319,6 +2329,7 @@ module.exports = {
     serviceCategoriesAssign,
     editSubCategories,
     editCategories,
+    deleteCategories,
     //-------------Services--------//
     getAllServices,
     AddServices,

@@ -120,6 +120,8 @@ router.post('/addCategory', validateAccessToken, uploadcategoryImage.single('Cat
 router.post('/addSubCategories', validateAccessToken, asyncMiddleware(adminController.addSubCategories))
 //get categories
 router.get('/getcategories', validateAccessToken, asyncMiddleware(adminController.getCategories))
+//Delete Categories
+router.delete('/deleteCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.deleteCategories))
 //Edit Categories
 router.patch('/editCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.editCategories))
 //get Services
