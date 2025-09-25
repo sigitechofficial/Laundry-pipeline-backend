@@ -132,6 +132,8 @@ router.get('/getSubcategories', validateAccessToken, asyncMiddleware(adminContro
 router.patch('/editSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.editSubCategories))
 //Assign Service to Categories
 router.post('/serviceCategoriesAssign', validateAccessToken, asyncMiddleware(adminController.serviceCategoriesAssign))
+//Delete SubCategories
+router.delete('/deleteSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.deleteSubCategories))
 
 //!---------------------------------------Admin Dashboard-----------------------------------------//
 router.get('/adminDashboard', validateAccessToken, asyncMiddleware(adminController.adminDashboard))

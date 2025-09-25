@@ -200,6 +200,21 @@ class ServiceManagementService {
     }
 
     /**
+     * Delete SubCategories
+     * @param {number} subCategoryId - Subcategory ID
+     * @returns {Object} Deleted subcategory data
+     */
+    async deleteSubcategories(subCategoryId) {
+        const deleteSubcategory = await subCategories.destroy({ where: { id: subCategoryId } });
+        if (!deleteSubcategory) {
+    if (!deleteSubcategory) {
+            throw new NotFoundError('Subcategory Not Found')
+        }
+        return deleteSubcategory;
+    }
+}
+
+    /**
      * Add a new service
      * @param {Object} serviceData - Service data containing name, description, and image
      * @returns {Object} Created service data
@@ -311,7 +326,7 @@ class ServiceManagementService {
 
     async deleteService(serviceId) {
         
-            const deleteService = await service.destroy({ where: { serviceId: serviceId } });
+            const deleteService = await service.destroy({ where: { id: serviceId } });
             if (!deleteService) {
                 throw new NotFoundError('Service Not Found')
             }
@@ -331,7 +346,7 @@ class ServiceManagementService {
             description,
             image: serviceImg 
         }, 
-            { where: { serviceId: serviceId } });
+            { where: { id: serviceId } });
         if (!editService) {
             throw new NotFoundError('Service Not Found')
         }

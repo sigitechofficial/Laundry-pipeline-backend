@@ -1746,6 +1746,16 @@ async function editSubCategories(req, res) {
 }
 
 
+/*
+  * Delete SubCategories
+*/
+async function deleteSubCategories(req, res) {
+    const { subCategoryId } = req.params;
+    const deleteSubCategory = await serviceManagementService.deleteSubcategories(subCategoryId);
+    return AdminResponseHelper.success(res, "SubCategory Deleted Successfully", deleteSubCategory);
+}
+
+
 //!-----------------------------------Driver && Vechicles------------------------------------------->>
 /* 
  *  Add vehicle
@@ -2330,6 +2340,7 @@ module.exports = {
     editSubCategories,
     editCategories,
     deleteCategories,
+    deleteSubCategories,
     //-------------Services--------//
     getAllServices,
     AddServices,
