@@ -1,5 +1,4 @@
 require("dotenv").config();
-
 // Admin-specific error handling
 const { 
     AdminValidationError, 
@@ -7,8 +6,7 @@ const {
     AdminUnauthorizedError, 
     AdminConflictError 
 } = require('../../middlewares/adminErrorHandler');
-const AdminResponseHelper = require('../../utils/adminResponseHelper');
-const { adminAsyncHandler } = require('../../middlewares/adminErrorHandler');
+const ResponseHelper = require('../../utils/responseHelper');
 
 // Import services
 const { authService } = require('../../services/Admin');
@@ -26,7 +24,7 @@ async function signIn(req, res) {
 
     // Basic validation only
     if (!email || !password) {
-        return AdminResponseHelper.validationError(res, "Email and password are required");
+        return ResponseHelper.validationError(res, "Email and password are required");
     }
 
     const signInData = {
@@ -46,7 +44,7 @@ async function signIn(req, res) {
         maxAge: 24 * 60 * 60 * 1000
     });
 
-    return AdminResponseHelper.success(res, "Login Successful", output);
+    return ResponseHelper.success(res, "Login Successful", output);
 }
 
 
@@ -61,7 +59,7 @@ async function signOut(req, res) {
 
     // Basic validation only
     if (!adminId || !dvToken) {
-        return AdminResponseHelper.validationError(res, "Admin ID and device token are required");
+        return ResponseHelper.validationError(res, "Admin ID and device token are required");
     }
 
     await authService.adminSignOut(adminId, dvToken);
@@ -71,7 +69,7 @@ async function signOut(req, res) {
         path: "/admin"
     });
 
-    return AdminResponseHelper.success(res, "Sign out successful", {});
+    return ResponseHelper.success(res, "Sign out successful", {});
 }
 
 module.exports = {
