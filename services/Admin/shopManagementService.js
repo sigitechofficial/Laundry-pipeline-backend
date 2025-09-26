@@ -1,6 +1,12 @@
 const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
+const { 
+    ValidationError, 
+    NotFoundError, 
+    ConflictError,
+    UnprocessableEntityError 
+} = require('../../middlewares/universalErrorHandler');
 
 class ShopManagementService {
     /**
@@ -8,7 +14,6 @@ class ShopManagementService {
      * @returns {Object} Shop count statistics
      */
     async getShopInformation() {
-        try {
             const fourDayAgo = new Date();
             fourDayAgo.setDate(fourDayAgo.getDate() - 4);
 
@@ -47,9 +52,6 @@ class ShopManagementService {
                 activeShops: activeShops,
                 inActiveShops: inActiveShops
             };
-        } catch (error) {
-            throw new Error(`Shop information service error: ${error.message}`);
-        }
     }
 
     /**
@@ -57,7 +59,6 @@ class ShopManagementService {
      * @returns {Array} List of all shops with business information
      */
     async getShopsData() {
-        try {
             const getShopData = await bussinessInformation.findAll({
                 include: [
                     {
@@ -128,9 +129,6 @@ class ShopManagementService {
             return {
                 AllShopsData: getShopData
             };
-        } catch (error) {
-            throw new Error(`Shops data service error: ${error.message}`);
-        }
     }
 
     /**
@@ -139,7 +137,6 @@ class ShopManagementService {
      * @returns {Object} Single shop data with detailed information
      */
     async getSingleShopData(shopId) {
-        try {
             const shopData = await bussinessInformation.findOne({
                 where: {
                     id: shopId
@@ -214,9 +211,6 @@ class ShopManagementService {
             });
 
             return shopData;
-        } catch (error) {
-            throw new Error(`Single shop data service error: ${error.message}`);
-        }
     }
 
     /**
@@ -225,7 +219,6 @@ class ShopManagementService {
      * @returns {Object} Shop employees data
      */
     async getShopEmployees(businessId) {
-        try {
             const findEmployees = await bussinessInformation.findOne({
                 where: {
                     id: businessId
@@ -246,9 +239,6 @@ class ShopManagementService {
             });
 
             return findEmployees;
-        } catch (error) {
-            throw new Error(`Shop employees service error: ${error.message}`);
-        }
     }
 }
 

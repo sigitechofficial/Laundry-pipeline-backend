@@ -52,7 +52,7 @@ const {
     UnauthorizedError, 
     ConflictError 
 } = require('../../middlewares/universalErrorHandler');
-const AdminResponseHelper = require('../../utils/adminResponseHelper');
+const ResponseHelper = require('../../utils/responseHelper');
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const { stat } = require('fs')
@@ -96,7 +96,7 @@ async function adminDashboard(req, res) {
     
         const outObj = await dashboardService.getDashboardData();
         //return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
-        return AdminResponseHelper.success(res, "Admin Dashboard Data", outObj);
+        return ResponseHelper.success(res, "Admin Dashboard Data", outObj);
 }
 
 
@@ -112,7 +112,7 @@ async function adminDashboard(req, res) {
 */
 async function getAllCustomers(req, res) {
         const formattedCustomers = await customerService.getAllCustomers();
-        return AdminResponseHelper.success(res, "All Customer Details", formattedCustomers);
+        return ResponseHelper.success(res, "All Customer Details", formattedCustomers);
     
 }
 
@@ -121,7 +121,7 @@ async function getAllCustomers(req, res) {
 */
 async function customerCount(req, res) {
         const outObj = await customerService.getCustomerCount();
-        return AdminResponseHelper.success(res, "All Customer Count", outObj);
+        return ResponseHelper.success(res, "All Customer Count", outObj);
 }
 
 
@@ -132,7 +132,7 @@ async function customerCount(req, res) {
 async function specificCustomerDetails(req, res) {
         const { customerId } = req.params;
         const output = await customerService.getSpecificCustomerDetails(customerId);
-        return AdminResponseHelper.success(res, "Customer Order Details", output);
+        return ResponseHelper.success(res, "Customer Order Details", output);
 }
 
 
@@ -145,7 +145,7 @@ async function updateCustomer(req, res) {
     
     const updateData = { firstName, lastName, email, phoneNum, status };
     const result = await customerService.updateCustomer(customerId, updateData);
-    return AdminResponseHelper.success(res, "Customer updated successfully", result);
+    return ResponseHelper.success(res, "Customer updated successfully", result);
 }
 
 
@@ -155,7 +155,7 @@ async function updateCustomer(req, res) {
 async function deleteCustomer(req, res) {
     const { customerId } = req.params;
     const result = await customerService.deleteCustomer(customerId);
-    return AdminResponseHelper.success(res, "Customer deleted successfully", result);
+    return ResponseHelper.success(res, "Customer deleted successfully", result);
 }
 
 
@@ -165,7 +165,7 @@ async function deleteCustomer(req, res) {
 */
 async function countTotalDrivers(req, res) {
         const outObj = await driverService.getDriverCount();
-        return AdminResponseHelper.success(res, "All Counts Fetched", outObj);
+        return ResponseHelper.success(res, "All Counts Fetched", outObj);
 }
 
 
@@ -174,7 +174,7 @@ async function countTotalDrivers(req, res) {
 */
 async function allDriverMiniDetails(req, res) {
         const driversWithBookingCounts = await driverService.getAllDriversWithStats();
-        return AdminResponseHelper.success(res, "Drivers Details fetched", driversWithBookingCounts);
+        return ResponseHelper.success(res, "Drivers Details fetched", driversWithBookingCounts);
 }
 
 
@@ -184,7 +184,7 @@ async function allDriverMiniDetails(req, res) {
 async function driverStatusChange(req, res) {
     const { driverId } = req.params;
     const result = await driverService.changeDriverStatus(driverId, false);
-    return AdminResponseHelper.success(res, "Driver Status Updated", result);
+    return ResponseHelper.success(res, "Driver Status Updated", result);
 }
 
 
@@ -195,7 +195,7 @@ async function driverStatusChange(req, res) {
 async function specificdriverDetail(req, res) {
     const { driverId } = req.params;
     const result = await driverService.getSpecificDriverDetails(driverId);
-    return AdminResponseHelper.success(res, `All booking Fetched for Driver id:${driverId}`, result);
+    return ResponseHelper.success(res, `All booking Fetched for Driver id:${driverId}`, result);
 }
 
 /*
@@ -207,7 +207,7 @@ async function updateDriver(req, res) {
     
     const updateData = { firstName, lastName, email, phoneNum, status };
     const result = await driverService.updateDriver(driverId, updateData);
-    return AdminResponseHelper.success(res, "Driver updated successfully", result);
+    return ResponseHelper.success(res, "Driver updated successfully", result);
 }
 
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
@@ -217,7 +217,7 @@ async function updateDriver(req, res) {
 */
 async function ordersCount(req, res) {
         const outObj = await orderService.getOrderCount();
-        return AdminResponseHelper.success(res, "All Order Count", outObj);
+        return ResponseHelper.success(res, "All Order Count", outObj);
 }
 
 
@@ -235,7 +235,7 @@ async function allOrderDetails(req, res) {
         if (dateFilter) filters.date = dateFilter;
 
         const outObj = await orderService.getAllOrderDetails(filters, page, limit);
-        return AdminResponseHelper.success(res, "All booking Details Fetched", outObj);
+        return ResponseHelper.success(res, "All booking Details Fetched", outObj);
 }
 
 
@@ -247,7 +247,7 @@ async function pendingOrders(req, res) {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const outObj = await orderService.getPendingOrders(page, limit);
-        return AdminResponseHelper.success(res, "All Pending Orders", outObj);
+        return ResponseHelper.success(res, "All Pending Orders", outObj);
 }
 
 
@@ -257,26 +257,10 @@ async function pendingOrders(req, res) {
   * Cancel Orders - Optimized Version
 */
 async function allCancelOrders(req, res) {
-
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-
-    const whereClause = {
-            bookingStatusId: {
-            [Op.eq]: [19]
-            }
-    };
-
-    const result = await getOptimizedBookings(whereClause, page, limit);
-
-    let outObj = {
-        cancelOrders: result.bookings,
-        cancelBookingCount: result.totalCount,
-        pagination: result.pagination
-    };
-
-    return AdminResponseHelper.success(res, "All Cancel Orders Details", outObj);
-
+    const result = await orderService.getCancelledOrders(page, limit);
+    return ResponseHelper.success(res, "All Cancel Orders Details", result);
 }
 
 
@@ -286,26 +270,10 @@ async function allCancelOrders(req, res) {
   * Complete Orders - Optimized Version
 */
 async function completeOrders(req, res) {
-
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-
-    const whereClause = {
-            bookingStatusId: {
-            [Op.eq]: [17]
-        }
-    };
-
-    const result = await getOptimizedBookings(whereClause, page, limit);
-
-    let outObj = {
-        allCompletedOrders: result.bookings,
-        completedOrdersCount: result.totalCount,
-        pagination: result.pagination
-    };
-
-    return AdminResponseHelper.success(res, "All Completed Orders", outObj);
-
+    const result = await orderService.getCompletedOrders(page, limit);
+    return ResponseHelper.success(res, "All Completed Orders", result);
 }
 
 /*
@@ -315,7 +283,7 @@ async function editOrder(req, res) {
     const { orderId } = req.params;
     const orderData = req.body;
     const result = await orderService.editOrder(orderId, orderData);
-    return AdminResponseHelper.success(res, "Order updated successfully", result);
+    return ResponseHelper.success(res, "Order updated successfully", result);
 }
 
 /*
@@ -324,7 +292,7 @@ async function editOrder(req, res) {
 async function getOrderForEdit(req, res) {
     const { orderId } = req.params;
     const result = await orderService.getOrderForEdit(orderId);
-    return AdminResponseHelper.success(res, "Order details fetched successfully", result);
+    return ResponseHelper.success(res, "Order details fetched successfully", result);
 }
 
 
@@ -336,7 +304,7 @@ async function getOrderForEdit(req, res) {
 async function getAdminServicesWithCategories(req, res) {
     
         const outObj = await serviceManagementService.getAdminServicesWithCategories();
-        return AdminResponseHelper.success(res, "All Services with Count Fetched", outObj);
+        return ResponseHelper.success(res, "All Services with Count Fetched", outObj);
     
 }
 
@@ -361,7 +329,7 @@ async function addServiceTypes(req, res) {
         image: CategoryImg,
     })
 
-    return AdminResponseHelper.success(res, "Service Type Added Successfully", category);
+    return ResponseHelper.success(res, "Service Type Added Successfully", category);
 
 
 }
@@ -376,7 +344,7 @@ async function getSubCategories(req, res) {
     
         const { categoryId } = req.params;
         const outObj = await serviceManagementService.getSubCategories(categoryId);
-        return AdminResponseHelper.success(res, "All Items fetched", outObj);
+        return ResponseHelper.success(res, "All Items fetched", outObj);
 
 }
 
@@ -384,48 +352,8 @@ async function getSubCategories(req, res) {
   * Get All Services and Categories for Order Edit
 */
 async function getServicesAndCategoriesForOrderEdit(req, res) {
-
-       
-    const services = await service.findAll({
-        where: { status: true },
-        attributes: ['id', 'name', 'description']
-    });
-
-  
-    const categoriesData = await categories.findAll({
-        where: { status: true },
-        attributes: ['id', 'name', 'description'],
-        include: [
-            {
-                model: subCategories,
-                attributes: ['id', 'name', 'price'],
-                where: { status: true }
-            }
-        ]
-    });
-
- 
-    const serviceCategoriesData = await serviceCategories.findAll({
-        where: { status: true },
-        include: [
-            {
-                model: service,
-                attributes: ['id', 'name']
-            },
-            {
-                model: categories,
-                attributes: ['id', 'name']
-            }
-        ]
-    });
-
-    const outObj = {
-        services: services,
-        categories: categoriesData,
-        serviceCategories: serviceCategoriesData
-    };
-
-    return AdminResponseHelper.success(res, "Services and Categories fetched successfully", outObj);
+    const result = await serviceManagementService.getServicesAndCategoriesForOrderEdit();
+    return ResponseHelper.success(res, "Services and Categories fetched successfully", result);
 }
 
 
@@ -442,7 +370,7 @@ async function addServiceItems(req, res) {
         status: true
     })
 
-    return AdminResponseHelper.success(res, "SubCategory Added Successfully", createSubCategory);
+    return ResponseHelper.success(res, "SubCategory Added Successfully", createSubCategory);
 }
 
 //!----------------------------------------------------Employee Management--------------------------------------->>
@@ -465,7 +393,7 @@ async function getAdminEmployess(req, res) {
     }
 
 
-    return AdminResponseHelper.success(res, "Admin Employees", outObj);
+    return ResponseHelper.success(res, "Admin Employees", outObj);
 
 }
 
@@ -473,56 +401,11 @@ async function getAdminEmployess(req, res) {
  *  Add Admin Employee
 */
 async function addEmployee(req, res) {
-    const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = req.body
-
-    const adminId = req.user.id
-
-
-    const userFind = await users.findOne({
-        where: {
-            classifiedAsId: 2,
-            roleId: roleId
-        }
-    })
-
-    if (userFind) {
-        throw new customError("Employee Already Exists")
-    }
-
-    let hashpassword = await bcrypt.hash(password, 10)
-
-    const user = await users.create({
-        firstName,
-        lastName,
-        email,
-        password: hashpassword,
-        phoneNum,
-        roleId,
-        status: true,
-        classifiedAsId: 2,
-        roleId: roleId,
-        verifiedAt: Date.now()
-    })
-
-    if (user.roleId === 7) {
-        await users.update({
-            employeeOff: adminId
-        }, { where: { id: adminId } })
-
-        await zone.update({
-            zoneAdminId: user.id
-        }, { where: { id: zoneId } })
-    }
-
-
-    if (user.roleId === 6) {
-        await users.update({
-            employeeOff: adminId
-        }, { where: { id: adminId } })
-    }
-
-    return AdminResponseHelper.success(res, "Employee Added Successfully", user);
-
+    const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = req.body;
+    const adminId = req.user.id;
+    const employeeData = { firstName, lastName, email, password, phoneNum, roleId, zoneId };
+    const result = await employeeManagementService.addEmployee(employeeData, adminId);
+    return ResponseHelper.success(res, "Employee Added Successfully", result);
 }
 
 
@@ -530,43 +413,10 @@ async function addEmployee(req, res) {
   * Update Employee
 */
 async function updateEmployee(req, res) {
-    const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = req.body
-
-    const userExists = await users.findOne({
-        where: {
-            email: email ? email : null,
-            id: { [Op.not]: employeeId },
-            classifiedAs: 2
-        }
-    })
-
-    if (userExists) {
-        throw new customError("Employee with the following email exists",
-            "Please try another email"
-        )
-    }
-
-    if (updatePassword) {
-        let hashpassword = await bcrypt.hash(updatePassword, 10)
-        users.update({
-            firstName,
-            lastName,
-            email,
-            password: hashpassword,
-            phoneNum,
-            roleId
-        }, { where: { id: employeeId } })
-    } else {
-        users.update({
-            firstName,
-            lastName,
-            email,
-            roleId
-        }, { where: { id: employeeId } })
-    }
-
-
-    return AdminResponseHelper.success(res, "Employee Updated Successfully", {});
+    const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = req.body;
+    const updateData = { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId };
+    const result = await employeeManagementService.updateEmployee(updateData);
+    return ResponseHelper.success(res, "Employee Updated Successfully", result);
 }
 
 
@@ -574,18 +424,9 @@ async function updateEmployee(req, res) {
     * Change Employee status
 */
 async function changeEmployeeStatus(req, res) {
-    const { status, employeeId } = req.body
-
-    users.update({
-        status
-    }, {
-        where: {
-            id: employeeId
-        }
-    })
-
-    return AdminResponseHelper.success(res, "Employee Status Updated", {});
-
+    const { status, employeeId } = req.body;
+    const result = await employeeManagementService.changeEmployeeStatus(employeeId, status);
+    return ResponseHelper.success(res, "Employee Status Updated", result);
 }
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 
@@ -597,7 +438,7 @@ async function addRole(req, res) {
     const { name, permissionRole } = req.body;
     const roleData = { name, permissionRole };
     const result = await roleManagementService.addRole(roleData);
-    return AdminResponseHelper.success(res, "Role and Permission Added Successfully", result);
+    return ResponseHelper.success(res, "Role and Permission Added Successfully", result);
 }
 
 
@@ -608,7 +449,7 @@ async function updateRoles(req, res) {
     const { name, permissionRole, roleId } = req.body;
     const updateData = { name, permissionRole };
     const result = await roleManagementService.updateRole(roleId, updateData);
-    return AdminResponseHelper.success(res, "Role updated", result);
+    return ResponseHelper.success(res, "Role updated", result);
 }
 
 
@@ -617,7 +458,7 @@ async function updateRoles(req, res) {
 */
 async function getAllRoles(req, res) {
     const getRoles = await roleManagementService.getAllRoles();
-    return AdminResponseHelper.success(res, "Get All Roles", getRoles);
+    return ResponseHelper.success(res, "Get All Roles", getRoles);
 }
 
 /*
@@ -627,7 +468,7 @@ async function addClassifiedAs(req, res) {
     const { name } = req.body;
     const classifiedData = { name };
     const result = await featureManagementService.addClassifiedAs(classifiedData);
-    return AdminResponseHelper.success(res, "Added the classified As", result);
+    return ResponseHelper.success(res, "Added the classified As", result);
 }
 
 
@@ -636,7 +477,7 @@ async function addClassifiedAs(req, res) {
 */
 async function getClassifiedAs(req, res) {
     const findData = await featureManagementService.getClassifiedAs();
-    return AdminResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
+    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
 }
 
 
@@ -648,7 +489,7 @@ async function addfeatures(req, res) {
     const { title, status, featureOf, key } = req.body;
     const featureData = { title, status, featureOf, key };
     const result = await featureManagementService.addFeature(featureData);
-    return AdminResponseHelper.success(res, "Feature Added", result);
+    return ResponseHelper.success(res, "Feature Added", result);
 }
 
 
@@ -657,7 +498,7 @@ async function addfeatures(req, res) {
 */
 async function getFeatures(req, res) {
     const findFeature = await featureManagementService.getFeatures();
-    return AdminResponseHelper.success(res, "All Features Fetched", findFeature);
+    return ResponseHelper.success(res, "All Features Fetched", findFeature);
 }
 
 
@@ -669,7 +510,7 @@ async function getFeatures(req, res) {
 async function getShopInformation(req, res) {
 
         const outObj = await shopManagementService.getShopInformation();
-        return AdminResponseHelper.success(res, "Shops Information Fetched", outObj);
+        return ResponseHelper.success(res, "Shops Information Fetched", outObj);
 
 }
 
@@ -680,7 +521,7 @@ async function getShopInformation(req, res) {
 async function shopsData(req, res) {
 
         const outObj = await shopManagementService.getShopsData();
-        return AdminResponseHelper.success(res, "Shop Information Data", outObj);
+        return ResponseHelper.success(res, "Shop Information Data", outObj);
 
 }
 
@@ -691,7 +532,7 @@ async function singleShopData(req, res) {
 
         const { Id } = req.params;
         const shopData = await shopManagementService.getSingleShopData(Id);
-        return AdminResponseHelper.success(res, "Single Shop Data", shopData);
+        return ResponseHelper.success(res, "Single Shop Data", shopData);
 
 }
 
@@ -703,7 +544,7 @@ async function getShopEmployees(req, res) {
 
         const { bussinessId } = req.params;
         const findEmployees = await shopManagementService.getShopEmployees(bussinessId);
-        return AdminResponseHelper.success(res, "Employee Data Fetched", findEmployees);
+        return ResponseHelper.success(res, "Employee Data Fetched", findEmployees);
 
 }
 
@@ -723,7 +564,7 @@ async function addCountries(req, res) {
 
     const countryData = { name, code: shortName, image: flagImg };
     const result = await locationManagementService.addCountry(countryData);
-    return AdminResponseHelper.success(res, "Country Added Successfully", result);
+    return ResponseHelper.success(res, "Country Added Successfully", result);
 }
 
 /*
@@ -731,7 +572,7 @@ async function addCountries(req, res) {
 */
 async function getCountries(req, res) {
     const getCountry = await locationManagementService.getCountries();
-    return AdminResponseHelper.success(res, "All Countries fetched", getCountry);
+    return ResponseHelper.success(res, "All Countries fetched", getCountry);
 }
 
 
@@ -743,7 +584,7 @@ async function addCities(req, res) {
     const { name, lat, lng, countryId } = req.body;
     const cityData = { name, lat, lng, countryId };
     const result = await locationManagementService.addCity(cityData);
-    return AdminResponseHelper.success(res, "City Added Successfully", result);
+    return ResponseHelper.success(res, "City Added Successfully", result);
 }
 
 /*
@@ -751,7 +592,7 @@ async function addCities(req, res) {
 */
 async function getCities(req, res) {
     const getCities = await locationManagementService.getCities();
-    return AdminResponseHelper.success(res, "All Cities Fetched", getCities);
+    return ResponseHelper.success(res, "All Cities Fetched", getCities);
 }
 
 
@@ -779,7 +620,7 @@ async function addZones(req, res) {
     };
 
     const zoneCreate = await zoneManagementService.addZone(zoneData);
-    return AdminResponseHelper.success(res, "Zone Added Successfully", zoneCreate);
+    return ResponseHelper.success(res, "Zone Added Successfully", zoneCreate);
 }
 
 
@@ -789,7 +630,7 @@ async function addZones(req, res) {
 
 async function getZones(req, res) {
     const shapedZones = await zoneManagementService.getZones();
-    return AdminResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
+    return ResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
 }
 
 
@@ -818,7 +659,7 @@ async function updateZone(req, res) {
     };
 
     const updateZone = await zoneManagementService.updateZone(zoneId, updateData);
-    return AdminResponseHelper.success(res, "Zone Updated Successfully", updateZone);
+    return ResponseHelper.success(res, "Zone Updated Successfully", updateZone);
 }
 
 
@@ -834,11 +675,11 @@ async function deleteZone(req, res) {
     const { zoneId } = req.query;
 
     if (!zoneId) {
-        return AdminResponseHelper.validationError(res, "zoneId is required");
+        return ResponseHelper.validationError(res, "zoneId is required");
     }
 
     const result = await zoneManagementService.deleteZone(zoneId);
-    return AdminResponseHelper.success(res, "Zone deleted successfully (soft delete)", result);
+    return ResponseHelper.success(res, "Zone deleted successfully (soft delete)", result);
 }
 
 
@@ -846,13 +687,13 @@ async function deleteZone(req, res) {
 async function getUnitsDistanceAndCurrency(req, res) {
 
         const getUnits = await dataService.getUnitsDistanceAndCurrency();
-        return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
+        return ResponseHelper.success(res, "All Units Fetched", getUnits);
 
 }
 async function getAllUnits(req, res) {
 
         const getUnits = await dataService.getAllUnits();
-        return AdminResponseHelper.success(res, "All Units Fetched", getUnits);
+        return ResponseHelper.success(res, "All Units Fetched", getUnits);
 
 }
 //!-----------------------Add Services,Categories and SubCategories --------------------//
@@ -880,7 +721,7 @@ async function AddServices(req, res) {
 
         const serviceCreate = await serviceManagementService.addService(serviceData);
 
-        return AdminResponseHelper.success(res, "Services Added Successfully", serviceCreate);
+        return ResponseHelper.success(res, "Services Added Successfully", serviceCreate);
 }
 
 
@@ -891,7 +732,7 @@ async function getAllServices(req, res) {
 
         const result = await serviceManagementService.getAllServices();
         console.log("🚀 ~ getAllServices ~ result:", result)
-        return AdminResponseHelper.success(res, "All Services", result);
+        return ResponseHelper.success(res, "All Services", result);
 
 }
 
@@ -902,7 +743,7 @@ async function getAllServices(req, res) {
 async function deleteServices(req, res) {
     const { serviceId } = req.params;
     const deleteService = await serviceManagementService.deleteService(serviceId);
-    return AdminResponseHelper.success(res, "Service Deleted Successfully", deleteService);
+    return ResponseHelper.success(res, "Service Deleted Successfully", deleteService);
 }
 
 
@@ -920,7 +761,7 @@ async function editServices(req,res){
             serviceImg = tempImage.replace(/\\/g, "/");
         }
     const editService = await serviceManagementService.editService(serviceId, name, description, serviceImg);
-    return AdminResponseHelper.success(res, "Service Edited Successfully", editService);
+    return ResponseHelper.success(res, "Service Edited Successfully", editService);
 }
 
 
@@ -947,7 +788,7 @@ async function AddCategories(req, res) {
 
     const category = await serviceManagementService.addCategory(categoryData);
 
-    return AdminResponseHelper.success(res, "Category Added Successfully", category);
+    return ResponseHelper.success(res, "Category Added Successfully", category);
 
 }
 
@@ -960,7 +801,7 @@ async function AddCategories(req, res) {
 async function getCategories(req, res) {
 
         const getCategories = await serviceManagementService.getCategories();
-        return AdminResponseHelper.success(res, "All Categories Fetched", getCategories);
+        return ResponseHelper.success(res, "All Categories Fetched", getCategories);
 
 }
 
@@ -971,7 +812,7 @@ async function editCategories(req, res) {
     const { categoryId } = req.params;
     const { name, description } = req.body;
     const editCategory = await serviceManagementService.editCategories(categoryId, name, description);
-    return AdminResponseHelper.success(res, "Category Edited Successfully", editCategory);
+    return ResponseHelper.success(res, "Category Edited Successfully", editCategory);
 }
 
 /*
@@ -980,7 +821,7 @@ async function editCategories(req, res) {
 async function deleteCategories(req, res) {
     const { categoryId } = req.params;
     const deleteCategory = await serviceManagementService.deleteCategories(categoryId);
-    return AdminResponseHelper.success(res, "Category Deleted Successfully", deleteCategory);
+    return ResponseHelper.success(res, "Category Deleted Successfully", deleteCategory);
 }
 
 
@@ -989,41 +830,8 @@ async function deleteCategories(req, res) {
 */
 async function serviceCategoriesAssign(req, res) {
     const { serviceId, categoryId } = req.body;
-
-    if (!serviceId || !categoryId || !Array.isArray(categoryId) || categoryId.length === 0) {
-        throw new customError("Invalid input. Please provide serviceId and an array of categoryIds.");
-    }
-
-
-    const existingAssignments = await serviceCategories.findAll({
-        where: {
-            serviceId,
-            categoryId: { [Op.in]: categoryId },
-            status: true
-        },
-        attributes: ['categoryId']
-    });
-
-    const existingCategoryIds = existingAssignments.map(item => item.categoryId);
-
-
-    const newCategoryIds = categoryId.filter(id => !existingCategoryIds.includes(id));
-
-    if (newCategoryIds.length === 0) {
-        return AdminResponseHelper.validationError(res, "All selected categories are already assigned to the service.");
-    }
-
-
-    const serviceCategoriesData = newCategoryIds.map(id => ({
-        serviceId: serviceId,
-        categoryId: id,
-        status: true
-    }));
-
-
-    const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
-
-    return AdminResponseHelper.success(res, "Service assigned to categories successfully.", { createData });
+    const result = await serviceManagementService.assignServiceToCategories(serviceId, categoryId);
+    return ResponseHelper.success(res, "Service assigned to categories successfully.", { createData: result });
 }
 
 
@@ -1035,30 +843,9 @@ async function serviceCategoriesAssign(req, res) {
   * Add SubCategories
 */
 async function addSubCategories(req, res) {
-    const categoryData = req.body
-    console.log("🚀 ~ addSubCategories ~ req.body:", req.body)
-
-    const processedData = categoryData.map((cat) => {
-        const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
-        const barcodePath = generateBarcodeforSubCategories(cat.name, cat.price, fileName)
-
-        return {
-            ...cat,
-            status: true,
-            barCode: barcodePath
-        }
-
-    })
-    console.log("🚀 ~ processedData ~ processedData:", processedData)
-
-    const createSubCategories = await subCategories.bulkCreate(processedData);
-
-    if (!createSubCategories) {
-        throw new customError("There is error in the request")
-    }
-
-    return AdminResponseHelper.success(res, "SubCategories Added Successfully", createSubCategories);
-
+    const categoryData = req.body;
+    const result = await serviceManagementService.addSubCategoriesWithBarcode(categoryData, generateBarcodeforSubCategories);
+    return ResponseHelper.success(res, "SubCategories Added Successfully", result);
 }
 
 
@@ -1068,7 +855,7 @@ async function addSubCategories(req, res) {
 async function getSubcategories(req, res) {
 
         const getSubcategories = await serviceManagementService.getSubcategories();
-        return AdminResponseHelper.success(res, "All SubCategories Fetched", getSubcategories);
+        return ResponseHelper.success(res, "All SubCategories Fetched", getSubcategories);
 
 }
 
@@ -1080,7 +867,7 @@ async function editSubCategories(req, res) {
     const { subCategoryId } = req.params;
     const { name, price } = req.body;
     const editSubCategory = await serviceManagementService.editSubcategories(subCategoryId, name, price);
-    return AdminResponseHelper.success(res, "SubCategory Edited Successfully", editSubCategory);
+    return ResponseHelper.success(res, "SubCategory Edited Successfully", editSubCategory);
 }
 
 
@@ -1090,7 +877,7 @@ async function editSubCategories(req, res) {
 async function deleteSubCategories(req, res) {
     const { subCategoryId } = req.params;
     const deleteSubCategory = await serviceManagementService.deleteSubcategories(subCategoryId);
-    return AdminResponseHelper.success(res, "SubCategory Deleted Successfully", deleteSubCategory);
+    return ResponseHelper.success(res, "SubCategory Deleted Successfully", deleteSubCategory);
 }
 
 
@@ -1123,7 +910,7 @@ async function addVehicle(req, res) {
     };
     
     const result = await vehicleManagementService.addVehicle(vehicleData);
-    return AdminResponseHelper.success(res, "Vehicle added", result);
+    return ResponseHelper.success(res, "Vehicle added", result);
 }
 
 //!----------------------------------Cancel Booking Reasons---------------------------------//
@@ -1135,7 +922,7 @@ async function cancelBooking(req, res) {
     const reasonCreate = await reason.create({
         cancelReason
     })
-    return AdminResponseHelper.success(res, "Reason Added", reasonCreate);
+    return ResponseHelper.success(res, "Reason Added", reasonCreate);
 
 }
 
@@ -1147,7 +934,7 @@ async function cancelBooking(req, res) {
 async function getCancelBookingReasons(req, res) {
 
         const getBooking = dataService.getCancelBookingReasons();
-        return AdminResponseHelper.success(res, "All Cancel Booking reasons fetched", getBooking);
+        return ResponseHelper.success(res, "All Cancel Booking reasons fetched", getBooking);
 
 }
 
@@ -1159,7 +946,7 @@ async function laundryRoles(req, res) {
         status
     })
 
-    return AdminResponseHelper.success(res, "Roles Added Successfully", roleCreation);
+    return ResponseHelper.success(res, "Roles Added Successfully", roleCreation);
 
 }
 
@@ -1186,48 +973,13 @@ async function addMachines(req, res) {
         name,
         status: true
     })
-    return AdminResponseHelper.success(res, "Machine Added", createMachine);
+    return ResponseHelper.success(res, "Machine Added", createMachine);
 
 }
 
 
 
 //!-----------------------------Add Match Preferences-------------------------//
-/*
-  * Add Preferences
-*/
-async function AddServicePreferences(req, res) {
-    const { title } = req.body
-
-    const findPref = await preferencesServiceName.findOne({
-        where: {
-            title: title,
-            status: true
-        }
-    })
-
-    if (findPref) {
-        throw new customError('Title Already Exists')
-    }
-
-    const createPreferences = await preferencesServiceName.create({
-        title,
-        status: true
-    })
-
-    return AdminResponseHelper.success(res, "Service Preferences Added Successfully", createPreferences);
-}
-
-/*
-  * Get Account Preferences
-*/
-async function getAccountPreferences(req, res) {
-
-        const preFind = dataService.getAccountPreferences();
-        return AdminResponseHelper.success(res, "All Account Preferences Fetched", preFind);
-
-}
-
 /*
   * Add Preference Types
 */
@@ -1250,7 +1002,7 @@ async function createPreferenceType(req, res) {
         status: true
     })
 
-    return AdminResponseHelper.success(res, "Preference Type Added", { createPreferenceType });
+    return ResponseHelper.success(res, "Preference Type Added", { createPreferenceType });
 
 }
 
@@ -1261,7 +1013,7 @@ async function editPreferenceType(req, res) {
     const { preferenceTypeId } = req.params;
     const { name } = req.body;
     const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name);
-    return AdminResponseHelper.success(res, "Preference Type Edited", editPreferenceType);
+    return ResponseHelper.success(res, "Preference Type Edited", editPreferenceType);
 }
 
 /*
@@ -1270,7 +1022,7 @@ async function editPreferenceType(req, res) {
 async function deletePreferenceTypeController(req, res) {
     const { preferenceTypeId } = req.params;
     const deletePreferenceType = await prefrencesServices.deletePreferenceType(preferenceTypeId);
-    return AdminResponseHelper.success(res, "Preference Type Deleted", deletePreferenceType);
+    return ResponseHelper.success(res, "Preference Type Deleted", deletePreferenceType);
 }
 
 /*
@@ -1278,45 +1030,8 @@ async function deletePreferenceTypeController(req, res) {
 */
 async function addPreferenceValues(req, res) {
     const { value, preferenceTypeId } = req.body;
-
-    if (!preferenceTypeId || !value || (Array.isArray(value) && value.length === 0)) {
-        return AdminResponseHelper.validationError(res, "Value(s) and preferenceTypeId are required");
-    }
-
-    const valuesToInsert = Array.isArray(value) ? value : [value];
-
-    const existingValues = await preferenceValues.findAll({
-        where: {
-            value: valuesToInsert,
-            preferenceTypeId: preferenceTypeId,
-            status: true
-        }
-    });
-
-    const existingValueSet = new Set(existingValues.map(v => v.value));
-
-    const newValues = valuesToInsert.filter(v => !existingValueSet.has(v));
-
-    if (newValues.length === 0) {
-        return AdminResponseHelper.validationError(res, "All preference values already exist");
-    }
-
-    const bulkData = newValues.map(v => ({
-        value: v,
-        preferenceTypeId,
-        status: true
-    }));
-
-    const createdValues = await preferenceValues.bulkCreate(bulkData);
-
-    return res.json(
-        responsefunc(
-            "1",
-            `${createdValues.length} Preference Value(s) Added`,
-            { createdValues },
-            ""
-        )
-    );
+    const result = await prefrencesServices.addPreferenceValues(value, preferenceTypeId);
+    return ResponseHelper.success(res, `${result.count} Preference Value(s) Added`, { createdValues: result.createdValues });
 }
 
 /*
@@ -1326,7 +1041,7 @@ async function editPreferenceValuesController(req, res) {
     const { preferenceValueId } = req.params;
     const { value } = req.body;
     const editPreferenceValuesData = await prefrencesServices.editPreferenceValues(preferenceValueId, value);
-    return AdminResponseHelper.success(res, "Preference Values Edited", editPreferenceValuesData);
+    return ResponseHelper.success(res, "Preference Values Edited", editPreferenceValuesData);
 }
 
 
@@ -1336,7 +1051,7 @@ async function editPreferenceValuesController(req, res) {
 async function deletePreferenceValuesController(req, res) {
     const { preferenceValueId } = req.params;
     const deletePreferenceValuesData = await prefrencesServices.deletePreferenceValues(preferenceValueId);
-    return AdminResponseHelper.success(res, "Preference Values Deleted", deletePreferenceValuesData);
+    return ResponseHelper.success(res, "Preference Values Deleted", deletePreferenceValuesData);
 }
 
 /*
@@ -1344,45 +1059,8 @@ async function deletePreferenceValuesController(req, res) {
 */
 async function addServiceWithPreferences(req, res) {
     const { serviceId, preferenceTypeId } = req.body;
-
-    if (!preferenceTypeId || !serviceId || (Array.isArray(serviceId) && serviceId.length === 0)) {
-        return AdminResponseHelper.validationError(res, "preferenceTypeId and serviceId(s) are required");
-    }
-
-    const serviceIds = Array.isArray(serviceId) ? serviceId : [serviceId];
-
-    const existingMappings = await serviceWithPreferences.findAll({
-        where: {
-            preferenceTypeId,
-            serviceId: serviceIds,
-            status: true
-        }
-    });
-
-    const existingServiceIds = new Set(existingMappings.map(m => m.serviceId));
-
-    const newMappings = serviceIds
-        .filter(id => !existingServiceIds.has(id))
-        .map(id => ({
-            serviceId: id,
-            preferenceTypeId,
-            status: true
-        }));
-
-    if (newMappings.length === 0) {
-        return AdminResponseHelper.validationError(res, "All Services already mapped to this Preference");
-    }
-
-    const createdMappings = await serviceWithPreferences.bulkCreate(newMappings);
-
-    return res.json(
-        responsefunc(
-            "1",
-            `${createdMappings.length} Service(s) mapped to Preference`,
-            { createdMappings },
-            ""
-        )
-    );
+    const result = await prefrencesServices.addServiceWithPreferences(serviceId, preferenceTypeId);
+    return ResponseHelper.success(res, `${result.count} Service(s) mapped to Preference`, { createdMappings: result.createdMappings });
 }
 
 
@@ -1391,7 +1069,7 @@ async function addServiceWithPreferences(req, res) {
 */
 async function getPreferenceTypes(req, res) {
         const getPreferenceTypes = await dataService.getPreferenceTypes();
-        return AdminResponseHelper.success(res, "All Preference Types Fetched", getPreferenceTypes);
+        return ResponseHelper.success(res, "All Preference Types Fetched", getPreferenceTypes);
     
 }
 
@@ -1402,7 +1080,7 @@ async function getPreferenceTypes(req, res) {
 async function servicesAndPreferencesData(req,res) {
     const {serviceId}=req.params
     const getData=await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId)
-    return AdminResponseHelper.success(res,"All Preferences and Services Data Fetched",getData)
+    return ResponseHelper.success(res,"All Preferences and Services Data Fetched",getData)
     
 }
 
@@ -1435,7 +1113,7 @@ async function onHoldOptions(req, res) {
         }))
     );
 
-    return AdminResponseHelper.success(res, "on Hold Options Created", optionsCreate);
+    return ResponseHelper.success(res, "on Hold Options Created", optionsCreate);
 
 
 }
@@ -1448,7 +1126,7 @@ async function onHoldOptions(req, res) {
 async function getOnHoldOptions(req, res) {
 
         const getOptions = await dataService.getOnHoldOptions();
-        return AdminResponseHelper.success(res, "All on Hold Options Fetched", getOptions);
+        return ResponseHelper.success(res, "All on Hold Options Fetched", getOptions);
 
 }
 
@@ -1486,7 +1164,7 @@ async function customerOnHoldOptions(req, res) {
     )
 
 
-    return AdminResponseHelper.success(res, "Customer Hold Option", optionsCreate);
+    return ResponseHelper.success(res, "Customer Hold Option", optionsCreate);
 }
 
 
@@ -1496,7 +1174,7 @@ async function customerOnHoldOptions(req, res) {
 async function getOnHoldCustomerOptions(req, res) {
 
         const optionsFound = dataService.getOnHoldCustomerOptions();
-        return AdminResponseHelper.success(res, "All Options Fetched", optionsFound);
+        return ResponseHelper.success(res, "All Options Fetched", optionsFound);
 
 }
 

@@ -8,7 +8,6 @@ class ZoneManagementService {
      * @returns {Object} Created zone data
      */
     async addZone(zoneData) {
-        try {
             const { name, description, coordinates } = zoneData;
             
             const zoneCreate = await zone.create({
@@ -18,9 +17,6 @@ class ZoneManagementService {
             });
             
             return zoneCreate;
-        } catch (error) {
-            throw new Error(`Add zone error: ${error.message}`);
-        }
     }
 
     /**
@@ -28,15 +24,11 @@ class ZoneManagementService {
      * @returns {Array} List of all zones
      */
     async getZones() {
-        try {
             const getZones = await zone.findAll({
                 where: { status: true },
                 order: [['createdAt', 'DESC']]
             });
             return getZones;
-        } catch (error) {
-            throw new Error(`Get zones error: ${error.message}`);
-        }
     }
 
     /**
@@ -46,7 +38,6 @@ class ZoneManagementService {
      * @returns {Object} Updated zone data
      */
     async updateZone(zoneId, updateData) {
-        try {
             const { name, description, coordinates } = updateData;
             
             const zoneExists = await zone.findOne({ where: { id: zoneId } });
@@ -65,12 +56,6 @@ class ZoneManagementService {
 
             const updatedZoneData = await zone.findOne({ where: { id: zoneId } });
             return updatedZoneData;
-        } catch (error) {
-            if (error instanceof NotFoundError) {
-                throw error;
-            }
-            throw new Error(`Update zone error: ${error.message}`);
-        }
     }
 
     /**
@@ -79,7 +64,6 @@ class ZoneManagementService {
      * @returns {Object} Deleted zone data
      */
     async deleteZone(zoneId) {
-        try {
             const zoneToDelete = await zone.destroy({ where: { id: zoneId } });
             
             if (!zoneToDelete) {
@@ -87,12 +71,6 @@ class ZoneManagementService {
             }
             
             return { message: 'Zone deleted successfully' };
-        } catch (error) {
-            if (error instanceof NotFoundError) {
-                throw error;
-            }
-            throw new Error(`Delete zone error: ${error.message}`);
-        }
     }
 }
 

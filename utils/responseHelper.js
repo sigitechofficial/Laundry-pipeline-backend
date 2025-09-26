@@ -1,7 +1,8 @@
 const { StatusCodes } = require('http-status-codes');
 
 /**
- * Standardized API Response Helper
+ * Universal API Response Helper
+ * Combines functionality from both responseHelper and adminResponseHelper
  */
 class ResponseHelper {
     /**
@@ -16,9 +17,9 @@ class ResponseHelper {
         const response = {
             status: '1',
             message: message,
+            statusCode: statusCode,
             data: data,
             error: '',
-            statusCode: statusCode,
             timestamp: new Date().toISOString()
         };
 
@@ -42,9 +43,9 @@ class ResponseHelper {
         const response = {
             status: '0',
             message: message,
+            statusCode: statusCode,
             data: {},
             error: error,
-            statusCode: statusCode,
             timestamp: new Date().toISOString()
         };
 
@@ -129,6 +130,114 @@ class ResponseHelper {
      */
     static paginated(res, message, data = [], pagination = {}) {
         return this.success(res, message, data, StatusCodes.OK, { pagination });
+    }
+
+    // ==================== ADMIN-SPECIFIC METHODS ====================
+
+    /**
+     * Admin dashboard response
+     * @param {Object} res - Express response object
+     * @param {string} message - Success message
+     * @param {Object} dashboardData - Dashboard data
+     */
+    static dashboard(res, message, dashboardData = {}) {
+        return this.success(res, message, dashboardData, StatusCodes.OK, { 
+            type: 'dashboard',
+            generatedAt: new Date().toISOString()
+        });
+    }
+
+    /**
+     * Admin statistics response
+     * @param {Object} res - Express response object
+     * @param {string} message - Success message
+     * @param {Object} statistics - Statistics data
+     */
+    static statistics(res, message, statistics = {}) {
+        return this.success(res, message, statistics, StatusCodes.OK, { 
+            type: 'statistics',
+            generatedAt: new Date().toISOString()
+        });
+    }
+
+    /**
+     * Admin list response with filters
+     * @param {Object} res - Express response object
+     * @param {string} message - Success message
+     * @param {Array} data - List data
+     * @param {Object} filters - Applied filters
+     * @param {Object} pagination - Pagination info
+     */
+    static list(res, message, data = [], filters = {}, pagination = {}) {
+        return this.success(res, message, data, StatusCodes.OK, { 
+            filters,
+            pagination,
+            type: 'list',
+            generatedAt: new Date().toISOString()
+        });
+    }
+
+    // ==================== LEGACY COMPATIBILITY ====================
+
+    /**
+     * Legacy response format for backward compatibility
+     * @param {Object} res - Express response object
+     * @param {string} status - Status code ('1' for success, '0' for error)
+     * @param {string} message - Response message
+     * @param {*} data - Response data
+     * @param {string} error - Error message (if any)
+     */
+    static legacy(res, status, message, data = {}, error = '') {
+        const response = {
+            status: status,
+            message: message,
+            data: data,
+            error: error,
+            timestamp: new Date().toISOString()
+        };
+
+        const statusCode = status === '1' ? StatusCodes.OK : StatusCodes.INTERNAL_SERVER_ERROR;
+        return res.status(statusCode).json(response);
+    }
+
+    // ==================== UTILITY METHODS ====================
+
+    /**
+     * Custom response with full control
+     * @param {Object} res - Express response object
+     * @param {Object} customResponse - Custom response object
+     * @param {number} statusCode - HTTP status code
+     */
+    static custom(res, customResponse, statusCode = StatusCodes.OK) {
+        const response = {
+            ...customResponse,
+            timestamp: new Date().toISOString()
+        };
+
+        return res.status(statusCode).json(response);
+    }
+
+    /**
+     * File download response
+     * @param {Object} res - Express response object
+     * @param {Buffer} fileBuffer - File buffer
+     * @param {string} filename - File name
+     * @param {string} mimeType - MIME type
+     */
+    static download(res, fileBuffer, filename, mimeType = 'application/octet-stream') {
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.send(fileBuffer);
+    }
+
+    /**
+     * Redirect response
+     * @param {Object} res - Express response object
+     * @param {string} url - Redirect URL
+     * @param {number} statusCode - HTTP status code (default: 302)
+     */
+    static redirect(res, url, statusCode = StatusCodes.FOUND) {
+        return res.redirect(statusCode, url);
     }
 }
 

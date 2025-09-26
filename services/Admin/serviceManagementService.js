@@ -21,27 +21,23 @@ class ServiceManagementService {
      * @returns {Object} Services with category counts
      */
     async getAdminServicesWithCategories() {
-        try {
-            const countAndService = await subCategories.findAll({
-                attributes: [
-                    'id',
-                    [sequelize.fn('COUNT', sequelize.col('categoryId')), 'categorySubItemCount']
-                ],
-                include: [
-                    {
-                        model: categories,
-                        attributes: ['id', 'name', 'status', 'image']
-                    }
-                ],
-                group: ['categoryId'],
-            });
+        const countAndService = await subCategories.findAll({
+            attributes: [
+                'id',
+                [sequelize.fn('COUNT', sequelize.col('categoryId')), 'categorySubItemCount']
+            ],
+            include: [
+                {
+                    model: categories,
+                    attributes: ['id', 'name', 'status', 'image']
+                }
+            ],
+            group: ['categoryId'],
+        });
 
-            return {
-                serviceTypes: countAndService
-            };
-        } catch (error) {
-            throw new Error(`Admin services with categories service error: ${error.message}`);
-        }
+        return {
+            serviceTypes: countAndService
+        };
     }
 
 
@@ -66,7 +62,6 @@ class ServiceManagementService {
      * @returns {Object} Subcategories for the category
      */
     async getSubCategories(categoryId) {
-        try {
             const findData = await subCategories.findAll({
                 where: {
                     categoryId: categoryId
@@ -77,9 +72,6 @@ class ServiceManagementService {
             return {
                 serviceTypesItems: findData
             };
-        } catch (error) {
-            throw new Error(`Subcategories service error: ${error.message}`);
-        }
     }
 
     /**
@@ -87,7 +79,6 @@ class ServiceManagementService {
      * @returns {Object} Services, categories, and service categories
      */
     async getServicesAndCategoriesForOrderEdit() {
-        try {
             const services = await service.findAll({
                 where: { status: true },
                 attributes: ['id', 'name', 'description']
@@ -124,9 +115,6 @@ class ServiceManagementService {
                 categories: categoriesData,
                 serviceCategories: serviceCategoriesData
             };
-        } catch (error) {
-            throw new Error(`Services and categories for order edit service error: ${error.message}`);
-        }
     }
 
     /**
@@ -134,16 +122,12 @@ class ServiceManagementService {
      * @returns {Array} List of all active services
      */
     async getAllServices() {
-        try {
             const getServices = await service.findAll({
                 where: {
                     status: true,
                 }
             });
             return { services: getServices };
-        } catch (error) {
-            throw new Error(`All services service error: ${error.message}`);
-        }
     }
 
     /**
@@ -151,12 +135,8 @@ class ServiceManagementService {
      * @returns {Array} List of all categories
      */
     async getCategories() {
-        try {
             const getCategories = await categories.findAll();
             return getCategories;
-        } catch (error) {
-            throw new Error(`Categories service error: ${error.message}`);
-        }
     }
 
     /**
@@ -191,12 +171,8 @@ class ServiceManagementService {
      * @returns {Array} List of all subcategories
      */
     async getSubcategories() {
-        try {
             const getSubcategories = await subCategories.findAll();
             return getSubcategories;
-        } catch (error) {
-            throw new Error(`Subcategories service error: ${error.message}`);
-        }
     }
 
     /**
@@ -220,7 +196,6 @@ class ServiceManagementService {
      * @returns {Object} Created service data
      */
     async addService(serviceData) {
-        try {
             const { name, description, image } = serviceData;
 
             const serviceCreate = await service.create({
@@ -230,9 +205,6 @@ class ServiceManagementService {
             });
 
             return serviceCreate;
-        } catch (error) {
-            throw new Error(`Add service error: ${error.message}`);
-        }
     }
 
 
@@ -243,13 +215,9 @@ class ServiceManagementService {
      */
 
     async addCategory(categoryData) {
-        try {
             const { name, description, image } = categoryData;
             const categoryCreate = await categories.create({ name, description, image });
             return categoryCreate;
-        } catch (error) {
-            throw new Error(`Add category error: ${error.message}`);
-        }
     }
 
 
@@ -360,7 +328,6 @@ class ServiceManagementService {
      * @returns {Object} Assignment result
      */
     async assignServiceToCategories(serviceId, categoryIds) {
-        try {
             if (!serviceId || !categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
                 throw new ValidationError('Invalid input. Please provide serviceId and an array of categoryIds.');
             }
@@ -389,12 +356,6 @@ class ServiceManagementService {
 
             const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
             return createData;
-        } catch (error) {
-            if (error instanceof ValidationError) {
-                throw error;
-            }
-            throw new Error(`Assign service to categories error: ${error.message}`);
-        }
     }
 
     /**
@@ -404,7 +365,6 @@ class ServiceManagementService {
      * @returns {Array} Created subcategories
      */
     async addSubCategoriesWithBarcode(subCategoryData, generateBarcodeFunction) {
-        try {
             const processedData = subCategoryData.map((cat) => {
                 const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
                 const barcodePath = generateBarcodeFunction(cat.name, cat.price, fileName);
@@ -423,9 +383,6 @@ class ServiceManagementService {
             }
 
             return createSubCategories;
-        } catch (error) {
-            throw new Error(`Add subcategories with barcode error: ${error.message}`);
-        }
     }
 
     /**
@@ -434,7 +391,6 @@ class ServiceManagementService {
      * @returns {Array} Service categories assignments
      */
     async getServiceCategories(serviceId) {
-        try {
             const serviceCategoriesData = await serviceCategories.findAll({
                 where: { serviceId },
                 include: [
@@ -445,9 +401,6 @@ class ServiceManagementService {
                 ]
             });
             return serviceCategoriesData;
-        } catch (error) {
-            throw new Error(`Get service categories error: ${error.message}`);
-        }
     }
 
     /**
@@ -457,18 +410,13 @@ class ServiceManagementService {
      * @returns {Object} Removal result
      */
     async removeServiceFromCategories(serviceId, categoryIds) {
-        try {
             const removedAssignments = await serviceCategories.destroy({
                 where: {
                     serviceId,
                     categoryId: { [sequelize.Op.in]: categoryIds }
                 }
             });
-
             return { message: 'Service removed from categories successfully', removedCount: removedAssignments };
-        } catch (error) {
-            throw new Error(`Remove service from categories error: ${error.message}`);
-        }
     }
 
 

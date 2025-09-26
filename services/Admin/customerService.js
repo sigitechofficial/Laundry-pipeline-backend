@@ -1,6 +1,12 @@
 const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
+const { 
+    ValidationError, 
+    NotFoundError, 
+    ConflictError,
+    UnprocessableEntityError 
+} = require('../../middlewares/universalErrorHandler');
 
 class CustomerService {
     /**
@@ -8,61 +14,57 @@ class CustomerService {
      * @returns {Array} List of customers with booking counts and amounts
      */
     async getAllCustomers() {
-        try {
-            const findCustomers = await users.findAll({
-                where: {
-                    userTypeId: 2,  // Ensuring we're fetching only customers
-                },
-                attributes: [
-                    'id',
-                    'firstName',
-                    'lastName',
-                    'email',
-                    'phoneNum',
-                    'status',
-                    [
-                        sequelize.literal(`(
-                    SELECT COUNT(*) 
-                    FROM bookings 
-                    WHERE bookings.customerId = users.id
-                  )`),
-                        'bookingCount'
-                    ],
-                    [
-                        sequelize.literal(`(
-                    SELECT COALESCE(SUM(orderAmount), 0) 
-                    FROM bookings 
-                    WHERE bookings.customerId = users.id
-                  )`),
-                        'totalAmountSpent'
-                    ],
-                    [
-                        sequelize.literal(`(
-                    SELECT MAX(createdAt) 
-                    FROM bookings 
-                    WHERE bookings.customerId = users.id
-                  )`),
-                        'lastBookingDate'
-                    ]
+        const findCustomers = await users.findAll({
+            where: {
+                userTypeId: 2,  // Ensuring we're fetching only customers
+            },
+            attributes: [
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'phoneNum',
+                'status',
+                [
+                    sequelize.literal(`(
+                SELECT COUNT(*) 
+                FROM bookings 
+                WHERE bookings.customerId = users.id
+              )`),
+                    'bookingCount'
+                ],
+                [
+                    sequelize.literal(`(
+                SELECT COALESCE(SUM(orderAmount), 0) 
+                FROM bookings 
+                WHERE bookings.customerId = users.id
+              )`),
+                    'totalAmountSpent'
+                ],
+                [
+                    sequelize.literal(`(
+                SELECT MAX(createdAt) 
+                FROM bookings 
+                WHERE bookings.customerId = users.id
+              )`),
+                    'lastBookingDate'
                 ]
-            });
+            ]
+        });
 
-            // Format the last booking date and totalAmountSpent
-            const formattedCustomers = findCustomers.map(customer => {
-                const customerData = customer.toJSON(); // Convert to plain object
-                return {
-                    ...customerData,
-                    lastBookingDate: customerData.lastBookingDate
-                        ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
-                        : null,
-                    totalAmountSpent: customerData.totalAmountSpent.toFixed(2) // Limit to 2 decimals
-                };
-            });
+        // Format the last booking date and totalAmountSpent
+        const formattedCustomers = findCustomers.map(customer => {
+            const customerData = customer.toJSON(); // Convert to plain object
+            return {
+                ...customerData,
+                lastBookingDate: customerData.lastBookingDate
+                    ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
+                    : null,
+                totalAmountSpent: customerData.totalAmountSpent.toFixed(2) // Limit to 2 decimals
+            };
+        });
 
-            return formattedCustomers;
-        } catch (error) {
-            throw new Error(`Customer service error: ${error.message}`);
-        }
+        return formattedCustomers;
     }
 
     /**
@@ -70,7 +72,6 @@ class CustomerService {
      * @returns {Object} Customer count metrics
      */
     async getCustomerCount() {
-        try {
             const customerCount = await users.count({
                 where: {
                     userTypeId: 2
@@ -121,9 +122,6 @@ class CustomerService {
                 activeUser: activeUser,
                 RepeatedCustomers: repeatCustomersCount
             };
-        } catch (error) {
-            throw new Error(`Customer count service error: ${error.message}`);
-        }
     }
 
     /**
@@ -132,7 +130,6 @@ class CustomerService {
      * @returns {Object} Customer details with booking information
      */
     async getSpecificCustomerDetails(customerId) {
-        try {
             const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation } = require('../../models');
 
             const [bookingsFind, userInfo] = await Promise.all([
@@ -206,9 +203,6 @@ class CustomerService {
                 bookingDetails: bookingsFind,
                 userDetails: userInfo ? userInfo.toJSON() : {},
             };
-        } catch (error) {
-            throw new Error(`Specific customer details service error: ${error.message}`);
-        }
     }
 
     /**
@@ -218,7 +212,6 @@ class CustomerService {
      * @returns {Object} Updated customer data
      */
     async updateCustomer(customerId, updateData) {
-        try {
             const { firstName, lastName, email, phoneNum, status } = updateData;
 
             // Check if customer exists
@@ -230,7 +223,7 @@ class CustomerService {
             });
 
             if (!customerExists) {
-                throw new Error('Customer not found');
+                throw new NotFoundError('Customer not found');
             }
 
             // Check if email is being changed and if it already exists
@@ -244,7 +237,7 @@ class CustomerService {
                 });
 
                 if (emailExists) {
-                    throw new Error('Email already exists');
+                    throw new ConflictError('Email already exists');
                 }
             }
 
@@ -264,7 +257,7 @@ class CustomerService {
             });
 
             if (updatedCustomer[0] === 0) {
-                throw new Error('No changes were made');
+                throw new ValidationError('No changes were made');
             }
 
             // Get updated customer data
@@ -277,9 +270,6 @@ class CustomerService {
             });
 
             return updatedCustomerData;
-        } catch (error) {
-            throw new Error(`Update customer service error: ${error.message}`);
-        }
     }
 
     /**
@@ -288,7 +278,6 @@ class CustomerService {
      * @returns {Object} Deletion result
      */
     async deleteCustomer(customerId) {
-        try {
             // Check if customer exists
             const customerExists = await users.findOne({
                 where: {
@@ -298,7 +287,7 @@ class CustomerService {
             });
 
             if (!customerExists) {
-                throw new Error('Customer not found');
+                throw new NotFoundError('Customer not found');
             }
 
             // Check if customer has any active bookings
@@ -312,7 +301,7 @@ class CustomerService {
             });
 
             if (activeBookings > 0) {
-                throw new Error(`Customer has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
+                throw new UnprocessableEntityError(`Customer has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
             }
 
             // Soft delete the customer (set status to false)
@@ -327,13 +316,10 @@ class CustomerService {
             );
 
             if (deletedCustomer[0] === 0) {
-                throw new Error('Failed to delete customer');
+                throw new ValidationError('Failed to delete customer');
             }
 
             return { customerId, message: 'Customer deleted successfully' };
-        } catch (error) {
-            throw new Error(`Delete customer service error: ${error.message}`);
-        }
     }
 }
 

@@ -1,5 +1,11 @@
 const { booking, customerSelectedService, OnHoldConfirmation, addressDb, bussinessInformation, bookingStatus, service, categories, billingDetails } = require('../../models');
 const { Op } = require('sequelize');
+const { 
+    ValidationError, 
+    NotFoundError, 
+    ConflictError,
+    UnprocessableEntityError 
+} = require('../../middlewares/universalErrorHandler');
 
 class OrderService {
     /**
@@ -7,7 +13,6 @@ class OrderService {
      * @returns {Object} Order count metrics
      */
     async getOrderCount() {
-        try {
             const allOrderCount = await booking.count();
 
             const completedOrder = await booking.count({
@@ -29,9 +34,6 @@ class OrderService {
                 completedOrders: completedOrder,
                 onHoldOrders: onHoldOrders
             };
-        } catch (error) {
-            throw new Error(`Order count service error: ${error.message}`);
-        }
     }
 
     /**
@@ -42,7 +44,6 @@ class OrderService {
      * @returns {Object} Bookings with pagination info
      */
     async getOptimizedBookings(whereClause, page = 1, limit = 50) {
-        try {
             const offset = (page - 1) * limit;
 
             // Get total count
@@ -112,9 +113,6 @@ class OrderService {
                     hasPrevPage: hasPrevPage
                 }
             };
-        } catch (error) {
-            throw new Error(`Optimized bookings service error: ${error.message}`);
-        }
     }
 
     /**
@@ -125,7 +123,6 @@ class OrderService {
      * @returns {Object} Order details with pagination
      */
     async getAllOrderDetails(filters = {}, page = 1, limit = 20) {
-        try {
             let whereClause = {};
             
             if (filters.status) {
@@ -144,9 +141,6 @@ class OrderService {
                 orderDetails: result.bookings,
                 pagination: result.pagination
             };
-        } catch (error) {
-            throw new Error(`All order details service error: ${error.message}`);
-        }
     }
 
     /**
@@ -156,7 +150,6 @@ class OrderService {
      * @returns {Object} Pending orders with pagination
      */
     async getPendingOrders(page = 1, limit = 20) {
-        try {
             const whereClause = {
                 bookingStatusId: {
                     [Op.ne]: [17, 23]
@@ -170,9 +163,6 @@ class OrderService {
                 pendingOrdersCount: result.totalCount,
                 pagination: result.pagination
             };
-        } catch (error) {
-            throw new Error(`Pending orders service error: ${error.message}`);
-        }
     }
 
     /**
@@ -182,7 +172,6 @@ class OrderService {
      * @returns {Object} Cancelled orders with pagination
      */
     async getCancelledOrders(page = 1, limit = 20) {
-        try {
             const whereClause = {
                 bookingStatusId: {
                     [Op.eq]: [19]
@@ -196,9 +185,6 @@ class OrderService {
                 cancelBookingCount: result.totalCount,
                 pagination: result.pagination
             };
-        } catch (error) {
-            throw new Error(`Cancelled orders service error: ${error.message}`);
-        }
     }
 
     /**
@@ -208,7 +194,6 @@ class OrderService {
      * @returns {Object} Completed orders with pagination
      */
     async getCompletedOrders(page = 1, limit = 20) {
-        try {
             const whereClause = {
                 bookingStatusId: {
                     [Op.eq]: [17]
@@ -222,9 +207,6 @@ class OrderService {
                 completedOrdersCount: result.totalCount,
                 pagination: result.pagination
             };
-        } catch (error) {
-            throw new Error(`Completed orders service error: ${error.message}`);
-        }
     }
 
     /**
@@ -233,7 +215,6 @@ class OrderService {
      * @returns {Object} Order details for editing
      */
     async getOrderForEdit(orderId) {
-        try {
             const { users } = require('../../models');
 
             const orderDetails = await booking.findOne({
@@ -286,9 +267,6 @@ class OrderService {
             }
 
             return orderDetails;
-        } catch (error) {
-            throw new Error(`Get order for edit service error: ${error.message}`);
-        }
     }
 
     /**
@@ -298,7 +276,6 @@ class OrderService {
      * @returns {Object} Updated order data
      */
     async editOrder(orderId, orderData) {
-        try {
             const {
                 orderTrackId,
                 collectionDate,
@@ -420,9 +397,6 @@ class OrderService {
             });
 
             return updatedOrder;
-        } catch (error) {
-            throw new Error(`Edit order service error: ${error.message}`);
-        }
     }
 }
 
