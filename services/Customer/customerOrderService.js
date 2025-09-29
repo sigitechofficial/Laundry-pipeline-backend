@@ -1,0 +1,1243 @@
+require("dotenv").config();
+const { 
+    booking, 
+    customerSelectedService, 
+    servicePreferences, 
+    billingDetails, 
+    bookingHistory,
+    users,
+    address,
+    addressDb,
+    zone,
+    cities,
+    countries,
+    bussinessInformation,
+    agentSelectServices,
+    service,
+    categories,
+    subCategories,
+    OnHoldConfirmation,
+    onHoldOption,
+    onHoldCustomerOption,
+    bookingStatus,
+    serviceCategories
+} = require('../../models');
+const { Op } = require('sequelize');
+const sequelize = require('sequelize');
+const otpGenerator = require('otp-generator');
+const { sendEvent } = require('../../socket_io');
+const { 
+    ValidationError, 
+    NotFoundError, 
+    UnauthorizedError,
+    ConflictError
+} = require('../../middlewares/universalErrorHandler');
+
+// Import stripe functions
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend } = require('../../controllers/stripe');
+
+/**
+ * Helper Functions (moved from customerOrders controller to avoid circular dependency)
+ */
+
+
+// Find zones function
+async function findZones(lat, lng) {
+    const findZone = await zone.findAll({
+        where: {
+            status: true,
+            coordinates: sequelize.where(
+                sequelize.fn(
+                    "ST_Contains",
+                    sequelize.col("coordinates"),
+                    sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
+                ),
+                true
+            ),
+        },
+        include: [
+            {
+                model: cities,
+                attributes: ["id", "name", "lat", "lng", "status"],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ["id", "name", "shortName", "status"],
+                    },
+                ],
+            },
+        ],
+        attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
+    });
+    return findZone;
+}
+
+// Address adder function
+async function addressAdder(addNew, address, type, userId, addressId, cityId, countryId) {
+    console.log("Address Data------>", address.lat);
+    console.log("Address Data------>", address.lng);
+    console.log("City ID----------->", cityId);
+    console.log("Country ID-------->", countryId);
+
+    if (addNew) {
+        await addressDb.update({ isDefault: false }, { where: { userId } });
+
+        const dropOffAddressData = await addressDb.create({
+            ...address,
+            userId,
+            type,
+            cityId,
+            countryId,
+            isDefault: true,
+        });
+        return dropOffAddressData.id;
+    } else {
+        return addressId;
+    }
+}
+
+// Get time plus minutes function
+function getTimePlusMinutes(mins = 40) {
+    const dt = new Date(Date.now() + mins * 60000);
+    return dt.toLocaleTimeString("en-GB", {
+        timeZone: "Asia/Karachi",
+        hour12: false,
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+// Check if time slot booked function
+async function checkIfTimeSlotBooked(
+    shopId,
+    deliveryTimeFrom,
+    deliveryTimeTo,
+    collectionTimeFrom,
+    collectionTimeTo,
+    zoneId
+) {
+    console.log("ðŸš€ ~ checkIfTimeSlotBooked ~ shopId:", shopId);
+
+    const existingTimeSlots = await booking.findAll({
+        where: {
+            laundryShopId: shopId,
+            [Op.or]: [
+                {
+                    deliveryDate: fn("DATE", col("deliveryDate")),
+                    bookingStatusId: 1,
+                    [Op.and]: [
+                        { deliveryTimeFrom: { [Op.gte]: deliveryTimeFrom } },
+                        { deliveryTimeTo: { [Op.lte]: deliveryTimeTo } },
+                    ],
+                },
+                {
+                    collectionDate: fn("DATE", col("collectionDate")),
+                    bookingStatusId: 1,
+                    [Op.and]: [
+                        { collectionTimeFrom: { [Op.gte]: collectionTimeFrom } },
+                        { collectionTimeTo: { [Op.lte]: collectionTimeTo } },
+                    ],
+                },
+            ],
+        },
+        include: [
+            {
+                model: users,
+                as: "customer",
+                attributes: ["id", "firstName", "LastName", "email"],
+            },
+            {
+                model: addressDb,
+                as: "laundryShop",
+                where:{
+                    zoneId:zoneId,
+                },
+                attributes: [
+                    "title",
+                    "customAddresstitle",
+                    "streetAddress",
+                    "district",
+                    "province",
+                    "lat",
+                    "lng",
+                    "status",
+                    "addressType",
+                    "coordinates",
+                ],
+                include: [
+                    {
+                        model: users,
+                        attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+                    },
+                    {
+                        model: zone,
+                        required: true,
+                        attributes: ["id", "name", "status", "coordinates"],
+                    },
+                ],
+            },
+        ],
+    });
+
+    // console.log(
+    //     "ðŸš€ ~ checkIfTimeSlotBooked ~ existingTimeSlots:",
+    //     existingTimeSlots
+    // );
+
+    return existingTimeSlots;
+}
+
+// Booking event sent check the shops function
+async function bookingEventSentCheckTheShops(
+    bookingId,
+    zoneId,
+    collectionDate,
+    collectionTimeTo,
+    collectionTimeFrom,
+    deliveryDate,
+    deliveryTimeTo,
+    deliveryTimeFrom,
+    services
+) {
+    console.log(collectionTimeTo);
+    console.log(collectionTimeFrom);
+    console.log(deliveryDate);
+    console.log(deliveryTimeTo);
+    console.log(deliveryTimeFrom);
+
+    let getShopsAndOwners = await addressDb.findAll({
+        where: {
+            zoneId: zoneId,
+            addressType: "LaundaryShopAddress",
+        },
+        include: [
+            {
+                model: users,
+                attributes: ["id", "firstName", "email", "lastName"],
+                include:[
+                    {
+                        model: agentSelectServices,
+                        as: "agentServices",
+                        where: {
+                            serviceId: {
+                                [Op.in]: services.map(service => service.serviceId)
+                            }
+                        },
+                        attributes: ['id']
+                    }
+                ],
+                include: [
+                    {
+                        model: bussinessInformation,
+                        as: "businessInfo",
+                        attributes: ["shopName"],
+                    },
+                ],
+            },
+        ],
+        attributes: ["id", "status", "zoneId", "userId"],
+    });
+
+    console.log(
+        "ðŸš€ ~ getBookingDetails ~ getShopsAndOwners ----------------->:",
+        getShopsAndOwners
+    );
+
+    let availableShops = [];
+
+    for (let shop of getShopsAndOwners) {
+        let checkSlots = await checkIfTimeSlotBooked(
+            shop.id,
+            deliveryDate,
+            collectionTimeTo,
+            collectionTimeFrom,
+            collectionDate,
+            deliveryTimeTo,
+            deliveryTimeFrom,
+            zoneId
+        );
+        console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
+        if (!checkSlots || checkSlots.length === 0) {
+            availableShops.push(shop);
+        }
+    }
+
+    console.log("ðŸš€ ~ getBookingDetails ~ availableShops:", availableShops);
+
+    if (availableShops.length > 0) {
+        const bookingDetails = await booking.findOne({
+            where: { id: bookingId },
+            include: [
+                {
+                    model: users,
+                    as: "customer",
+                    attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+                },
+                {
+                    model: addressDb,
+                    as: "pickupAddress",
+                    attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+                },
+                {
+                    model: billingDetails,
+                    attributes: ["total", "serviceCharge", "categoryCharge"],
+                },
+                {
+                    model: customerSelectedService,
+                    include: [
+                        {
+                            model: service,
+                            attributes: ["id", "name", "status"],
+                        },
+                        {
+                            model: categories,
+                            attributes: ["id", "name", "status"],
+                        },
+                        {
+                            model: subCategories,
+                            attributes: ["id", "name", "status"],
+                        },
+                    ],
+                },
+                {
+                    model: zone,
+                    attributes: [
+                        "id",
+                        "zoneMinimumAmount",
+                        "serviceCharge",
+                        "currencyUnitId",
+                    ],
+                },
+            ],
+        });
+
+        console.log("ðŸš€ ~ getBookingDetails ~ bookingDetails:", bookingDetails);
+
+        const customerService =
+            bookingDetails.customerSelectedServices.length > 0
+                ? bookingDetails.customerSelectedServices.map((serviceItem) => ({
+                    serviceId: serviceItem.service.id,
+                    serviceName: serviceItem.service.name,
+                    serviceStatus: serviceItem.service.status,
+                    categoryId: serviceItem?.category?.id,
+                    categoryName: serviceItem?.category?.name,
+                    categoryStatus: serviceItem?.category?.status,
+                    subCategoryId: serviceItem?.subCategory?.id,
+                    subCategoryName: serviceItem?.subCategory?.name,
+                    subCategoryStatus: serviceItem?.subCategory?.status,
+                }))
+                : [];
+
+        // const eventData = {
+        //     type: 'newBookingRequest',
+        //     data: {
+        //         shopId: availableShops[0].id,
+        //         shopName: availableShops[0]?.user?.businessInfo?.shopName,
+        //         owner: availableShops[0].user.firstName + ' ' + availableShops[0].user.lastName,
+        //         ownerEmail: availableShops[0].user.email,
+        //         zoneId: availableShops[0].zoneId,
+        //         bookingId: bookingId,
+        //         customer: {
+        //             firstName: bookingDetails.customer.firstName,
+        //             lastName: bookingDetails.customer.lastName,
+        //             email: bookingDetails.customer.email,
+        //             phoneNum: bookingDetails.customer.phoneNum
+        //         },
+        //         orderDetails: {
+        //             orderTrackId: bookingDetails.orderTrackId,
+        //             collectionDate: collectionDate,
+        //             collectionTimeTo: collectionTimeTo,
+        //             collectionTimeFrom: collectionTimeFrom,
+        //             deliveryDate: deliveryDate,
+        //             deliveryTimeTo: deliveryTimeTo,
+        //             deliveryTimeFrom: deliveryTimeFrom,
+        //             totalAmount: bookingDetails?.billingDetail?.total,
+        //             serviceCharge: bookingDetails?.zone?.serviceCharge,
+        //             categoryCharge: bookingDetails?.billingDetail?.categoryCharge,
+        //             upfrontAmount: bookingDetails?.zone?.zoneMinimumAmount,
+        //         },
+        //         customerServices: {
+        //             services: customerService
+        //         }
+        //     }
+        // };
+        const eventData = {
+            type: "newBookingRequest",
+            data: {
+                id: bookingDetails.id,
+                orderTrackId: bookingDetails.orderTrackId,
+                collectionDate: new Date(collectionDate).toISOString(),
+                collectionTimeTo,
+                collectionTimeFrom,
+                deliveryDate: new Date(deliveryDate).toISOString(),
+                deliveryTimeTo,
+                deliveryTimeFrom,
+                driverInstructionOptions:
+                    bookingDetails.driverInstructionOptions || null,
+                driverInstructionOptions1:
+                    bookingDetails.driverInstructionOptions1 || null,
+                driverInstruction: bookingDetails.driverInstruction || null,
+                paymentConfirmed: bookingDetails.paymentConfirmed || false,
+                partialPayment: bookingDetails.partialPayment || false,
+                totalItems: bookingDetails.totalItems || 0,
+                orderAmount: bookingDetails?.billingDetail?.total || 0,
+                frequency: bookingDetails.frequency || "Just Once",
+                orderExpireTime: bookingDetails.orderExpireTime || null,
+                pickupAddresId: bookingDetails.pickupAddresId || null,
+                dropOffAddressId: bookingDetails.dropOffAddressId || null,
+                laundryShopId: availableShops[0]?.id || null,
+                customerId: bookingDetails.customer.id,
+                pickupAddress: bookingDetails.pickupAddress || {},
+                customer: {
+                    id: bookingDetails.customer.id,
+                    firstName: bookingDetails.customer.firstName,
+                    lastName: bookingDetails.customer.lastName,
+                    email: bookingDetails.customer.email,
+                    userTypeId: bookingDetails.customer.userTypeId || 2,
+                    image: bookingDetails.customer.image || null,
+                    phoneNum: bookingDetails.customer.phoneNum,
+                },
+                zone: bookingDetails.zone || {},
+            },
+        };
+        availableShops.forEach((shop) => {
+            sendEvent(shop.user.id, eventData);
+        });
+    }
+}
+
+/**
+ * Customer Order Service
+ * Handles all customer order related business logic
+ */
+class CustomerOrderService {
+    
+    /**
+     * Create Booking
+     * @param {Object} data - Booking data
+     * @param {string} data.collectionDate - Collection date
+     * @param {string} data.collectionTimeFrom - Collection time from
+     * @param {string} data.collectionTimeTo - Collection time to
+     * @param {string} data.driverInstruction - Driver instruction
+     * @param {string} data.frequency - Frequency
+     * @param {string} data.deliveryDate - Delivery date
+     * @param {string} data.deliveryTimeFrom - Delivery time from
+     * @param {string} data.deliveryTimeTo - Delivery time to
+     * @param {Object} data.pickUpAddress - Pick up address
+     * @param {Object} data.dropOffAddress - Drop off address
+     * @param {boolean} data.addNewAddress - Add new address flag
+     * @param {boolean} data.addNewDropOffAddress - Add new drop off address flag
+     * @param {boolean} data.dropOffSamePickUp - Drop off same as pick up flag
+     * @param {number} data.dropOffAddressId - Drop off address ID
+     * @param {number} data.pickUpAddressId - Pick up address ID
+     * @param {Array} data.services - Services array
+     * @param {number} data.totalItems - Total items
+     * @param {number} data.addressId - Address ID
+     * @param {string} data.driverInstructionOptions - Driver instruction options
+     * @param {string} data.driverInstructionOptions1 - Driver instruction options 1
+     * @param {Array} data.preferencesArray - Preferences array
+     * @param {string} data.paymentMethodId - Payment method ID
+     * @param {string} data.paymentIntentId - Payment intent ID
+     * @param {string} data.stripeCustomerId - Stripe customer ID
+     * @param {number} userId - User ID
+     * @returns {Object} Booking creation result
+     */
+    async createBooking(data, userId) {
+        const {
+            collectionDate,
+            collectionTimeFrom,
+            collectionTimeTo,
+            driverInstruction,
+            frequency,
+            deliveryDate,
+            deliveryTimeFrom,
+            deliveryTimeTo,
+            pickUpAddress,
+            dropOffAddress,
+            addNewAddress,
+            addNewDropOffAddress,
+            dropOffSamePickUp,
+            dropOffAddressId,
+            pickUpAddressId,
+            services,
+            totalItems,
+            addressId,
+            driverInstructionOptions,
+            driverInstructionOptions1,
+            preferencesArray,
+            paymentMethodId,
+            paymentIntentId,
+            stripeCustomerId,
+        } = data;
+
+        console.log("stripeCustomerId==============>>>", stripeCustomerId);
+        console.log("🚀 ~ createBooking ~ req.body:", data);
+
+        let userAddressId;
+        let userPickUpAddressId;
+        let userDropOffAddressId;
+
+        // Find zone information
+        let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
+        if(!findZone || findZone.length === 0) {
+            throw new ValidationError("No Zone found for these lat,lngs and coordinates");
+        }
+        let zoneId = findZone[0].id;
+        let zoneUpfrontAmount = findZone[0].zoneMinimumAmount;
+        let zoneSeviceCharge = findZone[0].serviceCharge;
+        let cityId = findZone[0].city.id;
+        let countryId = findZone[0].city.country.id;
+        
+        console.log("🚀 ~ createBooking ~ findZone:==============================", zoneId);
+        console.log("🚀 ~ createBooking ~ findZone:------------------------------", zoneUpfrontAmount);
+        console.log("🚀 ~ createBooking ~ findZone:======================+++++++++", zoneSeviceCharge);
+
+        // Handle pick up address
+        if (addNewAddress || !pickUpAddressId) {
+            userAddressId = await addressAdder(
+                addNewAddress,
+                pickUpAddress,
+                "pickUp",
+                userId,
+                pickUpAddressId,
+                cityId,
+                countryId
+            );
+            userPickUpAddressId = userAddressId;
+        } else {
+            userPickUpAddressId = pickUpAddressId;
+        }
+
+        // Handle drop off address
+        if (dropOffSamePickUp === true) {
+            userDropOffAddressId = userPickUpAddressId;
+        } else if (addNewDropOffAddress || !dropOffAddressId) {
+            userDropOffAddressId = await addressAdder(
+                addNewAddress,
+                dropOffAddress,
+                "dropOff",
+                userId
+            );
+        } else {
+            userDropOffAddressId = dropOffAddressId;
+        }
+
+        // Generate order tracking ID
+        const orderTrackingId = otpGenerator.generate(6, {
+            lowerCaseAlphabets: false,
+            upperCaseAlphabets: false,
+            specialChars: false,
+        });
+
+        // Create booking
+        const bookingData = await booking.create({
+            collectionDate,
+            collectionTimeFrom,
+            collectionTimeTo,
+            driverInstruction,
+            frequency,
+            deliveryDate,
+            deliveryTimeFrom,
+            deliveryTimeTo,
+            customerId: userId,
+            bookingStatusId: 1,
+            pickupAddresId: userPickUpAddressId,
+            dropOffAddressId: userDropOffAddressId,
+            totalItems: totalItems || 0,
+            paymentConfirmed: false,
+            partialPayment: false,
+            zoneId: zoneId,
+            driverInstructionOptions,
+            driverInstructionOptions1,
+            subTotal: 0,
+            paymentMethodId: paymentMethodId,
+            paymentIntentId: paymentIntentId,
+        });
+
+        // Create preferences
+        const createPreferences = preferencesArray.map((preferences) => ({
+            type: preferences.type,
+            chooseTemperature: preferences.chooseTemperature,
+            serviceId: preferences.serviceId,
+            preferencesServiceNameId: preferences.preferencesServiceNameId,
+            numberOfBags: preferences.numberOfBags,
+            bookingId: bookingData.id,
+        }));
+
+        await servicePreferences.bulkCreate(createPreferences);
+
+        let total = 0;
+        let categoryCharge = 0;
+
+        const currentTime = new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        });
+        const currentDate = new Date().toISOString().split("T")[0];
+        console.log(currentDate);
+        console.log(currentTime);
+
+        const discount = 0;
+        
+        if (services && services.length > 0) {
+            categoryCharge = services.reduce(
+                (acc, service) => acc + parseFloat(service.categoryCharge || 0),
+                0
+            );
+            // Calculate total amount
+            total = categoryCharge;
+
+            // Prepare the serviceData to be inserted
+            const serviceData = services.map((service) => {
+                let serviceObj = {
+                    bookingId: bookingData.id,
+                    serviceId: service.serviceId,
+                    date: currentDate,
+                    time: currentTime,
+                };
+                if (service.categoryId) serviceObj.categoryId = service.categoryId;
+                if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
+                if (service.categoryCharge) serviceObj.categoryPrice = total;
+
+                return serviceObj;
+            });
+            console.log("🚀 ~ createBooking ~ serviceData:", serviceData);
+            let serviceCreate = await customerSelectedService.bulkCreate(serviceData);
+            console.log("🚀 ~ createBooking ~ serviceCreate:", serviceCreate);
+        } else if (services.length === 0) {
+            throw new ValidationError(
+                "Cannot Continue without Selection of Service Types",
+                "Select Minimum one Service Type"
+            );
+        }
+
+        const ordertrackingNumber = `${bookingData.id}-${orderTrackingId}`;
+        const upfrontAmount = zoneUpfrontAmount;
+        console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
+
+        const fixTimeKey = getTimePlusMinutes();
+        console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey);
+
+        // Create the billing details
+        await billingDetails.create({
+            bookingId: bookingData.id,
+            upfrontAmount,
+            discount,
+            paymentStatus: "Pending",
+        });
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId: bookingData.id,
+            bookingStatusId: 1,
+        });
+
+        await booking.update(
+            {
+                orderAmount: total || 0,
+                orderTrackId: ordertrackingNumber,
+                orderExpireTime: fixTimeKey,
+                partialPayment: true,
+            },
+            { where: { id: bookingData.id } }
+        );
+
+        if (paymentMethodId && stripeCustomerId) {
+            await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
+        }
+
+        let bookingId = bookingData.id;
+        bookingEventSentCheckTheShops(
+            bookingId,
+            zoneId,
+            collectionDate,
+            collectionTimeTo,
+            collectionTimeFrom,
+            deliveryDate,
+            deliveryTimeTo,
+            deliveryTimeFrom,
+            services
+        );
+
+        return {
+            message: "Booking Created"
+        };
+    }
+
+    /**
+     * Update Booking Upfront Amount
+     * @param {Object} data - Update data
+     * @param {string} data.bookingId - Booking ID
+     * @param {string} data.IntentId - Payment Intent ID
+     * @returns {Object} - Result object
+     */
+    async updateBookingUpfrontAmount(data) {
+        const { bookingId, IntentId } = data;
+        if(!bookingId || !IntentId) {
+            throw new ValidationError("Booking ID and Intent ID are required");
+        }
+        const intentDataGet = await getIntent(IntentId);
+        if(!intentDataGet) {
+            throw new ValidationError("Intent Not Get");
+        }
+        if (intentDataGet.status === "succeeded") {
+            await booking.update(
+                {
+                    partialPayment: true,
+                },
+                { where: { id: bookingId } }
+            );
+        } else {
+            throw new ValidationError("Intent Not Succeeded");
+        }
+
+        return { message: "Payment Updated Successfully" };
+    }
+
+    /**
+     * Show Customer On Hold Reason
+     * @param {Object} data - Request data
+     * @param {string} data.bookingId - Booking ID
+     * @returns {Object} - Result object with customer option data
+     */
+    async onHoldCustomerShow(data) {
+        const { bookingId } = data;
+        if(!bookingId) {
+            throw new ValidationError("Booking ID is required");
+        }
+        const userFound = await booking.findOne({
+            where: {
+                id: bookingId,
+            },
+            include: [
+                {
+                    model: users,
+                    as: "customer",
+                    attributes: ["id", "email"],
+                },
+            ],
+        });
+        console.log("🚀 ~ onHoldCustomerShow ~ userFound:", userFound.customer.id);
+        if(!userFound) {
+            throw new ValidationError("No User Found");
+        }
+        const optionIdFound = await OnHoldConfirmation.findOne({
+            where: {
+                bookingId: bookingId,
+            },
+            include: [
+                {
+                    model: onHoldOption,
+                    as: "agentHoldId",
+                },
+            ],
+            attributes: ["onHoldOptionId"],
+        });
+        console.log("🚀 ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound);
+        if(!optionIdFound) {
+            throw new ValidationError("No Option ID Found");
+        }
+        const customerOptionFound = await onHoldCustomerOption.findOne({
+            where: {
+                onHoldOptionId: optionIdFound.onHoldOptionId,
+            },
+            attributes: ["id", "option", "title", "conformationText", "notConfirmText"],
+        });
+        if(!customerOptionFound) {
+            throw new ValidationError("No Customer Option Found");
+        }
+        return { 
+            message: "Customer On Hold Response Show", 
+            data: customerOptionFound 
+        };
+    }
+
+    /**
+     * Update Customer Response for On Hold Booking
+     * @param {Object} data - Request data
+     * @param {string} data.bookingId - Booking ID
+     * @param {boolean} data.customerResponse - Customer response (true/false)
+     * @returns {Object} - Result object
+     */
+    async customerResponseUpdate(data) {
+        const { bookingId, customerResponse } = data;
+
+        const bookingFind = await booking.findOne({
+            where: {
+                id: bookingId,
+            },
+            include: [
+                {
+                    model: addressDb,
+                    as: "laundryShop",
+                    attributes: ["id", "userId"],
+                    include: [
+                        {
+                            model: users,
+                            attributes: ["id", "firstName", "lastName", "userTypeId"],
+                        },
+                    ],
+                },
+            ],
+        });
+        console.log(
+            "🚀 ~ customerResponseUpdate ~ bookingFind:",
+            bookingFind.laundryShop.user.id
+        );
+        const userId = bookingFind.laundryShop.user.id;
+
+        await OnHoldConfirmation.update(
+            {
+                customerResponse: customerResponse,
+            },
+            { where: { bookingId: bookingId } }
+        );
+
+        const currentTime = new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        });
+        const currentDate = new Date().toISOString().split("T")[0];
+
+        await booking.update(
+            {
+                bookingStatusId: 22,
+            },
+            { where: { id: bookingId } }
+        );
+
+        await bookingHistory.create({
+            bookingId: bookingId,
+            bookingStatusId: 22,
+            date: currentDate,
+            time: currentTime,
+        });
+
+        let eventData = {
+            type: "customerResponse",
+            data: {
+                customerResponse: customerResponse,
+                bookingId: bookingId,
+            },
+        };
+
+        sendEvent(userId, eventData);
+
+        return { message: "Customer Response" };
+    }
+
+    /**
+     * Get All Customer Bookings
+     * @param {Object} data - Request data
+     * @param {string} data.userId - User ID
+     * @returns {Object} - Result object with bookings data
+     */
+    async allBookings(data) {
+        const { userId } = data;
+
+        const findAllBooking = await booking.findAll({
+            where: {
+                customerId: userId,
+            },
+            include: [
+                {
+                    model: bookingStatus,
+                    attributes: ["title", "description"],
+                },
+            ],
+            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+        });
+        if(!findAllBooking || findAllBooking.length === 0) {
+            throw new ValidationError("No Bookings Found");
+        }
+
+        return { 
+            message: "Customer All Bookings", 
+            data: findAllBooking 
+        };
+    }
+
+    /**
+     * Get Booking Details by ID
+     * @param {Object} data - Request data
+     * @param {string} data.bookingId - Booking ID (optional)
+     * @param {string} data.orderTrackId - Order Track ID (optional)
+     * @returns {Object} - Result object with booking details
+     */
+    async bookingDetailsById(data) {
+        const { bookingId, orderTrackId } = data;
+
+        let whereCondition = {};
+
+        if (bookingId) {
+            whereCondition.id = bookingId;
+        } else {
+            whereCondition.orderTrackId = orderTrackId;
+        }
+
+        const bookingFind = await booking.findOne({
+            where: whereCondition,
+            include: [
+                {
+                    model: users,
+                    as: "customer",
+                    attributes: ["id", "firstName", "lastName", "email"],
+                },
+                {
+                    model: addressDb,
+                    as: "pickupAddress",
+                    attributes: [
+                        "title",
+                        "streetAddress",
+                        "province",
+                        "district",
+                        "addressType",
+                    ],
+                },
+                {
+                    model: addressDb,
+                    as: "dropOffAddress",
+                    attributes: [
+                        "title",
+                        "streetAddress",
+                        "province",
+                        "district",
+                        "addressType",
+                    ],
+                },
+                {
+                    model: customerSelectedService,
+                    attributes: [
+                        "date",
+                        "time",
+                        "categoryprice",
+                        "categoryId",
+                        "serviceId",
+                        "subCategoryId",
+                        "items",
+                    ],
+                },
+                {
+                    model: bookingStatus,
+                    attributes: ["title", "description"],
+                },
+                {
+                    model: bookingHistory,
+                    attributes: ["date", "time"],
+                    include: [
+                        {
+                            model: bookingStatus,
+                            attributes: ["title", "description"],
+                        },
+                    ],
+                },
+            ],
+        });
+        if(!bookingFind) {
+            throw new ValidationError("No Booking Found");
+        }
+
+        return { 
+            message: "Customer Order Details Fetched", 
+            data: bookingFind 
+        };
+    }
+
+    /**
+     * Get All Services
+     * @returns {Object} - Result object with services data
+     */
+    async allServices() {
+        const serviceData = await service.findAll();
+
+        if(!serviceData || serviceData.length === 0) {
+            throw new ValidationError("No Services Found");
+        }
+
+        return { 
+            message: "All Services", 
+            data: { serviceData } 
+        };
+    }
+
+    /**
+     * Get Service Detail by ID
+     * @param {Object} data - Request data
+     * @param {string} data.serviceId - Service ID
+     * @returns {Object} - Result object with service details
+     */
+    async serviceDetail(data) {
+        const { serviceId } = data;
+
+        const serviceData = await serviceCategories.findAll({
+            where: {
+                serviceId: serviceId,
+                status: true,
+            },
+            include: [
+                {
+                    model: service,
+                    attributes: ["id", "name", "status"],
+                },
+                {
+                    model: categories,
+                    attributes: ["id", "name", "status", "image", "description"],
+                    include: [
+                        {
+                            model: subCategories,
+                            attributes: ["id", "name", "status", "price"],
+                        },
+                    ],
+                },
+            ],
+        });
+
+        if(!serviceData || serviceData.length === 0) {
+            throw new ValidationError("No Service Details Found");
+        }
+
+        return { 
+            message: "Service Details", 
+            data: { serviceData } 
+        };
+    }
+
+    /**
+     * Get Customer Addresses
+     * @param {Object} data - Request data
+     * @param {string} data.userId - User ID
+     * @returns {Object} - Result object with customer addresses
+     */
+    async customerAddresses(data) {
+        const { userId } = data;
+
+        const customerAddresses = await addressDb.findAll({
+            where: {
+                userId: userId,
+                isDefault: true,
+            },
+            attributes: [
+                "id",
+                "title",
+                "streetAddress",
+                "province",
+                "district",
+                "addressType"
+            ],
+        });
+
+        if(!customerAddresses || customerAddresses.length === 0) {
+            throw new ValidationError("No Customer Addresses Found");
+        }
+
+        return { 
+            message: "Customer Addresses", 
+            data: customerAddresses 
+        };
+    }
+
+    /**
+     * Fetch Zone and Charges
+     * @param {Object} data - Request data
+     * @param {string} data.lat - Latitude
+     * @param {string} data.lng - Longitude
+     * @returns {Object} - Result object with zone and charge information
+     */
+    async fetchZoneAndCharges(data) {
+        const { lat, lng } = data;
+
+        if (!lat || !lng) {
+            throw new ValidationError("Latitude and Longitude are required");
+        }
+
+        const zoneData = await findZones(lat, lng);
+        
+        if (!zoneData || zoneData.length === 0) {
+            throw new ValidationError("No Zone Found");
+        }
+
+        let zoneId = zoneData[0].id;
+        let zoneUpfrontAmount = zoneData[0].zoneMinimumAmount;
+        let zoneSeviceCharge = zoneData[0].serviceCharge;
+        let cityId = zoneData[0].city.id;
+        let countryId = zoneData[0].city.country.id;
+
+        return { 
+            message: "Zone and Charges", 
+            data: { zoneId, zoneUpfrontAmount, zoneSeviceCharge, cityId, countryId } 
+        };
+    }
+
+    /**
+     * Create Intent Using Stripe
+     * @param {Object} data - Request data
+     * @param {string} data.amount - Payment amount
+     * @param {string} data.customerId - Stripe customer ID
+     * @returns {Object} - Result object with intent data
+     */
+    async createIntentUsingStripe(data) {
+        const { amount, customerId } = data;
+
+        if (!amount || !customerId) {
+            throw new ValidationError("Amount and Customer ID are required");
+        }
+
+        console.log("Req.body ===================================>>>>", { amount, customerId });
+        
+        const intent = await createPaymentIntend(amount, customerId);
+        console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent);
+        
+        let intentData = {
+            intentId: intent.id,
+            clientSecret: intent.client_secret,
+            amount: amount,
+            customerId: customerId,
+        };
+
+        return { 
+            message: "Intent Created", 
+            data: intentData 
+        };
+    }
+
+    /**
+     * Get On-Hold Bookings
+     * @param {Object} data - Request data
+     * @param {string} data.bookingId - Booking ID
+     * @returns {Object} - Result object with on-hold bookings data
+     */
+    async getOnHoldBookings(data) {
+        const { bookingId } = data;
+
+        if (!bookingId) {
+            throw new ValidationError("Booking ID is required");
+        }
+
+        const onHoldBookings = await OnHoldConfirmation.findAll({
+            where: {
+                bookingId: bookingId,
+            },
+            include: [
+                {
+                    model: service,
+                    attributes: ['id', 'name']
+                },
+                {
+                    model: subCategories,
+                    attributes: ['id', 'name', 'price']
+                }
+            ],
+            attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+        });
+
+        if (!onHoldBookings || onHoldBookings.length === 0) {
+            throw new NotFoundError("No on-hold bookings found");
+        }
+
+        return { 
+            message: "On-hold bookings retrieved successfully", 
+            data: { onHoldBookings } 
+        };
+    }
+
+    /**
+     * Update Customer Response for On Hold Booking
+     * @param {Object} data - Request data
+     * @param {Array} data.responses - Array of response objects
+     * @param {string} data.bookingId - Booking ID
+     * @returns {Object} - Result object with updated responses
+     */
+    async updateCustomerResponseForOnHoldBooking(data) {
+        const { responses, bookingId } = data;
+
+        if (!Number.isInteger(bookingId)) {
+            throw new ValidationError("bookingId must be an integer");
+        }
+
+        if (!Array.isArray(responses) || responses.length === 0) {
+            throw new ValidationError("responses must be a non-empty array");
+        }
+
+        // Validate all items first
+        for (const r of responses) {
+            const { customerResponse, onHoldId } = r ?? {};
+            if (typeof customerResponse !== "boolean") {
+                throw new ValidationError("customerResponse must be boolean for each response");
+            }
+            if (!Number.isInteger(onHoldId)) {
+                throw new ValidationError("onHoldId must be an integer for each response");
+            }
+        }
+
+        const updatedResponses = [];
+
+        for (const { customerResponse, onHoldId } of responses) {
+            const onHoldBooking = await OnHoldConfirmation.findOne({
+                where: { id: onHoldId, bookingId }
+            });
+
+            if (!onHoldBooking) {
+                throw new NotFoundError(`On-hold booking not found for onHoldId: ${onHoldId}`);
+            }
+
+            onHoldBooking.customerResponse = customerResponse;   // can be true or false
+            onHoldBooking.responseConformation = true;
+            await onHoldBooking.save();
+
+            updatedResponses.push({
+                id: onHoldBooking.id,
+                bookingId: onHoldBooking.bookingId,
+                customerResponse: onHoldBooking.customerResponse,
+                updatedAt: onHoldBooking.updatedAt
+            });
+        }
+
+        return { 
+            message: "Customer responses updated successfully", 
+            data: { updatedResponses } 
+        };
+    }
+
+    /**
+     * Get On-Hold Bookings for Customer
+     * @param {Object} data - Request data
+     * @param {string} data.customerId - Customer ID
+     * @returns {Object} - Result object with on-hold bookings data
+     */
+    async getOnHoldBookingsForCustomer(data) {
+        const { customerId } = data;
+
+        if (!customerId) {
+            throw new ValidationError("Customer ID is required");
+        }
+
+        const onHoldBookings = await booking.findAll({
+            where: {
+                customerId: customerId,
+                bookingStatusId: 18,
+            },
+            include: [
+                {
+                    model: OnHoldConfirmation,
+                    required: false,
+                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+                }
+            ],
+            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+        });
+
+        if (!onHoldBookings || onHoldBookings.length === 0) {
+            throw new NotFoundError("No on-hold bookings found for this customer");
+        }
+
+        return { 
+            message: "On-hold bookings retrieved successfully", 
+            data: { onHoldBookings } 
+        };
+    }
+}
+
+module.exports = new CustomerOrderService();

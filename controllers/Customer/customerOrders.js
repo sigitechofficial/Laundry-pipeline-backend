@@ -46,6 +46,8 @@ const { sendEvent } = require("../../socket_io");
 const { title } = require("process");
 const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPaymentMethodToCustomer } = require("../stripe");
 const { sendNotification } = require("../../utils/notification");
+const customerOrderService = require('../../services/Customer/customerOrderService');
+const ResponseHelper = require('../../utils/responseHelper');
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -79,72 +81,10 @@ async function createBooking(req, res) {
         stripeCustomerId,
     } = req.body;
 
-    console.log("ðŸš€ ~ createBooking ~ req.body:", req.body);
-
     const userId = req.user.id;
-    let userAddressId;
-    let userPickUpAddressId;
-    let userDropOffAddressId;
 
-    // console.log("Lat -------------->", pickUpAddress.lat);
-    // console.log("Lng ---------------------->", pickUpAddress.lng);
-
-    let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
-    let zoneId = findZone[0].id;
-    let zoneUpfrontAmount = findZone[0].zoneMinimumAmount;
-    let zoneSeviceCharge = findZone[0].serviceCharge;
-    let cityId = findZone[0].city.id;
-    let countryId = findZone[0].city.country.id;
-    console.log(
-        "ðŸš€ ~ createBooking ~ findZone:==============================",
-        zoneId
-    );
-    console.log(
-        "ðŸš€ ~ createBooking ~ findZone:------------------------------",
-        zoneUpfrontAmount
-    );
-    console.log(
-        "ðŸš€ ~ createBooking ~ findZone:======================+++++++++",
-        zoneSeviceCharge
-    );
-
-    //return res.json(findZone)
-
-    if (addNewAddress || !pickUpAddressId) {
-        userAddressId = await addressAdder(
-            addNewAddress,
-            pickUpAddress,
-            "pickUp",
-            userId,
-            pickUpAddressId,
-            cityId,
-            countryId
-        );
-        userPickUpAddressId = userAddressId;
-    } else {
-        userPickUpAddressId = pickUpAddressId;
-    }
-
-    if (dropOffSamePickUp === true) {
-        userDropOffAddressId = userPickUpAddressId;
-    } else if (addNewDropOffAddress || !dropOffAddressId) {
-        userDropOffAddressId = await addressAdder(
-            addNewAddress,
-            dropOffAddress,
-            "dropOff",
-            userId
-        );
-    } else {
-        userDropOffAddressId = dropOffAddressId;
-    }
-
-    const orderTrackingId = otpGenerator.generate(6, {
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: false,
-    });
-
-    const bookingData = await booking.create({
+    // Call service to handle business logic
+    const result = await customerOrderService.createBooking({
         collectionDate,
         collectionTimeFrom,
         collectionTimeTo,
@@ -153,139 +93,26 @@ async function createBooking(req, res) {
         deliveryDate,
         deliveryTimeFrom,
         deliveryTimeTo,
-        customerId: userId,
-        bookingStatusId: 1,
-        pickupAddresId: userPickUpAddressId,
-        dropOffAddressId: userDropOffAddressId,
-        totalItems: totalItems || 0,
-        paymentConfirmed: false,
-        partialPayment: false,
-        zoneId: zoneId,
+        pickUpAddress,
+        dropOffAddress,
+        addNewAddress,
+        addNewDropOffAddress,
+        dropOffSamePickUp,
+        dropOffAddressId,
+        pickUpAddressId,
+        services,
+        totalItems,
+        addressId,
         driverInstructionOptions,
         driverInstructionOptions1,
-        subTotal: 0,
-        paymentMethodId: paymentMethodId,
-        paymentIntentId: paymentIntentId,
-    });
+        preferencesArray,
+        paymentMethodId,
+        paymentIntentId,
+        stripeCustomerId,
+    }, userId);
 
-    const createPreferences = preferencesArray.map((preferences) => ({
-        type: preferences.type,
-        chooseTemperature: preferences.chooseTemperature,
-        serviceId: preferences.serviceId,
-        preferencesServiceNameId: preferences.preferencesServiceNameId,
-        numberOfBags: preferences.numberOfBags,
-        bookingId: bookingData.id,
-    }));
-
-    await servicePreferences.bulkCreate(createPreferences);
-
-    let total = 0;
-    let categoryCharge = 0;
-
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log(currentDate);
-    console.log(currentTime);
-
-    const discount = 0;
-    if (services && services.length > 0) {
-        categoryCharge = services.reduce(
-            (acc, service) => acc + parseFloat(service.categoryCharge || 0),
-            0
-        );
-        // Calculate total amount
-        total = categoryCharge;
-
-        // Prepare the serviceData to be inserted
-        const serviceData = services.map((service) => {
-            let serviceObj = {
-                bookingId: bookingData.id,
-                serviceId: service.serviceId,
-                date: currentDate,
-                time: currentTime,
-            };
-            if (service.categoryId) serviceObj.categoryId = service.categoryId;
-            if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
-            if (service.categoryCharge) serviceObj.categoryPrice = total;
-
-            return serviceObj;
-        });
-        console.log("ðŸš€ ~ createBooking ~ serviceData:", serviceData);
-        let serviceCreate = await customerSelectedService.bulkCreate(serviceData);
-        console.log("ðŸš€ ~ createBooking ~ serviceCreate:", serviceCreate);
-    } else if (services.length === 0) {
-        throw new customError(
-            "Cannot Continue without Selection of Service Types",
-            "Select Minimum one Service Type"
-        );
-    }
-
-    const ordertrackingNumber = `${bookingData.id}-${orderTrackingId}`;
-    const upfrontAmount = zoneUpfrontAmount;
-    console.log("ðŸš€ ~ createBooking ~ upfrontAmount:", upfrontAmount);
-
-    // const fixTimeKey = new Date(Date.now() + 40 * 60 * 1000).toLocaleTimeString(
-    //     'en-GB',
-    //     {
-    //         hour12: false, // Forces 24-hour format
-    //         hour: "2-digit",
-    //         minute: "2-digit",
-    //     }
-    // );
-
-    const fixTimeKey = getTimePlusMinutes();
-    console.log(
-        "ðŸš€ ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:",
-        fixTimeKey
-    );
-
-    // Create the billing details
-    await billingDetails.create({
-        bookingId: bookingData.id,
-        upfrontAmount,
-        discount,
-        paymentStatus: "Pending",
-    });
-
-    await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
-        bookingId: bookingData.id,
-        bookingStatusId: 1,
-    });
-
-    await booking.update(
-        {
-            orderAmount: total || 0,
-            orderTrackId: ordertrackingNumber,
-            orderExpireTime: fixTimeKey,
-            partialPayment: true,
-        },
-        { where: { id: bookingData.id } }
-    );
-
-    if (paymentMethodId && stripeCustomerId) {
-        await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
-    }
-
-    let bookingId = bookingData.id;
-    bookingEventSentCheckTheShops(
-        bookingId,
-        zoneId,
-        collectionDate,
-        collectionTimeTo,
-        collectionTimeFrom,
-        deliveryDate,
-        deliveryTimeTo,
-        deliveryTimeFrom,
-        services
-    );
-
-    return res.json(responsefunc("1", "Booking Created", {}, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {});
 }
 
 /*
@@ -294,21 +121,14 @@ async function createBooking(req, res) {
 async function updateBookingUpfrontAmount(req, res) {
     const { bookingId, IntentId } = req.query;
 
-    const intentDataGet = await getIntent(IntentId);
-    console.log("🚀 ~ updateBookingUpfrontAmount ~ intentDataGet:", intentDataGet)
+    // Call service to handle business logic
+    const result = await customerOrderService.updateBookingUpfrontAmount({
+        bookingId,
+        IntentId
+    });
 
-    if (intentDataGet.status === "succeeded") {
-        await booking.update(
-            {
-                partialPayment: true,
-            },
-            { where: { id: bookingId } }
-        );
-    } else {
-        throw new customError("Intent Not Get");
-    }
-
-    return res.json(responsefunc("1", "Payment Updated Sucessfully", {}, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {});
 }
 
 /*
@@ -317,44 +137,13 @@ async function updateBookingUpfrontAmount(req, res) {
 async function onHoldCustomerShow(req, res) {
     const { bookingId } = req.body;
 
-    const userFound = await booking.findOne({
-        where: {
-            id: bookingId,
-        },
-        include: [
-            {
-                model: users,
-                as: "customer",
-                attributes: ["id", "email"],
-            },
-        ],
-    });
-    console.log("ðŸš€ ~ onHoldCustomerShow ~ userFound:", userFound.customer.id);
-
-    const optionIdFound = await OnHoldConfirmation.findOne({
-        where: {
-            bookingId: bookingId,
-        },
-        include: [
-            {
-                model: onHoldOption,
-                as: "agentHoldId",
-            },
-        ],
-        attributes: ["onHoldOptionId"],
-    });
-    console.log("ðŸš€ ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound);
-
-    const customerOptionFound = await onHoldCustomerOption.findOne({
-        where: {
-            onHoldOptionId: optionIdFound.onHoldOptionId,
-        },
-        attributes: ["id", "option", "title", "conformationText", "notConfirmText"],
+    // Call service to handle business logic
+    const result = await customerOrderService.onHoldCustomerShow({
+        bookingId
     });
 
-    return res.json(
-        responsefunc("1", "Customer On Hold Response Show", customerOptionFound, "")
-    );
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
@@ -363,71 +152,14 @@ async function onHoldCustomerShow(req, res) {
 async function customerResponseUpdate(req, res) {
     const { bookingId, customerResponse } = req.body;
 
-    const bookingFind = await booking.findOne({
-        where: {
-            id: bookingId,
-        },
-        include: [
-            {
-                model: addressDb,
-                as: "laundryShop",
-                attributes: ["id", "userId"],
-                include: [
-                    {
-                        model: users,
-                        attributes: ["id", "firstName", "lastName", "userTypeId"],
-                    },
-                ],
-            },
-        ],
-    });
-    console.log(
-        "ðŸš€ ~ customerResponseUpdate ~ bookingFind:",
-        bookingFind.laundryShop.user.id
-    );
-    const userId = bookingFind.laundryShop.user.id;
-    //return res.json(bookingFind)
-
-    await OnHoldConfirmation.update(
-        {
-            customerResponse: customerResponse,
-        },
-        { where: { bookingId: bookingId } }
-    );
-
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-    const currentDate = new Date().toISOString().split("T")[0];
-
-    await booking.update(
-        {
-            bookingStatusId: 22,
-        },
-        { where: { id: bookingId } }
-    );
-
-    await bookingHistory.create({
-        bookingId: bookingId,
-        bookingStatusId: 22,
-        date: currentDate,
-        time: currentTime,
+    // Call service to handle business logic
+    const result = await customerOrderService.customerResponseUpdate({
+        bookingId,
+        customerResponse
     });
 
-    let eventData = {
-        type: "customerResponse",
-        data: {
-            customerResponse: customerResponse,
-            bookingId: bookingId,
-        },
-    };
-
-    sendEvent(userId, eventData);
-    //two options can send event for new tab or can send notification from here
-
-    return res.json(responsefunc("1", "Customer Response", {}, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {});
 }
 
 /*
@@ -436,37 +168,13 @@ async function customerResponseUpdate(req, res) {
 async function allBookings(req, res) {
     const userId = req.user.id;
 
-    const findAllBooking = await booking.findAll({
-        where: {
-            customerId: userId,
-        },
-        include: [
-            // {
-            //     model: users,
-            //     as: "customer",
-            //     attributes: ["firstName", "lastName", "email"],
-            // },
-            // {
-            //     model: addressDb,
-            //     as: "pickupAddress",
-            //     attributes: ["title", "streetAddress", "province", "addressType"],
-            // },
-            // {
-            //     model: addressDb,
-            //     as: "dropOffAddress",
-            //     attributes: ["title", "streetAddress", "province", "addressType"],
-            // },
-            {
-                model: bookingStatus,
-                attributes: ["title", "description"],
-            },
-        ],
-        attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+    // Call service to handle business logic
+    const result = await customerOrderService.allBookings({
+        userId
     });
 
-    return res.json(
-        responsefunc("1", "Customer All Bookings", findAllBooking, "")
-    );
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
@@ -475,85 +183,25 @@ async function allBookings(req, res) {
 async function bookingDetailsById(req, res) {
     const { bookingId, orderTrackId } = req.query;
 
-    let whereCondition = {};
-
-    if (bookingId) {
-        whereCondition.id = bookingId;
-    } else {
-        whereCondition.orderTrackId = orderTrackId;
-    }
-
-    const bookingFind = await booking.findOne({
-        where: whereCondition,
-        include: [
-            {
-                model: users,
-                as: "customer",
-                attributes: ["id", "firstName", "lastName", "email"],
-            },
-            {
-                model: addressDb,
-                as: "pickupAddress",
-                attributes: [
-                    "title",
-                    "streetAddress",
-                    "province",
-                    "district",
-                    "addressType",
-                ],
-            },
-            {
-                model: addressDb,
-                as: "dropOffAddress",
-                attributes: [
-                    "title",
-                    "streetAddress",
-                    "province",
-                    "district",
-                    "addressType",
-                ],
-            },
-            {
-                model: customerSelectedService,
-                attributes: [
-                    "date",
-                    "time",
-                    "categoryprice",
-                    "categoryId",
-                    "serviceId",
-                    "subCategoryId",
-                    "items",
-                ],
-            },
-            {
-                model: bookingStatus,
-                attributes: ["title", "description"],
-            },
-            {
-                model: bookingHistory,
-                attributes: ["date", "time"],
-                include: [
-                    {
-                        model: bookingStatus,
-                        attributes: ["title", "description"],
-                    },
-                ],
-            },
-        ],
+    // Call service to handle business logic
+    const result = await customerOrderService.bookingDetailsById({
+        bookingId,
+        orderTrackId
     });
 
-    return res.json(
-        responsefunc("1", "Customer Order Details Fetched", bookingFind, "")
-    );
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
  * Services For the Customer
  */
 async function allServices(req, res) {
-    const serviceData = await service.findAll();
+    // Call service to handle business logic
+    const result = await customerOrderService.allServices();
 
-    return res.json(responsefunc("1", " All Services", { serviceData }, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
@@ -562,30 +210,13 @@ async function allServices(req, res) {
 async function serviceDetail(req, res) {
     const { serviceId } = req.params;
 
-    const serviceData = await serviceCategories.findAll({
-        where: {
-            serviceId: serviceId,
-            status: true,
-        },
-        include: [
-            {
-                model: service,
-                attributes: ["id", "name", "status"],
-            },
-            {
-                model: categories,
-                attributes: ["id", "name", "status", "image", "description"],
-                include: [
-                    {
-                        model: subCategories,
-                        attributes: ["id", "name", "status", "price"],
-                    },
-                ],
-            },
-        ],
+    // Call service to handle business logic
+    const result = await customerOrderService.serviceDetail({
+        serviceId
     });
 
-    return res.json(responsefunc("1", "Service Details", { serviceData }, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
@@ -594,24 +225,13 @@ async function serviceDetail(req, res) {
 async function customerAddresses(req, res) {
     const userId = req.user.id;
 
-    const customerAddresses = await addressDb.findAll({
-        where: {
-            userId: userId,
-            isDefault: true,
-        },
-        attributes: [
-            "id",
-            "title",
-            "streetAddress",
-            "province",
-            "district",
-            "addressType"
-        ],
+    // Call service to handle business logic
+    const result = await customerOrderService.customerAddresses({
+        userId
     });
 
-    return res.json(
-        responsefunc("1", "Customer Addresses", customerAddresses, "")
-    );
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
@@ -619,13 +239,13 @@ async function customerAddresses(req, res) {
  */
 async function fetchZoneAndCharges(req, res) {
     const { lat, lng } = req.query;
-    const zoneData = await findZones(lat, lng);
-    let zoneId = zoneData[0].id;
-    let zoneUpfrontAmount = zoneData[0].zoneMinimumAmount;
-    let zoneSeviceCharge = zoneData[0].serviceCharge;
-    let cityId = zoneData[0].city.id;
-    let countryId = zoneData[0].city.country.id;
-    return res.json(responsefunc("1", "Zone and Charges", { zoneId, zoneUpfrontAmount, zoneSeviceCharge, cityId, countryId }, ""));
+    const result = await customerOrderService.fetchZoneAndCharges({
+        lat,
+        lng
+    });
+
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 
@@ -634,15 +254,15 @@ async function fetchZoneAndCharges(req, res) {
  */
 async function createIntentUsingStripe(req, res) {
     const { amount, customerId } = req.body;
-    const intent = await createPaymentIntend(amount, customerId);
-    console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
-    let intentData = {
-        intentId: intent.id,
-        clientSecret: intent.client_secret,
-        amount: amount,
-        customerId: customerId,
-    }
-    return res.json(responsefunc("1", "Intent Created", intentData, ""));
+
+    // Call service to handle business logic
+    const result = await customerOrderService.createIntentUsingStripe({
+        amount,
+        customerId
+    });
+
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 
@@ -673,33 +293,13 @@ async function getPrefrencesValues(req, res) {
 async function getOnHoldBookings(req, res) {
     const { bookingId } = req.params;
 
-    try {
-        const onHoldBookings = await OnHoldConfirmation.findAll({
-            where: {
-                bookingId: bookingId,
-            },
-            include: [
-                {
-                    model: service,
-                    attributes: ['id', 'name']
-                },
-                {
-                    model: subCategories,
-                    attributes: ['id', 'name', 'price']
-                }
-            ],
-            attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
-        });
+    // Call service to handle business logic
+    const result = await customerOrderService.getOnHoldBookings({
+        bookingId
+    });
 
-        if (!onHoldBookings || onHoldBookings.length === 0) {
-            return res.status(404).json(responsefunc("0", "No on-hold bookings found", {}, ""));
-        }
-
-        return res.json(responsefunc("1", "On-hold bookings retrieved successfully", { onHoldBookings }, ""));
-    } catch (error) {
-        console.error("Error fetching on-hold bookings:", error);
-        return res.status(500).json(responsefunc("0", "Internal server error", {}, ""));
-    }
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 
@@ -710,38 +310,16 @@ async function getOnHoldBookings(req, res) {
 async function updateCustomerResponseForOnHoldBooking(req, res) {
     const { responses, bookingId } = req.body;
 
-    
-    if (!Array.isArray(responses)) {
-        return res.status(400).json(responsefunc("0", "Responses must be an array", {}, ""));
-    }
+    // Call service to handle business logic
+    const result = await customerOrderService.updateCustomerResponseForOnHoldBooking({
+        responses,
+        bookingId
+    });
 
-        const updatedResponses = [];
-
-        for (const response of responses) {
-            const { customerResponse, onHoldId } = response;
-
-            
-            if (!customerResponse || !onHoldId) {
-                return res.status(400).json(responsefunc("0", "Each response must contain customerResponse and onHoldId", {}, ""));
-            }
-
-            const onHoldBooking = await OnHoldConfirmation.findOne({
-                where: { id: onHoldId, bookingId: bookingId }
-            });
-
-            if (!onHoldBooking) {
-                return res.status(404).json(responsefunc("0", `On-hold booking not found for onHoldId: ${onHoldId}`, {}, ""));
-            }
-
-            onHoldBooking.customerResponse = customerResponse;
-            onHoldBooking.responseConformation = true;
-            await onHoldBooking.save();
-
-            updatedResponses.push(onHoldBooking);
-        }
-
-        return res.json(responsefunc("1", "Customer responses updated successfully", { updatedResponses }, ""));
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
+
 
 /*
  * Get All Bookings with On-Hold Status for a Customer
@@ -749,31 +327,13 @@ async function updateCustomerResponseForOnHoldBooking(req, res) {
 async function getOnHoldBookingsForCustomer(req, res) {
     const customerId = req.user.id;
 
-    try {
-        const onHoldBookings = await booking.findAll({
-            where: {
-                customerId: customerId,
-                bookingStatusId: 18,
-            },
-            include: [
-                {
-                    model: OnHoldConfirmation,
-                    required: false,
-                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
-                }
-            ],
-            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
-        });
+    // Call service to handle business logic
+    const result = await customerOrderService.getOnHoldBookingsForCustomer({
+        customerId
+    });
 
-        if (!onHoldBookings || onHoldBookings.length === 0) {
-            return res.status(404).json(responsefunc("0", "No on-hold bookings found for this customer", {}, ""));
-        }
-
-        return res.json(responsefunc("1", "On-hold bookings retrieved successfully", { onHoldBookings }, ""));
-    } catch (error) {
-        console.error("Error fetching on-hold bookings for customer:", error);
-        return res.status(500).json(responsefunc("0", "Internal server error", {}, ""));
-    }
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 

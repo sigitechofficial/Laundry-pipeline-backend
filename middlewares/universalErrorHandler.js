@@ -94,7 +94,7 @@ const universalErrorHandler = (err, req, res, next) => {
 
     // Handle different error types
     if (err.name === 'ValidationError') {
-        const message = Object.values(err.errors).map(val => val.message).join(', ');
+        const message = err.errors ? Object.values(err.errors).map(val => val.message).join(', ') : err.message;
         error = new ValidationError(message);
     }
 
@@ -149,17 +149,17 @@ const universalErrorHandler = (err, req, res, next) => {
     // Prepare response based on context
     const response = {
         status: statusCode >= 400 ? '0' : '1',
-        //message: statusCode >= 500 ? 'Internal Server Error' : message,
+        message: statusCode >= 500 ? 'Internal Server Error' : message,
+        statusCode: statusCode,
         data: {},
         error: statusCode >= 500 ? 'Something went wrong' : message,
-        statusCode: statusCode,
         timestamp: new Date().toISOString(),
         path: req.originalUrl
     };
 
     // Add details if available
     if (error.details) {
-        response.details = error.details;
+        response.data = error.details;
     }
 
     // Add stack trace in development

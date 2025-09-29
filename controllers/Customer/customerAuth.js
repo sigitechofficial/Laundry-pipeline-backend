@@ -14,13 +14,16 @@ const path = require('path')
 const { stat } = require('fs')
 const stripe = require('../stripe')
 const { create } = require('domain')
+const customerAuthService = require('../../services/Customer/authService')
+const ResponseHelper = require('../../utils/responseHelper')
+const { ValidationError } = require('../../middlewares/universalErrorHandler')
 
 //!-------------------Customer Auth---------------------//
 /*
   * Combine Register with OTP
 */
 async function registerCustomerWithOTP(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email,countryCode } = req.body;
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
     console.log("🚀 ~ registerCustomerWithOTP ~ req.body:", req.body);
 
     let profileImg = null;
@@ -29,103 +32,22 @@ async function registerCustomerWithOTP(req, res) {
         profileImg = tempProfileImg.replace(/\\/g, "/");
     }
 
+    // Call service to handle business logic
+    const result = await customerAuthService.registerCustomerWithOTP({
+        firstName,
+        lastName,
+        password,
+        dvToken,
+        phoneNum,
+        confirmPassword,
+        countryId,
+        cityId,
+        email,
+        countryCode
+    }, profileImg);
 
-    const userfind = await users.findOne({
-        where: {
-            email: email,
-            deletedAt: {
-                [Op.is]: null
-            }
-        },
-        include: [{
-            model: otpVerification,
-            required: false,
-            attributes: ['OTP']
-        }, {
-            model: deviceToken,
-            required: false,
-            attributes: ['tokenId']
-        }],
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "phoneNum",
-            "userTypeId",
-            "verifiedAt",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ],
-    });
-
-    console.log("🚀 ~ registerCustomerWithOTP ~ userfind:", userfind);
-
-    if (userfind) {
-        throw new customError("User with this email already exists ")
-    } else {
-
-        let userTypeId = 2;
-        const hashedPassword = await bcrypt.hash(password, 8)
-        const userCreate = await users.create({
-            email,
-            firstName,
-            lastName,
-            phoneNum,
-            userTypeId,
-            password: hashedPassword,
-            status: true,
-            countryCode
-        });
-
-
-        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        console.log("🚀 ~ registerCustomerWithOTP ~ stripeCustomer:", stripeCustomer);
-
-
-        const otp = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false
-        });
-
-
-        otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: otp
-        });
-
-        let dt = new Date();
-
-
-        const otpCreation = await otpVerification.create({
-            OTP: otp,
-            reqAt: dt,
-            userId: userCreate.id
-        });
-
-
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userCreate.id
-        });
-
-
-        await users.update({
-            stripeCustomerId: stripeCustomer,
-            image: profileImg,
-            countryId,
-            cityId
-        }, {
-            where: { id: userCreate.id }
-        });
-
-        return res.json(responsefunc("1", "OTP sent successfully", { otpId: otpCreation.id, userId: userCreate.id,stripeCustomerId:stripeCustomer }));
-    }
+    // Return response using ResponseHelper with legacy format for compatibility
+    return ResponseHelper.success(res,"OTP sent successfully", result);
 }
 
 
@@ -136,101 +58,28 @@ async function registerCustomerWithOTP(req, res) {
    * verify OTp for SignUp
 */
 async function verifyOTpSignUp(req, res) {
-    const { otpId, OTP, userId,dvToken } = req.body
-    const userData = await users.findByPk(userId,{
-        include: {
-            model: deviceToken,
-            attributes: ['tokenId']
-        }
-    })
-    console.log("🚀 ~ verifyOTpSignUp ~ userData:", userData)
-    if (OTP === '5678') {
+    const { otpId, OTP, userId, dvToken } = req.body;
 
-        if(!userData.deviceToken){
-            await deviceToken.create({
-                tokenId: dvToken,   
-                status: true,
-                userId: userData.id
-            })
-        }
-        const userUpdate = await users.update({
-            verifiedAt: new Date(),
-        }, {
-            where: {
-                id: userId
-            }
-        })
+    // Call service to handle business logic
+    const result = await customerAuthService.verifyOTpSignUp({
+        otpId,
+        OTP,
+        userId,
+        dvToken
+    });
 
-        const accessToken = jwt.sign({
-            id: userData.id,
-            email: userData.email,
-            dvToken: dvToken,
-            userTypeId: userData.userTypeId
-        }, process.env.JWT_ACCESS_SECRET
-        )
-        redisCli.hSet(
-            `id-${userData.id}`,
-            dvToken,
-            accessToken
-        )
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            path: "/customer",
-            maxAge: 24 * 60 * 60 * 1000
-        });
-        let output = VerifyOTPData(userData, accessToken, false);
-        return res.json(output)
-    } else {
-        if(!userData.deviceToken){
-            await deviceToken.create({
-                tokenId: dvToken,
-                status: true,
-                userId: userData.id
-            })
-        }
-        const otpData = await otpVerification.findByPk(otpId)
-        if (!otpData) {
-            throw new customError(
-                "Sorry, we could not fetch the data",
-                "Please rensend OTP to continue"
-            )
-        }
-        if (otpData.OTP != OTP) {
-            throw new customError("Entered Incorrect OTP. Please enter correct OTP to continue")
-        }
-        const userUpdate = await users.update({
-            verifiedAt: new Date(),
+    // Set cookie
+    res.cookie("accessToken", result.accessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        path: "/customer",
+        maxAge: 24 * 60 * 60 * 1000
+    });
 
-        }, {
-            where: {
-                id: userId
-            }
-        })
-        const accessToken = jwt.sign({
-            id: userData.id,
-            email: userData.email,
-            dvToken: dvToken,
-            userTypeId: userData.userTypeId
-        }, process.env.JWT_ACCESS_SECRET
-        )
-        redisCli.hSet(
-            `id-${userData.id}`,
-            dvToken,
-            accessToken
-        )
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            path: "/customer",
-            maxAge: 24 * 60 * 60 * 1000
-        });
-        let output = VerifyOTPData(userData, accessToken, false);
-        return res.json(output)
-    }
-
+    // Generate response data using existing helper function
+    let output = VerifyOTPData(result.userData, result.accessToken, result.isGuest);
+    return res.json(output);
 }
 
 /*
@@ -238,7 +87,7 @@ async function verifyOTpSignUp(req, res) {
 */
 async function registerCustomer(req, res) {
     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
-    console.log("🚀 ~ registerCustomer ~ req.body:", req.body)
+    console.log("ðŸš€ ~ registerCustomer ~ req.body:", req.body)
 
     let profileImg = null;
     if (req.file) {
@@ -273,7 +122,7 @@ async function registerCustomer(req, res) {
             ],
         ],
     })
-    console.log("🚀 ~ registerCustomer ~ userfind:", userfind)
+    console.log("ðŸš€ ~ registerCustomer ~ userfind:", userfind)
 
 
     if (!userfind) {
@@ -291,10 +140,10 @@ async function registerCustomer(req, res) {
     }
 
     const hashpass = await bcrypt.hash(password, 8)
-    console.log("🚀 ~ registerCustomer ~ hashpass:", hashpass)
+    console.log("ðŸš€ ~ registerCustomer ~ hashpass:", hashpass)
 
     const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
-    console.log("🚀 ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
+    console.log("ðŸš€ ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
 
     await users.update({
         firstName,
@@ -363,251 +212,38 @@ async function registerCustomer(req, res) {
     *  Login User
 */
 async function loginUser(req, res) {
-    const { email, password, signedFrom, dvToken } = req.body
+    const { email, password, signedFrom, dvToken } = req.body;
 
-    const userFind = await users.findOne({
-        where: {
-            email: email,
-            userTypeId: 2,
-            deletedAt: { [Op.is]: null }
-        },
-        include: [
-            {
-                model: deviceToken, attributes: ['tokenId']
-
-            },
-            {
-                model: countries,
-                required: false,
-                attributes: ['name']
-            },
-            {
-                model: cities,
-                attributes: ['name']
-            }],
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "password",
-            "status",
-            "userTypeId",
-            "verifiedAt",
-            "phoneNum",
-            "stripeCustomerId",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ]
-    })
-    //console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ userFind:", userFind)
-    console.log("🚀 ~ loginUser ~ userFind:", userFind)
-
-    if (!userFind && signedFrom===null) {
-        throw new customError('User Not Exists with this email')
-    }
-
-    if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
-        
-        console.log("Going into this condition ----------------->>>")
-
-        const createStripeCustomer = await stripe.createStripeCustomer(
-            email
-        )
-
-        const createUser = await users.create({
-            email,
-            userTypeId: 2,
-            verifiedAt: Date.now(),
-            status:true,
-            stripeCustomerId: createStripeCustomer,
-            signedFrom:signedFrom
-        })
-
-        const userId = createUser.id
-
-        return res.json(responsefunc('3', `User signed-In by : ${signedFrom}`, { userId }))
-    }
-
-    if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
-        return res.json(
-            responsefunc(
-                "4",
-                "Social Login Required",
-                {},
-                `You have previously signed up using ${userFind.signedFrom}. Please log in using ${userFind.signedFrom}.`
-            )
-        );
-    }
-
-
-    if (signedFrom === 'google' || signedFrom === 'facebook' || signedFrom === 'apple') {
-        const userFind = await users.findOne({
-            where: {
-                email: email,
-                userTypeId: 2,
-                signedFrom
-            },
-            include: { model: deviceToken, attributes: ['tokenId'] },
-            attributes: [
-                "id",
-                "firstName",
-                "lastName",
-                "email",
-                "password",
-                "status",
-                "userTypeId",
-                "verifiedAt",
-                "phoneNum",
-                "stripeCustomerId",
-                [
-                    sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                    "joinedOn",
-                ],
-            ]
-        })
-        
-        console.log("userFind------------>",userFind)
-        
-        if (!userFind) {
-        throw new customError("User not found. Please ensure the correct email and sign-in method.");
-    }
-
-        if (!userFind.status) {
-            throw new customError('Blocked By admin Please contact admin to continue')
-        }
-
-        const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken)
-        if (!dvTokenFound) {
-            await deviceToken.create({
-                tokenId: dvToken,
-                status: true,
-                userId: userFind.id
-            })
-        }
-
-        const accessToken = jwt.sign({
-            id: userFind.id,
-            email: userFind.email,
-            dvToken: dvToken
-        }, process.env.JWT_ACCESS_SECRET);
-
-        redisCli.hSet(
-            `id-${userFind.id}`,
-            dvToken,
-            accessToken
-        )
-
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: true,
-            sameSite: "None",
-            path: "/customer",
-            maxAge: 24 * 60 * 60 * 1000
-        });
-
-        let output = loginData(userFind, accessToken, false);
-        return res.json(output);
-    }
-
-    let otpId = 0;
-
-    if (!userFind.status) {
-        throw new customError("Blocked by admin Please contact admin to continue")
-    } else {
-        const otpData = await otpVerification.findOne(
-            { where: { userId: userFind.id } },
-            { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
-        );
-        if (!otpData)
-            throw new customError("User Not Verifed", "user not verifeid by otp");
-        otpId = otpData.id;
-    }
-
-    if (!userFind.verifiedAt) {
-        return res.json(
-            responsefunc(
-                2,
-                "Pending email verification",
-                { userId: userFind.id, otpId, email: userFind.email },
-                "Please verify your email to continue"
-            )
-        );
-    }
-
-    if (userFind.userTypeId === 2) {
-        if (userFind.firstName === null || !userFind.phoneNum) {
-            return res.json(
-                responsefunc(
-                    3,
-                    "Pending User Data",
-                    { userId: userFind.id },
-                    "Your first Name or Phone Number is Missing"
-                )
-            );
-        }
-    }
-
-    if (userFind.userTypeId === 2) {
-        if (userFind.firstName === null) {
-            return res.json(
-                responsefunc(
-                    3,
-                    "Pending User Data",
-                    { userId: userFind.id },
-                    "Your first Name is Missing"
-                )
-            );
-        }
-    }
-
-    const passwordMatch = await bcrypt.compare(password, userFind.password)
-    if (!passwordMatch) {
-        throw new customError(
-            "Bad credentials",
-            "Please enter correct password to continue")
-    }
-
-
-    const dvTokenFound = userFind.deviceTokens.find((ele) => ele.tokenId === dvToken)
-    console.log("Ã°Å¸Å¡â‚¬ ~ loginUser ~ dvTokenFound:", dvTokenFound)
-    if (!dvTokenFound) {
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userFind.id
-            
-        })
-    }
-
-    const accessToken = jwt.sign({
-        id: userFind.id,
-        email: userFind.email,
-        dvToken: dvToken
-    }, process.env.JWT_ACCESS_SECRET)
-
-    redisCli.hSet(
-        `id-${userFind.id}`,
-        dvToken,
-        accessToken
-    )
-
-    res.cookie("accessToken", accessToken, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "None",
-        path: "/customer",
-        maxAge: 24 * 60 * 60 * 1000
+    // Call service to handle business logic
+    const result = await customerAuthService.loginUser({
+        email,
+        password,
+        signedFrom,
+        dvToken
     });
 
+    // Handle success case
+    if (result.type === 'success') {
+        // Handle social signup case (no access token)
+        if (result.socialSignup) {
+            return ResponseHelper.success(res, result.message, result.data);
+        }
 
+        // Set cookie for regular login
+        if (result.accessToken) {
+            res.cookie("accessToken", result.accessToken, {
+                httpOnly: true,
+                secure: true,
+                sameSite: "None",
+                path: "/customer",
+                maxAge: 24 * 60 * 60 * 1000
+            });
 
-    let output = loginData(userFind, accessToken, false);
-    return res.json(output);
-
-
+            // Generate response data using existing helper function
+            let output = loginData(result.userData, result.accessToken, result.isGuest);
+            return res.json(output);
+        }
+    }
 }
 
 
@@ -616,70 +252,17 @@ async function loginUser(req, res) {
 */
 async function forgetPasswordRequest(req, res) {
     const { email } = req.body;
-    const userData = await users.findOne({
-        where: {
-            email,
-            deletedAt: { [Op.is]: null },
-            userTypeId: { [Op.or]: [2] },
-        },
-        include: { model: otpVerification, attributes: ["id"] },
-        attributes: ["id"],
+
+    // Call service to handle business logic
+    const result = await customerAuthService.forgetPasswordRequest({
+        email
     });
 
-    // user not found
-    if (!userData)
-        throw new customError(
-            "Invalid information",
-            "No user exists against this email"
-        );
-    let OTP = otpGenerator.generate(4, {
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: true,
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {
+        otpId: result.otpId,
+        userId: result.userId
     });
-    //return res.json(OTP)
-
-
-    otpMail({
-        type: 'ForgetPassword',
-        email: email,
-        OTP: OTP
-    })
-
-    let dt = new Date();
-    if (userData.otpVerification != null) {
-        try {
-            otpVerification.update(
-                {
-                    OTP: OTP,
-                    reqAt: dt,
-                }, { where: { userid: userData.id } }
-            )
-
-            return res.json(responsefunc("1", "OTP Updated Sucessfully", { otpid: userData.otpVerification.id, userId: userData.id }))
-
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-
-        }
-    } else {
-        try {
-            const otpSend = otpVerification.create({
-                OTP: OTP,
-                reqAt: dt,
-                userId: userData.id
-            })
-
-            return res.json(responsefunc("1", "OTP sent Sucessfully for Password Reset", { otpId: otpSend.id, userId: userData.id }))
-
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-
-        }
-    }
-
 }
 
 
@@ -688,25 +271,18 @@ async function forgetPasswordRequest(req, res) {
 */
 async function verifyOTPforPassword(req, res) {
     const { otpId, OTP } = req.body;
-    const otpData = await otpVerification.findByPk(otpId, {
-        attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
-    });
-    if (!otpData)
-        throw new customError(
-            "Sorry, we could not fetch the data",
-            "Please rensend OTP to continue"
-        );
 
-    if (OTP != otpData.OTP) {
-        throw new customError(
-            "You entered incorrect OTP Please enter correct OTP to continue"
-        );
-    }
-    otpData.verifiedAtForgetCase = true;
-    await otpData.save();
-    return res.json(
-        responsefunc("1", "OTP verified", { otpId, userId: otpData.userId }, "")
-    );
+    // Call service to handle business logic
+    const result = await customerAuthService.verifyOTPforPassword({
+        otpId,
+        OTP
+    });
+
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {
+        otpId: result.otpId,
+        userId: result.userId
+    });
 }
 
 /*
@@ -714,36 +290,16 @@ async function verifyOTPforPassword(req, res) {
 */
 async function changePasswordOTP(req, res) {
     const { userId, otpId, password } = req.body;
-    const otpData = await otpVerification.findByPk(otpId, {
-        attributes: ["id", "OTP", "verifiedAtForgetCase"],
+
+    // Call service to handle business logic
+    const result = await customerAuthService.changePasswordOTP({
+        userId,
+        otpId,
+        password
     });
-    const userData = await users.findByPk(userId, {
-        attributes: ["id", "password"],
-    });
-    if (!otpData)
-        throw new customError(
-            "Sorry, we could not fetch the data",
-            "Please rensend OTP to continue"
-        );
-    if (otpData.verifiedAtForgetCase === false)
-        throw new customError(
-            "OTP not verified yet",
-            "Please verify OTP first"
-        );
-    let hashedPassword = await bcrypt.hash(password, 8);
-    userData.password = hashedPassword;
-    await userData.save();
-    // reset the OTP Id
-    otpData.verifiedAtForgetCase = false;
-    await otpData.save();
-    return res.json(
-        responsefunc(
-            "1",
-            "Password updated successfully. Please login to continue",
-            {},
-            ""
-        )
-    );
+
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {});
 }
 
 
@@ -753,51 +309,16 @@ async function changePasswordOTP(req, res) {
 */
 async function resendOTP(req, res) {
     const { userId } = req.body;
-    const userExist = await users.findByPk(userId);
 
-    if (!userExist) {
-        throw new customError(
-            "Sorry, we could not fetch the associated data",    
-            "Please try sending again"
-        );
-    }
-
-    let otpData = await otpVerification.findOne({ where: { userId } });
-    let OTP = otpGenerator.generate(4, {
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: false,
+    // Call service to handle business logic
+    const result = await customerAuthService.resendOTP({
+        userId
     });
 
-    // Send OTP email using otpMail
-    otpMail({
-        type: 'RegisterOTP',
-        email: userExist.email,
-        OTP: OTP,
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {
+        otpId: result.otpId
     });
-
-    let DT = new Date();
-
-    if (!otpData) {
-        await otpVerification.create({
-            OTP,
-            reqAt: DT,
-            verifiedInForgetCase: false,
-            userId,
-        });
-        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
-    } else {
-        await otpVerification.update(
-            {
-                OTP,
-                reqAt: DT,
-                verifiedInForgetCase: false,
-            },
-            { where: { userId } }
-        );
-        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
-    }
-
 }
 
 /*
@@ -837,30 +358,15 @@ async function logout(req, res) {
 async function session(req, res) {
     const userId = req.user.id;
     const { guestUser } = req.body;
-    if (guestUser) throw new customError("Login failed", "");
-    const userData = await users.findByPk(userId, {
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "status",
-            "countryCode",
-            "phoneNum",
-        ],
+
+    // Call service to handle business logic
+    const result = await customerAuthService.session({
+        userId,
+        guestUser
     });
-    if (!userData) {
-        throw new customError(
-            "Sorry no user found!",
-            "Please contact support for more information"
-        );
-    }
-    if (!userData?.status)
-        throw new customError(
-            "You are blocked by Admin",
-            "Please contact support for more information"
-        );
-    let output = loginData(userData, "", guestUser);
+
+    // Generate response data using existing helper function
+    let output = loginData(result.userData, result.accessToken, result.isGuest);
     return res.json(output);
 }
 
@@ -871,22 +377,15 @@ async function session(req, res) {
 */
 
 async function getUserProfile(req, res) {
+    const userId = req.user.id;
 
-    const userId = req.user.id
+    // Call service to handle business logic
+    const result = await customerAuthService.getUserProfile({
+        userId
+    });
 
-    const userData = await users.findOne({
-        where: {
-            id: userId
-        },
-        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId','countryCode']
-    })
-
-    if (!userData) {
-        throw new customError('No User Exists with this email')
-    }
-
-    return res.json(responsefunc("1", "User Profile fetched", userData, ""))
-
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, result.userData);
 }
 
 
@@ -896,49 +395,32 @@ async function getUserProfile(req, res) {
 */
 
 async function updateUserProfile(req, res) {
-    const userId = req.user.id
-    const { firstName, lastName, email, isProfileImgChanged, phoneNum,countryCode } = req.body
+    const userId = req.user.id;
+    const { firstName, lastName, email, isProfileImgChanged, phoneNum, countryCode } = req.body;
 
-    const userFind = await users.findOne({
-        where: {
-            id: userId
-        },
-        attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId']
-    })
-
-    if (!userFind) {
-        throw new customError("user Not Exists with this ID")
-    }
-
-
-    let tempProfileImg = "";
-    let profileImage = "";
-
+    let profileImage = null;
     if (isProfileImgChanged === "true") {
         if (!req.file) {
-            throw new customError("Profile Image Required")
+            throw new ValidationError("Profile Image Required");
         } else {
-            tempProfileImg = req.file.path;
+            let tempProfileImg = req.file.path;
             profileImage = tempProfileImg.replace(/\\/g, "/");
-
         }
     }
 
-    await users.update({
+    // Call service to handle business logic
+    const result = await customerAuthService.updateUserProfile({
+        userId,
         firstName,
         lastName,
-        phoneNum,
         email,
-        countryCode,
-        image: isProfileImgChanged === "true" ? profileImage : undefined,
+        isProfileImgChanged,
+        phoneNum,
+        countryCode
+    }, profileImage);
 
-    }, { where: { id: userId } })
-
-
-    return res.json(
-        responsefunc("1", "User Profile Updated Sucessfully", {}, "")
-    )
-
+    // Return response using ResponseHelper success method
+    return ResponseHelper.success(res, result.message, {});
 }
 
 //!------------------------------------------Recurring functions----------------------------------------//
@@ -957,6 +439,7 @@ let registerData = (userData, accessToken, isGuest) => {
     return {
         status: "1",
         message: "User Register successful",
+        statusCode: 200,
         data: {
             userId: `${userData.id}`,
             firstName: `${userData.firstName}`,
@@ -979,6 +462,7 @@ let loginData = (userData, accessToken, isGuest) => {
     return {
         status: "1",
         message: "Login successful",
+        statusCode: 200,
         data: {
             userId: `${userData.id}`,
             firstName: `${userData.firstName}`,
@@ -1002,6 +486,7 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
     return {
         status: "1",
         message: "OTP Verified successfully",
+        statusCode: 200,
         data: {
             userId: `${userData.id}`,
             firstName: `${userData.firstName}`,
