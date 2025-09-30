@@ -150,6 +150,19 @@ class PrefrencesServices {
             return { createdMappings, count: createdMappings.length };
     
     }
+
+    /**
+     * UnAssign Service From Preferences
+     * @param {number} serviceId - Service ID
+     * @returns {Object} Unassigned service data
+     */
+    async unAssignServiceFromPreferences(serviceId) {
+        const unAssignService = await serviceWithPreferences.destroy({ where: { serviceId } });
+        if (!unAssignService) {
+            throw new NotFoundError('Service Not Found')
+        }
+        return unAssignService;
+    }
 }
 
 module.exports = new PrefrencesServices();

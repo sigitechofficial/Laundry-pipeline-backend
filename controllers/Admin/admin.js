@@ -1089,6 +1089,17 @@ async function servicesAndPreferencesData(req,res) {
     
 }
 
+
+
+/*
+  * UnAssign Service From Preferences
+*/
+async function unAssignServiceFromPreferences(req, res) {
+    const { serviceId } = req.params;
+    const result = await serviceManagementService.unAssignServiceFromPreferences(serviceId);
+    return ResponseHelper.success(res, "Service Unassigned From Preferences", result);
+}
+
 //!------------------------On Hold Options-------------------//
 
 /*
@@ -1360,6 +1371,7 @@ module.exports = {
     addServiceWithPreferences,
     getPreferenceTypes,
     servicesAndPreferencesData,
+    unAssignServiceFromPreferences,
     //--------on Hold Option------------//
     onHoldOptions,
     customerOnHoldOptions,

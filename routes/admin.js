@@ -165,7 +165,8 @@ router.delete('/deletePreferenceValues/:preferenceValueId', validateAccessToken,
 router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
 //Get Preferences && Services Data 
 router.get("/servicesAndPreferencesData/:serviceId",validateAccessToken,asyncMiddleware(adminController.servicesAndPreferencesData))
-
+//unAttach Service From Preferences
+router.delete('/unAssignServiceFromPreferences/:serviceId', validateAccessToken, asyncMiddleware(adminController.unAssignServiceFromPreferences))
 //!----------------------------On Hold Options------------------------------------------------------------------//
 //On Hold Options Add
 router.post('/onHoldOptions', validateAccessToken, asyncMiddleware(adminController.onHoldOptions))
