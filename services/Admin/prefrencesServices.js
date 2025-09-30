@@ -1,13 +1,13 @@
-const{preferenceTypes,
+const { preferenceTypes,
     preferenceValues,
     preferencesServiceName,
     servicePreferences,
     serviceWithPreferences,
     bookingPreference
-}=require('../../models')
+} = require('../../models')
 const { NotFoundError } = require('../../middlewares/universalErrorHandler');
 
-class PrefrencesServices{
+class PrefrencesServices {
 
     /**
      * Edit Preference Type
@@ -17,7 +17,7 @@ class PrefrencesServices{
      */
     async editPreferenceType(preferenceTypeId, name) {
         const editPreferenceType = await preferenceTypes.update(
-            { name }, 
+            { name },
             { where: { id: preferenceTypeId } });
         if (!editPreferenceType) {
             throw new NotFoundError('Preference Type Not Found')
@@ -37,8 +37,8 @@ class PrefrencesServices{
         }
         return deletePreferenceType;
     }
-    
-    
+
+
 
     /**
      *  Edit Preferences Values
@@ -118,43 +118,37 @@ class PrefrencesServices{
      * @param {number} preferenceTypeId - Preference type ID
      * @returns {Object} Created service-preference mappings
      */
-    async addServiceWithPreferences(serviceId, preferenceTypeId) {
-        try {
-            if (!preferenceTypeId || !serviceId || (Array.isArray(serviceId) && serviceId.length === 0)) {
-                throw new ValidationError('preferenceTypeId and serviceId(s) are required');
+    async addServiceWithPreferences(serviceId, preferenceTypeIds) {
+            if (!preferenceTypeIds || !serviceId || (Array.isArray(preferenceTypeIds) && preferenceTypeIds.length === 0)) {
+                throw new ValidationError('preferenceTypeIds and serviceId are required');
             }
 
-            const serviceIds = Array.isArray(serviceId) ? serviceId : [serviceId];
+            const preferenceTypeIdArray = Array.isArray(preferenceTypeIds) ? preferenceTypeIds : [preferenceTypeIds];
 
             const existingMappings = await serviceWithPreferences.findAll({
                 where: {
-                    preferenceTypeId,
-                    serviceId: serviceIds,
+                    preferenceTypeId: preferenceTypeIdArray,
+                    serviceId,
                     status: true
                 }
             });
 
-            const existingServiceIds = new Set(existingMappings.map(m => m.serviceId));
-            const newMappings = serviceIds
-                .filter(id => !existingServiceIds.has(id))
+            const existingPreferenceTypeIds = new Set(existingMappings.map(m => m.preferenceTypeId));
+            const newMappings = preferenceTypeIdArray
+                .filter(id => !existingPreferenceTypeIds.has(id))
                 .map(id => ({
-                    serviceId: id,
-                    preferenceTypeId,
+                    serviceId,
+                    preferenceTypeId: id,
                     status: true
                 }));
 
             if (newMappings.length === 0) {
-                throw new ValidationError('All Services already mapped to this Preference');
+                throw new ValidationError('All Preferences already mapped to this Service');
             }
 
             const createdMappings = await serviceWithPreferences.bulkCreate(newMappings);
             return { createdMappings, count: createdMappings.length };
-        } catch (error) {
-            if (error instanceof ValidationError) {
-                throw error;
-            }
-            throw new Error(`Add service with preferences service error: ${error.message}`);
-        }
+    
     }
 }
 

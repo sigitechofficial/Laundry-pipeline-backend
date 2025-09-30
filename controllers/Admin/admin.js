@@ -111,9 +111,14 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-        const formattedCustomers = await customerService.getAllCustomers();
-        return ResponseHelper.success(res, "All Customer Details", formattedCustomers);
-    
+            const { startPage = 1, endPage = 10, offset = 0 } = req.query;
+            // Convert query parameters to numbers
+            const startPageNum = parseInt(startPage);
+            const endPageNum = parseInt(endPage);
+            const offsetNum = parseInt(offset);
+            
+            const result = await customerService.getAllCustomers(startPageNum, endPageNum, offsetNum);
+            return ResponseHelper.success(res, "All Customer Details", result);
 }
 
 /*

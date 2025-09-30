@@ -13,7 +13,11 @@ class CustomerService {
      * Get all customers with booking statistics
      * @returns {Array} List of customers with booking counts and amounts
      */
-    async getAllCustomers() {
+    async getAllCustomers(startPage = 1, endPage = 10, offset = 0) {
+        // Calculate limit based on start and end page
+        const limit = (endPage - startPage + 1) * 10; // Assuming 10 items per page
+        const calculatedOffset = offset + ((startPage - 1) * 10);
+
         const findCustomers = await users.findAll({
             where: {
                 userTypeId: 2,  // Ensuring we're fetching only customers
@@ -49,7 +53,17 @@ class CustomerService {
               )`),
                     'lastBookingDate'
                 ]
-            ]
+            ],
+            limit: limit,
+            offset: calculatedOffset,
+            order: [['createdAt', 'DESC']] // Add ordering for consistent pagination
+        });
+
+        // Get total count for pagination info
+        const totalCount = await users.count({
+            where: {
+                userTypeId: 2,
+            }
         });
 
         // Format the last booking date and totalAmountSpent
@@ -64,7 +78,16 @@ class CustomerService {
             };
         });
 
-        return formattedCustomers;
+        return {
+            customers: formattedCustomers,
+            pagination: {
+                currentPage: startPage,
+                totalPages: Math.ceil(totalCount / 10),
+                totalCount: totalCount,
+                hasNextPage: endPage < Math.ceil(totalCount / 10),
+                hasPreviousPage: startPage > 1
+            }
+        };
     }
 
     /**

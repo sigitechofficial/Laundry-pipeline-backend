@@ -48,6 +48,7 @@ const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPay
 const { sendNotification } = require("../../utils/notification");
 const customerOrderService = require('../../services/Customer/customerOrderService');
 const ResponseHelper = require('../../utils/responseHelper');
+const { serviceManagementService } = require('../../services/Admin/serviceManagementService');
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -336,6 +337,17 @@ async function getOnHoldBookingsForCustomer(req, res) {
     return ResponseHelper.success(res, result.message, result.data);
 }
 
+
+/*
+ * Get All Service With Preferences
+ */
+async function getAllServiceWithPreferenceDetails(req, res) {
+    const { serviceId } = req.params;
+    const result = await serviceManagementService.getAllServiceWithPreferences({
+        serviceId
+    });
+    return ResponseHelper.success(res, result.message, result.data);
+}
 
 /*
  * Test Notification
@@ -771,5 +783,6 @@ module.exports = {
     getOnHoldBookings,
     updateCustomerResponseForOnHoldBooking,
     getOnHoldBookingsForCustomer,
-    testNotification
+    testNotification,
+    getAllServiceWithPreferenceDetails
 };

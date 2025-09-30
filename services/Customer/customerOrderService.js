@@ -480,7 +480,7 @@ class CustomerOrderService {
         // Find zone information
         let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
         if(!findZone || findZone.length === 0) {
-            throw new ValidationError("No Zone found for these lat,lngs and coordinates");
+            throw new NotFoundError("No Zone found for these lat,lngs and coordinates");
         }
         let zoneId = findZone[0].id;
         let zoneUpfrontAmount = findZone[0].zoneMinimumAmount;
@@ -721,7 +721,7 @@ class CustomerOrderService {
         });
         console.log("🚀 ~ onHoldCustomerShow ~ userFound:", userFound.customer.id);
         if(!userFound) {
-            throw new ValidationError("No User Found");
+            throw new NotFoundError("No User Found");
         }
         const optionIdFound = await OnHoldConfirmation.findOne({
             where: {
@@ -737,7 +737,7 @@ class CustomerOrderService {
         });
         console.log("🚀 ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound);
         if(!optionIdFound) {
-            throw new ValidationError("No Option ID Found");
+            throw new NotFoundError("No Option ID Found");
         }
         const customerOptionFound = await onHoldCustomerOption.findOne({
             where: {
@@ -746,7 +746,7 @@ class CustomerOrderService {
             attributes: ["id", "option", "title", "conformationText", "notConfirmText"],
         });
         if(!customerOptionFound) {
-            throw new ValidationError("No Customer Option Found");
+            throw new NotFoundError("No Customer Option Found");
         }
         return { 
             message: "Customer On Hold Response Show", 
@@ -851,7 +851,7 @@ class CustomerOrderService {
             attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
         });
         if(!findAllBooking || findAllBooking.length === 0) {
-            throw new ValidationError("No Bookings Found");
+            throw new NotFoundError("No Bookings Found");
         }
 
         return { 
@@ -937,7 +937,7 @@ class CustomerOrderService {
             ],
         });
         if(!bookingFind) {
-            throw new ValidationError("No Booking Found");
+            throw new NotFoundError("No Booking Found");
         }
 
         return { 
@@ -954,7 +954,7 @@ class CustomerOrderService {
         const serviceData = await service.findAll();
 
         if(!serviceData || serviceData.length === 0) {
-            throw new ValidationError("No Services Found");
+            throw new NotFoundError("No Services Found");
         }
 
         return { 
@@ -996,7 +996,7 @@ class CustomerOrderService {
         });
 
         if(!serviceData || serviceData.length === 0) {
-            throw new ValidationError("No Service Details Found");
+            throw new NotFoundError("No Service Details Found");
         }
 
         return { 
@@ -1030,7 +1030,7 @@ class CustomerOrderService {
         });
 
         if(!customerAddresses || customerAddresses.length === 0) {
-            throw new ValidationError("No Customer Addresses Found");
+            throw new NotFoundError("No Customer Addresses Found");
         }
 
         return { 
@@ -1050,13 +1050,13 @@ class CustomerOrderService {
         const { lat, lng } = data;
 
         if (!lat || !lng) {
-            throw new ValidationError("Latitude and Longitude are required");
+            throw new NotFoundError("Latitude and Longitude are required");
         }
 
         const zoneData = await findZones(lat, lng);
         
         if (!zoneData || zoneData.length === 0) {
-            throw new ValidationError("No Zone Found");
+            throw new NotFoundError("No Zone Found");
         }
 
         let zoneId = zoneData[0].id;

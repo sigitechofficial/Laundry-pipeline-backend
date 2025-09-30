@@ -89,4 +89,6 @@ router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken,asyn
 router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware(customerOtherController.getOnHoldBookingsForCustomer));
 // Route to test sending notifications
 router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOtherController.testNotification));
+// Route to get all service with preference details
+router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessToken, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
 module.exports=router
