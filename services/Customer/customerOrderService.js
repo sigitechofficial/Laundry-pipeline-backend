@@ -32,6 +32,8 @@ const {
     UnauthorizedError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
+const { literal, fn, col } = require("sequelize");
+
 
 // Import stripe functions
 const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend } = require('../../controllers/stripe');
@@ -934,6 +936,10 @@ class CustomerOrderService {
                         },
                     ],
                 },
+                {
+                    model:zone,
+                    attributes:["id","name","zoneMinimumAmount","serviceCharge"],
+                }
             ],
         });
         if (!bookingFind) {

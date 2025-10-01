@@ -7,6 +7,7 @@ const {
     ConflictError,
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
+const { literal, fn, col } = require("sequelize");
 
 class CustomerService {
     /**

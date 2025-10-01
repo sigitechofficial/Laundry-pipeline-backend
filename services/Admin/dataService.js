@@ -1,6 +1,7 @@
 const { countries, cities, zone, units, addressDb, bussinessInformation, roles, classifiedAs, features, onHoldOption, onHoldCustomerOption, preferenceTypes, preferenceValues, preferencesServiceName, reason } = require('../../models');
 const { Op } = require('sequelize');
 const geolib = require('geolib');
+const { literal, fn, col } = require("sequelize");
 
 class DataService {
     /**

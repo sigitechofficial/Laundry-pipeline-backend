@@ -7,6 +7,7 @@ const {
     preferenceValues,
     serviceWithPreferences } = require('../../models');
 const sequelize = require('sequelize');
+const { literal, fn, col } = require("sequelize");
 
 const {
     ValidationError,
