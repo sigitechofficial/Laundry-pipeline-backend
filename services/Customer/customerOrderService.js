@@ -1025,7 +1025,9 @@ class CustomerOrderService {
                 "streetAddress",
                 "province",
                 "district",
-                "addressType"
+                "addressType",
+                "lat",
+                "lng"
             ],
         });
 

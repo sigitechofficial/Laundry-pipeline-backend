@@ -190,12 +190,12 @@ class CustomerService {
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
                         }
                     ],
                     order: [['id', 'DESC']],
@@ -214,7 +214,7 @@ class CustomerService {
                     include: [
                         {
                             model: users,
-                            attributes: ['id', 'firstName', 'lastName', 'email'],
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum'],
                         },
                     ],
                     order: [['createdAt', 'DESC']],
