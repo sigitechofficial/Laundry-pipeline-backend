@@ -350,6 +350,18 @@ async function getAllServiceWithPreferenceDetails(req, res) {
 }
 
 /*
+ * Get All Order Status
+ */
+async function getAllOrderStatus(req, res) {
+    const result = await customerOrderService.allOrderStatus();
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
+/*
+ * Get All Service With Preferences
+ */
+
+/*
  * Test Notification
  */
 async function testNotification(req, res) {
@@ -784,5 +796,6 @@ module.exports = {
     updateCustomerResponseForOnHoldBooking,
     getOnHoldBookingsForCustomer,
     testNotification,
-    getAllServiceWithPreferenceDetails
+    getAllServiceWithPreferenceDetails,
+    getAllOrderStatus
 };

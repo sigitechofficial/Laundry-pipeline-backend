@@ -1,9 +1,9 @@
 require("dotenv").config();
-const { 
-    booking, 
-    customerSelectedService, 
-    servicePreferences, 
-    billingDetails, 
+const {
+    booking,
+    customerSelectedService,
+    servicePreferences,
+    billingDetails,
     bookingHistory,
     users,
     address,
@@ -26,9 +26,9 @@ const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const otpGenerator = require('otp-generator');
 const { sendEvent } = require('../../socket_io');
-const { 
-    ValidationError, 
-    NotFoundError, 
+const {
+    ValidationError,
+    NotFoundError,
     UnauthorizedError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
@@ -149,8 +149,8 @@ async function checkIfTimeSlotBooked(
             {
                 model: addressDb,
                 as: "laundryShop",
-                where:{
-                    zoneId:zoneId,
+                where: {
+                    zoneId: zoneId,
                 },
                 attributes: [
                     "title",
@@ -214,7 +214,7 @@ async function bookingEventSentCheckTheShops(
             {
                 model: users,
                 attributes: ["id", "firstName", "email", "lastName"],
-                include:[
+                include: [
                     {
                         model: agentSelectServices,
                         as: "agentServices",
@@ -411,7 +411,7 @@ async function bookingEventSentCheckTheShops(
  * Handles all customer order related business logic
  */
 class CustomerOrderService {
-    
+
     /**
      * Create Booking
      * @param {Object} data - Booking data
@@ -479,7 +479,7 @@ class CustomerOrderService {
 
         // Find zone information
         let findZone = await findZones(pickUpAddress.lat, pickUpAddress.lng);
-        if(!findZone || findZone.length === 0) {
+        if (!findZone || findZone.length === 0) {
             throw new NotFoundError("No Zone found for these lat,lngs and coordinates");
         }
         let zoneId = findZone[0].id;
@@ -487,7 +487,7 @@ class CustomerOrderService {
         let zoneSeviceCharge = findZone[0].serviceCharge;
         let cityId = findZone[0].city.id;
         let countryId = findZone[0].city.country.id;
-        
+
         console.log("🚀 ~ createBooking ~ findZone:==============================", zoneId);
         console.log("🚀 ~ createBooking ~ findZone:------------------------------", zoneUpfrontAmount);
         console.log("🚀 ~ createBooking ~ findZone:======================+++++++++", zoneSeviceCharge);
@@ -579,7 +579,7 @@ class CustomerOrderService {
         console.log(currentTime);
 
         const discount = 0;
-        
+
         if (services && services.length > 0) {
             categoryCharge = services.reduce(
                 (acc, service) => acc + parseFloat(service.categoryCharge || 0),
@@ -675,11 +675,11 @@ class CustomerOrderService {
      */
     async updateBookingUpfrontAmount(data) {
         const { bookingId, IntentId } = data;
-        if(!bookingId || !IntentId) {
+        if (!bookingId || !IntentId) {
             throw new ValidationError("Booking ID and Intent ID are required");
         }
         const intentDataGet = await getIntent(IntentId);
-        if(!intentDataGet) {
+        if (!intentDataGet) {
             throw new ValidationError("Intent Not Get");
         }
         if (intentDataGet.status === "succeeded") {
@@ -704,7 +704,7 @@ class CustomerOrderService {
      */
     async onHoldCustomerShow(data) {
         const { bookingId } = data;
-        if(!bookingId) {
+        if (!bookingId) {
             throw new ValidationError("Booking ID is required");
         }
         const userFound = await booking.findOne({
@@ -720,7 +720,7 @@ class CustomerOrderService {
             ],
         });
         console.log("🚀 ~ onHoldCustomerShow ~ userFound:", userFound.customer.id);
-        if(!userFound) {
+        if (!userFound) {
             throw new NotFoundError("No User Found");
         }
         const optionIdFound = await OnHoldConfirmation.findOne({
@@ -736,7 +736,7 @@ class CustomerOrderService {
             attributes: ["onHoldOptionId"],
         });
         console.log("🚀 ~ onHoldCustomerShow ~ optionIdFound:", optionIdFound);
-        if(!optionIdFound) {
+        if (!optionIdFound) {
             throw new NotFoundError("No Option ID Found");
         }
         const customerOptionFound = await onHoldCustomerOption.findOne({
@@ -745,12 +745,12 @@ class CustomerOrderService {
             },
             attributes: ["id", "option", "title", "conformationText", "notConfirmText"],
         });
-        if(!customerOptionFound) {
+        if (!customerOptionFound) {
             throw new NotFoundError("No Customer Option Found");
         }
-        return { 
-            message: "Customer On Hold Response Show", 
-            data: customerOptionFound 
+        return {
+            message: "Customer On Hold Response Show",
+            data: customerOptionFound
         };
     }
 
@@ -848,15 +848,15 @@ class CustomerOrderService {
                     attributes: ["title", "description"],
                 },
             ],
-            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
         });
-        if(!findAllBooking || findAllBooking.length === 0) {
+        if (!findAllBooking || findAllBooking.length === 0) {
             throw new NotFoundError("No Bookings Found");
         }
 
-        return { 
-            message: "Customer All Bookings", 
-            data: findAllBooking 
+        return {
+            message: "Customer All Bookings",
+            data: findAllBooking
         };
     }
 
@@ -936,13 +936,13 @@ class CustomerOrderService {
                 },
             ],
         });
-        if(!bookingFind) {
+        if (!bookingFind) {
             throw new NotFoundError("No Booking Found");
         }
 
-        return { 
-            message: "Customer Order Details Fetched", 
-            data: bookingFind 
+        return {
+            message: "Customer Order Details Fetched",
+            data: bookingFind
         };
     }
 
@@ -953,13 +953,13 @@ class CustomerOrderService {
     async allServices() {
         const serviceData = await service.findAll();
 
-        if(!serviceData || serviceData.length === 0) {
+        if (!serviceData || serviceData.length === 0) {
             throw new NotFoundError("No Services Found");
         }
 
-        return { 
-            message: "All Services", 
-            data: { serviceData } 
+        return {
+            message: "All Services",
+            data: { serviceData }
         };
     }
 
@@ -995,13 +995,13 @@ class CustomerOrderService {
             ],
         });
 
-        if(!serviceData || serviceData.length === 0) {
+        if (!serviceData || serviceData.length === 0) {
             throw new NotFoundError("No Service Details Found");
         }
 
-        return { 
-            message: "Service Details", 
-            data: { serviceData } 
+        return {
+            message: "Service Details",
+            data: { serviceData }
         };
     }
 
@@ -1031,13 +1031,13 @@ class CustomerOrderService {
             ],
         });
 
-        if(!customerAddresses || customerAddresses.length === 0) {
+        if (!customerAddresses || customerAddresses.length === 0) {
             throw new NotFoundError("No Customer Addresses Found");
         }
 
-        return { 
-            message: "Customer Addresses", 
-            data: customerAddresses 
+        return {
+            message: "Customer Addresses",
+            data: customerAddresses
         };
     }
 
@@ -1056,7 +1056,7 @@ class CustomerOrderService {
         }
 
         const zoneData = await findZones(lat, lng);
-        
+
         if (!zoneData || zoneData.length === 0) {
             throw new NotFoundError("No Zone Found");
         }
@@ -1067,9 +1067,9 @@ class CustomerOrderService {
         let cityId = zoneData[0].city.id;
         let countryId = zoneData[0].city.country.id;
 
-        return { 
-            message: "Zone and Charges", 
-            data: { zoneId, zoneUpfrontAmount, zoneSeviceCharge, cityId, countryId } 
+        return {
+            message: "Zone and Charges",
+            data: { zoneId, zoneUpfrontAmount, zoneSeviceCharge, cityId, countryId }
         };
     }
 
@@ -1088,10 +1088,10 @@ class CustomerOrderService {
         }
 
         console.log("Req.body ===================================>>>>", { amount, customerId });
-        
+
         const intent = await createPaymentIntend(amount, customerId);
         console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent);
-        
+
         let intentData = {
             intentId: intent.id,
             clientSecret: intent.client_secret,
@@ -1099,9 +1099,9 @@ class CustomerOrderService {
             customerId: customerId,
         };
 
-        return { 
-            message: "Intent Created", 
-            data: intentData 
+        return {
+            message: "Intent Created",
+            data: intentData
         };
     }
 
@@ -1139,9 +1139,9 @@ class CustomerOrderService {
             throw new NotFoundError("No on-hold bookings found");
         }
 
-        return { 
-            message: "On-hold bookings retrieved successfully", 
-            data: { onHoldBookings } 
+        return {
+            message: "On-hold bookings retrieved successfully",
+            data: { onHoldBookings }
         };
     }
 
@@ -1197,9 +1197,9 @@ class CustomerOrderService {
             });
         }
 
-        return { 
-            message: "Customer responses updated successfully", 
-            data: { updatedResponses } 
+        return {
+            message: "Customer responses updated successfully",
+            data: { updatedResponses }
         };
     }
 
@@ -1228,16 +1228,33 @@ class CustomerOrderService {
                     attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
                 }
             ],
-            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo","driverInstructionOptions","driverInstructionOptions1"],
+            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
         });
 
         if (!onHoldBookings || onHoldBookings.length === 0) {
             throw new NotFoundError("No on-hold bookings found for this customer");
         }
 
-        return { 
-            message: "On-hold bookings retrieved successfully", 
-            data: { onHoldBookings } 
+        return {
+            message: "On-hold bookings retrieved successfully",
+            data: { onHoldBookings }
+        };
+    }
+
+    /**
+    * ALl ORder Status
+    * @param {Object} data - Request data
+    * @returns {Object} - Result object with all order status
+    */
+    async allOrderStatus() {
+        const allOrderStatuses = await bookingStatus.findAll();
+        if (!allOrderStatuses || allOrderStatuses.length === 0) {
+            throw new NotFoundError("No Order Statuses Found");
+        }
+
+        return {
+            message: "All Order Statuses",
+            data: allOrderStatuses
         };
     }
 }

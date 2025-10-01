@@ -91,4 +91,6 @@ router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware
 router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOtherController.testNotification));
 // Route to get all service with preference details
 router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessToken, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
+//Get All Order Status
+router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
 module.exports=router
