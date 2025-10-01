@@ -922,7 +922,7 @@ class CustomerOrderService {
                 },
                 {
                     model: bookingStatus,
-                    attributes: ["title", "description"],
+                    attributes: ["id","title", "description"],
                 },
                 {
                     model: bookingHistory,
@@ -930,7 +930,7 @@ class CustomerOrderService {
                     include: [
                         {
                             model: bookingStatus,
-                            attributes: ["title", "description"],
+                            attributes: ["id","title", "description"],
                         },
                     ],
                 },
@@ -1247,7 +1247,9 @@ class CustomerOrderService {
     * @returns {Object} - Result object with all order status
     */
     async allOrderStatus() {
-        const allOrderStatuses = await bookingStatus.findAll();
+        const allOrderStatuses = await bookingStatus.findAll({
+            attributes:['id','title','description']
+        });
         if (!allOrderStatuses || allOrderStatuses.length === 0) {
             throw new NotFoundError("No Order Statuses Found");
         }
