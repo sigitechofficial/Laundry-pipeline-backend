@@ -972,15 +972,12 @@ class CustomerOrderService {
     /**
      * Get Service Detail by ID
      * @param {Object} data - Request data
-     * @param {string} data.serviceId - Service ID
      * @returns {Object} - Result object with service details
      */
-    async serviceDetail(data) {
-        const { serviceId } = data;
+    async serviceDetail() {
 
         const serviceData = await serviceCategories.findAll({
             where: {
-                serviceId: serviceId,
                 status: true,
             },
             include: [

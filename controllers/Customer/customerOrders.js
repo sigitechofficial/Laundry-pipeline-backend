@@ -209,12 +209,8 @@ async function allServices(req, res) {
  *  Specific Service Detail For the Customer
  */
 async function serviceDetail(req, res) {
-    const { serviceId } = req.params;
-
     // Call service to handle business logic
-    const result = await customerOrderService.serviceDetail({
-        serviceId
-    });
+    const result = await customerOrderService.serviceDetail();
 
     // Return response using ResponseHelper success method
     return ResponseHelper.success(res, result.message, result.data);
