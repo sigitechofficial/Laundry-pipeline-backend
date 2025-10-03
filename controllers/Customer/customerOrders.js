@@ -80,6 +80,7 @@ async function createBooking(req, res) {
         paymentMethodId,
         paymentIntentId,
         stripeCustomerId,
+        tipAmount
     } = req.body;
 
     const userId = req.user.id;
@@ -110,6 +111,7 @@ async function createBooking(req, res) {
         paymentMethodId,
         paymentIntentId,
         stripeCustomerId,
+        tipAmount
     }, userId);
 
     // Return response using ResponseHelper success method

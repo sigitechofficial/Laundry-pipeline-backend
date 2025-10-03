@@ -20,7 +20,8 @@ const {
     onHoldOption,
     onHoldCustomerOption,
     bookingStatus,
-    serviceCategories
+    serviceCategories,
+    tip
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -470,6 +471,7 @@ class CustomerOrderService {
             paymentMethodId,
             paymentIntentId,
             stripeCustomerId,
+            tipAmount
         } = data;
 
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
@@ -636,12 +638,18 @@ class CustomerOrderService {
             bookingStatusId: 1,
         });
 
+        let tipCreate = await tip.create({
+            bookingId: bookingData.id,
+            amount: tipAmount,
+        });
+
         await booking.update(
             {
                 orderAmount: total || 0,
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: fixTimeKey,
                 partialPayment: true,
+                tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }
         );
