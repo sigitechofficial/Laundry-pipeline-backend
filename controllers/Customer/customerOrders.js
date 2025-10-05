@@ -48,7 +48,9 @@ const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPay
 const { sendNotification } = require("../../utils/notification");
 const customerOrderService = require('../../services/Customer/customerOrderService');
 const ResponseHelper = require('../../utils/responseHelper');
-const { serviceManagementService } = require('../../services/Admin/serviceManagementService');
+const {
+    serviceManagementService,
+} = require('../../services/Admin');
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -341,10 +343,8 @@ async function getOnHoldBookingsForCustomer(req, res) {
  */
 async function getAllServiceWithPreferenceDetails(req, res) {
     const { serviceId } = req.params;
-    const result = await serviceManagementService.getAllServiceWithPreferences({
-        serviceId
-    });
-    return ResponseHelper.success(res, result.message, result.data);
+    const result = await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId);
+    return ResponseHelper.success(res, "Service preferences retrieved successfully", result);
 }
 
 /*
