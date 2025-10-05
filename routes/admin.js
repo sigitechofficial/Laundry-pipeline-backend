@@ -176,6 +176,8 @@ router.post('/customerOnHoldOptions', validateAccessToken, asyncMiddleware(admin
 router.get('/getOnHoldCustomerOptions', validateAccessToken, asyncMiddleware(adminController.getOnHoldCustomerOptions))
 //Get on  Hold Options
 router.get('/getOnHoldOptions', validateAccessToken, asyncMiddleware(adminController.getOnHoldOptions))
+//Get All On Hold Bookings
+router.get('/getOnHoldBookings', validateAccessToken, asyncMiddleware(adminController.getOnHoldBookings))
 //!-------------------------------Customer Management---------------------------------//
 //Get All Customers
 router.get('/getAllCustomers', validateAccessToken, asyncMiddleware(adminController.getAllCustomers))

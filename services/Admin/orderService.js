@@ -398,6 +398,24 @@ class OrderService {
 
             return updatedOrder;
     }
+    /**
+     * Get all on hold bookings
+     * @returns {Object} All on hold bookings
+     */
+    async getOnHoldBookings() {
+        const onHoldBookings = await booking.findAll({ 
+            where: 
+            { 
+                bookingStatusId: {
+                    [Op.or]: [18, 24]
+                }
+            } 
+        });
+        return {
+            message: "All on hold bookings retrieved successfully",
+            data: { onHoldBookings }
+        };
+    }
 }
 
 module.exports = new OrderService();

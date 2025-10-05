@@ -1194,6 +1194,13 @@ async function getOnHoldCustomerOptions(req, res) {
 
 }
 
+/*
+  * Get All On Hold Bookings
+*/
+async function getOnHoldBookings(req, res) {
+    const optionsFound = orderService.getOnHoldBookings();
+    return ResponseHelper.success(res, "All Options Fetched", optionsFound);
+}
 
 //!===================================================Recurring functions=======================================//
 let responsefunc = (status, message, data, error) => {
