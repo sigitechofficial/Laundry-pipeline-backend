@@ -1384,6 +1384,7 @@ module.exports = {
     customerOnHoldOptions,
     getOnHoldCustomerOptions,
     getOnHoldOptions,
+    getOnHoldBookings,
     //------------Customer Management-------//
     getAllCustomers,
     customerCount,
