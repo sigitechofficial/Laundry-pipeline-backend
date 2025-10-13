@@ -433,6 +433,95 @@ async function changeEmployeeStatus(req, res) {
     const result = await employeeManagementService.changeEmployeeStatus(employeeId, status);
     return ResponseHelper.success(res, "Employee Status Updated", result);
 }
+
+/*
+ * Add Agent Employee
+ */
+async function addAgentEmployee(req, res) {
+    const {
+        firstName,
+        lastName,
+        email,
+        password,
+        phoneNum,
+        countryCode,
+        roleId,
+    } = req.body;
+
+    const agentId = req.user.id;
+
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    const employeeData = {
+        firstName,
+        lastName,
+        email,
+        password,
+        phoneNum,
+        countryCode,
+        roleId,
+    };
+
+    const result = await employeeManagementService.addAgentEmployee(employeeData, profileImg, agentId);
+    return ResponseHelper.success(res, "Employee Added Successfully", result);
+}
+
+/*
+ * Update Agent Employee
+ */
+async function updateAgentEmployee(req, res) {
+    const {
+        firstName,
+        lastName,
+        email,
+        phoneNum,
+        roleId,
+        updatePassword,
+        employeeId
+    } = req.body;
+
+    let profileImg = null;
+    if (req.file) {
+        const tempProfileImg = req.file.path;
+        profileImg = path.join('Public', 'Profile', path.basename(tempProfileImg));
+        profileImg = profileImg.replace(/\\/g, "/");
+    }
+
+    const updateData = {
+        firstName,
+        lastName,
+        email,
+        phoneNum,
+        roleId,
+        updatePassword,
+        employeeId
+    };
+
+    const result = await employeeManagementService.updateAgentEmployee(updateData, profileImg);
+    return ResponseHelper.success(res, "Employee Updated Successfully", result);
+}
+
+/*
+ * Change Agent Employee Status
+ */
+async function changeAgentEmployeeStatus(req, res) {
+    const { status, employeeId } = req.body;
+    const result = await employeeManagementService.changeAgentEmployeeStatus(employeeId, status);
+    return ResponseHelper.success(res, "Employee Status Updated", result);
+}
+
+/*
+ * Get All Agent Employees
+ */
+async function getAllAgentEmployees(req, res) {
+    const agentId = req.user.id;
+    const result = await employeeManagementService.getAllAgentEmployees(agentId);
+    return ResponseHelper.success(res, "All Employee Fetched", result);
+}
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 
 /*
@@ -1416,6 +1505,10 @@ module.exports = {
     addEmployee,
     updateEmployee,
     changeEmployeeStatus,
+    addAgentEmployee,
+    updateAgentEmployee,
+    changeAgentEmployeeStatus,
+    getAllAgentEmployees,
     //----------Add,Roles,Permissions && Features ---------//
     addRole,
     updateRoles,

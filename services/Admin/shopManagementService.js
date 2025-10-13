@@ -219,25 +219,18 @@ class ShopManagementService {
      * @returns {Object} Shop employees data
      */
     async getShopEmployees(businessId) {
-            const findEmployees = await bussinessInformation.findOne({
+            const findShopData = await bussinessInformation.findOne({
                 where: {
                     id: businessId
                 },
-                include: [
-                    {
-                        model: users,
-                        as: 'businessInfo',
-                        attributes: [
-                            'id',
-                            [
-                                sequelize.literal(`(SELECT * FROM users WHERE users.employeeOff = businessInfo.Id)`),
-                                'EmployeeData'
-                            ]
-                        ]
-                    }
-                ]
+                attributes: ['id','agentId']
             });
-
+            const findEmployees = await users.findAll({
+                where: {
+                    employeeOff: findShopData.agentId,
+                    classifiedAsId: 1
+                }
+            });
             return findEmployees;
     }
 }

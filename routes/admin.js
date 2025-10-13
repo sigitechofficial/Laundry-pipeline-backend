@@ -255,6 +255,14 @@ router.post('/adinEmployeeAdd', validateAccessToken, asyncMiddleware(adminContro
 router.patch('/updateEmployee', validateAccessToken, asyncMiddleware(adminController.updateEmployee))
 //update Employee Status
 router.patch('/updateEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeEmployeeStatus))
+//Add Agent Employee
+router.post('/addAgentEmployee', validateAccessToken, asyncMiddleware(adminController.addAgentEmployee))
+//Update Agent Employee
+router.patch('/updateAgentEmployee', validateAccessToken, asyncMiddleware(adminController.updateAgentEmployee))
+//Update Agent Employee Status
+router.patch('/updateAgentEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeAgentEmployeeStatus))
+//Get All Agent Employees
+router.get('/getAllAgentEmployees', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
 
 
 //!-----------------------------------Shop Management------------------------------------>>>>
