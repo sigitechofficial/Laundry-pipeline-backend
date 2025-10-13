@@ -9,7 +9,7 @@ const redisClient=redis.createClient({
 })
 
 redisClient.on('connect',function(){
-    console.log("Redis Cli  Connected");
+    console.log('\x1b[31m%s\x1b[0m', "Redis Cli  Connected");
     
 })
 

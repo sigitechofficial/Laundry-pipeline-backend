@@ -48,6 +48,11 @@ module.exports = (sequelize, DataTypes) => {
   serviceCharge:{
     type:DataTypes.FLOAT,
     allowNull:true
+  },
+  paymentMehtod:{
+    type:DataTypes.ENUM('Cash','Stripe','Paypal'),
+    allowNull:true,
+    defaultValue: 'Cash'
   }
   }, {
     sequelize,

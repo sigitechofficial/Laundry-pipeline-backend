@@ -84,7 +84,7 @@ swaggerDocument.servers = [
   }
 ];
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-console.log(`Swagger URL---> ${swaggerUrl}/api-docs`);
+//console.log(`Swagger URL---> ${swaggerUrl}/api-docs`);
 
 // === Routes ===
 app.use('/customer', customerRouter);
@@ -104,19 +104,38 @@ intilizeSocketFunc(server);
 
 // === Start server ===
 const server_port = process.env.PORT;
-let syncDb = 0;
+let syncDb = 1;
 async function startServer() {
   try {
     if (syncDb) {
       await db.sequelize.sync({ alter: true });
-      console.log('Database synchronized successfully.');
+      console.log('\x1b[32m%s\x1b[0m', '<================= Database synchronized successfully ======================>');
     }
     server.listen(server_port, function (err) {
       if (err) throw err;
-      console.log('Listening on port %d', server_port);
+      
+      const env = process.env.NODE_ENV || 'development'
+      let baseUrl
+      
+      switch(env) {
+        case 'production':
+          baseUrl = 'https://backendlaundary.fomino.ch'
+          break
+        case 'test':
+          baseUrl = 'https://testlaundaryb.fomino.ch'
+          break
+        default:
+          baseUrl = `http://localhost:${server_port}`
+      }
+
+      console.log('\x1b[34m%s\x1b[0m', `Server is running in ${env.toUpperCase()} mode`)
+      console.log('\x1b[34m%s\x1b[0m', `Server is listening on: ${baseUrl}`)
+      console.log('\x1b[34m%s\x1b[0m', `Swagger Documentation: ${baseUrl}/api-docs`)
+      console.log('\x1b[34m%s\x1b[0m', `Environment: ${env}`)
     });
   } catch (error) {
     console.error('Error during initialization:', error);
+    console.error('================= Error during initialization ======================>', error);
   }
 }
 
