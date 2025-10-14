@@ -93,6 +93,8 @@ router.get('/getCountries', validateAccessToken, asyncMiddleware(adminController
 router.post('/addCities', validateAccessToken, asyncMiddleware(adminController.addCities))
 //Get Cities
 router.get('/getCities', validateAccessToken, asyncMiddleware(adminController.getCities))
+//Get Cities by Country Id
+router.get('/getCitiesByCountryId/:countryId', validateAccessToken, asyncMiddleware(adminController.getCitiesByCountryId))
 //!---------------------------------------Zones-----------------------------------------//
 //Add Zones
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))

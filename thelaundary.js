@@ -104,7 +104,7 @@ intilizeSocketFunc(server);
 
 // === Start server ===
 const server_port = process.env.PORT;
-let syncDb = 1;
+let syncDb = 0;
 async function startServer() {
   try {
     if (syncDb) {
@@ -127,15 +127,16 @@ async function startServer() {
         default:
           baseUrl = `http://localhost:${server_port}`
       }
-
-      console.log('\x1b[34m%s\x1b[0m', `Server is running in ${env.toUpperCase()} mode`)
-      console.log('\x1b[34m%s\x1b[0m', `Server is listening on: ${baseUrl}`)
-      console.log('\x1b[34m%s\x1b[0m', `Swagger Documentation: ${baseUrl}/api-docs`)
-      console.log('\x1b[34m%s\x1b[0m', `Environment: ${env}`)
+      console.log('\x1b[94m%s\x1b[0m', `**********************************************************`)
+      console.log('\x1b[94m%s\x1b[0m', `** Server is running in ${env.toUpperCase()} mode`)
+      console.log('\x1b[94m%s\x1b[0m', `** Server is listening on: ${baseUrl}`)
+      console.log('\x1b[94m%s\x1b[0m', `** Swagger Documentation: ${baseUrl}/api-docs`)
+      console.log('\x1b[94m%s\x1b[0m', `** Environment: ${env} `)
+      console.log('\x1b[94m%s\x1b[0m', `**********************************************************`)
     });
   } catch (error) {
     console.error('Error during initialization:', error);
-    console.error('================= Error during initialization ======================>', error);
+    console.error('\x1b[32m%s\x1b[0m]','================= Error during initialization ======================>', error);
   }
 }
 

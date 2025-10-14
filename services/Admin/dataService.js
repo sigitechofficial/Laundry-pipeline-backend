@@ -9,12 +9,8 @@ class DataService {
      * @returns {Array} List of all countries
      */
     async getCountries() {
-        try {
-            const getCountry = await countries.findAll();
-            return getCountry;
-        } catch (error) {
-            throw new Error(`Countries service error: ${error.message}`);
-        }
+        const getCountry = await countries.findAll();
+        return getCountry;
     }
 
     /**
@@ -22,12 +18,29 @@ class DataService {
      * @returns {Array} List of all cities
      */
     async getCities() {
-        try {
-            const getCities = await cities.findAll();
-            return getCities;
-        } catch (error) {
-            throw new Error(`Cities service error: ${error.message}`);
-        }
+        const getCities = await cities.findAll();
+        return getCities;
+    }
+
+        /**
+     * Get all cities on the basis of country id
+     * @param {number} countryId - Optional country ID to filter cities
+     * @returns {Array} List of all cities
+     */
+    async getCitiesByCountryId(countryId) {
+        const getCities = await cities.findAll({
+            where: {
+                countryId
+            },
+            include: [
+                {
+                    model: countries,
+                    attributes: ['name', 'code']
+                }
+            ],
+            order: [['createdAt', 'DESC']]
+        });
+        return getCities;
     }
 
     /**
@@ -35,73 +48,69 @@ class DataService {
      * @returns {Array} List of zones with shop counts and other details
      */
     async getZones() {
-        try {
-            const zones = await zone.findAll({
-                include: [
-                    {
-                        model: cities,
-                        attributes: ['name'],
-                    },
-                    {
-                        model: units,
-                        as: 'distanceUnitZ',
-                        attributes: ['name', 'symbol'],
-                    },
-                    {
-                        model: units,
-                        as: 'currencyUnitZ',
-                        attributes: ['name', 'symbol'],
-                    },
-                    {
-                        model: require('../../models').users,
-                        as: 'zoneAdmin',
-                        attributes: ['firstName', 'lastName'],
-                    }
-                ]
-            });
+        const zones = await zone.findAll({
+            include: [
+                {
+                    model: cities,
+                    attributes: ['name'],
+                },
+                {
+                    model: units,
+                    as: 'distanceUnitZ',
+                    attributes: ['name', 'symbol'],
+                },
+                {
+                    model: units,
+                    as: 'currencyUnitZ',
+                    attributes: ['name', 'symbol'],
+                },
+                {
+                    model: require('../../models').users,
+                    as: 'zoneAdmin',
+                    attributes: ['firstName', 'lastName'],
+                }
+            ]
+        });
 
-            const shopCounts = await addressDb.findAll({
-                where: { addressType: 'laundaryShopAddress' },
-                attributes: ['zoneId'],
-                group: ['zoneId'],
-                raw: true,
-                logging: false,
-                attributes: [
-                    'zoneId',
-                    [require('sequelize').fn('COUNT', '*'), 'shopCount']
-                ]
-            });
+        const shopCounts = await addressDb.findAll({
+            where: { addressType: 'laundaryShopAddress' },
+            attributes: ['zoneId'],
+            group: ['zoneId'],
+            raw: true,
+            logging: false,
+            attributes: [
+                'zoneId',
+                [require('sequelize').fn('COUNT', '*'), 'shopCount']
+            ]
+        });
 
-            const shopMap = shopCounts.reduce((acc, curr) => {
-                acc[curr.zoneId] = parseInt(curr.shopCount, 10);
-                return acc;
-            }, {});
+        const shopMap = shopCounts.reduce((acc, curr) => {
+            acc[curr.zoneId] = parseInt(curr.shopCount, 10);
+            return acc;
+        }, {});
 
-            const shapedZones = zones.map(zone => {
-                const radius = this.calculateZoneRadius(zone.coordinates); // in km
+        const shapedZones = zones.map(zone => {
+            const radius = this.calculateZoneRadius(zone.coordinates); // in km
 
-                return {
-                    zoneId: zone.id,
-                    zoneName: zone.name,
-                    cityName: zone.city?.name || "",
-                    zoneMinimumAmount: zone.zoneMinimumAmount,
-                    zoneCoordinates: zone.coordinates,
-                    serviceCharge: zone.serviceCharge,
-                    zoneAdminCommission: `${zone.zoneAdminCommission}%`,
-                    currencyUnit: zone.currencyUnitZ ? `${zone.currencyUnitZ.name} (${zone.currencyUnitZ.symbol})` : "",
-                    distanceUnit: zone.distanceUnitZ ? `${zone.distanceUnitZ.name} (${zone.distanceUnitZ.symbol})` : "",
-                    radius: `${radius} km`,
-                    adminName: zone.zoneAdmin
-                        ? `${zone.zoneAdmin.firstName || ''} ${zone.zoneAdmin.lastName || ''}`.trim()
-                        : '',
-                    totalShops: shopMap[zone.id] || 0
-                };
-            });
+            return {
+                zoneId: zone.id,
+                zoneName: zone.name,
+                cityName: zone.city?.name || "",
+                zoneMinimumAmount: zone.zoneMinimumAmount,
+                zoneCoordinates: zone.coordinates,
+                serviceCharge: zone.serviceCharge,
+                zoneAdminCommission: `${zone.zoneAdminCommission}%`,
+                currencyUnit: zone.currencyUnitZ ? `${zone.currencyUnitZ.name} (${zone.currencyUnitZ.symbol})` : "",
+                distanceUnit: zone.distanceUnitZ ? `${zone.distanceUnitZ.name} (${zone.distanceUnitZ.symbol})` : "",
+                radius: `${radius} km`,
+                adminName: zone.zoneAdmin
+                    ? `${zone.zoneAdmin.firstName || ''} ${zone.zoneAdmin.lastName || ''}`.trim()
+                    : '',
+                totalShops: shopMap[zone.id] || 0
+            };
+        });
 
-            return shapedZones;
-        } catch (error) {
-            throw new Error(`Zones service error: ${error.message}`);
-        }
+        return shapedZones;
     }
 
     /**
@@ -109,19 +118,15 @@ class DataService {
      * @returns {Array} List of distance and currency units
      */
     async getUnitsDistanceAndCurrency() {
-        try {
-            const getUnits = await units.findAll({
-                where: {
-                    type: {
-                        [Op.or]: ['distance', 'currency']
-                    }
-                },
-                attributes: ['id', 'name', 'symbol', 'type', 'status']
-            });
-            return getUnits;
-        } catch (error) {
-            throw new Error(`Units service error: ${error.message}`);
-        }
+        const getUnits = await units.findAll({
+            where: {
+                type: {
+                    [Op.or]: ['distance', 'currency']
+                }
+            },
+            attributes: ['id', 'name', 'symbol', 'type', 'status']
+        });
+        return getUnits;
     }
 
     /**
@@ -129,12 +134,8 @@ class DataService {
      * @returns {Array} List of all units
      */
     async getAllUnits() {
-        try {
-            const getUnits = await units.findAll();
-            return getUnits;
-        } catch (error) {
-            throw new Error(`All units service error: ${error.message}`);
-        }
+        const getUnits = await units.findAll();
+        return getUnits;
     }
 
     /**
@@ -142,17 +143,13 @@ class DataService {
      * @returns {Array} List of all active roles
      */
     async getAllRoles() {
-        try {
-            const getRoles = await roles.findAll({
-                where: {
-                    status: true
-                },
-                attributes: ['id', 'name', 'status']
-            });
-            return getRoles;
-        } catch (error) {
-            throw new Error(`All roles service error: ${error.message}`);
-        }
+        const getRoles = await roles.findAll({
+            where: {
+                status: true
+            },
+            attributes: ['id', 'name', 'status']
+        });
+        return getRoles;
     }
 
     /**
@@ -160,14 +157,10 @@ class DataService {
      * @returns {Array} List of all classified as options
      */
     async getClassifiedAs() {
-        try {
-            const findData = await classifiedAs.findAll({
-                attributes: ['id', 'name']
-            });
-            return findData;
-        } catch (error) {
-            throw new Error(`Classified as service error: ${error.message}`);
-        }
+        const findData = await classifiedAs.findAll({
+            attributes: ['id', 'name']
+        });
+        return findData;
     }
 
     /**
@@ -175,17 +168,13 @@ class DataService {
      * @returns {Array} List of all active features
      */
     async getFeatures() {
-        try {
-            const findFeature = await features.findAll({
-                where: {
-                    status: true
-                },
-                attributes: ['id', 'name', 'status']
-            });
-            return findFeature;
-        } catch (error) {
-            throw new Error(`Features service error: ${error.message}`);
-        }
+        const findFeature = await features.findAll({
+            where: {
+                status: true
+            },
+            attributes: ['id', 'name', 'status']
+        });
+        return findFeature;
     }
 
     /**
@@ -193,17 +182,13 @@ class DataService {
      * @returns {Array} List of all active on hold options
      */
     async getOnHoldOptions() {
-        try {
-            const getOptions = await onHoldOption.findAll({
-                where: {
-                    status: true
-                },
-                attributes: ['id', 'option', 'status']
-            });
-            return getOptions;
-        } catch (error) {
-            throw new Error(`On hold options service error: ${error.message}`);
-        }
+        const getOptions = await onHoldOption.findAll({
+            where: {
+                status: true
+            },
+            attributes: ['id', 'option', 'status']
+        });
+        return getOptions;
     }
 
     /**
@@ -211,21 +196,17 @@ class DataService {
      * @returns {Array} List of on hold customer options with related data
      */
     async getOnHoldCustomerOptions() {
-        try {
-            const optionsFound = await onHoldCustomerOption.findAll({
-                include: [{
-                    model: onHoldOption,
-                    where: {
-                        status: true
-                    },
-                    attributes: ['id', 'option', 'status']
-                }],
-                attributes: ['id', 'option', 'title', 'conformationText', 'notConfirmText', 'onHoldOptionId']
-            });
-            return optionsFound;
-        } catch (error) {
-            throw new Error(`On hold customer options service error: ${error.message}`);
-        }
+        const optionsFound = await onHoldCustomerOption.findAll({
+            include: [{
+                model: onHoldOption,
+                where: {
+                    status: true
+                },
+                attributes: ['id', 'option', 'status']
+            }],
+            attributes: ['id', 'option', 'title', 'conformationText', 'notConfirmText', 'onHoldOptionId']
+        });
+        return optionsFound;
     }
 
     /**
@@ -233,29 +214,25 @@ class DataService {
      * @returns {Array} List of preference types with their values
      */
     async getPreferenceTypes() {
-        try {
-            const getPreferenceTypes = await preferenceTypes.findAll({
-                where: {
-                    status: true
-                },
-                include: [
-                    {
-                        model: preferenceValues,
-                        as: 'preferenceValues',
-                        where: {
-                            status: true
-                        },
-                        required: false,
-                        order: [['id', 'DESC']],
-                        attributes: ['id', 'value', 'status']
-                    }
-                ],
-                attributes: ['id', 'name', 'status']
-            });
-            return getPreferenceTypes;
-        } catch (error) {
-            throw new Error(`Preference types service error: ${error.message}`);
-        }
+        const getPreferenceTypes = await preferenceTypes.findAll({
+            where: {
+                status: true
+            },
+            include: [
+                {
+                    model: preferenceValues,
+                    as: 'preferenceValues',
+                    where: {
+                        status: true
+                    },
+                    required: false,
+                    order: [['id', 'DESC']],
+                    attributes: ['id', 'value', 'status']
+                }
+            ],
+            attributes: ['id', 'name', 'status']
+        });
+        return getPreferenceTypes;
     }
 
     /**
@@ -263,14 +240,10 @@ class DataService {
      * @returns {Array} List of account preferences
      */
     async getAccountPreferences() {
-        try {
-            const preFind = await preferencesServiceName.findAll({
-                attributes: ['title', 'status']
-            });
-            return preFind;
-        } catch (error) {
-            throw new Error(`Account preferences service error: ${error.message}`);
-        }
+        const preFind = await preferencesServiceName.findAll({
+            attributes: ['title', 'status']
+        });
+        return preFind;
     }
 
     /**
@@ -278,14 +251,10 @@ class DataService {
      * @returns {Array} List of cancel booking reasons
      */
     async getCancelBookingReasons() {
-        try {
-            const getBooking = await reason.findAll({
-                attributes: ['id', 'cancelReason']
-            });
-            return getBooking;
-        } catch (error) {
-            throw new Error(`Cancel booking reasons service error: ${error.message}`);
-        }
+        const getBooking = await reason.findAll({
+            attributes: ['id', 'cancelReason']
+        });
+        return getBooking;
     }
 
     /**

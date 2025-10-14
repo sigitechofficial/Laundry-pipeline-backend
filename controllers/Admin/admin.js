@@ -689,6 +689,15 @@ async function getCities(req, res) {
     return ResponseHelper.success(res, "All Cities Fetched", getCities);
 }
 
+/*
+ * Get Cities by Country Id
+*/
+async function getCitiesByCountryId(req, res) {
+    const { countryId } = req.params;
+    const getCities = await dataService.getCitiesByCountryId(countryId);
+    return ResponseHelper.success(res, "All Cities Fetched", getCities);
+}
+
 
 /*
    * Add Zones
@@ -1424,6 +1433,7 @@ module.exports = {
     addCountries,
     addCities,
     getCities,
+    getCitiesByCountryId,
     getCountries,
     //-------------Add Zones--------//
     addZones,
