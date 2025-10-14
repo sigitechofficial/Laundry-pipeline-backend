@@ -35,7 +35,7 @@ class DataService {
             include: [
                 {
                     model: countries,
-                    attributes: ['name', 'code']
+                    attributes: ['id','name', 'shortName']
                 }
             ],
             order: [['createdAt', 'DESC']]

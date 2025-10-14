@@ -1,0 +1,174 @@
+require("dotenv").config();
+const { 
+    users, 
+    bussinessInformation, 
+    driverInZones, 
+    addressDb, 
+    booking, 
+    bookingHistory 
+} = require('../../models');
+const { Op } = require('sequelize');
+const { 
+    UnauthorizedError, 
+    NotFoundError, 
+    ConflictError, 
+    ValidationError 
+} = require('../../middlewares/universalErrorHandler');
+
+/**
+ * Agent Driver Management Service
+ * Handles all agent driver related business logic
+ */
+class AgentDriverManagementService {
+
+    /**
+     * Get All Agent Drivers
+     * @param {number} agentId - Agent ID
+     * @returns {Object} Agent drivers data
+     */
+    async agnetDrivers(agentId) {
+        const laundryShopFound = await bussinessInformation.findOne({
+            where: {
+                agentId: agentId,
+            },
+        });
+
+        console.log("🚀 ~ agnetDrivers ~ laundryShopFound:", laundryShopFound);
+        //return res.json(laundryShopFound)
+        
+        if (!laundryShopFound) {
+            throw new NotFoundError("Laundry shop not found for this agent");
+        }
+
+        const driverFound = await driverInZones.findAll({
+            where: {
+                laundaryShopId: 1,
+            },
+            include: [
+                {
+                    model: users,
+                    as: "driverInZone",
+                    where: {
+                        classifiedAsId: 1,
+                        roleId: 6,
+                    },
+                    attributes: ["id", "firstName", "lastName", "email"],
+                },
+                {
+                    model: bussinessInformation,
+                    as: "laundaryDriver",
+                    attributes: ["shopAddressId"],
+                    include: [
+                        {
+                            model: addressDb,
+                            where: {
+                                addressType: "LaundaryShopAddress",
+                            },
+                            attributes: [
+                                "streetAddress",
+                                "province",
+                                "lat",
+                                "lng",
+                                "addressType",
+                            ],
+                        },
+                    ],
+                },
+            ],
+            attributes: ["id", "status", "cityId", "countryId", "zoneId"],
+        });
+
+        return {
+            driverFound,
+            message: "Agent drivers fetched"
+        };
+    }
+
+    /**
+     * Agent Assign Booking To Laundry Driver
+     * @param {Object} data - Assignment data
+     * @param {number} data.driverId - Driver ID
+     * @param {number} data.bookingId - Booking ID
+     * @returns {Object} Assignment result
+     */
+    async agentAssignBookingToLaundryDriver(data) {
+        const { driverId, bookingId } = data;
+
+        const orderAssign = await booking.update(
+            {
+                driverId: driverId,
+                bookingStatusId: 13,
+            },
+            {
+                where: {
+                    id: bookingId,
+                },
+            }
+        );
+
+        const currentTime = new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        });
+
+        const currentDate = new Date().toISOString().split("T")[0];
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId: bookingId,
+            bookingStatusId: 13,
+        });
+
+        return {
+            orderAssign,
+            message: "Order Assign to Laundry Driver"
+        };
+    }
+
+    /**
+     * Agent Pickup Order By Self
+     * @param {Object} data - Self pickup data
+     * @param {number} data.bookingId - Booking ID
+     * @param {number} agentId - Agent ID
+     * @returns {Object} Self pickup result
+     */
+    async agentPickupOrderBySelf(data, agentId) {
+        const { bookingId } = data;
+
+        const agentByselfPickup = await booking.update(
+            {
+                driverId: agentId,
+                bookingStatusId: 13,
+            },
+            {
+                where: {
+                    id: bookingId,
+                },
+            }
+        );
+
+        const currentTime = new Date().toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+        });
+
+        const currentDate = new Date().toISOString().split("T")[0];
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId: bookingId,
+            bookingStatusId: 13,
+        });
+
+        return {
+            agentByselfPickup,
+            message: "Order picked up by agent"
+        };
+    }
+}
+
+module.exports = new AgentDriverManagementService();
