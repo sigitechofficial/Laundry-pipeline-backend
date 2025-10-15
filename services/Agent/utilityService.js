@@ -33,7 +33,6 @@ class AgentUtilityService {
 
         return {
             allCountries: countriesFind,
-            message: "Countries Fetched"
         };
     }
 
@@ -46,7 +45,6 @@ class AgentUtilityService {
 
         return {
             allCities: getAllCities,
-            message: "Fetched All Cities"
         };
     }
 
@@ -83,7 +81,6 @@ class AgentUtilityService {
         return {
             allMachineInformation: machineInfo,
             agentServices: findServices,
-            message: "Information fetched"
         };
     }
 
@@ -112,7 +109,6 @@ class AgentUtilityService {
 
         return {
             bussinesWorkingHours: bussinesWorkingHours,
-            message: "Information fetched"
         };
     }
 
@@ -130,7 +126,6 @@ class AgentUtilityService {
 
         return {
             onHoldOptions,
-            message: "On hold options fetched"
         };
     }
 
@@ -175,7 +170,6 @@ class AgentUtilityService {
 
         return {
             datafind,
-            message: "Print label data fetched"
         };
     }
 }

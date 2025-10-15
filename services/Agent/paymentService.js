@@ -36,7 +36,6 @@ class AgentPaymentService {
 
         return {
             intentData,
-            message: "Intent Created"
         };
     }
 
@@ -85,7 +84,6 @@ class AgentPaymentService {
         });
 
         return {
-            message: "Booking invoice generated status updated",
             bookingId: bookingId,
             status: 11,
             paymentConfirmed: true,

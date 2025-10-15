@@ -176,7 +176,6 @@ class AgentEmployeeManagementService {
 
         return {
             result,
-            message: "Employee Updated Successfully"
         };
     }
 
@@ -199,7 +198,6 @@ class AgentEmployeeManagementService {
 
         return {
             result,
-            message: "Employee Status Updated"
         };
     }
 
@@ -225,7 +223,6 @@ class AgentEmployeeManagementService {
 
         return {
             agentEmployee,
-            message: "All Employee Fetched"
         };
     }
 }

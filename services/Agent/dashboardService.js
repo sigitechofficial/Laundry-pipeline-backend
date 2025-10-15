@@ -112,7 +112,6 @@ class AgentDashboardService {
 
         return {
             bookingData,
-            message: "Available bookings fetched"
         };
     }
 
@@ -276,7 +275,6 @@ class AgentDashboardService {
             deliveryTypeSplit: deliveryTypeSplit[0] || { totalDeliveries: 0, totalEarnings: 0 },
             recentBookings,
             zonePerformance,
-            message: "Performance dashboard data fetched"
         };
     }
 }

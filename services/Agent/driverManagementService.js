@@ -80,7 +80,6 @@ class AgentDriverManagementService {
 
         return {
             driverFound,
-            message: "Agent drivers fetched"
         };
     }
 
@@ -123,7 +122,6 @@ class AgentDriverManagementService {
 
         return {
             orderAssign,
-            message: "Order Assign to Laundry Driver"
         };
     }
 
@@ -166,7 +164,6 @@ class AgentDriverManagementService {
 
         return {
             agentByselfPickup,
-            message: "Order picked up by agent"
         };
     }
 }

@@ -85,7 +85,6 @@ class AgentOnHoldManagementService {
 
         return {
             responseData,
-            message: "On hold confirmation created successfully"
         };
     }
 
@@ -116,22 +115,15 @@ class AgentOnHoldManagementService {
         });
 
         if (rejectedItems.length === 0) {
-            return {
-                rejectedItems: [],
-                message: "No rejected items found"
-            };
+            throw new NotFoundError("No rejected items found");
         }
 
         if (rejectedItems[0].customerResponse === true && rejectedItems[0].deleted === true) {
-            return {
-                rejectedItems: [],
-                message: "Rejected Services Items"
-            };
+            throw new NotFoundError("Rejected Services Items");
         }
 
         return {
-            rejectedItems,
-            message: "Rejected Services Items"
+            rejectedItems
         };
     }
 
@@ -164,7 +156,6 @@ class AgentOnHoldManagementService {
         );
 
         return {
-            message: "Issue resolved successfully"
         };
     }
 }

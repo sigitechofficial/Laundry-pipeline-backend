@@ -120,7 +120,6 @@ class AgentOrderManagementService {
 
         return {
             bookingData,
-            message: "Available bookings fetched"
         };
     }
 
@@ -204,7 +203,6 @@ class AgentOrderManagementService {
 
         return {
             getBooking,
-            message: "Agent orders fetched"
         };
     }
 
@@ -262,13 +260,11 @@ class AgentOrderManagementService {
             return {
                 bookingfind,
                 oneHourLater,
-                message: `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`
             };
         }
 
         return {
-            bookingfind,
-            message: `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`
+            bookingfind
         };
     }
 
@@ -297,7 +293,6 @@ class AgentOrderManagementService {
             results.slots = await this.getSlotBookings(addressFound.id);
             return {
                 results,
-                message: "Booking Details Fetched for all filters"
             };
         }
 
@@ -381,8 +376,7 @@ class AgentOrderManagementService {
         });
 
         return {
-            results,
-            message: "Booking Details Fetched for all filters"
+            results
         };
     }
 
@@ -588,7 +582,6 @@ class AgentOrderManagementService {
         });
 
         return {
-            message: "Booking status updated to 'On The Way'",
             bookingId: bookingId,
             status: 4
         };
@@ -635,7 +628,6 @@ class AgentOrderManagementService {
         });
 
         return {
-            message: "Driver status updated to 'Arrived'",
             bookingId: bookingId,
             status: 5
         };
@@ -673,7 +665,6 @@ class AgentOrderManagementService {
 
         return {
             proofRecords,
-            message: "Pickup delivery proof added successfully"
         };
     }
 
@@ -713,12 +704,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 6,
-            message: "Inspection in progress",
             time: currentTime
         });
 
         return {
-            message: "Inspection status updated",
             bookingId: bookingId,
             status: 6
         };
@@ -760,12 +749,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 7,
-            message: "Reached at delivery shop",
             time: currentTime
         });
 
         return {
-            message: "Status updated to 'Reached at Delivery Shop'",
             bookingId: bookingId,
             status: 7
         };
@@ -807,12 +794,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 8,
-            message: "Laundry wash completed",
             time: currentTime
         });
 
         return {
-            message: "Laundry wash completed",
             bookingId: bookingId,
             status: 8
         };
@@ -854,12 +839,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 9,
-            message: "Out for delivery to customer",
             time: currentTime
         });
 
         return {
-            message: "Out for delivery to customer",
             bookingId: bookingId,
             status: 9
         };
@@ -901,12 +884,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 10,
-            message: "Driver reached for delivery",
             time: currentTime
         });
 
         return {
-            message: "Driver reached for delivery",
             bookingId: bookingId,
             status: 10
         };
@@ -948,12 +929,10 @@ class AgentOrderManagementService {
         sendEvent('bookingStatusUpdated', {
             bookingId: bookingId,
             status: 11,
-            message: "Order delivered successfully",
             time: currentTime
         });
 
         return {
-            message: "Order delivered successfully",
             bookingId: bookingId,
             status: 11
         };
@@ -993,7 +972,6 @@ class AgentOrderManagementService {
         );
 
         return {
-            message: "Booking cancelled successfully",
             bookingId: bookingId,
             status: 12
         };

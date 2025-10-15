@@ -49,7 +49,6 @@ class AgentServiceManagementService {
 
         return {
             findServices,
-            message: "Services Found"
         };
     }
 
@@ -81,7 +80,6 @@ class AgentServiceManagementService {
         );
 
         return {
-            message: "Service Status Updated"
         };
     }
 
@@ -159,7 +157,6 @@ class AgentServiceManagementService {
 
         return {
             serviceDetails: result,
-            message: "Service details fetched"
         };
     }
 
@@ -205,11 +202,7 @@ class AgentServiceManagementService {
         });
 
         if (!customerServicesFind || customerServicesFind.length === 0) {
-            return {
-                customerServices: [],
-                totalAmount: 0,
-                message: "No Customer Selected Services"
-            };
+            throw new NotFoundError("No Customer Selected Services");
         }
 
         // Calculate total
@@ -221,7 +214,6 @@ class AgentServiceManagementService {
         return {
             customerServices: customerServicesFind,
             totalAmount: totalAmount,
-            message: "Customer services fetched"
         };
     }
 
@@ -283,7 +275,6 @@ class AgentServiceManagementService {
         return {
             customerServices: customerServicesFind,
             totalAmount: totalAmount,
-            message: "Customer services for invoice update fetched"
         };
     }
 }

@@ -85,7 +85,6 @@ class AgentAddressManagementService {
 
         return {
             registerShop,
-            message: "Laundary Shop Address Added"
         };
     }
 
@@ -165,7 +164,6 @@ class AgentAddressManagementService {
 
         return {
             updatedAddress,
-            message: "Laundary Shop Address Updated"
         };
     }
 
@@ -217,7 +215,6 @@ class AgentAddressManagementService {
 
         return {
             agentAddress,
-            message: "Agent Address Fetched"
         };
     }
 
@@ -269,7 +266,6 @@ class AgentAddressManagementService {
 
         return {
             shopAddress,
-            message: "Shop Address Fetched"
         };
     }
 

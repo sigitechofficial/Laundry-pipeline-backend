@@ -31,8 +31,7 @@ class AgentRolePermissionService {
 
         const checkExist = await roles.findOne({ where: { name } });
         if (checkExist) {
-            throw new ConflictError("Same role exists", { 
-                message: "Please try another name" 
+            throw new ConflictError("Same role exists Please try another name", { 
             });
         }
 
@@ -49,7 +48,6 @@ class AgentRolePermissionService {
 
         return {
             newRole,
-            message: "Role and Permission Added Successfully"
         };
     }
 
@@ -76,9 +74,7 @@ class AgentRolePermissionService {
             });
 
             if (checkExist) {
-                throw new ConflictError("Same role exists", { 
-                message: "Please try another name" 
-            });
+                throw new ConflictError("Same role exists Please try another name");
             }
         }
 
@@ -102,7 +98,6 @@ class AgentRolePermissionService {
         }
 
         return {
-            message: "Role and Permission Updated Successfully"
         };
     }
 
@@ -120,7 +115,6 @@ class AgentRolePermissionService {
 
         return {
             getRoles,
-            message: "Get All Roles"
         };
     }
 
@@ -152,7 +146,6 @@ class AgentRolePermissionService {
 
         return {
             getPermissions,
-            message: "Get All Permissions"
         };
     }
 
@@ -171,7 +164,6 @@ class AgentRolePermissionService {
 
         return {
             createData,
-            message: "Added the classified As"
         };
     }
 
@@ -186,7 +178,6 @@ class AgentRolePermissionService {
 
         return {
             getClassifiedAs,
-            message: "Get All Classified As"
         };
     }
 
@@ -208,7 +199,6 @@ class AgentRolePermissionService {
 
         return {
             createData,
-            message: "Feature Added Successfully"
         };
     }
 
@@ -226,7 +216,6 @@ class AgentRolePermissionService {
 
         return {
             getFeatures,
-            message: "Get All Features"
         };
     }
 }

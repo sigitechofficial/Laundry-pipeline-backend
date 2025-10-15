@@ -25,7 +25,8 @@ const registerAgentWithOTP = async (req, res) => {
 const verifyOTpSignUp = async (req, res) => {
     const { otpId, OTP, userId } = req.body;
 
-    const result = await authService.verifyOTpSignUp(otpId, OTP, userId);
+    const data = { otpId, OTP, userId };
+    const result = await authService.verifyOTpSignUp(data);
     return ResponseHelper.success(res, "OTP verified successfully", result);
 };
 
@@ -33,7 +34,8 @@ const verifyOTpSignUp = async (req, res) => {
 const resendOTP = async (req, res) => {
     const { userId } = req.body;
 
-    const result = await authService.resendOTP(userId);
+    const data = { userId };
+    const result = await authService.resendOTP(data);
     return ResponseHelper.success(res, "OTP resent successfully", result);
 };
 
@@ -56,11 +58,7 @@ const agentBusinessInfo = async (req, res) => {
 const businesInfoAdded = async (req, res) => {
     const { serviceId, userId } = req.body;
 
-    const data = {
-        serviceId,
-        userId
-    };
-
+    const data = { serviceId, userId };
     const result = await authService.businesInfoAdded(data);
     return ResponseHelper.success(res, "Service added successfully", result);
 };
@@ -69,11 +67,7 @@ const businesInfoAdded = async (req, res) => {
 const workingHoursUpdate = async (req, res) => {
     const { workingHours, userId } = req.body;
 
-    const data = {
-        workingHours,
-        userId
-    };
-
+    const data = { workingHours, userId };
     const result = await authService.workingHoursUpdate(data);
     return ResponseHelper.success(res, "Working hours updated successfully", result);
 };
@@ -82,12 +76,7 @@ const workingHoursUpdate = async (req, res) => {
 const loginUser = async (req, res) => {
     const { email, password, dvToken } = req.body;
 
-    const data = {
-        email,
-        password,
-        dvToken
-    };
-
+    const data = { email, password, dvToken };
     const result = await authService.loginUser(data);
     return ResponseHelper.success(res, "Login successful", result);
 };
@@ -96,7 +85,8 @@ const loginUser = async (req, res) => {
 const forgetPasswordRequest = async (req, res) => {
     const { email } = req.body;
 
-    const result = await authService.forgetPasswordRequest(email);
+    const data = { email };
+    const result = await authService.forgetPasswordRequest(data);
     return ResponseHelper.success(res, "Password reset OTP sent to your email", result);
 };
 
@@ -104,7 +94,8 @@ const forgetPasswordRequest = async (req, res) => {
 const verifyOTPforPassword = async (req, res) => {
     const { otpId, OTP } = req.body;
 
-    const result = await authService.verifyOTPforPassword(otpId, OTP);
+    const data = { otpId, OTP };
+    const result = await authService.verifyOTPforPassword(data);
     return ResponseHelper.success(res, "OTP verified successfully", result);
 };
 
@@ -112,7 +103,8 @@ const verifyOTPforPassword = async (req, res) => {
 const changePasswordOTP = async (req, res) => {
     const { otpId, newPassword } = req.body;
 
-    const result = await authService.changePasswordOTP(otpId, newPassword);
+    const data = { otpId, newPassword };
+    const result = await authService.changePasswordOTP(data);
     return ResponseHelper.success(res, "Password changed successfully", result);
 };
 
@@ -120,7 +112,8 @@ const changePasswordOTP = async (req, res) => {
 const logout = async (req, res) => {
     const { userId, dvToken } = req.body;
 
-    const result = await authService.logout(userId, dvToken);
+    const data = { userId, dvToken };
+    const result = await authService.logout(data);
     return ResponseHelper.success(res, "Logout successful", result);
 };
 
@@ -142,7 +135,8 @@ const session = async (req, res) => {
 const getUserProfile = async (req, res) => {
     const { userId } = req.params;
 
-    const result = await authService.getUserProfile(userId);
+    const data = { userId };
+    const result = await authService.getUserProfile(data);
     return ResponseHelper.success(res, "User profile fetched successfully", result);
 };
 
@@ -152,13 +146,8 @@ const updateUserProfile = async (req, res) => {
     const { firstName, lastName, phoneNum } = req.body;
     const profileImg = req.file?.path;
 
-    const updateData = {
-        firstName,
-        lastName,
-        phoneNum
-    };
-
-    const result = await authService.updateUserProfile(userId, updateData, profileImg);
+    const data = { userId, firstName, lastName, phoneNum };
+    const result = await authService.updateUserProfile(data, profileImg);
     return ResponseHelper.success(res, "Profile updated successfully", result);
 };
 

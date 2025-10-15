@@ -92,7 +92,6 @@ class AgentInvoiceManagementService {
 
         return {
             results,
-            message: "Invoice details fetched"
         };
     }
 
@@ -201,7 +200,6 @@ class AgentInvoiceManagementService {
 
         return {
             total,
-            message: "Services added successfully"
         };
     }
 
@@ -288,7 +286,6 @@ class AgentInvoiceManagementService {
 
         return {
             invoiceDetails,
-            message: "Invoice details fetched"
         };
     }
 
@@ -325,7 +322,6 @@ class AgentInvoiceManagementService {
         );
 
         return {
-            message: "Invoice updated successfully"
         };
     }
 
@@ -358,7 +354,6 @@ class AgentInvoiceManagementService {
         );
 
         return {
-            message: "Invoice generated status updated"
         };
     }
 
@@ -416,7 +411,6 @@ class AgentInvoiceManagementService {
         }
 
         return {
-            message: "Invoice updated successfully"
         };
     }
 }
