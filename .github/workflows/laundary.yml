@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: node:18.20.4
-
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -24,7 +23,6 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Checkout latest code
         uses: actions/checkout@v4
@@ -33,30 +31,30 @@ jobs:
       - name: 🔐 Create .env file
         run: |
           cat << 'EOF' > .env
-${{ secrets.ENV_FILE_CONTENT_PROD }}
-EOF
+          ${{ secrets.ENV_FILE_CONTENT_PROD }}
+          EOF
 
       # ---------------- CONFIG JSON ----------------
       - name: 📁 Create config/config.json
         run: |
           mkdir -p config
           cat << 'EOF' > config/config.json
-${{ secrets.CONFIG_JSON_CONTENT_PROD }}
-EOF
+          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
+          EOF
 
       # ---------------- HTACCESS ----------------
       - name: 🧾 Create .htaccess
         run: |
           cat << 'EOF' > .htaccess
-${{ secrets.HTACCESS_CONTENT_PROD }}
-EOF
+          ${{ secrets.HTACCESS_CONTENT_PROD }}
+          EOF
 
       # ---------------- FIREBASE ----------------
       - name: 🔥 Create firebase.json
         run: |
           cat << 'EOF' > firebase.json
-${{ secrets.FIREBASE_CONTENT_PROD }}
-EOF
+          ${{ secrets.FIREBASE_CONTENT_PROD }}
+          EOF
 
       # ---------------- FTP DEPLOY ----------------
       - name: 🚀 Deploy via FTP
