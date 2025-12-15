@@ -1,17 +1,23 @@
 <?php
-// Enable error reporting for debugging
+// Enable error reporting
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
-// Path to your working directory
+// ================= PATHS =================
+
+// Project working directory (CONFIRM this path exists)
 $workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
 
-// Explicit PATH (no NVM)
+// Explicit PATH (NO NVM)
 putenv("PATH=/bin:/usr/bin:/usr/local/bin");
+putenv("HOME=/root");
 
-// Commands (using system node & npm)
+// ================= COMMANDS =================
+
+// npm install
 $npmCommand = "cd $workingDir && /bin/npm install 2>&1";
 
+// pm2 restart
 $pm2Command = "
 cd $workingDir &&
 /bin/pm2 stop thelaundary || true &&
@@ -20,7 +26,8 @@ cd $workingDir &&
 /bin/pm2 save 2>&1
 ";
 
-// Run npm install
+// ================= RUN NPM INSTALL =================
+
 $process = proc_open($npmCommand, [
     0 => ["pipe", "r"],
     1 => ["pipe", "w"],
@@ -28,17 +35,19 @@ $process = proc_open($npmCommand, [
 ], $pipes);
 
 if (is_resource($process)) {
-    $installOutput = stream_get_contents($pipes[1]);
-    $installError  = stream_get_contents($pipes[2]);
+
+    $npmOutput = stream_get_contents($pipes[1]);
+    $npmError  = stream_get_contents($pipes[2]);
 
     fclose($pipes[1]);
     fclose($pipes[2]);
     proc_close($process);
 
-    echo "<h3>NPM install output</h3>";
-    echo "<pre>" . htmlspecialchars($installOutput . $installError) . "</pre>";
+    echo "<h3>NPM Install Output</h3>";
+    echo "<pre>" . htmlspecialchars($npmOutput . $npmError) . "</pre>";
 
-    // Run PM2
+    // ================= RUN PM2 =================
+
     $pm2Process = proc_open($pm2Command, [
         0 => ["pipe", "r"],
         1 => ["pipe", "w"],
@@ -46,6 +55,7 @@ if (is_resource($process)) {
     ], $pm2Pipes);
 
     if (is_resource($pm2Process)) {
+
         $pm2Output = stream_get_contents($pm2Pipes[1]);
         $pm2Error  = stream_get_contents($pm2Pipes[2]);
 
@@ -53,15 +63,15 @@ if (is_resource($process)) {
         fclose($pm2Pipes[2]);
         proc_close($pm2Process);
 
-        echo "<h3>PM2 output</h3>";
+        echo "<h3>PM2 Output</h3>";
         echo "<pre>" . htmlspecialchars($pm2Output . $pm2Error) . "</pre>";
-        echo "<strong>Deployment completed successfully</strong>";
+        echo "<strong>✅ Deployment completed successfully</strong>";
+
     } else {
-        echo "Failed to run PM2 command.";
+        echo "❌ Failed to execute PM2 command";
     }
+
 } else {
-    echo "Failed to run npm install.";
+    echo "❌ Failed to execute npm install";
 }
 ?>
-
-
