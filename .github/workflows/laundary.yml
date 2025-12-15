@@ -60,11 +60,13 @@ jobs:
       - name: 🚀 Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
-          server: ftp.sigisolutions.net
+          server: sigisolutions.net
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           timeout: 360
-          
+          port: 21
+          protocol: ftp
+
       # ---------------- TRIGGER SERVER ----------------
       - name: 🔄 Trigger npm install & PM2
         run: |
