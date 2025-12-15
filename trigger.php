@@ -1,23 +1,21 @@
 <?php
-// Enable error reporting
+// Enable error reporting for debugging
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 // ================= PATHS =================
-
 // Project working directory
 $workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
 
-// Explicit PATH (no NVM needed)
+// Explicit PATH (no NVM)
 putenv("PATH=/bin:/usr/bin:/usr/local/bin");
 putenv("HOME=/home/sigisolutions");
 
 // ================= COMMANDS =================
-
-// npm install
+// npm install command
 $npmCommand = "cd $workingDir && /bin/npm install 2>&1";
 
-// pm2 restart
+// PM2 restart command
 $pm2Command = "
 cd $workingDir &&
 /usr/local/bin/pm2 stop thelaundary || true &&
@@ -27,15 +25,13 @@ cd $workingDir &&
 ";
 
 // ================= RUN NPM INSTALL =================
-
 $process = proc_open($npmCommand, [
-    0 => ["pipe", "r"],
-    1 => ["pipe", "w"],
-    2 => ["pipe", "w"],
+    0 => ["pipe", "r"], // stdin
+    1 => ["pipe", "w"], // stdout
+    2 => ["pipe", "w"], // stderr
 ], $pipes);
 
 if (is_resource($process)) {
-
     $npmOutput = stream_get_contents($pipes[1]);
     $npmError  = stream_get_contents($pipes[2]);
 
@@ -47,15 +43,13 @@ if (is_resource($process)) {
     echo "<pre>" . htmlspecialchars($npmOutput . $npmError) . "</pre>";
 
     // ================= RUN PM2 =================
-
     $pm2Process = proc_open($pm2Command, [
-        0 => ["pipe", "r"],
-        1 => ["pipe", "w"],
-        2 => ["pipe", "w"],
+        0 => ["pipe", "r"], // stdin
+        1 => ["pipe", "w"], // stdout
+        2 => ["pipe", "w"], // stderr
     ], $pm2Pipes);
 
     if (is_resource($pm2Process)) {
-
         $pm2Output = stream_get_contents($pm2Pipes[1]);
         $pm2Error  = stream_get_contents($pm2Pipes[2]);
 
