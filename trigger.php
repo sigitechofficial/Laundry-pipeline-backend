@@ -5,12 +5,12 @@ error_reporting(E_ALL);
 
 // ================= PATHS =================
 
-// Project working directory (CONFIRM this path exists)
+// Project working directory
 $workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
 
-// Explicit PATH (NO NVM)
+// Explicit PATH (no NVM needed)
 putenv("PATH=/bin:/usr/bin:/usr/local/bin");
-putenv("HOME=/root");
+putenv("HOME=/home/sigisolutions");
 
 // ================= COMMANDS =================
 
@@ -20,10 +20,10 @@ $npmCommand = "cd $workingDir && /bin/npm install 2>&1";
 // pm2 restart
 $pm2Command = "
 cd $workingDir &&
-/bin/pm2 stop thelaundary || true &&
-/bin/pm2 delete thelaundary || true &&
-/bin/pm2 start $workingDir/thelaundary.js --name thelaundary &&
-/bin/pm2 save 2>&1
+/usr/local/bin/pm2 stop thelaundary || true &&
+/usr/local/bin/pm2 delete thelaundary || true &&
+/usr/local/bin/pm2 start $workingDir/thelaundary.js --name thelaundary &&
+/usr/local/bin/pm2 save 2>&1
 ";
 
 // ================= RUN NPM INSTALL =================
