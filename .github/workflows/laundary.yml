@@ -71,4 +71,4 @@ jobs:
       - name: 🔄 Trigger npm install & PM2
         run: |
           echo "Triggering server build..."
-          curl -X GET "https://laundaryb.sigisolutions.net/trigger.php"
+          curl -X GET "https://laundarybackend.sigisolutions.net/"

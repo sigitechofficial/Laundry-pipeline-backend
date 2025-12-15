@@ -4,7 +4,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 // Path to your working directory
-$workingDir = '/home/sigisolutions/laundaryb.sigisolutions.net';
+$workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net/';
 
 // Set up the correct environment variables for the shell
 $nodeBinPath = '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin';
