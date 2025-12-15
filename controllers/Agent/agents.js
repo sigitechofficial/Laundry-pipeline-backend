@@ -40,7 +40,12 @@ const jwt = require("jsonwebtoken");
 var JSbarcode = require("jsbarcode");
 const redisCli = require("../../redis/redis");
 const otpGenerator = require("otp-generator");
-const customError = require("../../middlewares/customError");
+const { 
+    ValidationError, 
+    NotFoundError, 
+    ConflictError, 
+    UnauthorizedError 
+} = require('../../middlewares/universalErrorHandler');
 const otpMail = require("../../helper/otpMail");
 const error = require("../../middlewares/error");
 const path = require("path");
@@ -58,6 +63,7 @@ const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent } = require("../stripe");
+const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
@@ -80,7 +86,7 @@ exports.agentAddressAdd = async (req, res) => {
     });
 
     if (findAgentShopAddress.length > 0) {
-        throw new customError("Already Added the Shop Address");
+        throw new ConflictError("Already Added the Shop Address");
     }
 
     const polygon = {
@@ -115,9 +121,7 @@ exports.agentAddressAdd = async (req, res) => {
         userId,
     });
 
-    return res.json(
-        responsefunc("1", "Laundary Shhop Address Added", { registerShop }, "")
-    );
+    return ResponseHelper.success(res, "Laundary Shhop Address Added", { registerShop });
 }
 
 //!----------------------------------Agent Shop Address Edit-----------------------------//
@@ -151,7 +155,7 @@ exports.agentAddressEdit = async (req, res) => {
 
 
     if (!existingAddress) {
-        throw new customError("No shop address found to edit. Please add an address first.");
+        throw new NotFoundError("No shop address found to edit. Please add an address first.");
     }
 
     const polygon = {
@@ -194,9 +198,7 @@ exports.agentAddressEdit = async (req, res) => {
 
     console.log("updatedAddressData===================>>>", updatedAddressData)
 
-    return res.json(
-        responsefunc("1", "Laundry Shop Address Updated Successfully", updatedAddressData, "")
-    );
+    return ResponseHelper.success(res, "Laundry Shop Address Updated Successfully", updatedAddressData);
 }
 
 /*
@@ -242,14 +244,10 @@ exports.getAgentAddress = async (req, res) => {
     });
 
     if (!agentAddress) {
-        return res.json(
-            responsefunc("0", "No address found for this agent", {}, "")
-        );
+        throw new NotFoundError("No address found for this agent");
     }
 
-    return res.json(
-        responsefunc("1", "Agent Address Retrieved Successfully", agentAddress, "")
-    );
+    return ResponseHelper.success(res, "Agent Address Retrieved Successfully", agentAddress);
 }
 
 /*
@@ -309,7 +307,7 @@ exports.getShopAddress = async (req, res) => {
         workingHours,
     };
     //console.log("ðŸš€ ~ getShopAddress ~ findAddress:", findAddress);
-    return res.json(responsefunc("1", "Address Get", outObj, " "));
+    return ResponseHelper.success(res, "Address Get", outObj);
 }
 
 //!------------------------------------------Get Order For Agent----------------------------------------//
@@ -411,14 +409,7 @@ exports.getBookingHome = async (req, res) => {
     //return res.json(bookingData)
 
 
-    return res.json(
-        responsefunc(
-            "1",
-            "Agent Orders fetched",
-            { bookingData },
-            ""
-        )
-    );
+    return ResponseHelper.success(res, "Agent Orders fetched", { bookingData });
 }
 
 /*
@@ -587,7 +578,7 @@ exports.getAgentOrder = async (req, res) => {
         })),
     };
 
-    return res.json(responsefunc("1", "Booking Available to Accept", outObj, ""));
+    return ResponseHelper.success(res, "Booking Available to Accept", outObj);
 }
 
 /*
@@ -637,25 +628,17 @@ exports.orderDetailsById = async (req, res) => {
 
     if (bookingfind.bookingStatusId === 5) {
         const oneHourLater = moment().add(1, "hours").format("HH:mm A"); // 24-hour format with AM/PM
-        return res.json(
-            responsefunc(
-                "1",
-                `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]
-                }`,
-                { bookingfind, oneHourLater },
-                ""
-            )
+        return ResponseHelper.success(
+            res,
+            `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
+            { bookingfind, oneHourLater }
         );
     }
 
-    return res.json(
-        responsefunc(
-            "1",
-            `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]
-            }`,
-            bookingfind,
-            ""
-        )
+    return ResponseHelper.success(
+        res,
+        `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
+        bookingfind
     );
 }
 
@@ -675,7 +658,7 @@ exports.agentBookingFilters = async (req, res) => {
     console.log("addressFound==========================>>", addressFound.id)
 
     if (!addressFound) {
-        return res.json(responsefunc("0", "Address not found for agent", {}, ""));
+        throw new NotFoundError("Address not found for agent");
     }
 
     const results = {};
@@ -685,7 +668,7 @@ exports.agentBookingFilters = async (req, res) => {
     // Slot bookings
     if (filterType === 'slots') {
         results.slots = await getSlotBookings(addressFound.id);
-        return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
+        return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
     }
 
 
@@ -769,7 +752,7 @@ exports.agentBookingFilters = async (req, res) => {
         ],
     });
 
-    return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
+    return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 }
 
 
@@ -784,7 +767,7 @@ exports.invoiceDetailTab = async (req, res) => {
     });
 
     if (!addressFound) {
-        return res.json(responsefunc("0", "Address not found for agent", {}, ""));
+        throw new NotFoundError("Address not found for agent");
     }
 
     const results = {};
@@ -869,7 +852,7 @@ exports.invoiceDetailTab = async (req, res) => {
         ],
     });
 
-    return res.json(responsefunc("1", "Booking Details Fetched for all filters", results, ""));
+    return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 }
 
 
@@ -892,16 +875,16 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     });
 
     if (!bookingfind) {
-        throw new customError(`Booking with ID ${bookingId} not found`);
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
     if (bookingfind.bookingStatusId !== 3) {
-        throw new customError("No driver is assigned to this booking yet");
+        throw new NotFoundError("No driver is assigned to this booking yet");
     }
 
 
     if (!bookingfind.customer.stripeCustomerId) {
-        throw new customError("PaymentIntent or PaymentMethod not found for this booking");
+        throw new NotFoundError("PaymentIntent or PaymentMethod not found for this booking");
     }
 
     const stripeResult = await confirmAndCapturePayment(
@@ -913,7 +896,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     console.log("ðŸš€ ~ agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);
 
     if (stripeResult.status !== 'succeeded') {
-        throw new customError(`Payment failed or incomplete. Current status: ${stripeResult.status}`);
+        throw new ValidationError(`Payment failed or incomplete. Current status: ${stripeResult.status}`);
     }
 
     await booking.update(
@@ -945,9 +928,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return res.json(
-        responsefunc("1", "Booking status updated and payment captured", {}, "")
-    );
+    return ResponseHelper.success(res, "Booking status updated and payment captured", {});
 }
 
 /*
@@ -963,11 +944,11 @@ exports.driverStatusArrived = async (req, res) => {
     });
 
     if (!bookingfind) {
-        throw new customError(`Booking with this  id : ${bookingId} not exists`);
+        throw new NotFoundError(`Booking with this id: ${bookingId} not exists`);
     }
 
     if (bookingfind.bookingStatusId !== 4) {
-        throw new customError("Your driver is still not out for pickup");
+        throw new ValidationError("Your driver is still not out for pickup");
     }
 
     await booking.update(
@@ -1000,9 +981,7 @@ exports.driverStatusArrived = async (req, res) => {
         driverId:bookingfind.driverId,
     }
     sendNotification(customerId,title,body,data);
-    return res.json(
-        responsefunc("1", "Booking Status Updated to Driver Arrived", {}, " ")
-    );
+    return ResponseHelper.success(res, "Booking Status Updated to Driver Arrived", {});
 }
 
 /*
@@ -1014,10 +993,7 @@ exports.AddPickupDeliveryProof = async (req, res) => {
     const userId = req.user.id;
 
     if (!req.files.length) {
-        throw new customError(
-            "Proof Images are not uploaded",
-            "Please Upload the Images"
-        );
+        throw new ValidationError("Proof Images are not uploaded. Please Upload the Images");
     }
 
     let imgArr = req.files.map((ele) => {
@@ -1052,9 +1028,7 @@ exports.AddPickupDeliveryProof = async (req, res) => {
         }
     );
 
-    return res.json(
-        responsefunc("1", "Driver proof Pics Uploaded Successfully", {}, "")
-    );
+    return ResponseHelper.success(res, "Driver proof Pics Uploaded Successfully", {});
 }
 
 /*
@@ -1071,7 +1045,7 @@ exports.agentInspectionStatus = async (req, res) => {
     });
 
     if (bookingFind.bookingStatusId !== 5) {
-        throw new customError("Your driver is not reached yet");
+        throw new ValidationError("Your driver is not reached yet");
     }
 
     await booking.update(
@@ -1107,9 +1081,7 @@ exports.agentInspectionStatus = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return res.json(
-        responsefunc("1", "Booking PickingUp and Inspection Status Updated", {}, "")
-    );
+    return ResponseHelper.success(res, "Booking PickingUp and Inspection Status Updated", {});
 }
 
 /*
@@ -1125,7 +1097,7 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 7) {
-        throw new customError("Booking is still not In Transit to Facility");
+        throw new ValidationError("Booking is still not In Transit to Facility");
     }
 
     await booking.update(
@@ -1160,7 +1132,7 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
+    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
 }
 
 
@@ -1177,7 +1149,7 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         amount: intent.amount,
         customerId: customerId,
     }
-    return res.json(responsefunc("1", "Intent Created", {}, ""));
+    return ResponseHelper.success(res, "Intent Created", {});
 }
 
 
@@ -1195,7 +1167,7 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 9) {
-        throw new customError("Booking is still not In Transit to Facility");
+        throw new ValidationError("Booking is still not In Transit to Facility");
     }
 
     await booking.update(
@@ -1240,7 +1212,7 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return res.json(responsefunc("1", "Driver Reached At Laundry Shop", {}, ""));
+    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
 }
 
 
@@ -1258,7 +1230,7 @@ exports.laundryWashCompleted = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 11) {
-        throw new customError("Booking is still not In Procesing or Invoice Not Generated");
+        throw new ValidationError("Booking is still not In Processing or Invoice Not Generated");
     }
 
     await booking.update(
@@ -1290,7 +1262,7 @@ exports.laundryWashCompleted = async (req, res) => {
         driverId:bookingCheck.driverId,
     }
     sendNotification(customerId,title,body,data);
-    return res.json(responsefunc("1", "Laundry Has Been Washed At Shop", {}, ""));
+    return ResponseHelper.success(res, "Laundry Has Been Washed At Shop", {});
 }
 
 /*
@@ -1336,23 +1308,16 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         bookingStatusId: 13,
     });
 
-    const customerId=bookingCheck.customerId;
-    let title="Driver Out for Deliver Laundry to Customer";
-    let body="Your driver is out for deliver laundry to customer";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
-    }
-    sendNotification(customerId,title,body,data);
+    // const customerId=bookingCheck.customerId;
+    // let title="Driver Out for Deliver Laundry to Customer";
+    // let body="Your driver is out for deliver laundry to customer";
+    // let data={
+    //     bookingId:bookingId,
+    //     driverId:bookingCheck.driverId,
+    // }
+    // sendNotification(customerId,title,body,data);
 
-    return res.json(
-        responsefunc(
-            "1",
-            "Driver updated and out for Deliver Laundry to Customer",
-            {},
-            ""
-        )
-    );
+    return ResponseHelper.success(res, "Driver updated and out for Deliver Laundry to Customer", {});
 }
 
 /*
@@ -1368,7 +1333,7 @@ exports.driverReachedForDelivery = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 13) {
-        throw new customError("Driver is not out to deliver your laundry");
+        throw new ValidationError("Driver is not out to deliver your laundry");
     }
 
     await booking.update(
@@ -1402,7 +1367,7 @@ exports.driverReachedForDelivery = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return res.json(responsefunc("1", "Driver reached for delivery", {}, ""));
+    return ResponseHelper.success(res, "Driver reached for delivery", {});
 }
 
 /*
@@ -1418,7 +1383,7 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 14) {
-        throw new customError("Driver not reached yet at customer destination");
+        throw new ValidationError("Driver not reached yet at customer destination");
     }
 
     await booking.update(
@@ -1455,9 +1420,7 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     sendNotification(customerId,title,body,data);
 
 
-    return res.json(
-        responsefunc("1", "Laundry Delivered to customer sucessfully", {}, "")
-    );
+    return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {});
 }
 
 //!-----------------------------Booking Step-2 When Agent/Driver Added the Services------------------------//
@@ -1470,7 +1433,7 @@ exports.driverAddSerivces = async (req, res) => {
     const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
 
     if (!Array.isArray(services) || services.length === 0) {
-        throw new customError("Invalid request. Please provide an array of services.");
+        throw new ValidationError("Invalid request. Please provide an array of services.");
     }
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -1493,13 +1456,13 @@ exports.driverAddSerivces = async (req, res) => {
     });
 
     if (!bookings) {
-        throw new customError("Booking not found");
+        throw new NotFoundError("Booking not found");
     }
 
     // Get zone information directly from booking
     const zoneData = bookings.zone;
     if (!zoneData) {
-        throw new customError("Zone information not found for this booking");
+        throw new NotFoundError("Zone information not found for this booking");
     }
 
     let total = 0;
@@ -1617,7 +1580,7 @@ exports.driverAddSerivces = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    return res.json(responsefunc("1", "Agent/Driver Added Detail", {}, ""));
+    return ResponseHelper.success(res, "Agent/Driver Added Detail", {});
 }
 
 
@@ -1842,7 +1805,7 @@ exports.invoiceCreation = async (req, res) => {
 
     // Handle no results case
     if (!invoiceDetails || invoiceDetails.length === 0) {
-        return res.status(404).json(responsefunc("0", "No invoice data found", {}, ""));
+        throw new NotFoundError("No invoice data found");
     }
 
     // Time calculations (1 hour ahead in Karachi)
@@ -1874,10 +1837,10 @@ exports.invoiceCreation = async (req, res) => {
         return item;
     });
 
-    return res.json(responsefunc("1", "Invoice Details", {
+    return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         remainingTime
-    }, ""));
+    });
 }
 
 
@@ -2016,14 +1979,10 @@ exports.customerServices = async (req, res) => {
     });
 
     if (!customerServicesFind || customerServicesFind.length === 0) {
-        return res.json(
-            responsefunc(
-                "1",
-                "No Customer Selected Services",
-                { customerServices: [], totalAmount: 0 },
-                ""
-            )
-        );
+        return ResponseHelper.success(res, "No Customer Selected Services", {
+            customerServices: [],
+            totalAmount: 0
+        });
     }
 
     // Calculate total
@@ -2072,17 +2031,10 @@ exports.customerServices = async (req, res) => {
 
     const formattedResponse = Object.values(groupedServices);
 
-    return res.json(
-        responsefunc(
-            "1",
-            "Customer Selected Services",
-            {
-                customerServices: formattedResponse,
-                totalAmount
-            },
-            ""
-        )
-    );
+    return ResponseHelper.success(res, "Customer Selected Services", {
+        customerServices: formattedResponse,
+        totalAmount
+    });
 }
 
 
@@ -2153,9 +2105,7 @@ exports.onHoldConformation = async (req, res) => {
         });
     }
 
-    return res.json(
-        responsefunc("1", "Hold Confirmation Submitted for All Records", { responseData }, "")
-    );
+    return ResponseHelper.success(res, "Hold Confirmation Submitted for All Records", { responseData });
 }
 
 /*
@@ -2185,11 +2135,11 @@ exports.rejectedServiceItems = async (req, res) => {
     console.log("rejectedItems======================....", rejectedItems[0].customerResponse)
 
     if (rejectedItems[0].customerResponse === true && rejectedItems[0].deleted === true) {
-        return res.json(responsefunc("1", "Rejected Services Items", {}, ""))
+        return ResponseHelper.success(res, "Rejected Services Items", {})
     }
 
 
-    return res.json(responsefunc("1", "Rejected Services Items", { rejectedItems }, ""))
+    return ResponseHelper.success(res, "Rejected Services Items", { rejectedItems })
 
 }
 
@@ -2207,7 +2157,7 @@ exports.agentIssueResolved = async (req, res) => {
     });
 
     if (bookingCheck.bookingStatusId !== 22) {
-        throw new customError("Booking customer Response is not confirmed");
+        throw new ValidationError("Booking customer Response is not confirmed");
     }
 
     await booking.update(
@@ -2234,9 +2184,7 @@ exports.agentIssueResolved = async (req, res) => {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
-    return res.json(
-        responsefunc("1", "Booking Status Updated Issue Resolved", {}, "")
-    );
+    return ResponseHelper.success(res, "Booking Status Updated Issue Resolved", {});
 }
 
 //!-------------------------Agent Drivers-------------------------------//
@@ -2334,7 +2282,7 @@ exports.agentAssignBookingToLaundryDriver = async (req, res) => {
         bookingId: bookingId,
         bookingStatusId: 13,
     });
-    return res.json(responsefunc("1", "Order Assign to Laundry Driver", {}, ""));
+    return ResponseHelper.success(res, "Order Assign to Laundry Driver", {});
 }
 
 /*
@@ -2370,7 +2318,7 @@ exports.agentPickupOrderBySelf = async (req, res) => {
         bookingStatusId: 13,
     });
 
-    return res.json(responsefunc("1", "Agent Assigned To PickUp Order", {}, ""));
+    return ResponseHelper.success(res, "Agent Assigned To PickUp Order", {});
 }
 
 //!-----------------------------------Agent Cancel Booking------------------------------------//
@@ -2412,7 +2360,7 @@ exports.agentCancelBooking = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    return res.json(responsefunc("1", "Booking Cancelled Sucessfully", {}, ""));
+    return ResponseHelper.success(res, "Booking Cancelled Sucessfully", {});
 }
 
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
@@ -2426,7 +2374,7 @@ exports.addRole = async (req, res) => {
 
     const checkExist = await roles.findOne({ where: { name } });
     if (checkExist) {
-        throw new customError("Same role exists", "Please try another name");
+        throw new ConflictError("Same role exists. Please try another name");
     }
     const newRole = await roles.create({ name, status: true });
 
@@ -2439,7 +2387,7 @@ exports.addRole = async (req, res) => {
 
     await permissions.bulkCreate(bulkArray);
 
-    return res.json(responsefunc("1", "Role and Permission Added Successfully", {}, ""));
+    return ResponseHelper.success(res, "Role and Permission Added Successfully", {});
 }
 
 /*
@@ -2449,7 +2397,7 @@ exports.updateRoles = async (req, res) => {
     const { name, permissionRole, roleId } = req.body;
 
     if (!roleId) {
-        throw new customError("Missing role ID", "Role ID is required to update role");
+        throw new ValidationError("Missing role ID. Role ID is required to update role");
     }
 
     if (name) {
@@ -2458,7 +2406,7 @@ exports.updateRoles = async (req, res) => {
         });
 
         if (checkExist) {
-            throw new customError("Same role exists", "Please try another name");
+            throw new ConflictError("Same role exists. Please try another name");
         }
     }
 
@@ -2483,7 +2431,7 @@ exports.updateRoles = async (req, res) => {
 
 
 
-    return res.json(responsefunc("1", "Role updated successfully", {}, ""));
+    return ResponseHelper.success(res, "Role updated successfully", {});
 }
 
 /*
@@ -2497,7 +2445,7 @@ exports.getAllRoles = async (req, res) => {
         attributes: ["id", "name", "status"],
     });
 
-    return res.json(responsefunc("1", "Get All Roles", { getRoles }, " "));
+    return ResponseHelper.success(res, "Get All Roles", { getRoles });
 }
 
 
@@ -2522,7 +2470,7 @@ exports.getPermissions = async (req, res) => {
         ],
         attributes: ['id', 'read', 'write', 'featureId', 'roleId']
     });
-    return res.json(responsefunc("1", "Get All Permissions", { getPermissions }, " "));
+    return ResponseHelper.success(res, "Get All Permissions", { getPermissions });
 }
 
 
@@ -2534,7 +2482,7 @@ exports.addClassifiedAs = async (req, res) => {
     const createData = await classifiedAs.create({
         name,
     });
-    return res.json(responsefunc("1", "Added the classified As", createData, ""));
+    return ResponseHelper.success(res, "Added the classified As", createData);
 }
 
 /*
@@ -2545,9 +2493,7 @@ exports.getClassifiedAs = async (req, res) => {
         attributes: ["id", "name"],
     });
 
-    return res.json(
-        responsefunc("1", "Fetched All ClassifiedAs Roles", findData, " ")
-    );
+    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
 }
 
 /*
@@ -2564,7 +2510,7 @@ exports.addfeatures = async (req, res) => {
     });
 
     if (titleFound) {
-        throw new customError("Feature Alreay Exists");
+        throw new ConflictError("Feature Already Exists");
     }
 
     const createFeatures = await features.create({
@@ -2573,7 +2519,7 @@ exports.addfeatures = async (req, res) => {
         featureOf,
         key,
     });
-    return res.json(responsefunc("1", "Feature Added", { createFeatures }, ""));
+    return ResponseHelper.success(res, "Feature Added", { createFeatures });
 }
 
 /*
@@ -2587,7 +2533,7 @@ exports.getFeatures = async (req, res) => {
         attributes: ["id", "title", "status"],
     });
 
-    return res.json(responsefunc("1", "All Features Fetched", { findFeature }, " "));
+    return ResponseHelper.success(res, "All Features Fetched", { findFeature });
 }
 
 //!------------------------------Agent Add Employees--------------------------//
@@ -2625,7 +2571,7 @@ exports.addEmployee = async (req, res) => {
     });
 
     if (userFind) {
-        throw new customError("Employee Already Exists");
+        throw new ConflictError("Employee Already Exists");
     }
 
     let hashpassword = await bcrypt.hash(password, 10);
@@ -2679,7 +2625,7 @@ exports.addEmployee = async (req, res) => {
         });
     }
 
-    return res.json(responsefunc("1", "Employee Added Sucessfully", user, ""));
+    return ResponseHelper.success(res, "Employee Added Sucessfully", user);
 }
 
 /*
@@ -2707,10 +2653,7 @@ exports.updateEmployee = async (req, res) => {
         });
 
         if (userExists) {
-            throw new customError(
-                "Employee with the following email exists",
-                "Please try another email"
-            );
+            throw new ConflictError("Employee with the following email exists. Please try another email");
         }
     }
 
@@ -2739,9 +2682,7 @@ exports.updateEmployee = async (req, res) => {
         where: { id: employeeId },
     });
 
-    return res.json(
-        responsefunc("1", "Employee Updated Successfully", {}, "")
-    );
+    return ResponseHelper.success(res, "Employee Updated Successfully", {});
 }
 
 /*
@@ -2761,7 +2702,7 @@ exports.changeEmployeeStatus = async (req, res) => {
         }
     );
 
-    return res.json(responsefunc("1", "Employee Status Updated", {}, ""));
+    return ResponseHelper.success(res, "Employee Status Updated", {});
 }
 
 /*
@@ -2783,9 +2724,7 @@ exports.getAllEmployees = async (req, res) => {
             },
         ],
     });
-    return res.json(
-        responsefunc("1", "All Employee Fetched", { agentEmployee }, " ")
-    );
+    return ResponseHelper.success(res, "All Employee Fetched", { agentEmployee });
 }
 
 /*
@@ -2813,7 +2752,7 @@ exports.getAgentServices = async (req, res) => {
         ],
     });
 
-    return res.json(responsefunc("1", "Services Found", { findServices }, ""));
+    return ResponseHelper.success(res, "Services Found", { findServices });
 }
 
 /*
@@ -2831,12 +2770,12 @@ exports.editServiceStatus = async (req, res) => {
     });
 
     if (!serviceFind) {
-        throw new customError("Service Not Found");
+        throw new NotFoundError("Service Not Found");
     }
 
     await agentSelectServices.update({ status: status }, { where: { serviceId: serviceId } });
 
-    return res.json(responsefunc("1", "Service Status Updated", {}, ""));
+    return ResponseHelper.success(res, "Service Status Updated", {});
 }
 
 
@@ -2870,20 +2809,24 @@ exports.serviceDetail = async (req, res) => {
         include: [
             {
                 model: service,
-                attributes: ['id', 'name', 'status', 'image']
+                attributes: ['id', 'name', 'status', 'image'],
+                paranoid: false // Include soft-deleted services
             },
             {
                 model: categories,
                 attributes: ['id', 'name', 'status', 'image', 'description'],
+                paranoid: false,
                 include: [
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'status', 'price', 'description']
+                        attributes: ['id', 'name', 'status', 'price', 'description'],
+                        paranoid: false
                     }
                 ]
             }
         ]
     });
+    
 
 
     const grouped = {};
@@ -2918,7 +2861,7 @@ exports.serviceDetail = async (req, res) => {
 
     const ServiceCategoriesList = Object.values(grouped);
 
-    return res.json(responsefunc("1", "Service Details", { ServiceCategoriesList }, ""));
+    return ResponseHelper.success(res, "Service Details", { ServiceCategoriesList });
 }
 
 /*
@@ -3097,7 +3040,7 @@ exports.getCountries = async (req, res) => {
         allCountries: countriesFind,
     };
 
-    return res.json(responsefunc("1", "Countries Fetched", outObj, ""));
+    return ResponseHelper.success(res, "Countries Fetched", outObj);
 }
 
 exports.getCities = async (req, res) => {
@@ -3107,7 +3050,7 @@ exports.getCities = async (req, res) => {
         allCountries: getAllCities,
     };
 
-    return res.json(responsefunc("1", "Fetched All Cities", outObj, ""));
+    return ResponseHelper.success(res, "Fetched All Cities", outObj);
 }
 
 //!------------------Get Bussiness Information ------------------//
@@ -3140,7 +3083,7 @@ exports.getBussinessInforMation = async (req, res) => {
         agentServices: findServices,
     };
 
-    return res.json(responsefunc("1", "Information fetched", outObj, ""));
+    return ResponseHelper.success(res, "Information fetched", outObj);
 }
 
 exports.getBussinessWrkinghours = async (req, res) => {
@@ -3164,7 +3107,7 @@ exports.getBussinessWrkinghours = async (req, res) => {
         bussinesWorkingHours: bussinesWorkingHours,
     };
 
-    return res.json(responsefunc("1", "Information fetched", outObj, ""));
+    return ResponseHelper.success(res, "Information fetched", outObj);
 }
 
 
@@ -3206,7 +3149,7 @@ exports.printLabelData = async (req, res) => {
     })
 
 
-    return res.json(responsefunc("1", "Print Label Data"))
+    return ResponseHelper.success(res, "Print Label Data", {})
 }
 
 
@@ -3222,7 +3165,7 @@ exports.getOnHoldOptions = async (req, res) => {
         attributes: ['id', 'option', 'status']
     })
 
-    return res.json(responsefunc("1", "All on Hold Options Fetched", getOptions, ""))
+    return ResponseHelper.success(res, "All on Hold Options Fetched", getOptions)
 
 }
 
@@ -3288,7 +3231,7 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
     }, []);
 
     // Return the grouped data in the response
-    return res.json(responsefunc("1", "Services of Customer", { customerServicesFind: groupedServices }, ""));
+    return ResponseHelper.success(res, "Services of Customer", { customerServicesFind: groupedServices });
 }
 
 /*
@@ -3440,7 +3383,7 @@ exports.getPerformanceDashboard = async (req, res) => {
         driverPerformance
     };
 
-    return res.json(responsefunc("1", "Performance Dashboard Data", response, ""));
+    return ResponseHelper.success(res, "Performance Dashboard Data", response);
 }
 
 
@@ -3453,7 +3396,7 @@ exports.updateInvoice = async (req, res) => {
     console.log("Services==============================>>", services)
 
     if (!Array.isArray(services) || services.length === 0) {
-        throw new customError("Invalid request. Please provide an array of services.");
+        throw new ValidationError("Invalid request. Please provide an array of services.");
     }
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -3553,19 +3496,11 @@ exports.updateInvoice = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    return res.json(responsefunc("1", "Invoice Updated", {}, ""));
+    return ResponseHelper.success(res, "Invoice Updated", {});
 }
 
 //!---------------Recurring Functions-------------------------//
 
-let responsefunc = (status, message, data, error) => {
-    return {
-        status: `${status}`,
-        message: `${message}`,
-        data: data,
-        error: `${error}`,
-    };
-};
 
 const findZones = async (lat, lng) => {
     const findZone = await zone.findAll({
@@ -3596,7 +3531,7 @@ const findZones = async (lat, lng) => {
 
 
     if (findZone.length === 0) {
-        throw new customError("No Zone found for these lat,lngs and coordinates");
+        throw new NotFoundError("No Zone found for these lat,lngs and coordinates");
     }
 
     return findZone;

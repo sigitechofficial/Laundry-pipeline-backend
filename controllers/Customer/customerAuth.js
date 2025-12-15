@@ -212,14 +212,17 @@ async function registerCustomer(req, res) {
     *  Login User
 */
 async function loginUser(req, res) {
-    const { email, password, signedFrom, dvToken } = req.body;
+    const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum } = req.body;
 
     // Call service to handle business logic
     const result = await customerAuthService.loginUser({
         email,
         password,
         signedFrom,
-        dvToken
+        dvToken,
+        firstName,
+        lastName,
+        phoneNum
     });
 
     // Handle success case

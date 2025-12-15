@@ -9,23 +9,16 @@ class FeatureManagementService {
      */
     async addFeature(featureData) {
         try {
-            const { title, status, featureOf, key } = featureData;
-            
             // Check if feature already exists
             const featureExists = await features.findOne({
-                where: { title, featureOf }
+                where: { title: featureData.title, featureOf: featureData.featureOf }
             });
             
             if (featureExists) {
                 throw new ValidationError('Feature with this title already exists for this feature type');
             }
 
-            const featureCreate = await features.create({
-                title,
-                status,
-                featureOf,
-                key
-            });
+            const featureCreate = await features.create(featureData);
             
             return featureCreate;
         } catch (error) {
@@ -114,9 +107,7 @@ class FeatureManagementService {
      */
     async addClassifiedAs(classifiedData) {
         try {
-            const { name } = classifiedData;
-            
-            const classifiedCreate = await classifiedAs.create({ name });
+            const classifiedCreate = await classifiedAs.create(classifiedData);
             return classifiedCreate;
         } catch (error) {
             throw new Error(`Add classified as error: ${error.message}`);

@@ -16,21 +16,21 @@ class RoleManagementService {
      * @returns {Object} Created role data
      */
     async addRole(roleData) {
-        const { name, permissionRole } = roleData;
-        
         // Check if role already exists
         const roleExists = await roles.findOne({
-            where: { name }
+            where: { name: roleData.name }
         });
         
         if (roleExists) {
             throw new ConflictError('Role with this name already exists');
         }
 
-        const roleCreate = await roles.create({
-            name,
-            permissionRole: JSON.stringify(permissionRole)
-        });
+        const createData = { ...roleData };
+        if (createData.permissionRole) {
+            createData.permissionRole = JSON.stringify(createData.permissionRole);
+        }
+
+        const roleCreate = await roles.create(createData);
         
         return roleCreate;
     }
@@ -53,18 +53,18 @@ class RoleManagementService {
      * @returns {Object} Updated role data
      */
     async updateRole(roleId, updateData) {
-        const { name, permissionRole } = updateData;
-        
         const roleExists = await roles.findOne({ where: { id: roleId } });
         if (!roleExists) {
             throw new NotFoundError('Role not found');
         }
 
+        const updateFields = { ...updateData };
+        if (updateFields.permissionRole) {
+            updateFields.permissionRole = JSON.stringify(updateFields.permissionRole);
+        }
+
         const updatedRole = await roles.update(
-            { 
-                name, 
-                permissionRole: JSON.stringify(permissionRole) 
-            },
+            updateFields,
             { where: { id: roleId } }
         );
 

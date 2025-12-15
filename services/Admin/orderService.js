@@ -29,10 +29,26 @@ class OrderService {
                 }
             });
 
+            const cancelledOrders = await booking.count({
+                where: {
+                    bookingStatusId: 19
+                }
+            });
+
+            const pendingOrders = await booking.count({
+                where: {
+                    bookingStatusId: {
+                        [Op.notIn]: [17, 18, 19, 24] // Not completed, on hold, or cancelled
+                    }
+                }
+            });
+
             return {
                 allOrderCount: allOrderCount,
                 completedOrders: completedOrder,
-                onHoldOrders: onHoldOrders
+                onHoldOrders: onHoldOrders,
+                cancelledOrders: cancelledOrders,
+                pendingOrders: pendingOrders
             };
     }
 

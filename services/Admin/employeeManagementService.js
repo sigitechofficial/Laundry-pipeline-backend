@@ -17,7 +17,7 @@ class EmployeeManagementService {
         });
 
         return {
-            adminEmployees: adminEmployees
+            adminEmployees
         };
     }
 
@@ -28,13 +28,11 @@ class EmployeeManagementService {
      * @returns {Object} Created employee data
      */
     async addEmployee(employeeData, adminId) {
-        const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = employeeData;
-
         // Check if employee already exists
         const userFind = await users.findOne({
             where: {
                 classifiedAsId: 2,
-                roleId: roleId
+                roleId: employeeData.roleId
             }
         });
 
@@ -42,31 +40,27 @@ class EmployeeManagementService {
             throw new Error('Employee Already Exists');
         }
 
-        // Hash password
-        const hashpassword = await bcrypt.hash(password, 10);
+        // Hash password if provided
+        const createData = { ...employeeData };
+        if (createData.password) {
+            createData.password = await bcrypt.hash(createData.password, 10);
+        }
+        createData.status = true;
+        createData.classifiedAsId = 2;
+        createData.verifiedAt = Date.now();
 
         // Create employee
-        const user = await users.create({
-            firstName,
-            lastName,
-            email,
-            password: hashpassword,
-            phoneNum,
-            roleId,
-            status: true,
-            classifiedAsId: 2,
-            verifiedAt: Date.now()
-        });
+        const user = await users.create(createData);
 
         // Handle zone admin assignment
-        if (user.roleId === 7) {
+        if (user.roleId === 7 && employeeData.zoneId) {
             await users.update({
                 employeeOff: adminId
             }, { where: { id: adminId } });
 
             await zone.update({
                 zoneAdminId: user.id
-            }, { where: { id: zoneId } });
+            }, { where: { id: employeeData.zoneId } });
         }
 
         // Handle driver assignment
@@ -85,33 +79,26 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async updateEmployee(updateData) {
-        const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = updateData;
+        const { updatePassword, employeeId, ...updateFields } = updateData;
 
         // Check if email already exists for another employee
-        const userExists = await users.findOne({
-            where: {
-                email: email ? email : null,
-                id: { [Op.not]: employeeId },
-                classifiedAsId: 2
+        if (updateFields.email) {
+            const userExists = await users.findOne({
+                where: {
+                    email: updateFields.email,
+                    id: { [Op.not]: employeeId },
+                    classifiedAsId: 2
+                }
+            });
+
+            if (userExists) {
+                throw new Error('Employee with the following email exists. Please try another email');
             }
-        });
-
-        if (userExists) {
-            throw new Error('Employee with the following email exists. Please try another email');
         }
-
-        const updateFields = {
-            firstName,
-            lastName,
-            email,
-            phoneNum,
-            roleId
-        };
 
         // Update password if provided
         if (updatePassword) {
-            const hashpassword = await bcrypt.hash(updatePassword, 10);
-            updateFields.password = hashpassword;
+            updateFields.password = await bcrypt.hash(updatePassword, 10);
         }
 
         const result = await users.update(updateFields, {
@@ -146,16 +133,14 @@ class EmployeeManagementService {
      * @returns {Object} Created employee data
      */
     async addAgentEmployee(employeeData, profileImg, agentId) {
-        const { firstName, lastName, email, password, phoneNum, countryCode, roleId } = employeeData;
-
         // Check if employee already exists
         const userFind = await users.findOne({
             where: {
                 classifiedAsId: 1,
-                roleId: roleId,
-                firstName: firstName,
-                lastName: lastName,
-                email
+                roleId: employeeData.roleId,
+                firstName: employeeData.firstName,
+                lastName: employeeData.lastName,
+                email: employeeData.email
             },
         });
 
@@ -163,23 +148,18 @@ class EmployeeManagementService {
             throw new Error('Employee Already Exists');
         }
 
-        // Hash password
-        const hashpassword = await bcrypt.hash(password, 10);
+        // Hash password if provided
+        const createData = { ...employeeData };
+        if (createData.password) {
+            createData.password = await bcrypt.hash(createData.password, 10);
+        }
+        createData.status = true;
+        createData.classifiedAsId = 1;
+        createData.image = profileImg;
+        createData.verifiedAt = Date.now();
 
         // Create employee
-        const user = await users.create({
-            firstName,
-            lastName,
-            email,
-            password: hashpassword,
-            phoneNum,
-            roleId,
-            status: true,
-            classifiedAsId: 1,
-            image: profileImg,
-            countryCode,
-            verifiedAt: Date.now(),
-        });
+        const user = await users.create(createData);
 
         // Handle agent employee assignment
         if (user.classifiedAsId === 1 || user.roleId === 6) {
@@ -227,13 +207,13 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async updateAgentEmployee(updateData, profileImg) {
-        const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = updateData;
+        const { updatePassword, employeeId, ...updateFields } = updateData;
 
         // Check if email already exists for another employee
-        if (email) {
+        if (updateFields.email) {
             const userExists = await users.findOne({
                 where: {
-                    email: email,
+                    email: updateFields.email,
                     id: { [Op.not]: employeeId },
                     classifiedAsId: 1,
                 },
@@ -244,26 +224,17 @@ class EmployeeManagementService {
             }
         }
 
-        const updatedFields = {};
-
-        if (firstName !== undefined) updatedFields.firstName = firstName;
-        if (lastName !== undefined) updatedFields.lastName = lastName;
-        if (email !== undefined) updatedFields.email = email;
-        if (phoneNum !== undefined) updatedFields.phoneNum = phoneNum;
-        if (roleId !== undefined) updatedFields.roleId = roleId;
-
         // Update password if provided
         if (updatePassword && updatePassword.trim() !== '') {
-            const hashedPassword = await bcrypt.hash(updatePassword, 10);
-            updatedFields.password = hashedPassword;
+            updateFields.password = await bcrypt.hash(updatePassword, 10);
         }
 
         // Update profile image if provided
         if (profileImg) {
-            updatedFields.image = profileImg;
+            updateFields.image = profileImg;
         }
 
-        const result = await users.update(updatedFields, {
+        const result = await users.update(updateFields, {
             where: { id: employeeId },
         });
 

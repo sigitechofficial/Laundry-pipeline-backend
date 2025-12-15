@@ -361,16 +361,14 @@ class AgentAuthService {
      * @returns {Object} Business info result
      */
     async businesInfoAdded(data) {
-        const { userId, services } = data;
-
         const existingServices = await agentSelectServices.findAll({
-            where: { agentServiceId: userId, status: true },
+            where: { agentServiceId: data.userId, status: true },
             attributes: ['serviceId']
         });
 
         const existingServiceIds = new Set(existingServices.map(s => s.serviceId));
 
-        const duplicateServices = services
+        const duplicateServices = data.services
             .filter(service => existingServiceIds.has(service.serviceId))
             .map(service => service.serviceId);
 
@@ -381,10 +379,10 @@ class AgentAuthService {
             );
         }
 
-        const servicesToCreate = services.map(service => ({
+        const servicesToCreate = data.services.map(service => ({
             serviceId: service.serviceId,
             status: true,
-            agentServiceId: userId
+            agentServiceId: data.userId
         }));
 
         const serviceCreate = await agentSelectServices.bulkCreate(servicesToCreate);

@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
   tip.init({
     amount: {
       type:DataTypes.DECIMAL,
-      allowNull:false
+      allowNull:true
     }
   }, {
     sequelize,

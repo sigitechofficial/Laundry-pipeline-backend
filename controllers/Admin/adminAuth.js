@@ -39,10 +39,11 @@ async function signIn(req, res) {
     res.cookie("accessToken", output.accessToken, {
         httpOnly: true,
         secure: true,
-        sameSite: "None",
+        sameSite: "none",
         path: "/admin",
         maxAge: 24 * 60 * 60 * 1000
     });
+
 
     return ResponseHelper.success(res, "Login Successful", output);
 }
@@ -66,7 +67,7 @@ async function signOut(req, res) {
 
     // Clear the cookie
     res.clearCookie("accessToken", {
-        path: "/admin"
+        path: "/admin",
     });
 
     return ResponseHelper.success(res, "Sign out successful", {});

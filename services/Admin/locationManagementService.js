@@ -9,21 +9,16 @@ class LocationManagementService {
      */
     async addCountry(countryData) {
         try {
-            const { name, code } = countryData;
-            
             // Check if country already exists
             const countryExists = await countries.findOne({
-                where: { name }
+                where: { name: countryData.name }
             });
             
             if (countryExists) {
                 throw new ValidationError('Country with this name already exists');
             }
 
-            const countryCreate = await countries.create({
-                name,
-                code
-            });
+            const countryCreate = await countries.create(countryData);
             
             return countryCreate;
         } catch (error) {
@@ -112,21 +107,16 @@ class LocationManagementService {
      */
     async addCity(cityData) {
         try {
-            const { name, countryId } = cityData;
-            
             // Check if city already exists for this country
             const cityExists = await cities.findOne({
-                where: { name, countryId }
+                where: { name: cityData.name, countryId: cityData.countryId }
             });
             
             if (cityExists) {
                 throw new ValidationError('City with this name already exists in this country');
             }
 
-            const cityCreate = await cities.create({
-                name,
-                countryId
-            });
+            const cityCreate = await cities.create(cityData);
             
             return cityCreate;
         } catch (error) {
@@ -170,15 +160,13 @@ class LocationManagementService {
      */
     async updateCity(cityId, updateData) {
         try {
-            const { name, countryId } = updateData;
-            
             const cityExists = await cities.findOne({ where: { id: cityId } });
             if (!cityExists) {
                 throw new NotFoundError('City not found');
             }
 
             const updatedCity = await cities.update(
-                { name, countryId },
+                updateData,
                 { where: { id: cityId } }
             );
 

@@ -21,7 +21,11 @@ const {
     onHoldCustomerOption,
     bookingStatus,
     serviceCategories,
-    tip
+    tip,
+    bookingPreference,
+    serviceWithPreferences,
+    preferenceTypes,
+    preferenceValues
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -46,6 +50,7 @@ const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend } = requir
 
 // Find zones function
 async function findZones(lat, lng) {
+    console.log("Going into this function", lat, lng);
     const findZone = await zone.findAll({
         where: {
             status: true,
@@ -438,7 +443,7 @@ class CustomerOrderService {
      * @param {number} data.addressId - Address ID
      * @param {string} data.driverInstructionOptions - Driver instruction options
      * @param {string} data.driverInstructionOptions1 - Driver instruction options 1
-     * @param {Array} data.preferencesArray - Preferences array
+     * @param {Array} data.preferencesArray - Preferences array with {preferenceTypeId, preferenceValueId, serviceId?}
      * @param {string} data.paymentMethodId - Payment method ID
      * @param {string} data.paymentIntentId - Payment intent ID
      * @param {string} data.stripeCustomerId - Stripe customer ID
@@ -558,17 +563,83 @@ class CustomerOrderService {
             paymentIntentId: paymentIntentId,
         });
 
-        // Create preferences
-        const createPreferences = preferencesArray.map((preferences) => ({
-            type: preferences.type,
-            chooseTemperature: preferences.chooseTemperature,
-            serviceId: preferences.serviceId,
-            preferencesServiceNameId: preferences.preferencesServiceNameId,
-            numberOfBags: preferences.numberOfBags,
-            bookingId: bookingData.id,
-        }));
-
-        await servicePreferences.bulkCreate(createPreferences);
+        // Create booking preferences from serviceWithPreferences
+        if (preferencesArray && preferencesArray.length > 0) {
+            // Get all service IDs from the booking
+            const serviceIds = services.map(s => s.serviceId);
+            
+            // Validate and create booking preferences
+            const bookingPreferencesToCreate = [];
+            
+            for (const pref of preferencesArray) {
+                const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                
+                // Validate that preferenceTypeId and preferenceValueId are provided
+                if (!preferenceTypeId || !preferenceValueId) {
+                    throw new ValidationError(
+                        "preferenceTypeId and preferenceValueId are required for each preference"
+                    );
+                }
+                
+                // If serviceId is provided, validate that this preference belongs to the service
+                if (serviceId) {
+                    const servicePreferenceExists = await serviceWithPreferences.findOne({
+                        where: {
+                            serviceId: serviceId,
+                            preferenceTypeId: preferenceTypeId,
+                            status: true
+                        }
+                    });
+                    
+                    if (!servicePreferenceExists) {
+                        throw new ValidationError(
+                            `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
+                        );
+                    }
+                } else {
+                    // If no serviceId, validate that at least one of the booking services has this preference
+                    const servicePreferenceExists = await serviceWithPreferences.findOne({
+                        where: {
+                            serviceId: { [Op.in]: serviceIds },
+                            preferenceTypeId: preferenceTypeId,
+                            status: true
+                        }
+                    });
+                    
+                    if (!servicePreferenceExists) {
+                        throw new ValidationError(
+                            `Preference type ${preferenceTypeId} is not available for any of the selected services`
+                        );
+                    }
+                }
+                
+                // Validate that preferenceValueId exists and belongs to preferenceTypeId
+                const preferenceValue = await preferenceValues.findOne({
+                    where: {
+                        id: preferenceValueId,
+                        preferenceTypeId: preferenceTypeId,
+                        status: true
+                    }
+                });
+                
+                if (!preferenceValue) {
+                    throw new ValidationError(
+                        `Preference value ${preferenceValueId} is invalid or does not belong to preference type ${preferenceTypeId}`
+                    );
+                }
+                
+                bookingPreferencesToCreate.push({
+                    bookingId: bookingData.id,
+                    preferenceTypeId: preferenceTypeId,
+                    preferenceValueId: preferenceValueId
+                });
+            }
+            
+            // Bulk create booking preferences
+            if (bookingPreferencesToCreate.length > 0) {
+                await bookingPreference.bulkCreate(bookingPreferencesToCreate);
+            }
+        }
 
         let total = 0;
         let categoryCharge = 0;
@@ -991,11 +1062,13 @@ class CustomerOrderService {
             include: [
                 {
                     model: service,
-                    attributes: ["id", "name", "status"],
+                    attributes: ["id", "name", "status", "image"],
+                    required: true,
                 },
                 {
                     model: categories,
                     attributes: ["id", "name", "status", "image", "description"],
+                    required: true,
                     include: [
                         {
                             model: subCategories,
@@ -1010,9 +1083,83 @@ class CustomerOrderService {
             throw new NotFoundError("No Service Details Found");
         }
 
+        // Group by serviceId
+        const grouped = {};
+
+        for (const item of serviceData) {
+            // Convert Sequelize instance to plain object if needed
+            const plainItem = item.toJSON ? item.toJSON() : item;
+            
+            // Skip if service or category is null/undefined (soft-deleted or missing)
+            // Note: association name is 'category' (singular), not 'categories'
+            if (!plainItem.service || !plainItem.category) {
+                continue;
+            }
+
+            // Validate that required properties exist
+            if (!plainItem.service.id || !plainItem.category.id) {
+                continue;
+            }
+
+            const serviceId = plainItem.service.id;
+            const categoryId = plainItem.category.id;
+
+            // Initialize service group if it doesn't exist
+            if (!grouped[serviceId]) {
+                grouped[serviceId] = {
+                    serviceId: serviceId,
+                    service: {
+                        id: plainItem.service.id,
+                        name: plainItem.service.name || '',
+                        status: plainItem.service.status,
+                        image: plainItem.service.image || null
+                    },
+                    categories: []
+                };
+            }
+
+            // Ensure grouped[serviceId] exists and has categories array
+            if (!grouped[serviceId] || !Array.isArray(grouped[serviceId].categories)) {
+                continue;
+            }
+
+            // Check if category already exists for this service
+            const existingCategory = grouped[serviceId].categories.find(
+                cat => cat && cat.categoryId === categoryId
+            );
+
+            if (!existingCategory) {
+                grouped[serviceId].categories.push({
+                    categoryId: categoryId,
+                    category: {
+                        id: plainItem.category.id,
+                        name: plainItem.category.name || '',
+                        status: plainItem.category.status,
+                        image: plainItem.category.image || null,
+                        description: plainItem.category.description || null
+                    },
+                    subCategories: (plainItem.category.subCategories || []).map(subCat => {
+                        const plainSubCat = subCat.toJSON ? subCat.toJSON() : subCat;
+                        return {
+                            id: plainSubCat.id,
+                            name: plainSubCat.name,
+                            status: plainSubCat.status,
+                            price: plainSubCat.price
+                        };
+                    })
+                });
+            }
+        }
+
+        const result = Object.values(grouped);
+
+        if (result.length === 0) {
+            throw new NotFoundError("No Service Details Found");
+        }
+
         return {
             message: "Service Details",
-            data: { serviceData }
+            data: { serviceData: result }
         };
     }
 

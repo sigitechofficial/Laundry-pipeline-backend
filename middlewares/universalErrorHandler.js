@@ -95,7 +95,8 @@ const universalErrorHandler = (err, req, res, next) => {
     // Handle different error types
     if (err.name === 'ValidationError') {
         const message = err.errors ? Object.values(err.errors).map(val => val.message).join(', ') : err.message;
-        error = new ValidationError(message);
+        const details = err.details || (err.errors && typeof err.errors === 'object' ? err.errors : null);
+        error = new ValidationError(message, details);
     }
 
     if (err.name === 'CastError') {
@@ -147,20 +148,16 @@ const universalErrorHandler = (err, req, res, next) => {
     const message = error.message || ReasonPhrases.INTERNAL_SERVER_ERROR;
 
     // Prepare response based on context
+    const hasErrorDetails = error.details && Object.keys(error.details).length > 0;
     const response = {
         status: statusCode >= 400 ? '0' : '1',
         message: statusCode >= 500 ? 'Internal Server Error' : message,
         statusCode: statusCode,
-        data: {},
+        data: hasErrorDetails ? error.details : {},
         error: statusCode >= 500 ? 'Something went wrong' : message,
         timestamp: new Date().toISOString(),
         path: req.originalUrl
     };
-
-    // Add details if available
-    if (error.details) {
-        response.data = error.details;
-    }
 
     // Add stack trace in development
     if (process.env.NODE_ENV === 'development') {

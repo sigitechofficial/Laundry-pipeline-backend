@@ -74,7 +74,7 @@ router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherContr
 //Get Specific Service Detail
 router.get('/serviceDetail',validateAccessToken,asyncMiddleware(customerOtherController.serviceDetail))
 //Get Preferences
-router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getPrefrencesValues))
+router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 
 router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
 //fetch Zone and Charges
@@ -93,4 +93,8 @@ router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOt
 router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessToken, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
 //Get All Order Status
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
+//Cancel Customer Booking with Policy Enforcement
+router.post('/cancelBooking', validateAccessToken, asyncMiddleware(customerOtherController.cancelCustomerBooking));
+//Get Customer Cancellation History
+router.get('/cancellationHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerCancellationHistory));
 module.exports=router

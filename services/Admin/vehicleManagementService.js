@@ -9,26 +9,21 @@ class VehicleManagementService {
      */
     async addVehicle(vehicleData) {
         try {
-            const { title, baseRate, perUnitRate, weightCapacity, volumeCapacity, image } = vehicleData;
-            
             // Check if vehicle already exists
             const vehicleExist = await vehicleType.findOne({
-                where: { title, status: true }
+                where: { title: vehicleData.title, status: true }
             });
             
             if (vehicleExist) {
                 throw new ValidationError('A vehicle with the same name already exists');
             }
 
-            const vehicleCreate = await vehicleType.create({
-                title,
-                baseRate,
-                perUnitRate,
-                weightCapacity,
-                volumeCapacity,
-                image,
-                status: true
-            });
+            const createData = { ...vehicleData };
+            if (createData.status === undefined) {
+                createData.status = true;
+            }
+
+            const vehicleCreate = await vehicleType.create(createData);
             
             return vehicleCreate;
         } catch (error) {

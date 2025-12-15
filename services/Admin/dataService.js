@@ -114,17 +114,26 @@ class DataService {
     }
 
     /**
-     * Get units for distance and currency
-     * @returns {Array} List of distance and currency units
+     * Get units based on type
+     * @param {string|Array} type - Optional type(s) to filter units (e.g., 'distance', 'currency', 'length', 'weight')
+     *                              Can be a single type or comma-separated string or array
+     * @returns {Array} List of units filtered by type(s)
+     * @example
      */
-    async getUnitsDistanceAndCurrency() {
+    async getUnitsDistanceAndCurrency(type = null) {
+        const whereClause = {};
+        
+        if (type) {
+            // If type is a string with comma-separated values, split it
+            const types = typeof type === 'string' ? type.split(',').map(t => t.trim()) : [type];
+            whereClause.type = { [Op.or]: types };
+        }
+        // If no type provided, return all types
+        
         const getUnits = await units.findAll({
-            where: {
-                type: {
-                    [Op.or]: ['distance', 'currency']
-                }
-            },
-            attributes: ['id', 'name', 'symbol', 'type', 'status']
+            where: whereClause,
+            attributes: ['id', 'name', 'symbol', 'type', 'status', 'conversionRate'],
+            order: [['type', 'ASC'], ['name', 'ASC']]
         });
         return getUnits;
     }

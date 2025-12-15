@@ -8,6 +8,7 @@ const {
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
 const { literal, fn, col } = require("sequelize");
+const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
 
 class CustomerService {
     /**
@@ -154,8 +155,6 @@ class CustomerService {
      * @returns {Object} Customer details with booking information
      */
     async getSpecificCustomerDetails(customerId) {
-            const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation } = require('../../models');
-
             const [bookingsFind, userInfo] = await Promise.all([
                 booking.findAll({
                     where: { customerId },
@@ -164,7 +163,7 @@ class CustomerService {
                             model: customerSelectedService,
                             include: [
                                 {
-                                    model: require('../../models').service,
+                                    model:service,
                                     attributes: ['name']
                                 }
                             ],
@@ -236,8 +235,6 @@ class CustomerService {
      * @returns {Object} Updated customer data
      */
     async updateCustomer(customerId, updateData) {
-            const { firstName, lastName, email, phoneNum, status } = updateData;
-
             // Check if customer exists
             const customerExists = await users.findOne({
                 where: {
@@ -251,10 +248,10 @@ class CustomerService {
             }
 
             // Check if email is being changed and if it already exists
-            if (email && email !== customerExists.email) {
+            if (updateData.email && updateData.email !== customerExists.email) {
                 const emailExists = await users.findOne({
                     where: {
-                        email: email,
+                        email: updateData.email,
                         id: { [Op.ne]: customerId },
                         userTypeId: 2
                     }
@@ -265,13 +262,8 @@ class CustomerService {
                 }
             }
 
-            // Update customer details
-            const updateFields = {};
-            if (firstName) updateFields.firstName = firstName;
-            if (lastName) updateFields.lastName = lastName;
-            if (email) updateFields.email = email;
-            if (phoneNum) updateFields.phoneNum = phoneNum;
-            if (status !== undefined) updateFields.status = status;
+            // Remove customerId from updateData if present
+            const { customerId: _, ...updateFields } = updateData;
 
             const updatedCustomer = await users.update(updateFields, {
                 where: {

@@ -1,5 +1,12 @@
 const { users, booking, driverInZones, proofOfDeliveries, addressDb, bussinessInformation, roles } = require('../../models');
 const { Op } = require('sequelize');
+const bcrypt = require('bcryptjs');
+const { 
+    ConflictError, 
+    NotFoundError, 
+    ValidationError,
+    UnprocessableEntityError 
+} = require('../../middlewares/universalErrorHandler');
 
 class DriverService {
     /**
@@ -69,6 +76,7 @@ class DriverService {
                     'userTypeId',
                     'classifiedAsId',
                     'roleId',
+                    'phoneNum',
                     'status',
                     'createdAt'
                 ],
@@ -295,81 +303,289 @@ class DriverService {
      * Update driver details
      * @param {number} driverId - Driver ID
      * @param {Object} updateData - Driver update data
+     * @param {string} updateData.firstName - First name
+     * @param {string} updateData.lastName - Last name
+     * @param {string} updateData.email - Email
+     * @param {string} updateData.password - Password (will be hashed)
+     * @param {string} updateData.phoneNum - Phone number
+     * @param {string} updateData.countryCode - Country code
+     * @param {boolean} updateData.status - Status
+     * @param {string} profileImg - Profile image path
      * @returns {Object} Updated driver data
      */
-    async updateDriver(driverId, updateData) {
-        try {
-            const { firstName, lastName, email, phoneNum, status } = updateData;
-
-            // Check if driver exists
-            const driverExists = await users.findOne({
-                where: {
-                    id: driverId,
-                    roleId: 6, // Ensure it's a driver
-                    classifiedAsId: 1
-                }
-            });
-
-            if (!driverExists) {
-                throw new Error('Driver not found');
+    async updateDriver(driverId, updateData, profileImg = null) {
+        // Check if driver exists
+        const driverExists = await users.findOne({
+            where: {
+                id: driverId,
+                roleId: 6,
+                classifiedAsId: 1
             }
+        });
 
-            // Check if email is being changed and if it already exists
-            if (email && email !== driverExists.email) {
-                const emailExists = await users.findOne({
-                    where: {
-                        email: email,
-                        id: { [Op.ne]: driverId },
-                        roleId: 6,
-                        classifiedAsId: 1
-                    }
-                });
-
-                if (emailExists) {
-                    throw new Error('Email already exists');
-                }
-            }
-
-            // Update driver details
-            const updateFields = {};
-            if (firstName) updateFields.firstName = firstName;
-            if (lastName) updateFields.lastName = lastName;
-            if (email) updateFields.email = email;
-            if (phoneNum) updateFields.phoneNum = phoneNum;
-            if (status !== undefined) updateFields.status = status;
-
-            const updatedDriver = await users.update(updateFields, {
-                where: {
-                    id: driverId,
-                    roleId: 6,
-                    classifiedAsId: 1
-                }
-            });
-
-            if (updatedDriver[0] === 0) {
-                throw new Error('No changes were made');
-            }
-
-            // Get updated driver data
-            const updatedDriverData = await users.findOne({
-                where: {
-                    id: driverId,
-                    roleId: 6,
-                    classifiedAsId: 1
-                },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
-                include: [
-                    {
-                        model: roles,
-                        attributes: ['name']
-                    }
-                ]
-            });
-
-            return updatedDriverData;
-        } catch (error) {
-            throw new Error(`Update driver service error: ${error.message}`);
+        if (!driverExists) {
+            throw new NotFoundError('Driver not found');
         }
+
+        // Check if email is being changed and if it already exists
+        if (updateData.email && updateData.email !== driverExists.email) {
+            const emailExists = await users.findOne({
+                where: {
+                    email: updateData.email,
+                    id: { [Op.ne]: driverId },
+                    roleId: 6,
+                    classifiedAsId: 1
+                }
+            });
+
+            if (emailExists) {
+                throw new ConflictError('Email already exists');
+            }
+        }
+
+        // Remove driverId from updateData if present
+        const { driverId: _, ...updateFields } = updateData;
+
+        // Hash password if provided
+        if (updateFields.password && updateFields.password.trim() !== '') {
+            updateFields.password = await bcrypt.hash(updateFields.password, 10);
+        } else {
+            // Remove password from updateFields if it's empty
+            delete updateFields.password;
+        }
+
+        // Add profile image if provided
+        if (profileImg) {
+            updateFields.image = profileImg;
+        }
+
+        const updatedDriver = await users.update(updateFields, {
+            where: {
+                id: driverId,
+                roleId: 6,
+                classifiedAsId: 1
+            }
+        });
+
+        if (updatedDriver[0] === 0) {
+            throw new ValidationError('No changes were made');
+        }
+
+        // Get updated driver data
+        const updatedDriverData = await users.findOne({
+            where: {
+                id: driverId,
+                roleId: 6,
+                classifiedAsId: 1
+            },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'image', 'countryCode', 'createdAt', 'updatedAt'],
+            include: [
+                {
+                    model: roles,
+                    attributes: ['id', 'name']
+                }
+            ]
+        });
+
+        return updatedDriverData;
+    }
+
+    /**
+     * Add driver by laundry shop ID
+     * @param {Object} data - Driver data
+     * @param {string} data.firstName - First name
+     * @param {string} data.lastName - Last name
+     * @param {string} data.email - Email
+     * @param {string} data.password - Password
+     * @param {string} data.phoneNum - Phone number
+     * @param {string} data.countryCode - Country code
+     * @param {number} data.roleId - Role ID (should be 6 for driver)
+     * @param {number} data.laundaryShopId - Laundry shop ID (bussinessInformation.id)
+     * @param {string} profileImg - Profile image path
+     * @returns {Object} Created driver data
+     */
+    async addDriverByLaundryShop(data, profileImg = null) {
+        const {
+            firstName,
+            lastName,
+            email,
+            password,
+            phoneNum,
+            countryCode,
+            roleId,
+            laundaryShopId
+        } = data;
+
+        // Validate required fields
+        if (!laundaryShopId) {
+            throw new ValidationError('Laundry shop ID is required');
+        }
+
+        // Get business information to find agent ID
+        const businessInfo = await bussinessInformation.findOne({
+            where: {
+                id: laundaryShopId
+            }
+        });
+
+        if (!businessInfo) {
+            throw new NotFoundError('Laundry shop not found');
+        }
+
+        const agentId = businessInfo.agentId;
+
+        if (!agentId) {
+            throw new NotFoundError('Agent ID not found for this laundry shop');
+        }
+
+        // Check if driver already exists
+        const userFind = await users.findOne({
+            where: {
+                classifiedAsId: 1,
+                roleId: roleId || 6,
+                firstName: firstName,
+                lastName: lastName,
+                email: email
+            }
+        });
+
+        if (userFind) {
+            throw new ConflictError('Driver already exists with this information');
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create driver user
+        const user = await users.create({
+            firstName,
+            lastName,
+            email,
+            password: hashedPassword,
+            phoneNum,
+            roleId: roleId || 6,
+            status: true,
+            classifiedAsId: 1,
+            image: profileImg,
+            countryCode,
+            verifiedAt: Date.now()
+        });
+
+        // Update user with employeeOff (agent ID)
+        await users.update(
+            {
+                employeeOff: agentId
+            },
+            { 
+                where: { id: user.id } 
+            }
+        );
+
+        // Get agent's address information
+        const agentAddress = await addressDb.findOne({
+            where: {
+                userId: agentId
+            }
+        });
+
+        if (!agentAddress) {
+            throw new NotFoundError('Agent address not found');
+        }
+
+        const zoneId = agentAddress.zoneId;
+        const countryId = agentAddress.countryId;
+        const cityId = agentAddress.cityId;
+        const driverId = user.id;
+
+        // Create driverInZones record
+        await driverInZones.create({
+            driverId: driverId,
+            zoneId: zoneId,
+            laundaryShopId: laundaryShopId,
+            countryId: countryId,
+            cityId: cityId
+        });
+
+        // Get created driver with role information
+        const createdDriver = await users.findOne({
+            where: { id: user.id },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt', 'employeeOff'],
+            include: [
+                {
+                    model: roles,
+                    attributes: ['id', 'name']
+                }
+            ]
+        });
+
+        return {
+            driver: createdDriver,
+            message: 'Driver added successfully'
+        };
+    }
+
+    /**
+     * Delete driver (soft delete)
+     * @param {number} driverId - Driver ID
+     * @returns {Object} Deletion result
+     */
+    async deleteDriver(driverId) {
+        // Check if driver exists
+        const driverExists = await users.findOne({
+            where: {
+                id: driverId,
+                roleId: 6,
+                classifiedAsId: 1
+            }
+        });
+
+        if (!driverExists) {
+            throw new NotFoundError('Driver not found');
+        }
+
+        // Check if driver has any active bookings as pickup driver
+        const activePickupBookings = await booking.count({
+            where: {
+                driverId: driverId,
+                bookingStatusId: {
+                    [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
+                }
+            }
+        });
+
+        // Check if driver has any active bookings as delivery driver
+        const activeDeliveryBookings = await booking.count({
+            where: {
+                deliveryDriverId: driverId,
+                bookingStatusId: {
+                    [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
+                }
+            }
+        });
+
+        const totalActiveBookings = activePickupBookings + activeDeliveryBookings;
+
+        if (totalActiveBookings > 0) {
+            throw new UnprocessableEntityError(`Driver has ${totalActiveBookings} active booking(s). Please complete or cancel all bookings first.`);
+        }
+
+        // Soft delete the driver (set status to false)
+        const deletedDriver = await users.update(
+            { status: false },
+            {
+                where: {
+                    id: driverId,
+                    roleId: 6,
+                    classifiedAsId: 1
+                }
+            }
+        );
+
+        if (deletedDriver[0] === 0) {
+            throw new ValidationError('Failed to delete driver');
+        }
+
+        return { driverId, message: 'Driver deleted successfully' };
     }
 }
 

@@ -73,6 +73,21 @@ const uploadServiceImage = multer({
     storage: uploadServicePic
 })
 
+//Driver Profile Image Multer
+const uploadDriverProfilePic = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = './Public/Profile';
+        createDestinationDirectory(destinationPath, cb);
+    },
+    filename: (req, file, cb) => {
+        cb(null, `Driver-Profile${Date.now()}${path.extname(file.originalname)}`);
+    },
+});
+
+const uploadDriverProfile = multer({
+    storage: uploadDriverProfilePic
+})
+
 
 
 
@@ -134,18 +149,14 @@ router.get('/getSubcategories', validateAccessToken, asyncMiddleware(adminContro
 router.patch('/editSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.editSubCategories))
 //Assign Service to Categories
 router.post('/serviceCategoriesAssign', validateAccessToken, asyncMiddleware(adminController.serviceCategoriesAssign))
+//Unassign Service From Categories
+router.delete('/unassignServiceFromCategories/:serviceId', validateAccessToken, asyncMiddleware(adminController.unassignServiceFromCategories))
 //Delete SubCategories
 router.delete('/deleteSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.deleteSubCategories))
 
 //!---------------------------------------Admin Dashboard-----------------------------------------//
 router.get('/adminDashboard', validateAccessToken, asyncMiddleware(adminController.adminDashboard))
 
-
-//!---------------------------------------Cancel Api---------------------------------------------------------------//
-//Create cancel booking reasons
-router.post('/cancelBooking', validateAccessToken, asyncMiddleware(adminController.cancelBooking))
-//Get All Cancel Booking Reasons
-router.get('/getCancelReasons', validateAccessToken, asyncMiddleware(adminController.getCancelBookingReasons))
 //!-------------------------Machinery-----------------------------------------------------------------------------//
 router.post('/addMachines', validateAccessToken, asyncMiddleware(adminController.addMachines))
 //!-------------------------Account Preferences------------------------------------------------------------------//
@@ -201,7 +212,11 @@ router.patch('/driverStatusChange/:driverId', validateAccessToken, asyncMiddlewa
 //Specific Drive Details
 router.get('/specificdriverDetail/:driverId', validateAccessToken, asyncMiddleware(adminController.specificdriverDetail))
 //Update Driver
-router.patch('/updateDriver/:driverId', validateAccessToken, asyncMiddleware(adminController.updateDriver))
+router.patch('/updateDriver/:driverId', validateAccessToken, uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.updateDriver))
+//Delete Driver
+router.delete('/deleteDriver/:driverId', validateAccessToken, asyncMiddleware(adminController.deleteDriver))
+//Add Driver by Laundry Shop ID
+router.post('/addDriverByLaundryShop', validateAccessToken, uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.addDriverByLaundryShop))
 
 //!-----------------------------Order Management------------------------------//
 //Get Order Count
@@ -266,6 +281,21 @@ router.patch('/updateAgentEmployeeStatus', validateAccessToken, asyncMiddleware(
 //Get All Agent Employees
 router.get('/getAllAgentEmployees', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
 
+//Register Agent (Admin Side)
+router.post('/registerAgent', validateAccessToken, uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
+
+//Add Business Information to Agent
+router.post('/addAgentBusinessInfo/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentBusinessInfo))
+
+//Add Services to Agent
+router.post('/addAgentServices/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentServices))
+
+//Update Agent Working Hours
+router.patch('/updateAgentWorkingHours/:userId', validateAccessToken, asyncMiddleware(adminController.updateAgentWorkingHours))
+
+//Get Agent Complete Information
+router.get('/getAgentCompleteInfo/:userId', validateAccessToken, asyncMiddleware(adminController.getAgentCompleteInfo))
+
 
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts
@@ -278,13 +308,25 @@ router.get('/singleShopData/:Id', validateAccessToken, asyncMiddleware(adminCont
 router.get('/getShopEmployees/:bussinessId', validateAccessToken, asyncMiddleware(adminController.getShopEmployees))
 
 
-
-
-
-
-
-
-
+//!-----------------------------------Cancellation Policy Management------------------------------------>>>>
+// Create Cancellation Policy
+router.post('/cancellation-policy', validateAccessToken, asyncMiddleware(adminController.createCancellationPolicyController))
+// Get All Cancellation Policies
+router.get('/cancellation-policies', validateAccessToken, asyncMiddleware(adminController.getAllCancellationPoliciesController))
+// Get Cancellation Policy by ID
+router.get('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyByIdController))
+// Update Cancellation Policy
+router.put('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.updateCancellationPolicyController))
+// Delete Cancellation Policy
+router.delete('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.deleteCancellationPolicyController))
+// Set Default Cancellation Policy
+router.patch('/cancellation-policy/:id/set-default', validateAccessToken, asyncMiddleware(adminController.setDefaultCancellationPolicyController))
+// Toggle Cancellation Policy Status
+router.patch('/cancellation-policy/:id/toggle-status', validateAccessToken, asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
+// Get Active Cancellation Policy
+router.get('/cancellation-policy/active/current', validateAccessToken, asyncMiddleware(adminController.getActiveCancellationPolicyController))
+// Get Cancellation Policy Statistics
+router.get('/cancellation-policy/statistics/summary', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
 
 
 module.exports = router

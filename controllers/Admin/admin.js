@@ -87,8 +87,10 @@ const {
     zoneManagementService,
     vehicleManagementService,
     roleManagementService,
+    cancellationPolicyService: cancellationPolicyServiceImport,
     featureManagementService,
-    locationManagementService
+    locationManagementService,
+    agentRegistrationService
 } = require('../../services/Admin');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
@@ -147,9 +149,8 @@ async function specificCustomerDetails(req, res) {
 async function updateCustomer(req, res) {
     const { customerId } = req.params;
     const { firstName, lastName, email, phoneNum, status } = req.body;
-    
-    const updateData = { firstName, lastName, email, phoneNum, status };
-    const result = await customerService.updateCustomer(customerId, updateData);
+    const data = { ...req.body };
+    const result = await customerService.updateCustomer(customerId, data);
     return ResponseHelper.success(res, "Customer updated successfully", result);
 }
 
@@ -208,11 +209,81 @@ async function specificdriverDetail(req, res) {
 */
 async function updateDriver(req, res) {
     const { driverId } = req.params;
-    const { firstName, lastName, email, phoneNum, status } = req.body;
-    
-    const updateData = { firstName, lastName, email, phoneNum, status };
-    const result = await driverService.updateDriver(driverId, updateData);
+    const { 
+        firstName, 
+        lastName, 
+        email, 
+        password,
+        phoneNum, 
+        countryCode,
+        status 
+    } = req.body;
+
+    // Handle profile image upload
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    const data = {
+        firstName,
+        lastName,
+        email,
+        password,
+        phoneNum,
+        countryCode,
+        status
+    };
+
+    const result = await driverService.updateDriver(driverId, data, profileImg);
     return ResponseHelper.success(res, "Driver updated successfully", result);
+}
+
+/*
+ * Delete Driver
+*/
+async function deleteDriver(req, res) {
+    const { driverId } = req.params;
+    const result = await driverService.deleteDriver(driverId);
+    return ResponseHelper.success(res, "Driver deleted successfully", result);
+}
+
+/*
+ * Add Driver by Laundry Shop ID
+*/
+async function addDriverByLaundryShop(req, res) {
+    const {
+        firstName,
+        lastName,
+        email,
+        password,
+        phoneNum,
+        countryCode,
+        roleId,
+        laundaryShopId
+    } = req.body;
+
+    // Handle profile image upload
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    const data = {
+        firstName,
+        lastName,
+        email,
+        password,
+        phoneNum,
+        countryCode,
+        roleId: roleId || 6,
+        laundaryShopId
+    };
+
+    const result = await driverService.addDriverByLaundryShop(data, profileImg);
+    return ResponseHelper.success(res, "Driver added successfully", result);
 }
 
 //!----------------------------------------------------Orders Management-------------------------------------------------------------->>
@@ -318,25 +389,22 @@ async function getAdminServicesWithCategories(req, res) {
   * Add Service types
 */
 async function addServiceTypes(req, res) {
-    const { name, description } = req.body
+    const { name, description } = req.body;
     let CategoryImg = null;
 
     if (req.file) {
-
         let tempImage = req.file.path;
         CategoryImg = tempImage.replace(/\\/g, "/")
-
     }
 
-    const category = await categories.create({
-        name,
-        description,
-        image: CategoryImg,
-    })
+    const data = { ...req.body };
+    if (CategoryImg) {
+        data.image = CategoryImg;
+    }
+
+    const category = await categories.create(data);
 
     return ResponseHelper.success(res, "Service Type Added Successfully", category);
-
-
 }
 
 
@@ -366,15 +434,9 @@ async function getServicesAndCategoriesForOrderEdit(req, res) {
   * Add SubCategories/Items
 */
 async function addServiceItems(req, res) {
-    const { name, price, categoryId } = req.body
-
-    const createSubCategory = await subCategories.create({
-        name,
-        price,
-        categoryId,
-        status: true
-    })
-
+    const { name, price, categoryId } = req.body;
+    const data = { ...req.body, status: true };
+    const createSubCategory = await subCategories.create(data);
     return ResponseHelper.success(res, "SubCategory Added Successfully", createSubCategory);
 }
 
@@ -385,20 +447,9 @@ async function addServiceItems(req, res) {
 */
 async function getAdminEmployess(req, res) {
 
-    const adminEmployees = await users.findAll({
-        where: {
-            classifiedAsId: 2,
-            status: true
-        },
-        attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
-    })
+    const adminEmployees = await employeeManagementService.getAdminEmployees();
 
-    let outObj = {
-        adminEmployees: adminEmployees
-    }
-
-
-    return ResponseHelper.success(res, "Admin Employees", outObj);
+    return ResponseHelper.success(res, "Admin Employees", adminEmployees);
 
 }
 
@@ -408,8 +459,8 @@ async function getAdminEmployess(req, res) {
 async function addEmployee(req, res) {
     const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = req.body;
     const adminId = req.user.id;
-    const employeeData = { firstName, lastName, email, password, phoneNum, roleId, zoneId };
-    const result = await employeeManagementService.addEmployee(employeeData, adminId);
+    const data = { ...req.body };
+    const result = await employeeManagementService.addEmployee(data, adminId);
     return ResponseHelper.success(res, "Employee Added Successfully", result);
 }
 
@@ -419,8 +470,8 @@ async function addEmployee(req, res) {
 */
 async function updateEmployee(req, res) {
     const { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId } = req.body;
-    const updateData = { firstName, lastName, email, phoneNum, roleId, updatePassword, employeeId };
-    const result = await employeeManagementService.updateEmployee(updateData);
+    const data = { ...req.body };
+    const result = await employeeManagementService.updateEmployee(data);
     return ResponseHelper.success(res, "Employee Updated Successfully", result);
 }
 
@@ -456,17 +507,8 @@ async function addAgentEmployee(req, res) {
         profileImg = tempProfileImg.replace(/\\/g, "/");
     }
 
-    const employeeData = {
-        firstName,
-        lastName,
-        email,
-        password,
-        phoneNum,
-        countryCode,
-        roleId,
-    };
-
-    const result = await employeeManagementService.addAgentEmployee(employeeData, profileImg, agentId);
+    const data = { ...req.body };
+    const result = await employeeManagementService.addAgentEmployee(data, profileImg, agentId);
     return ResponseHelper.success(res, "Employee Added Successfully", result);
 }
 
@@ -491,17 +533,8 @@ async function updateAgentEmployee(req, res) {
         profileImg = profileImg.replace(/\\/g, "/");
     }
 
-    const updateData = {
-        firstName,
-        lastName,
-        email,
-        phoneNum,
-        roleId,
-        updatePassword,
-        employeeId
-    };
-
-    const result = await employeeManagementService.updateAgentEmployee(updateData, profileImg);
+    const data = { ...req.body };
+    const result = await employeeManagementService.updateAgentEmployee(data, profileImg);
     return ResponseHelper.success(res, "Employee Updated Successfully", result);
 }
 
@@ -522,6 +555,140 @@ async function getAllAgentEmployees(req, res) {
     const result = await employeeManagementService.getAllAgentEmployees(agentId);
     return ResponseHelper.success(res, "All Employee Fetched", result);
 }
+
+
+    //!----------Agent Registration Management---------//
+
+/*
+ * Register Agent (Admin Side)
+ */
+async function registerAgent(req, res) {
+    const { 
+        firstName, 
+        lastName, 
+        password, 
+        phoneNum, 
+        countryId, 
+        cityId, 
+        email, 
+        countryCode,
+        // Business Information
+        shopName,
+        matchProfileOptions,
+        otherText,
+        machineryCount,
+        serviceTimes,
+        // Address Information
+        streetAddress,
+        province,
+        postalCode,
+        district,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        zoneId,
+        // Services
+        services
+    } = req.body;
+
+    // Handle profile image upload
+    let profileImg = null;
+    if (req.file) {
+        let tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, "/");
+    }
+
+    const data = {
+        firstName,
+        lastName,
+        password,
+        phoneNum,
+        countryId,
+        cityId,
+        email,
+        countryCode,
+        shopName,
+        matchProfileOptions,
+        otherText,
+        machineryCount,
+        serviceTimes,
+        streetAddress,
+        province,
+        postalCode,
+        district,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        zoneId,
+        services
+    };
+
+    const result = await agentRegistrationService.registerAgent(data, profileImg);
+    return ResponseHelper.success(res, "Agent registered successfully", result);
+}
+
+/*
+ * Add Business Information to Agent
+ */
+async function addAgentBusinessInfo(req, res) {
+    const { userId } = req.params;
+    const { 
+        shopName, 
+        matchProfileOptions, 
+        otherText, 
+        machineryCount, 
+        serviceTimes,
+        streetAddress,
+        province,
+        postalCode,
+        district,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        zoneId
+    } = req.body;
+
+    const data = { ...req.body };
+    const result = await agentRegistrationService.addBusinessInformation(data, userId);
+    return ResponseHelper.success(res, "Business information added successfully", result);
+}
+
+/*
+ * Add Services to Agent
+ */
+async function addAgentServices(req, res) {
+    const { userId } = req.params;
+    const { services } = req.body;
+
+    const data = { services };
+    const result = await agentRegistrationService.addAgentServices(data, userId);
+    return ResponseHelper.success(res, "Services added successfully", result);
+}
+
+/*
+ * Update Agent Working Hours
+ */
+async function updateAgentWorkingHours(req, res) {
+    const { userId } = req.params;
+    const { bussinessWorkingDays } = req.body;
+
+    const data = { ...req.body };
+    const result = await agentRegistrationService.updateWorkingHours(data, userId);
+    return ResponseHelper.success(res, "Working hours updated successfully", result);
+}
+
+/*
+ * Get Agent Complete Information
+ */
+async function getAgentCompleteInfo(req, res) {
+    const { userId } = req.params;
+    
+    const result = await agentRegistrationService.getAgentCompleteInfo(userId);
+    return ResponseHelper.success(res, "Agent information fetched successfully", result);
+}
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 
 /*
@@ -530,8 +697,8 @@ async function getAllAgentEmployees(req, res) {
 
 async function addRole(req, res) {
     const { name, permissionRole } = req.body;
-    const roleData = { name, permissionRole };
-    const result = await roleManagementService.addRole(roleData);
+    const data = { ...req.body };
+    const result = await roleManagementService.addRole(data);
     return ResponseHelper.success(res, "Role and Permission Added Successfully", result);
 }
 
@@ -541,7 +708,8 @@ async function addRole(req, res) {
 */
 async function updateRoles(req, res) {
     const { name, permissionRole, roleId } = req.body;
-    const updateData = { name, permissionRole };
+    const data = { ...req.body };
+    const { roleId: roleIdParam, ...updateData } = data;
     const result = await roleManagementService.updateRole(roleId, updateData);
     return ResponseHelper.success(res, "Role updated", result);
 }
@@ -560,8 +728,8 @@ async function getAllRoles(req, res) {
 */
 async function addClassifiedAs(req, res) {
     const { name } = req.body;
-    const classifiedData = { name };
-    const result = await featureManagementService.addClassifiedAs(classifiedData);
+    const data = { ...req.body };
+    const result = await featureManagementService.addClassifiedAs(data);
     return ResponseHelper.success(res, "Added the classified As", result);
 }
 
@@ -581,8 +749,8 @@ async function getClassifiedAs(req, res) {
 */
 async function addfeatures(req, res) {
     const { title, status, featureOf, key } = req.body;
-    const featureData = { title, status, featureOf, key };
-    const result = await featureManagementService.addFeature(featureData);
+    const data = { ...req.body };
+    const result = await featureManagementService.addFeature(data);
     return ResponseHelper.success(res, "Feature Added", result);
 }
 
@@ -643,6 +811,100 @@ async function getShopEmployees(req, res) {
 }
 
 
+//!---------------------------------Cancellation Policy Management--------------------------------------->>
+
+/*
+ * Create Cancellation Policy
+ */
+async function createCancellationPolicyController(req, res) {
+    const userId = req.user.id;
+    const policyData = {
+        ...req.body,
+        createdBy: userId
+    };
+    const result = await cancellationPolicyServiceImport.createCancellationPolicy(policyData);
+    return ResponseHelper.success(res, "Cancellation policy created successfully", result);
+}
+
+/*
+ * Get Cancellation Policy by ID
+ */
+async function getCancellationPolicyByIdController(req, res) {
+    const { id } = req.params;
+    const result = await cancellationPolicyServiceImport.getCancellationPolicyById(id);
+    return ResponseHelper.success(res, "Cancellation policy details", result);
+}
+
+/*
+ * Get All Cancellation Policies
+ */
+async function getAllCancellationPoliciesController(req, res) {
+    const filters = {
+        isActive: req.query.isActive,
+        isDefault: req.query.isDefault,
+        page: parseInt(req.query.page) || 1,
+        limit: parseInt(req.query.limit) || 10
+    };
+    const result = await cancellationPolicyServiceImport.getAllCancellationPolicies(filters);
+    return ResponseHelper.success(res, "All cancellation policies", result);
+}
+
+/*
+ * Update Cancellation Policy
+ */
+async function updateCancellationPolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await cancellationPolicyServiceImport.updateCancellationPolicy(id, req.body, userId);
+    return ResponseHelper.success(res, "Cancellation policy updated successfully", result);
+}
+
+/*
+ * Delete Cancellation Policy
+ */
+async function deleteCancellationPolicyController(req, res) {
+    const { id } = req.params;
+    const result = await cancellationPolicyServiceImport.deleteCancellationPolicy(id);
+    return ResponseHelper.success(res, result.message, { policyId: result.policyId });
+}
+
+/*
+ * Set Default Cancellation Policy
+ */
+async function setDefaultCancellationPolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await cancellationPolicyServiceImport.setDefaultCancellationPolicy(id, userId);
+    return ResponseHelper.success(res, "Default cancellation policy set successfully", result);
+}
+
+/*
+ * Toggle Cancellation Policy Status
+ */
+async function toggleCancellationPolicyStatusController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await cancellationPolicyServiceImport.toggleCancellationPolicyStatus(id, userId);
+    return ResponseHelper.success(res, "Cancellation policy status toggled successfully", result);
+}
+
+/*
+ * Get Active Cancellation Policy
+ */
+async function getActiveCancellationPolicyController(req, res) {
+    const result = await cancellationPolicyServiceImport.getActiveCancellationPolicy();
+    return ResponseHelper.success(res, "Active cancellation policy", result);
+}
+
+/*
+ * Get Cancellation Policy Statistics
+ */
+async function getCancellationPolicyStatisticsController(req, res) {
+    const result = await cancellationPolicyServiceImport.getCancellationPolicyStatistics();
+    return ResponseHelper.success(res, "Cancellation policy statistics", result);
+}
+
+
 //!----------------------------------------------------Add Countries,Cities,Zones && Zone Details--------------------------------------->>
 /* 
  *  Add Countries
@@ -656,8 +918,16 @@ async function addCountries(req, res) {
         flagImg = tempImage.replace(/\\/g, "/");
     }
 
-    const countryData = { name, code: shortName, image: flagImg };
-    const result = await locationManagementService.addCountry(countryData);
+    const data = { ...req.body };
+    if (data.shortName) {
+        data.code = data.shortName;
+        delete data.shortName;
+    }
+    if (flagImg) {
+        data.image = flagImg;
+    }
+
+    const result = await locationManagementService.addCountry(data);
     return ResponseHelper.success(res, "Country Added Successfully", result);
 }
 
@@ -676,8 +946,8 @@ async function getCountries(req, res) {
 
 async function addCities(req, res) {
     const { name, lat, lng, countryId } = req.body;
-    const cityData = { name, lat, lng, countryId };
-    const result = await locationManagementService.addCity(cityData);
+    const data = { ...req.body };
+    const result = await locationManagementService.addCity(data);
     return ResponseHelper.success(res, "City Added Successfully", result);
 }
 
@@ -706,23 +976,24 @@ async function getCitiesByCountryId(req, res) {
 async function addZones(req, res) {
     const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
 
-    const polygon = {
-        type: 'Polygon',
-        coordinates: coordinates
-    };
+    const data = { ...req.body };
 
-    const zoneData = {
-        name,
-        coordinates: polygon,
-        cityId,
-        zoneMinimumAmount,
-        currencyUnitId,
-        distanceUnitId,
-        serviceCharge,
-        zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
-    };
+    if (data.coordinates) {
+        data.coordinates = {
+            type: 'Polygon',
+            coordinates: data.coordinates
+        };
+    }
 
-    const zoneCreate = await zoneManagementService.addZone(zoneData);
+    if (!data.zoneAdminComission) {
+        data.zoneAdminComission = 20;
+    }
+
+    if(!data.status){
+        data.status=true
+    }
+
+    const zoneCreate = await zoneManagementService.addZone(data);
     return ResponseHelper.success(res, "Zone Added Successfully", zoneCreate);
 }
 
@@ -742,26 +1013,23 @@ async function getZones(req, res) {
 */
 
 async function updateZone(req, res) {
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
     const { zoneId } = req.params;
+    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
 
-    const polygon = {
-        type: 'Polygon',
-        coordinates: coordinates
-    };
+    const data = { ...req.body };
 
-    const updateData = {
-        name,
-        coordinates: polygon,
-        cityId,
-        zoneMinimumAmount,
-        currencyUnitId,
-        distanceUnitId,
-        serviceCharge,
-        zoneAdminComission: zoneAdminComission ? zoneAdminComission : 20
-    };
+    if (data.coordinates) {
+        data.coordinates = {
+            type: 'Polygon',
+            coordinates: data.coordinates
+        };
+    }
 
-    const updateZone = await zoneManagementService.updateZone(zoneId, updateData);
+    if (data.zoneAdminComission === undefined || data.zoneAdminComission === null) {
+        data.zoneAdminComission = 20;
+    }
+
+    const updateZone = await zoneManagementService.updateZone(zoneId, data);
     return ResponseHelper.success(res, "Zone Updated Successfully", updateZone);
 }
 
@@ -788,10 +1056,10 @@ async function deleteZone(req, res) {
 
 //!-----------------------Units Management--------------------//
 async function getUnitsDistanceAndCurrency(req, res) {
-
-        const getUnits = await dataService.getUnitsDistanceAndCurrency();
-        return ResponseHelper.success(res, "All Units Fetched", getUnits);
-
+        const { type } = req.query;
+        const getUnits = await dataService.getUnitsDistanceAndCurrency(type);
+        const message = type ? `Units of type '${type}' fetched successfully` : "All Units Fetched";
+        return ResponseHelper.success(res, message, getUnits);
 }
 async function getAllUnits(req, res) {
 
@@ -806,25 +1074,22 @@ async function getAllUnits(req, res) {
 
 */
 async function AddServices(req, res) {
+    const { name, description } = req.body;
 
-        const { name, description } = req.body;
+    let serviceImg = null;
 
-        let serviceImg = null;
+    if (req.file) {
+        let tempImage = req.file.path;
+        serviceImg = tempImage.replace(/\\/g, "/");
+    }
 
-        if (req.file) {
-            let tempImage = req.file.path;
-            serviceImg = tempImage.replace(/\\/g, "/");
-        }
+    const data = { ...req.body };
+    if (serviceImg) {
+        data.image = serviceImg;
+    }
 
-        const serviceData = {
-            name,
-            description,
-            image: serviceImg,
-        };
-
-        const serviceCreate = await serviceManagementService.addService(serviceData);
-
-        return ResponseHelper.success(res, "Services Added Successfully", serviceCreate);
+    const serviceCreate = await serviceManagementService.addService(data);
+    return ResponseHelper.success(res, "Services Added Successfully", serviceCreate);
 }
 
 
@@ -853,17 +1118,23 @@ async function deleteServices(req, res) {
 /*
   * Edit Services
 */
-async function editServices(req,res){
+async function editServices(req, res) {
     const { serviceId } = req.params;
     const { name, description } = req.body;
 
     let serviceImg = null;
 
-        if (req.file) {
-            let tempImage = req.file.path;
-            serviceImg = tempImage.replace(/\\/g, "/");
-        }
-    const editService = await serviceManagementService.editService(serviceId, name, description, serviceImg);
+    if (req.file) {
+        let tempImage = req.file.path;
+        serviceImg = tempImage.replace(/\\/g, "/");
+    }
+
+    const data = { ...req.body };
+    if (serviceImg) {
+        data.image = serviceImg;
+    }
+
+    const editService = await serviceManagementService.editService(serviceId, data);
     return ResponseHelper.success(res, "Service Edited Successfully", editService);
 }
 
@@ -872,27 +1143,22 @@ async function editServices(req,res){
   * Add Categories
 */
 async function AddCategories(req, res) {
-    const { name, description } = req.body
+    const { name, description } = req.body;
 
     let CategoryImg = null;
 
     if (req.file) {
-
         let tempImage = req.file.path;
-        CategoryImg = tempImage.replace(/\\/g, "/")
-
+        CategoryImg = tempImage.replace(/\\/g, "/");
     }
 
-    const categoryData = {
-        name,
-        description,
-        image: CategoryImg,
+    const data = { ...req.body };
+    if (CategoryImg) {
+        data.image = CategoryImg;
     }
 
-    const category = await serviceManagementService.addCategory(categoryData);
-
+    const category = await serviceManagementService.addCategory(data);
     return ResponseHelper.success(res, "Category Added Successfully", category);
-
 }
 
 
@@ -914,7 +1180,8 @@ async function getCategories(req, res) {
 async function editCategories(req, res) {
     const { categoryId } = req.params;
     const { name, description } = req.body;
-    const editCategory = await serviceManagementService.editCategories(categoryId, name, description);
+    const data = { ...req.body };
+    const editCategory = await serviceManagementService.editCategories(categoryId, data);
     return ResponseHelper.success(res, "Category Edited Successfully", editCategory);
 }
 
@@ -935,6 +1202,17 @@ async function serviceCategoriesAssign(req, res) {
     const { serviceId, categoryId } = req.body;
     const result = await serviceManagementService.assignServiceToCategories(serviceId, categoryId);
     return ResponseHelper.success(res, "Service assigned to categories successfully.", { createData: result });
+}
+
+/*
+  * Unassign Service From Categories
+*/
+async function unassignServiceFromCategories(req, res) {
+    const { serviceId } = req.params;
+    const { categoryIds } = req.body; // Optional: array of category IDs to unassign
+    
+    const result = await serviceManagementService.unassignServiceFromCategories(serviceId, categoryIds);
+    return ResponseHelper.success(res, "Service unassigned from categories successfully", result);
 }
 
 
@@ -969,7 +1247,8 @@ async function getSubcategories(req, res) {
 async function editSubCategories(req, res) {
     const { subCategoryId } = req.params;
     const { name, price } = req.body;
-    const editSubCategory = await serviceManagementService.editSubcategories(subCategoryId, name, price);
+    const data = { ...req.body };
+    const editSubCategory = await serviceManagementService.editSubcategories(subCategoryId, data);
     return ResponseHelper.success(res, "SubCategory Edited Successfully", editSubCategory);
 }
 
@@ -1003,16 +1282,19 @@ async function addVehicle(req, res) {
         imagePath = tmpPath.replace(/\\/g, "/");
     }
     
-    const vehicleData = {
-        title,
-        baseRate,
-        perUnitRate,
-        weightCapacity,
-        volumeCapacity,
-        image: imagePath
-    };
+    const data = { ...req.body };
     
-    const result = await vehicleManagementService.addVehicle(vehicleData);
+    if (data.weightCapacity) {
+        data.weightCapacity = convertToBaseUnits(data.weightCapacity, units.conversionRate.weight);
+    }
+    if (data.volumeCapacity) {
+        data.volumeCapacity = convertToBaseUnits(data.volumeCapacity, units.conversionRate.length);
+    }
+    if (imagePath) {
+        data.image = imagePath;
+    }
+    
+    const result = await vehicleManagementService.addVehicle(data);
     return ResponseHelper.success(res, "Vehicle added", result);
 }
 
@@ -1194,7 +1476,7 @@ async function servicesAndPreferencesData(req,res) {
 */
 async function unAssignServiceFromPreferences(req, res) {
     const { serviceId } = req.params;
-    const result = await serviceManagementService.unAssignServiceFromPreferences(serviceId);
+    const result = await prefrencesServices.unAssignServiceFromPreferences(serviceId);
     return ResponseHelper.success(res, "Service Unassigned From Preferences", result);
 }
 
@@ -1425,49 +1707,50 @@ function calculateZoneRadius(polygon) {
 
 //!-------------------Exports----------------//
 module.exports = {
-    //-------------Admin Dashboard--------//
+    //!-------------Admin Dashboard--------//
     adminDashboard,
     //-------------Vehicles--------//
     addVehicle,
-    //-------------Countries,Cities--------//
+    //!-------------Countries,Cities--------//
     addCountries,
     addCities,
     getCities,
     getCitiesByCountryId,
     getCountries,
-    //-------------Add Zones--------//
+    //!-------------Add Zones--------//
     addZones,
     getZones,
     deleteZone,
     updateZone,
-    //-------------Units--------//
+    //!-------------Units--------//
     getUnitsDistanceAndCurrency,
-    //-------------Categories,SubCategories--------//
+    //!-------------Categories,SubCategories--------//
     AddCategories,
     addSubCategories,
     getCategories,
     getSubcategories,
     serviceCategoriesAssign,
+    unassignServiceFromCategories,
     editSubCategories,
     editCategories,
     deleteCategories,
     deleteSubCategories,
-    //-------------Services--------//
+    //!-------------Services--------//
     getAllServices,
     AddServices,
     deleteServices,
     editServices,
-    //-------------Units--------//
+    //!-------------Units--------//
     getUnitsDistanceAndCurrency,
     getAllUnits,
-    //-------------Cancel Booking--------//
+    //!-------------Cancel Booking--------//
     cancelBooking,
     getCancelBookingReasons,
-    //-------------Laundry Roles--------//
+    //!-------------Laundry Roles--------//
     laundryRoles,
-    //-------------Machinery--------//
+    //!-------------Machinery--------//
     addMachines,
-    //------------Account Preferences-----------//
+    //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,
     createPreferenceType,
@@ -1478,25 +1761,27 @@ module.exports = {
     getPreferenceTypes,
     servicesAndPreferencesData,
     unAssignServiceFromPreferences,
-    //--------on Hold Option------------//
+    //!--------on Hold Option------------//
     onHoldOptions,
     customerOnHoldOptions,
     getOnHoldCustomerOptions,
     getOnHoldOptions,
     getOnHoldBookings,
-    //------------Customer Management-------//
+    //!------------Customer Management-------//
     getAllCustomers,
     customerCount,
     specificCustomerDetails,
     updateCustomer,
     deleteCustomer,
-    //-----------Driver Management----------//
+    //!-----------Driver Management----------//
     countTotalDrivers,
     allDriverMiniDetails,
     driverStatusChange,
     specificdriverDetail,
     updateDriver,
-    //----------Order Management------------//
+    deleteDriver,
+    addDriverByLaundryShop,
+    //!----------Order Management------------//
     ordersCount,
     allOrderDetails,
     pendingOrders,
@@ -1504,13 +1789,13 @@ module.exports = {
     completeOrders,
     editOrder,
     getOrderForEdit,
-    //----------Service Management---------//
+    //!----------Service Management---------//
     getAdminServicesWithCategories,
     addServiceTypes,
     getSubCategories,
     addServiceItems,
     getServicesAndCategoriesForOrderEdit,
-    //----------Employee Management---------//
+    //!----------Employee Management---------//
     getAdminEmployess,
     addEmployee,
     updateEmployee,
@@ -1519,7 +1804,13 @@ module.exports = {
     updateAgentEmployee,
     changeAgentEmployeeStatus,
     getAllAgentEmployees,
-    //----------Add,Roles,Permissions && Features ---------//
+    //!----------Agent Registration Management---------//
+    registerAgent,
+    addAgentBusinessInfo,
+    addAgentServices,
+    updateAgentWorkingHours,
+    getAgentCompleteInfo,
+    //!----------Add,Roles,Permissions && Features ---------//
     addRole,
     updateRoles,
     getAllRoles,
@@ -1527,9 +1818,19 @@ module.exports = {
     getClassifiedAs,
     addfeatures,
     getFeatures,
-    //------------Shop Management-----------//
+    //!------------Shop Management-----------//
     getShopInformation,
     shopsData,
     singleShopData,
-    getShopEmployees
+    getShopEmployees,
+    //!------------Cancellation Policy Management-----------//
+    createCancellationPolicyController,
+    getCancellationPolicyByIdController,
+    getAllCancellationPoliciesController,
+    updateCancellationPolicyController,
+    deleteCancellationPolicyController,
+    setDefaultCancellationPolicyController,
+    toggleCancellationPolicyStatusController,
+    getActiveCancellationPolicyController,
+    getCancellationPolicyStatisticsController
 }

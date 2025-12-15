@@ -279,8 +279,36 @@ class CustomerAuthService {
      * @returns {Object} Login result with user data and access token or special response
      */
     async loginUser(data) {
-        const { email, password, signedFrom, dvToken } = data;
+        const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum } = data;
+        const socialProviders = ['google', 'facebook', 'apple'];
+        const requiredProfileFields = ['firstName', 'lastName', 'phoneNum'];
 
+        const normalizePayload = (payload) => {
+            if (!payload) {
+                return {};
+            }
+            if (typeof payload.get === 'function') {
+                return payload.get({ plain: true });
+            }
+            if (payload.dataValues && typeof payload.dataValues === 'object') {
+                return payload.dataValues;
+            }
+            return payload;
+        };
+
+        const collectMissingFields = (payload) => {
+            const plainPayload = normalizePayload(payload);
+            return requiredProfileFields.filter((field) => {
+                const value = plainPayload[field];
+                if (value === undefined || value === null) {
+                    return true;
+                }
+                if (typeof value === 'string' && value.trim() === '') {
+                    return true;
+                }
+                return false;
+            });
+        };
         // Find user
         const userFind = await users.findOne({
             where: {
@@ -330,8 +358,18 @@ class CustomerAuthService {
         }
 
         // Handle social login - user doesn't exist
-        if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
+        if (!userFind && socialProviders.includes(signedFrom)) {
             console.log("Going into this condition ----------------->>>");
+
+            const missingFields = collectMissingFields({ firstName, lastName, phoneNum });
+            if (missingFields.length) {
+                throw new ValidationError('Information Missing', {
+                    missingFields,
+                    requiredFields: missingFields,
+                    email,
+                    signedFrom
+                });
+            }
 
             const createStripeCustomer = await stripe.createStripeCustomer(email);
 
@@ -341,18 +379,69 @@ class CustomerAuthService {
                 verifiedAt: Date.now(),
                 status: true,
                 stripeCustomerId: createStripeCustomer,
-                signedFrom: signedFrom
+                signedFrom: signedFrom,
+                firstName: typeof firstName === 'string' ? firstName.trim() : firstName,
+                lastName: typeof lastName === 'string' ? lastName.trim() : lastName,
+                phoneNum: typeof phoneNum === 'string' ? phoneNum.trim() : phoneNum
             });
 
-            // Return success data for social signup
+            // Handle device token
+            if (dvToken) {
+                await deviceToken.create({
+                    tokenId: dvToken,
+                    status: true,
+                    userId: createUser.id
+                });
+            }
+
+            // Fetch created user with all attributes including joinedOn
+            const userData = await users.findOne({
+                where: {
+                    id: createUser.id,
+                    userTypeId: 2
+                },
+                attributes: [
+                    "id",
+                    "firstName",
+                    "lastName",
+                    "email",
+                    "password",
+                    "status",
+                    "userTypeId",
+                    "verifiedAt",
+                    "phoneNum",
+                    "stripeCustomerId",
+                    "signedFrom",
+                    [
+                        sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
+                        "joinedOn",
+                    ],
+                ]
+            });
+
+            // Generate access token
+            const accessToken = jwt.sign({
+                id: userData.id,
+                email: userData.email,
+                dvToken: dvToken || '',
+                userTypeId: userData.userTypeId
+            }, process.env.JWT_ACCESS_SECRET);
+
+            // Store token in Redis
+            if (dvToken) {
+                redisCli.hSet(
+                    `id-${userData.id}`,
+                    dvToken,
+                    accessToken
+                );
+            }
+
+            // Return success data with full user details
             return {
                 type: 'success',
-                userData: createUser,
-                accessToken: null, // No token needed for social signup flow
-                isGuest: false,
-                socialSignup: true,
-                message: `User signed-In by : ${signedFrom}`,
-                data: { userId: createUser.id }
+                userData: userData,
+                accessToken: accessToken,
+                isGuest: false
             };
         }
 
@@ -362,7 +451,7 @@ class CustomerAuthService {
         }
 
         // Handle social login for existing user
-        if (signedFrom === 'google' || signedFrom === 'facebook' || signedFrom === 'apple') {
+        if (socialProviders.includes(signedFrom)) {
             const userFind = await users.findOne({
                 where: {
                     email: email,
@@ -396,6 +485,17 @@ class CustomerAuthService {
 
             if (!userFind.status) {
                 throw new UnauthorizedError('Blocked By admin Please contact admin to continue');
+            }
+
+            const profileMissingFields = collectMissingFields(userFind);
+            if (profileMissingFields.length) {
+                throw new ValidationError('Information Missing', {
+                    missingFields: profileMissingFields,
+                    requiredFields: profileMissingFields,
+                    userId: userFind.id,
+                    email: userFind.email,
+                    signedFrom
+                });
             }
 
             // Handle device token

@@ -8,14 +8,7 @@ class ZoneManagementService {
      * @returns {Object} Created zone data
      */
     async addZone(zoneData) {
-            const { name, description, coordinates } = zoneData;
-            
-            const zoneCreate = await zone.create({
-                name,
-                description,
-                coordinates
-            });
-            
+            const zoneCreate = await zone.create(zoneData);
             return zoneCreate;
     }
 
@@ -52,15 +45,13 @@ class ZoneManagementService {
      * @returns {Object} Updated zone data
      */
     async updateZone(zoneId, updateData) {
-            const { name, description, coordinates } = updateData;
-            
             const zoneExists = await zone.findOne({ where: { id: zoneId } });
             if (!zoneExists) {
                 throw new NotFoundError('Zone not found');
             }
 
             const updatedZone = await zone.update(
-                { name, description, coordinates },
+                updateData,
                 { where: { id: zoneId } }
             );
 

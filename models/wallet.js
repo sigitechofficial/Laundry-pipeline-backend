@@ -28,6 +28,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
       defaultValue: ''
+  },
+    type: {
+      type: DataTypes.ENUM('credit', 'debit'),
+      allowNull: false,
+      defaultValue: 'credit'
+  },
+    status: {
+      type: DataTypes.ENUM('pending', 'completed', 'failed'),
+      allowNull: false,
+      defaultValue: 'completed'
   }
   }, {
     sequelize,

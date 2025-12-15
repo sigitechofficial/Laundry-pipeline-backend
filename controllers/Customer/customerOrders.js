@@ -47,6 +47,7 @@ const { title } = require("process");
 const { confirmIntend, paymentIntentGet, createPaymentIntend,getIntent,attachPaymentMethodToCustomer } = require("../stripe");
 const { sendNotification } = require("../../utils/notification");
 const customerOrderService = require('../../services/Customer/customerOrderService');
+const cancelBookingService = require('../../services/Customer/cancelBookingService');
 const ResponseHelper = require('../../utils/responseHelper');
 const {
     serviceManagementService,
@@ -255,6 +256,7 @@ async function fetchZoneAndCharges(req, res) {
  */
 async function createIntentUsingStripe(req, res) {
     const { amount, customerId } = req.body;
+    console.log(" req.body=====================>>>>", req.body)
 
     // Call service to handle business logic
     const result = await customerOrderService.createIntentUsingStripe({
@@ -306,7 +308,7 @@ async function getOnHoldBookings(req, res) {
 
 
 /*
- * Update Customer esponse for on hold booking
+ * Update Customer response for on hold booking
  */
 async function updateCustomerResponseForOnHoldBooking(req, res) {
     const { responses, bookingId } = req.body;
@@ -343,8 +345,8 @@ async function getOnHoldBookingsForCustomer(req, res) {
  */
 async function getAllServiceWithPreferenceDetails(req, res) {
     const { serviceId } = req.params;
-    const result = await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId);
-    return ResponseHelper.success(res, "Service preferences retrieved successfully", result);
+    const getData = await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId);
+    return ResponseHelper.success(res, "All Preferences and Services Data Fetched", getData);
 }
 
 /*
@@ -355,9 +357,43 @@ async function getAllOrderStatus(req, res) {
     return ResponseHelper.success(res, result.message, result.data);
 }
 
+
 /*
- * Get All Service With Preferences
+ * Cancel Customer Booking with Policy Enforcement
  */
+async function cancelCustomerBooking(req, res) {
+    const { bookingId, reasonId, reasonText } = req.body;
+    const customerId = req.user.id;
+
+    if (!bookingId) {
+        throw new customError("Booking ID is required");
+    }
+
+    if (!reasonText || reasonText.trim() === '') {
+        throw new customError("Cancellation reason is required");
+    }
+
+    const result = await cancelBookingService.cancelCustomerBooking(
+        bookingId,
+        customerId,
+        reasonId,
+        reasonText
+    );
+
+    return ResponseHelper.success(res, "Booking cancelled successfully", result);
+}
+
+/*
+ * Get Customer Cancellation History
+ */
+async function getCustomerCancellationHistory(req, res) {
+    const customerId = req.user.id;
+    const days = parseInt(req.query.days) || 30;
+
+    const history = await cancelBookingService.getCustomerCancellationHistory(customerId, days);
+
+    return ResponseHelper.success(res, "Cancellation history fetched successfully", history);
+}
 
 /*
  * Test Notification
@@ -775,6 +811,7 @@ function getTimePlusMinutes(mins = 40) {
 
 
 
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -795,5 +832,7 @@ module.exports = {
     getOnHoldBookingsForCustomer,
     testNotification,
     getAllServiceWithPreferenceDetails,
-    getAllOrderStatus
+    getAllOrderStatus,
+    cancelCustomerBooking,
+    getCustomerCancellationHistory
 };
