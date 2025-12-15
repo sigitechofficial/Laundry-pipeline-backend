@@ -64,8 +64,7 @@ jobs:
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           timeout: 360
-          dangerous-clean-slate: false
-
+          
       # ---------------- TRIGGER SERVER ----------------
       - name: 🔄 Trigger npm install & PM2
         run: |
