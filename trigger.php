@@ -6,7 +6,7 @@ error_reporting(E_ALL);
 header('Content-Type: text/plain');
 
 // ===== CONFIG =====
-$workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
+$workingDir = '/home/sigisolutions/prodlaundry.sigisolutions.net';
 $nodeBinPath = '/home/sigisolutions/.nvm/versions/node/v20.19.6/bin';
 
 // ===== ENV =====

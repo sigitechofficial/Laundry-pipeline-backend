@@ -58,6 +58,6 @@ jobs:
       - name: Trigger npm install on server
         run: |
           echo "Triggering npm install via PHP script..."
-          curl -X GET "https://laundarybackend.sigisolutions.net/trigger.php"
+          curl -X GET "https://prodlaundry.sigisolutions.net/trigger.php"
         env:
           HOME: /home/sigisolutions
