@@ -1,27 +1,24 @@
 <?php
-// Enable error reporting (disable display_errors in production if desired)
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
-// ===== CONFIG =====
-$workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
-$processName = 'laundary';
-$nodeEntry = 'laundary.js';
-$nvmScript = '/home/sigisolutions/.nvm/nvm.sh';
-
-// ===== BUILD COMMAND =====
-$command = <<<CMD
-source $nvmScript &&
-export HOME=/home/sigisolutions &&
-cd $workingDir &&
-npm install &&
-pm2 reload $processName || pm2 start $nodeEntry --name $processName &&
-pm2 save
-CMD;
-
-// Run command in a login shell so NVM works
-$output = shell_exec("bash -lc " . escapeshellarg($command) . " 2>&1");
-
-// Output result for GitHub Actions logs
 header('Content-Type: text/plain');
-echo $output;
+
+echo "USER: " . get_current_user() . PHP_EOL;
+echo "WHOAMI: " . shell_exec('whoami') . PHP_EOL;
+echo "PWD: " . shell_exec('pwd') . PHP_EOL;
+
+echo "\n---- PATH ----\n";
+echo shell_exec('echo $PATH');
+
+echo "\n---- WHICH node ----\n";
+echo shell_exec('which node 2>&1');
+
+echo "\n---- WHICH npm ----\n";
+echo shell_exec('which npm 2>&1');
+
+echo "\n---- WHICH pm2 ----\n";
+echo shell_exec('which pm2 2>&1');
+
+echo "\n---- NODE VERSION ----\n";
+echo shell_exec('node -v 2>&1');
+
+echo "\n---- PM2 VERSION ----\n";
+echo shell_exec('pm2 -v 2>&1');
