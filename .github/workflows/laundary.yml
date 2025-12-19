@@ -45,13 +45,15 @@ jobs:
           echo "Creating firebase.json..."
           echo "${{ secrets.FIREBASE_CONTENT_PROD }}" > firebase.json
 
-      - name: 📂 Sync files to production
-        uses: SamKirkland/FTP-Deploy-Action@v4.2.0
+      - name: 🚀 Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
-          server: ftp.sigisolutions.net
+          server: sigisolutions.net
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           timeout: 360
+          port: 21
+          protocol: ftp
 
       - name: Trigger npm install on server
         run: |
