@@ -1,24 +1,31 @@
 <?php
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
 header('Content-Type: text/plain');
 
-echo "USER: " . get_current_user() . PHP_EOL;
-echo "WHOAMI: " . shell_exec('whoami') . PHP_EOL;
-echo "PWD: " . shell_exec('pwd') . PHP_EOL;
+// ===== CONFIG =====
+$workingDir = '/home/sigisolutions/laundarybackend.sigisolutions.net';
 
-echo "\n---- PATH ----\n";
-echo shell_exec('echo $PATH');
+// ✅ Node 18 paths (MATCH PIPELINE)
+$node = '/home/sigisolutions/.nvm/versions/node/v18.20.4/bin/node';
+$npm  = '/home/sigisolutions/.nvm/versions/node/v18.20.4/bin/npm';
+$pm2  = '/home/sigisolutions/.nvm/versions/node/v18.20.4/bin/pm2';
 
-echo "\n---- WHICH node ----\n";
-echo shell_exec('which node 2>&1');
+$processName = 'laundary';
+$entryFile   = 'laundary.js';
 
-echo "\n---- WHICH npm ----\n";
-echo shell_exec('which npm 2>&1');
+// ===== COMMAND =====
+$command = "
+export HOME=/home/sigisolutions
+export PATH=/home/sigisolutions/.nvm/versions/node/v18.20.4/bin:\$PATH
+cd $workingDir || exit 1
+$npm install
+$pm2 reload $processName || $pm2 start $entryFile --name $processName
+$pm2 save
+";
 
-echo "\n---- WHICH pm2 ----\n";
-echo shell_exec('which pm2 2>&1');
+// ===== EXECUTE =====
+$output = shell_exec($command . " 2>&1");
 
-echo "\n---- NODE VERSION ----\n";
-echo shell_exec('node -v 2>&1');
-
-echo "\n---- PM2 VERSION ----\n";
-echo shell_exec('pm2 -v 2>&1');
+echo $output;
