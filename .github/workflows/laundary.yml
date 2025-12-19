@@ -10,65 +10,50 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: node:18.20.4
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
 
-      - name: 🧪 Basic check
-        run: |
-          node -v
-          npm -v
+    steps:
+      - uses: actions/checkout@v2
 
   deploy_main:
     needs: build
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+
     steps:
-      - name: 📥 Checkout latest code
-        uses: actions/checkout@v4
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v2
 
-      # ---------------- ENV FILE ----------------
-      - name: 🔐 Create .env file
+      - name: Create .env file dynamically
         run: |
-          cat << 'EOF' > .env
-          ${{ secrets.ENV_FILE_CONTENT_PROD }}
-          EOF
+          echo "Creating .env file..."
+          echo "${{ secrets.ENV_FILE_CONTENT_PROD }}" > .env
 
-      # ---------------- CONFIG JSON ----------------
-      - name: 📁 Create config/config.json
+      - name: Create config folder and files
         run: |
+          echo "Creating config folder..."
           mkdir -p config
-          cat << 'EOF' > config/config.json
-          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
-          EOF
+          echo "${{ secrets.CONFIG_JSON_CONTENT_PROD }}" > config/config.json
 
-      # ---------------- HTACCESS ----------------
-      - name: 🧾 Create .htaccess
+      - name: Create .htaccess file
         run: |
-          cat << 'EOF' > .htaccess
-          ${{ secrets.HTACCESS_CONTENT_PROD }}
-          EOF
+          echo "Creating .htaccess file..."
+          echo "${{ secrets.HTACCESS_CONTENT_PROD }}" > .htaccess
 
-      # ---------------- FIREBASE ----------------
-      - name: 🔥 Create firebase.json
+      - name: Creating firebase.json file
         run: |
-          cat << 'EOF' > firebase.json
-          ${{ secrets.FIREBASE_CONTENT_PROD }}
-          EOF
+          echo "Creating firebase.json..."
+          echo "${{ secrets.FIREBASE_CONTENT_PROD }}" > firebase.json
 
-      # ---------------- FTP DEPLOY ----------------
-      - name: 🚀 Deploy via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+      - name: 📂 Sync files to production
+        uses: SamKirkland/FTP-Deploy-Action@v4.2.0
         with:
-          server: sigisolutions.net
+          server: ftp.sigisolutions.net
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           timeout: 360
-          port: 21
-          protocol: ftp
 
-      # ---------------- TRIGGER SERVER ----------------
-      - name: 🔄 Trigger npm install & PM2
+      - name: Trigger npm install on server
         run: |
-          echo "Triggering server build..."
-          curl -X GET "https://laundarybackend.sigisolutions.net/"
+          echo "Triggering npm install via PHP script..."
+          curl -X GET "https://laundarybackend.sigisolutions.net/trigger.php"
+        env:
+          HOME: /home/sigisolutions
