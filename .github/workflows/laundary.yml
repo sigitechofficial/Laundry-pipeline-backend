@@ -51,9 +51,9 @@ jobs:
           server: sigisolutions.net
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
-          timeout: 520
-          port: 21
           protocol: ftp
+          port: 21
+          
 
       - name: Trigger npm install on server
         run: |
