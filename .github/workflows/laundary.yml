@@ -51,7 +51,7 @@ jobs:
           server: sigisolutions.net
           username: ${{ secrets.PROD_FTP_USERNAME }}
           password: ${{ secrets.PROD_FTP_PASSWORD }}
-          timeout: 360
+          timeout: 520
           port: 21
           protocol: ftp
 
