@@ -31,7 +31,9 @@ jobs:
         run: |
           echo "Creating config folder..."
           mkdir -p config
-          echo "${{ secrets.CONFIG_JSON_CONTENT_PROD }}" > config/config.json
+          cat << 'EOF' > config/config.json
+          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
+          EOF
 
       - name: Create .htaccess file
         run: |
