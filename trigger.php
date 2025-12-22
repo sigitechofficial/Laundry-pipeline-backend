@@ -23,7 +23,7 @@ nvm use 16
 cd "$WORKDIR" || exit 1
 
 echo "Running npm install..."
-npm install --production
+npm install
 
 echo "Restarting PM2..."
 pm2 delete laundary || true
