@@ -1,47 +1,57 @@
 <?php
+// Enable error reporting for debugging
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
-/**
- * PATHS
- */
-$HOME = '/home/sigisolutions';
-$WORKDIR = $HOME . '/prodlaundry.sigisolutions.net';
-$NVM_DIR = $HOME . '/.nvm';
+// Path to your working directory
+$workingDir = '/home/sigisolutions/prodlaundry.sigisolutions.net';
 
-/**
- * DEPLOY SCRIPT
- */
-$script = <<<BASH
-#!/bin/bash
-export HOME=$HOME
-export NVM_DIR="$NVM_DIR"
+// Set up the correct environment variables for the shell
+$nodeBinPath = '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin';
+$npmCommand = "source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && cd $workingDir && npm install";
 
-source \$NVM_DIR/nvm.sh
-nvm use 16
+// Command to stop, delete, and restart the PM2 process
+$pm2Command = "source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && pm2 stop laundary || true && pm2 delete laundary || true && pm2 start $workingDir/laundary.js --name laundary && pm2 save";
 
-cd "$WORKDIR" || exit 1
+// Set the PATH environment variable explicitly using putenv()
+putenv("PATH=$nodeBinPath:" . getenv('PATH'));
 
-echo "Running npm install..."
-npm install
+// Run the npm install command and capture output
+$process = proc_open($npmCommand, [
+    0 => ["pipe", "r"],  // stdin
+    1 => ["pipe", "w"],  // stdout
+    2 => ["pipe", "w"],  // stderr
+], $pipes);
 
-echo "Restarting PM2..."
-pm2 delete laundary || true
-pm2 start laundary.js --name laundary
-pm2 save
+// Check if the npm install process started successfully
+if (is_resource($process)) {
+    $installOutput = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
 
-echo "DONE"
-BASH;
+    echo "NPM install completed successfully.<br>";
+    echo nl2br($installOutput);
 
-/**
- * WRITE TEMP SCRIPT
- */
-$tmp = '/tmp/deploy_laundary.sh';
-file_put_contents($tmp, $script);
-chmod($tmp, 0700);
+    // Run the PM2 command to stop, delete, and start the PM2 process
+    $pm2Process = proc_open($pm2Command, [
+        0 => ["pipe", "r"],  // stdin
+        1 => ["pipe", "w"],  // stdout
+        2 => ["pipe", "w"],  // stderr
+    ], $pm2Pipes);
 
-/**
- * EXECUTE
- */
-header('Content-Type: text/plain');
-echo shell_exec("bash $tmp 2>&1");
+    if (is_resource($pm2Process)) {
+        $pm2Output = stream_get_contents($pm2Pipes[1]);
+        fclose($pm2Pipes[1]);
+        fclose($pm2Pipes[2]);
+        proc_close($pm2Process);
+
+        echo "PM2 command completed successfully.<br>";
+        echo nl2br($pm2Output);
+    } else {
+        echo "Failed to run PM2 command.<br>";
+    }
+} else {
+    echo "Failed to run npm install.<br>";
+}
+?>
