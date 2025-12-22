@@ -25,3 +25,6 @@ pm2 save
 $output = shell_exec($command . " 2>&1");
 
 echo $output;
+
+
+
