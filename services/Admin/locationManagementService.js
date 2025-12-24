@@ -47,20 +47,32 @@ class LocationManagementService {
     /**
      * Update country
      * @param {number} countryId - Country ID
-     * @param {Object} updateData - Country update data
+     * @param {Object} updateData - Country update data (name, shortName, image, status)
      * @returns {Object} Updated country data
      */
     async updateCountry(countryId, updateData) {
         try {
-            const { name, code } = updateData;
-            
             const countryExists = await countries.findOne({ where: { id: countryId } });
             if (!countryExists) {
                 throw new NotFoundError('Country not found');
             }
 
+            // Only update fields that are provided and exist in the model
+            const allowedFields = ['name', 'shortName', 'image', 'status'];
+            const updateFields = {};
+            
+            Object.keys(updateData).forEach(key => {
+                if (allowedFields.includes(key) && updateData[key] !== undefined) {
+                    updateFields[key] = updateData[key];
+                }
+            });
+
+            if (Object.keys(updateFields).length === 0) {
+                throw new ValidationError('No valid fields to update');
+            }
+
             const updatedCountry = await countries.update(
-                { name, code },
+                updateFields,
                 { where: { id: countryId } }
             );
 
@@ -71,7 +83,7 @@ class LocationManagementService {
             const updatedCountryData = await countries.findOne({ where: { id: countryId } });
             return updatedCountryData;
         } catch (error) {
-            if (error instanceof NotFoundError) {
+            if (error instanceof NotFoundError || error instanceof ValidationError) {
                 throw error;
             }
             throw new Error(`Update country error: ${error.message}`);
@@ -141,7 +153,7 @@ class LocationManagementService {
                 include: [
                     {
                         model: countries,
-                        attributes: ['name', 'code']
+                        attributes: ['id', 'name', 'shortName', 'image', 'status']
                     }
                 ],
                 order: [['createdAt', 'DESC']]
@@ -155,7 +167,7 @@ class LocationManagementService {
     /**
      * Update city
      * @param {number} cityId - City ID
-     * @param {Object} updateData - City update data
+     * @param {Object} updateData - City update data (name, lat, lng, status, countryId)
      * @returns {Object} Updated city data
      */
     async updateCity(cityId, updateData) {
@@ -165,8 +177,30 @@ class LocationManagementService {
                 throw new NotFoundError('City not found');
             }
 
+            // Only update fields that are provided and exist in the model
+            const allowedFields = ['name', 'lat', 'lng', 'status', 'countryId'];
+            const updateFields = {};
+            
+            Object.keys(updateData).forEach(key => {
+                if (allowedFields.includes(key) && updateData[key] !== undefined) {
+                    updateFields[key] = updateData[key];
+                }
+            });
+
+            if (Object.keys(updateFields).length === 0) {
+                throw new ValidationError('No valid fields to update');
+            }
+
+            // If countryId is being updated, verify it exists
+            if (updateFields.countryId) {
+                const countryExists = await countries.findOne({ where: { id: updateFields.countryId } });
+                if (!countryExists) {
+                    throw new ValidationError('Invalid country ID');
+                }
+            }
+
             const updatedCity = await cities.update(
-                updateData,
+                updateFields,
                 { where: { id: cityId } }
             );
 
@@ -179,13 +213,13 @@ class LocationManagementService {
                 include: [
                     {
                         model: countries,
-                        attributes: ['name', 'code']
+                        attributes: ['id', 'name', 'shortName', 'image', 'status']
                     }
                 ]
             });
             return updatedCityData;
         } catch (error) {
-            if (error instanceof NotFoundError) {
+            if (error instanceof NotFoundError || error instanceof ValidationError) {
                 throw error;
             }
             throw new Error(`Update city error: ${error.message}`);

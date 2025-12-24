@@ -970,6 +970,51 @@ async function getCitiesByCountryId(req, res) {
     return ResponseHelper.success(res, "All Cities Fetched", getCities);
 }
 
+/*
+ * Update Country
+*/
+async function updateCountry(req, res) {
+    const { countryId } = req.params;
+    const { name, shortName, status } = req.body;
+
+    // Validate required field
+    if (!countryId) {
+        throw new ValidationError('Country ID is required');
+    }
+
+    let flagImg = null;
+    if (req.file) {
+        let tempImage = req.file.path;
+        flagImg = tempImage.replace(/\\/g, "/");
+    }
+
+    const data = { ...req.body };
+    // Keep shortName as it's required by the database model
+    if (flagImg) {
+        data.image = flagImg;
+    }
+
+    const result = await locationManagementService.updateCountry(countryId, data);
+    return ResponseHelper.success(res, "Country Updated Successfully", result);
+}
+
+/*
+ * Update City
+*/
+async function updateCity(req, res) {
+    const { cityId } = req.params;
+    const { name, lat, lng, countryId, status } = req.body;
+
+    // Validate required field
+    if (!cityId) {
+        throw new ValidationError('City ID is required');
+    }
+
+    const data = { ...req.body };
+    const result = await locationManagementService.updateCity(cityId, data);
+    return ResponseHelper.success(res, "City Updated Successfully", result);
+}
+
 
 /*
    * Add Zones
@@ -1715,9 +1760,12 @@ module.exports = {
     addVehicle,
     //!-------------Countries,Cities--------//
     addCountries,
+    getCountries,
+    updateCountry,
     addCities,
     getCities,
     getCitiesByCountryId,
+    updateCity,
     getCountries,
     //!-------------Add Zones--------//
     addZones,

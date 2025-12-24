@@ -105,12 +105,16 @@ router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddlewa
 router.post('/addCountries', validateAccessToken, uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.addCountries))
 //Get Countries
 router.get('/getCountries', validateAccessToken, asyncMiddleware(adminController.getCountries))
+//Update Country
+router.put('/updateCountry/:countryId', validateAccessToken, uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.updateCountry))
 //Add Cities
 router.post('/addCities', validateAccessToken, asyncMiddleware(adminController.addCities))
 //Get Cities
 router.get('/getCities', validateAccessToken, asyncMiddleware(adminController.getCities))
 //Get Cities by Country Id
 router.get('/getCitiesByCountryId/:countryId', validateAccessToken, asyncMiddleware(adminController.getCitiesByCountryId))
+//Update City
+router.put('/updateCity/:cityId', validateAccessToken, asyncMiddleware(adminController.updateCity))
 //!---------------------------------------Zones-----------------------------------------//
 //Add Zones
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))
