@@ -912,6 +912,11 @@ async function getCancellationPolicyStatisticsController(req, res) {
 async function addCountries(req, res) {
     const { name, shortName } = req.body;
 
+    // Validate required fields
+    if (!name || !shortName) {
+        throw new ValidationError('Name and shortName are required fields');
+    }
+
     let flagImg = null;
     if (req.file) {
         let tempImage = req.file.path;
@@ -919,10 +924,7 @@ async function addCountries(req, res) {
     }
 
     const data = { ...req.body };
-    if (data.shortName) {
-        data.code = data.shortName;
-        delete data.shortName;
-    }
+    // Keep shortName as it's required by the database model
     if (flagImg) {
         data.image = flagImg;
     }

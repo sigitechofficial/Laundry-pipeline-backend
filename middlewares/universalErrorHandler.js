@@ -1,4 +1,5 @@
 const { StatusCodes, ReasonPhrases } = require('http-status-codes');
+const CustomException = require('./customError');
 
 /**
  * Universal HTTP Error Class with proper status codes
@@ -71,9 +72,6 @@ class TooManyRequestsError extends UniversalHttpError {
  * Universal error handler middleware
  */
 const universalErrorHandler = (err, req, res, next) => {
-    let error = { ...err };
-    error.message = err.message;
-
     // Determine context (admin, customer, driver, etc.)
     const context = req.route?.path?.includes('/admin') ? 'Admin' : 
                    req.route?.path?.includes('/customer') ? 'Customer' :
@@ -92,36 +90,77 @@ const universalErrorHandler = (err, req, res, next) => {
         context: context
     });
 
-    // Handle different error types
-    if (err.name === 'ValidationError') {
-        const message = err.errors ? Object.values(err.errors).map(val => val.message).join(', ') : err.message;
-        const details = err.details || (err.errors && typeof err.errors === 'object' ? err.errors : null);
-        error = new ValidationError(message, details);
+    // Check if error is already a UniversalHttpError (or its subclass)
+    if (err instanceof UniversalHttpError) {
+        const statusCode = err.statusCode;
+        const message = err.message;
+        const hasErrorDetails = err.details && Object.keys(err.details).length > 0;
+
+        const response = {
+            status: '0',
+            message: message,
+            statusCode: statusCode,
+            data: hasErrorDetails ? err.details : {},
+            error: message,
+            timestamp: new Date().toISOString(),
+            path: req.originalUrl
+        };
+
+        if (process.env.NODE_ENV === 'development') {
+            response.stack = err.stack;
+        }
+
+        return res.status(statusCode).json(response);
     }
 
-    if (err.name === 'CastError') {
-        const message = 'Invalid ID format';
+    // Handle CustomException from old controllers
+    if (err instanceof CustomException || err.constructor?.name === 'CustomException') {
+        const message = err.message;
+        const body = err.body || '';
+
+        const response = {
+            status: '0',
+            message: message,
+            statusCode: StatusCodes.BAD_REQUEST,
+            data: body ? { details: body } : {},
+            error: message,
+            timestamp: new Date().toISOString(),
+            path: req.originalUrl
+        };
+
+        if (process.env.NODE_ENV === 'development') {
+            response.stack = err.stack;
+        }
+
+        return res.status(StatusCodes.BAD_REQUEST).json(response);
+    }
+
+    // Handle other error types
+    let error = err;
+
+    if (err.name === 'ValidationError' && err.errors) {
+        const message = Object.values(err.errors).map(val => val.message).join(', ');
         error = new ValidationError(message);
     }
 
+    if (err.name === 'CastError') {
+        error = new ValidationError('Invalid ID format');
+    }
+
     if (err.code === 11000) {
-        const message = 'Duplicate field value entered';
-        error = new ConflictError(message);
+        error = new ConflictError('Duplicate field value entered');
     }
 
     if (err.name === 'JsonWebTokenError') {
-        const message = context === 'Admin' ? 'Invalid admin token' : 'Invalid token';
-        error = new UnauthorizedError(message);
+        error = new UnauthorizedError(context === 'Admin' ? 'Invalid admin token' : 'Invalid token');
     }
 
     if (err.name === 'TokenExpiredError') {
-        const message = context === 'Admin' ? 'Admin token expired' : 'Token expired';
-        error = new UnauthorizedError(message);
+        error = new UnauthorizedError(context === 'Admin' ? 'Admin token expired' : 'Token expired');
     }
 
     // Handle admin-specific errors
     if (err.name && err.name.startsWith('Admin')) {
-        // Convert admin errors to universal errors
         switch (err.name) {
             case 'AdminValidationError':
                 error = new ValidationError(err.message);
@@ -146,15 +185,16 @@ const universalErrorHandler = (err, req, res, next) => {
     // Determine status code
     const statusCode = error.statusCode || StatusCodes.INTERNAL_SERVER_ERROR;
     const message = error.message || ReasonPhrases.INTERNAL_SERVER_ERROR;
+    const isServerError = statusCode >= 500;
 
-    // Prepare response based on context
+    // Prepare response
     const hasErrorDetails = error.details && Object.keys(error.details).length > 0;
     const response = {
-        status: statusCode >= 400 ? '0' : '1',
-        message: statusCode >= 500 ? 'Internal Server Error' : message,
+        status: '0',
+        message: isServerError ? 'Internal Server Error' : message,
         statusCode: statusCode,
         data: hasErrorDetails ? error.details : {},
-        error: statusCode >= 500 ? 'Something went wrong' : message,
+        error: isServerError ? 'Something went wrong' : message,
         timestamp: new Date().toISOString(),
         path: req.originalUrl
     };

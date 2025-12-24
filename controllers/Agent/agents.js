@@ -691,6 +691,7 @@ exports.agentBookingFilters = async (req, res) => {
             "deliveryDate",
             "driverInstructionOptions",
             "driverInstructionOptions1",
+            "driverInstruction",
             "bookingStatusId"
         ],
         include: [
@@ -791,6 +792,7 @@ exports.invoiceDetailTab = async (req, res) => {
             "deliveryDate",
             "driverInstructionOptions",
             "driverInstructionOptions1",
+            "driverInstruction",
             "bookingStatusId"
         ],
         include: [

@@ -25,25 +25,13 @@ class AgentAuthService {
     /**
      * Register Agent With OTP
      * @param {Object} data - Registration data
-     * @param {string} data.firstName - First name
-     * @param {string} data.lastName - Last name
-     * @param {string} data.password - Password
-     * @param {string} data.dvToken - Device token
-     * @param {string} data.phoneNum - Phone number
-     * @param {string} data.confirmPassword - Confirm password
-     * @param {number} data.countryId - Country ID
-     * @param {number} data.cityId - City ID
-     * @param {string} data.email - Email
-     * @param {string} data.countryCode - Country code
      * @param {string} profileImg - Profile image path
      * @returns {Object} Registration result
      */
     async registerAgentWithOTP(data, profileImg = null) {
-        const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = data;
-
         const userfind = await users.findOne({
             where: {
-                email: email,
+                email: data.email,
                 deletedAt: {
                     [Op.is]: null
                 }
@@ -72,23 +60,23 @@ class AgentAuthService {
             ],
         });
 
-        if (userfind?.email === email && userfind?.userTypeId === 4) {
-            throw new ConflictError('User Already Exists');
+        if (userfind?.email === data.email && userfind?.userTypeId === 4) {
+            throw new ConflictError('User With This Email Already Exists');
         } else {
             let userTypeId = 4;
-            const hashedPassword = await bcrypt.hash(password, 8);
+            const hashedPassword = await bcrypt.hash(data.password, 8);
             const userCreate = await users.create({
-                email,
-                firstName,
-                lastName,
-                phoneNum,
+                email: data.email,
+                firstName: data.firstName,
+                lastName: data.lastName,
+                phoneNum: data.phoneNum,
                 userTypeId,
                 password: hashedPassword,
                 status: true,
-                countryCode
+                countryCode: data.countryCode
             });
 
-            const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
+            const stripeCustomer = await stripe.createStripeCustomer(data.firstName, data.email);
 
             const otp = otpGenerator.generate(4, {
                 lowerCaseAlphabets: false,
@@ -98,7 +86,7 @@ class AgentAuthService {
 
             otpMail({
                 type: 'RegisterOTP',
-                email: email,
+                email: data.email,
                 OTP: otp
             });
 
@@ -111,7 +99,7 @@ class AgentAuthService {
             });
 
             await deviceToken.create({
-                tokenId: dvToken,
+                tokenId: data.dvToken,
                 status: true,
                 userId: userCreate.id
             });
@@ -119,8 +107,8 @@ class AgentAuthService {
             await users.update({
                 stripeCustomerId: stripeCustomer,
                 image: profileImg,
-                countryId,
-                cityId
+                countryId: data.countryId,
+                cityId: data.cityId
             }, {
                 where: { id: userCreate.id }
             });
@@ -129,14 +117,14 @@ class AgentAuthService {
             const accessToken = jwt.sign({
                 id: userCreate.id,
                 email: userCreate.email,
-                dvToken: dvToken,
+                dvToken: data.dvToken,
                 userTypeId: userCreate.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store access token in Redis
             redisCli.hSet(
                 `id-${userCreate.id}`,
-                dvToken,
+                data.dvToken,
                 accessToken
             );
 
@@ -151,21 +139,16 @@ class AgentAuthService {
     /**
      * Verify OTP SignUp
      * @param {Object} data - OTP verification data
-     * @param {number} data.otpId - OTP ID
-     * @param {string} data.OTP - OTP code
-     * @param {number} data.userId - User ID
      * @returns {Object} Verification result
      */
     async verifyOTpSignUp(data) {
-        const { otpId, OTP, userId } = data;
-
-        if (OTP === '5678') {
-            const userData = await users.findByPk(userId);
+        if (data.OTP === '5678') {
+            const userData = await users.findByPk(data.userId);
             const userUpdate = await users.update({
                 verifiedAt: new Date(),
             }, {
                 where: {
-                    id: userId
+                    id: data.userId
                 }
             });
 
@@ -173,26 +156,26 @@ class AgentAuthService {
             const dataMap = daysArray.map((day) => ({
                 dayOfWeek: day,
                 status: true,
-                userId: userId
+                userId: data.userId
             }));
             let output = await bussinessWorkingHours.bulkCreate(dataMap);
 
             return {
-                userId
+                userId: data.userId
             };
         } else {
-            const otpData = await otpVerification.findByPk(otpId);
+            const otpData = await otpVerification.findByPk(data.otpId);
             if (!otpData) {
                 throw new NotFoundError("Sorry, we could not fetch the data or You Entered Incorrect OTP");
             }
-            if (otpData.OTP != OTP) {
+            if (otpData.OTP != data.OTP) {
                 throw new UnauthorizedError("Entered Incorrect OTP. Please enter correct OTP to continue");
             }
             const userUpdate = await users.update({
                 verifiedAt: new Date(),
             }, {
                 where: {
-                    id: userId
+                    id: data.userId
                 }
             });
 
@@ -200,12 +183,12 @@ class AgentAuthService {
             const dataMap = daysArray.map((day) => ({
                 dayOfWeek: day,
                 status: true,
-                userId: userId
+                userId: data.userId
             }));
             let output = await bussinessWorkingHours.bulkCreate(dataMap);
 
             return {
-                userId
+                userId: data.userId
             };
         }
     }
@@ -213,18 +196,16 @@ class AgentAuthService {
     /**
      * Resend OTP
      * @param {Object} data - Resend OTP data
-     * @param {number} data.userId - User ID
      * @returns {Object} Resend OTP result
      */
     async resendOTP(data) {
-        const { userId } = data;
-        const userExist = await users.findByPk(userId);
+        const userExist = await users.findByPk(data.userId);
 
         if (!userExist) {
             throw new NotFoundError("Sorry, we could not fetch the associated data or You Entered Incorrect OTP");
         }
 
-        let otpData = await otpVerification.findOne({ where: { userId } });
+        let otpData = await otpVerification.findOne({ where: { userId: data.userId } });
         let OTP = otpGenerator.generate(4, {
             lowerCaseAlphabets: false,
             upperCaseAlphabets: false,
@@ -245,7 +226,7 @@ class AgentAuthService {
                 OTP,
                 reqAt: DT,
                 verifiedInForgetCase: false,
-                userId,
+                userId: data.userId,
             });
             return {
                 otpId: newOtpData.id
@@ -257,7 +238,7 @@ class AgentAuthService {
                     reqAt: DT,
                     verifiedInForgetCase: false,
                 },
-                { where: { userId } }
+                { where: { userId: data.userId } }
             );
             return {
                 otpId: otpData.id
@@ -268,38 +249,30 @@ class AgentAuthService {
     /**
      * Agent Business Info
      * @param {Object} data - Business info data
-     * @param {string} data.shopName - Shop name
-     * @param {string} data.matchProfileOptions - Match profile options
-     * @param {number} data.userId - User ID
-     * @param {string} data.otherText - Other text
-     * @param {Array} data.machineryCount - Machinery count array
-     * @param {Array} data.serviceTimes - Service times array
      * @returns {Object} Business info result
      */
     async agentBusinessInfo(data) {
-        const { shopName, matchProfileOptions, userId, otherText, machineryCount, serviceTimes } = data;
-
-        if (matchProfileOptions !== 'Other' && otherText) {
+        if (data.matchProfileOptions !== 'Other' && data.otherText) {
             throw new ValidationError('You can Add this Field Only when Select Other Option in Match Profile Options');
         }
 
         // Get agent's address information
         const agentAddress = await addressDb.findOne({
             where: {
-                userId: userId,
+                userId: data.userId,
             },
         });
 
-        if (matchProfileOptions === 'Other') {
+        if (data.matchProfileOptions === 'Other') {
             const agentInfo = await bussinessInformation.create({
-                shopName,
-                matchProfileOptions,
-                otherText,
-                agentId: userId,
+                shopName: data.shopName,
+                matchProfileOptions: data.matchProfileOptions,
+                otherText: data.otherText,
+                agentId: data.userId,
                 shopAddressId: agentAddress ? agentAddress.id : null
             });
 
-            const machinesCountCreate = machineryCount.map(ele => ({
+            const machinesCountCreate = data.machineryCount.map(ele => ({
                 total: ele.total,
                 status: true,
                 machineId: ele.machineId,
@@ -309,29 +282,29 @@ class AgentAuthService {
             await machineCount.bulkCreate(machinesCountCreate);
 
             await Promise.all(
-                serviceTimes.map(async (ele) => {
+                data.serviceTimes.map(async (ele) => {
                     await agentSelectServices.update({
                         serviceTimeRequired: ele.serviceTimeRequired
-                    }, { where: { agentServiceId: userId, serviceId: ele.serviceId } });
+                    }, { where: { agentServiceId: data.userId, serviceId: ele.serviceId } });
                 })
             );
 
             await users.update({
                 bussinessInformationId: agentInfo.id
-            }, { where: { id: userId } });
+            }, { where: { id: data.userId } });
 
             return {
             };
         }
 
         const agentInfo = await bussinessInformation.create({
-            shopName,
-            matchProfileOptions,
-            agentId: userId,
+            shopName: data.shopName,
+            matchProfileOptions: data.matchProfileOptions,
+            agentId: data.userId,
             shopAddressId: agentAddress ? agentAddress.id : null
         });
 
-        const machinesCountCreate = machineryCount.map(ele => ({
+        const machinesCountCreate = data.machineryCount.map(ele => ({
             total: ele.total,
             status: true,
             machineId: ele.machineId,
@@ -341,10 +314,10 @@ class AgentAuthService {
         await machineCount.bulkCreate(machinesCountCreate);
 
         await Promise.all(
-            serviceTimes.map(async (ele) => {
+            data.serviceTimes.map(async (ele) => {
                 await agentSelectServices.update({
                     serviceTimeRequired: ele.serviceTimeRequired
-                }, { where: { agentServiceId: userId, serviceId: ele.serviceId } });
+                }, { where: { agentServiceId: data.userId, serviceId: ele.serviceId } });
             })
         );
 
@@ -395,14 +368,10 @@ class AgentAuthService {
     /**
      * Working Hours Update
      * @param {Object} data - Working hours data
-     * @param {number} data.userId - User ID
-     * @param {Array} data.bussinessWorkingDays - Business working days array
      * @returns {Object} Update result
      */
     async workingHoursUpdate(data) {
-        const { userId, bussinessWorkingDays } = data;
-
-        for (const ele of bussinessWorkingDays) {
+        for (const ele of data.bussinessWorkingDays) {
             await bussinessWorkingHours.update(
                 {
                     openTime: ele.openTime,
@@ -425,18 +394,12 @@ class AgentAuthService {
     /**
      * Login User
      * @param {Object} data - Login data
-     * @param {string} data.email - Email
-     * @param {string} data.password - Password
-     * @param {string} data.signedFrom - Social login provider
-     * @param {string} data.dvToken - Device token
      * @returns {Object} Login result
      */
     async loginUser(data) {
-        const { email, password, signedFrom, dvToken } = data;
-
         const userFind = await users.findOne({
             where: {
-                email: email,
+                email: data.email,
                 deletedAt: { [Op.is]: null }
             },
             include: [
@@ -503,7 +466,7 @@ class AgentAuthService {
         }
 
         if (userFind?.classifiedAsId === 2) {
-            const passwordMatch = await bcrypt.compare(password, userFind.password);
+            const passwordMatch = await bcrypt.compare(data.password, userFind.password);
             if (!passwordMatch) {
                 throw new UnauthorizedError("Bad credentials", { 
                     message: "Please enter correct password to continue" 
@@ -573,11 +536,11 @@ class AgentAuthService {
         }
 
         // Social login: Create if not found
-        if ((!userFind && signedFrom === 'google') || (!userFind && signedFrom === 'facebook') || (!userFind && signedFrom === 'apple')) {
-            const createStripeCustomer = await stripe.createStripeCustomer(email);
+        if ((!userFind && data.signedFrom === 'google') || (!userFind && data.signedFrom === 'facebook') || (!userFind && data.signedFrom === 'apple')) {
+            const createStripeCustomer = await stripe.createStripeCustomer(data.email);
 
             const createUser = await users.create({
-                email,
+                email: data.email,
                 userTypeId: 4,
                 verifiedAt: Date.now(),
                 stripeCustomerId: createStripeCustomer
@@ -589,17 +552,17 @@ class AgentAuthService {
         }
 
         // Warn if user previously used social login but is now using email/password
-        if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
+        if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !data.signedFrom) {
             throw new ValidationError("Social Login Required", { 
                 signedFrom: userFind.signedFrom
             });
         }
 
         // Handle social login flow
-        if (["google", "facebook", "apple"].includes(signedFrom)) {
+        if (["google", "facebook", "apple"].includes(data.signedFrom)) {
             const socialUser = await users.findOne({
                 where: {
-                    email: email,
+                    email: data.email,
                     userTypeId: 2,
                     deletedAt: { [Op.is]: null }
                 },
@@ -615,79 +578,94 @@ class AgentAuthService {
                 throw new UnauthorizedError('Blocked by admin. Please contact admin to continue');
             }
 
-            const dvTokenFound = socialUser.deviceToken.find(ele => ele.tokenId === dvToken);
+            const dvTokenFound = socialUser.deviceToken.find(ele => ele.tokenId === data.dvToken);
             if (!dvTokenFound) {
-                await deviceToken.create({ tokenId: dvToken, status: true, userId: socialUser.id });
+                await deviceToken.create({ tokenId: data.dvToken, status: true, userId: socialUser.id });
             }
 
             const accessToken = jwt.sign({
                 id: socialUser.id,
                 email: socialUser.email,
-                dvToken: dvToken
+                dvToken: data.dvToken
             }, process.env.JWT_ACCESS_SECRET);
 
-            redisCli.hSet(`id-${socialUser.id}`, dvToken, accessToken);
+            redisCli.hSet(`id-${socialUser.id}`, data.dvToken, accessToken);
 
             const featureData = await features.findAll({
                 where: { status: true },
-                attributes: ['id', 'title', 'description']
+                attributes: ['id', 'title']
             });
 
             return {
-                type: 'success',
-                userData: socialUser,
+                userId: String(socialUser.id),
+                firstName: socialUser.firstName,
+                lastName: socialUser.lastName,
+                email: socialUser.email,
                 accessToken,
+                userTypeId: String(socialUser.userTypeId),
+                addressId: null,
+                currencyUnit: '$',
                 isGuest: false,
-                featureData,
+                joinedOn: socialUser.dataValues.joinedOn,
+                phoneNum: socialUser.phoneNum,
+                features: featureData
             };
         }
 
-        const passwordMatch = await bcrypt.compare(password, userFind.password);
+        const passwordMatch = await bcrypt.compare(data.password, userFind.password);
         if (!passwordMatch) {
             throw new UnauthorizedError("Bad credentials", { 
                 message: "Please enter correct password to continue" 
             });
         }
 
-        const dvTokenFound = userFind.deviceToken.find(ele => ele.tokenId === dvToken);
+        const dvTokenFound = userFind.deviceToken.find(ele => ele.tokenId === data.dvToken);
         if (!dvTokenFound) {
-            await deviceToken.create({ tokenId: dvToken, status: true, userId: userFind.id });
+            await deviceToken.create({ tokenId: data.dvToken, status: true, userId: userFind.id });
         }
 
         const accessToken = jwt.sign({
             id: userFind.id,
             email: userFind.email,
-            dvToken: dvToken
+            dvToken: data.dvToken
         }, process.env.JWT_ACCESS_SECRET);
 
-        redisCli.hSet(`id-${userFind.id}`, dvToken, accessToken);
+        redisCli.hSet(`id-${userFind.id}`, data.dvToken, accessToken);
 
         const featureData = await features.findAll({
             where: { status: true },
-            attributes: ['id', 'title', 'description']
+            attributes: ['id', 'title']
         });
 
+        // Get address and currency info
+        const userAddress = userFind.addressDb?.[0];
+        const currencyUnit = userAddress?.zone?.currencyUnitZ?.symbol || '$';
+
         return {
-            type: 'success',
-            userData: userFind,
+            userId: String(userFind.id),
+            firstName: userFind.firstName,
+            lastName: userFind.lastName,
+            email: userFind.email,
             accessToken,
+            userTypeId: String(userFind.userTypeId),
+            addressId: userAddress ? String(userAddress.id) : null,
+            currencyUnit: currencyUnit,
             isGuest: false,
-            featureData,
+            joinedOn: userFind.dataValues.joinedOn,
+            phoneNum: userFind.phoneNum,
+            features: featureData
         };
     }
 
     /**
      * Forget Password Request
      * @param {Object} data - Forget password data
-     * @param {string} data.email - Email
      * @returns {Object} Forget password result
      */
     async forgetPasswordRequest(data) {
-        const { email } = data;
-
         const userData = await users.findOne({
             where: {
-                email,
+                email: data.email,
                 deletedAt: { [Op.is]: null },
                 userTypeId: { [Op.or]: [4] }, // Agent type
             },
@@ -707,7 +685,7 @@ class AgentAuthService {
 
         otpMail({
             type: 'ForgetPassword',
-            email: email,
+            email: data.email,
             OTP: OTP
         });
 
@@ -743,14 +721,10 @@ class AgentAuthService {
     /**
      * Verify OTP for Password
      * @param {Object} data - OTP verification data
-     * @param {number} data.otpId - OTP ID
-     * @param {string} data.OTP - OTP code
      * @returns {Object} Verification result
      */
     async verifyOTPforPassword(data) {
-        const { otpId, OTP } = data;
-
-        const otpData = await otpVerification.findByPk(otpId, {
+        const otpData = await otpVerification.findByPk(data.otpId, {
             attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
         });
 
@@ -760,7 +734,7 @@ class AgentAuthService {
             });
         }
 
-        if (OTP != otpData.OTP) {
+        if (data.OTP != otpData.OTP) {
             throw new UnauthorizedError("You entered incorrect OTP Please enter correct OTP to continue");
         }
 
@@ -768,7 +742,7 @@ class AgentAuthService {
         await otpData.save();
 
         return {
-            otpId,
+            otpId: data.otpId,
             userId: otpData.userId,
         };
     }
@@ -776,19 +750,14 @@ class AgentAuthService {
     /**
      * Change Password OTP
      * @param {Object} data - Change password data
-     * @param {number} data.userId - User ID
-     * @param {number} data.otpId - OTP ID
-     * @param {string} data.password - New password
      * @returns {Object} Change password result
      */
     async changePasswordOTP(data) {
-        const { userId, otpId, password } = data;
-
-        const otpData = await otpVerification.findByPk(otpId, {
+        const otpData = await otpVerification.findByPk(data.otpId, {
             attributes: ["id", "OTP", "verifiedAtForgetCase"],
         });
 
-        const userData = await users.findByPk(userId, {
+        const userData = await users.findByPk(data.userId, {
             attributes: ["id", "password"],
         });
 
@@ -804,7 +773,7 @@ class AgentAuthService {
             });
         }
 
-        let hashedPassword = await bcrypt.hash(password, 8);
+        let hashedPassword = await bcrypt.hash(data.password, 8);
         userData.password = hashedPassword;
         await userData.save();
 
@@ -818,35 +787,35 @@ class AgentAuthService {
     /**
      * Logout
      * @param {Object} data - Logout data
-     * @param {number} data.userId - User ID
-     * @param {string} data.dvToken - Device token
      * @returns {Object} Logout result
      */
     async logout(data) {
-        const { userId, dvToken } = data;
+        // Remove device token from database
+        deviceToken.destroy({
+            where: { 
+                tokenId: data.dvToken, 
+                userId: data.userId 
+            }
+        });
 
-        await redisCli.hDel(`id-${userId}`, dvToken);
+        // Remove from Redis
+        await redisCli.hDel(`tsh${data.userId}`, data.dvToken);
 
-        return {
-        };
+        return {};
     }
 
     /**
      * Session
      * @param {Object} data - Session data
-     * @param {number} data.userId - User ID
-     * @param {boolean} data.guestUser - Guest user flag
      * @returns {Object} Session result
      */
     async session(data) {
-        const { userId, guestUser, dvToken } = data;
-
-        if (guestUser) {
+        if (data.guestUser) {
             throw new UnauthorizedError("Login failed");
         }
 
         const userData = await users.findOne({
-            where: { id: userId },
+            where: { id: data.userId },
             include: [
                 {
                     model: deviceToken,
@@ -973,18 +942,18 @@ class AgentAuthService {
             });
         }
         
-        const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === dvToken);
+        const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === data.dvToken);
         if (!dvTokenFound) {
-            await deviceToken.create({ tokenId: dvToken, status: true, userId: userData.id });
+            await deviceToken.create({ tokenId: data.dvToken, status: true, userId: userData.id });
         }
         
         const accessToken = jwt.sign({
             id: userData.id,
             email: userData.email,
-            dvToken: dvToken
+            dvToken: data.dvToken
         }, process.env.JWT_ACCESS_SECRET);
 
-        redisCli.hSet(`id-${userData.id}`, dvToken, accessToken);
+        redisCli.hSet(`id-${userData.id}`, data.dvToken, accessToken);
 
         const featureData = await features.findAll({
             where: { status: true },
@@ -994,7 +963,7 @@ class AgentAuthService {
         return {
             userData,
             accessToken,
-            isGuest: guestUser,
+            isGuest: data.guestUser,
             featureData,
         };
     }
@@ -1002,15 +971,12 @@ class AgentAuthService {
     /**
      * Get User Profile
      * @param {Object} data - Profile data
-     * @param {number} data.userId - User ID
      * @returns {Object} User profile data
      */
     async getUserProfile(data) {
-        const { userId } = data;
-
         const userData = await users.findOne({
             where: {
-                id: userId
+                id: data.userId
             },
             attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
         });
@@ -1027,22 +993,13 @@ class AgentAuthService {
     /**
      * Update User Profile
      * @param {Object} data - Update profile data
-     * @param {number} data.userId - User ID
-     * @param {string} data.firstName - First name
-     * @param {string} data.lastName - Last name
-     * @param {string} data.email - Email
-     * @param {string} data.isProfileImgChanged - Profile image change flag
-     * @param {string} data.phoneNum - Phone number
-     * @param {string} data.countryCode - Country code
      * @param {string} profileImage - Profile image path
      * @returns {Object} Update result
      */
     async updateUserProfile(data, profileImage = null) {
-        const { userId, firstName, lastName, email, isProfileImgChanged, phoneNum, countryCode } = data;
-
         const userFind = await users.findOne({
             where: {
-                id: userId
+                id: data.userId
             },
             attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId']
         });
@@ -1051,20 +1008,20 @@ class AgentAuthService {
             throw new NotFoundError("user Not Exists with this ID");
         }
 
-        if (isProfileImgChanged === "true") {
+        if (data.isProfileImgChanged === "true") {
             if (!profileImage) {
                 throw new ValidationError("Profile Image Required");
             }
         }
 
         await users.update({
-            firstName,
-            lastName,
-            phoneNum,
-            email,
-            countryCode,
-            image: isProfileImgChanged === "true" ? profileImage : undefined,
-        }, { where: { id: userId } });
+            firstName: data.firstName,
+            lastName: data.lastName,
+            phoneNum: data.phoneNum,
+            email: data.email,
+            countryCode: data.countryCode,
+            image: data.isProfileImgChanged === "true" ? profileImage : undefined,
+        }, { where: { id: data.userId } });
 
         return {
         };

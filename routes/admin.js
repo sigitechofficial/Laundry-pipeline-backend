@@ -7,6 +7,7 @@ const multer = require('multer')
 const path = require('path')
 const validateAccessToken = require('../middlewares/adminValidateToken')
 const { createDestinationDirectory } = require('../utils/destination')
+const agentController = require("../controllers/Agent/agents");
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -233,7 +234,12 @@ router.get('/completeOrders', validateAccessToken, asyncMiddleware(adminControll
 router.get('/getOrderForEdit/:orderId', validateAccessToken, asyncMiddleware(adminController.getOrderForEdit))
 //Edit Order
 router.patch('/editOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.editOrder))
-
+//For Order Items Sheet
+router.get(
+    "/orderItemsSheet",
+    validateAccessToken,
+    asyncMiddleware(agentController.customerServices)
+);
 
 //!-----------------------------Service Management------------------------------//
 //Get Services with CategOries && SubCategoriesCounts

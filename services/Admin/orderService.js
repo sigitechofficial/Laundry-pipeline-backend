@@ -1,5 +1,25 @@
-const { booking, customerSelectedService, OnHoldConfirmation, addressDb, bussinessInformation, bookingStatus, service, categories, billingDetails } = require('../../models');
+const { 
+    booking, 
+    customerSelectedService, 
+    proofOfDeliveries,
+    OnHoldConfirmation, 
+    addressDb, 
+    bussinessInformation, 
+    bookingStatus, 
+    service, 
+    categories, 
+    billingDetails,
+    bookingPreference,
+    serviceWithPreferences,
+    preferenceValues,
+    tip,
+    zone,
+    cities,
+    countries,
+    users
+} = require('../../models');
 const { Op } = require('sequelize');
+const sequelize = require('sequelize');
 const { 
     ValidationError, 
     NotFoundError, 
@@ -274,7 +294,11 @@ class OrderService {
                         model: users,
                         as: 'deliveryDriver',
                         attributes: ['id', 'firstName', 'lastName', 'email']
-                    }
+                    },
+                    {
+                        model: proofOfDeliveries,
+                        attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
+                    },
                 ]
             });
 
@@ -289,31 +313,56 @@ class OrderService {
      * Edit order - Comprehensive order management
      * @param {number} orderId - Order ID
      * @param {Object} orderData - Order update data
+     * @param {string} orderData.collectionDate - Collection date
+     * @param {string} orderData.collectionTimeFrom - Collection time from
+     * @param {string} orderData.collectionTimeTo - Collection time to
+     * @param {string} orderData.deliveryDate - Delivery date
+     * @param {string} orderData.deliveryTimeFrom - Delivery time from
+     * @param {string} orderData.deliveryTimeTo - Delivery time to
+     * @param {string} orderData.driverInstruction - Driver instruction
+     * @param {string} orderData.driverInstructionOptions - Driver instruction options
+     * @param {string} orderData.driverInstructionOptions1 - Driver instruction options 1
+     * @param {string} orderData.frequency - Frequency (e.g., "Just Once")
+     * @param {number} orderData.totalItems - Total items
+     * @param {number} orderData.bookingStatusId - Booking status ID
+     * @param {Object} orderData.pickUpAddress - Pick up address object with lat, lng, streetAddress, etc.
+     * @param {Object} orderData.dropOffAddress - Drop off address object
+     * @param {boolean} orderData.updatePickupAddress - Flag to update pickup address
+     * @param {boolean} orderData.updateDropOffAddress - Flag to update drop off address
+     * @param {boolean} orderData.dropOffSamePickUp - Flag if drop off same as pickup
+     * @param {Array} orderData.services - Array of services with serviceId, categoryId, subCategoryId, categoryCharge
+     * @param {Object} orderData.billingData - Billing details object
+     * @param {Array} orderData.preferencesArray - Array of preferences with preferenceTypeId, preferenceValueId
+     * @param {number} orderData.tipAmount - Tip amount
      * @returns {Object} Updated order data
      */
     async editOrder(orderId, orderData) {
             const {
-                orderTrackId,
                 collectionDate,
                 collectionTimeFrom,
                 collectionTimeTo,
                 deliveryDate,
                 deliveryTimeFrom,
                 deliveryTimeTo,
+                driverInstruction,
                 driverInstructionOptions,
                 driverInstructionOptions1,
-                driverInstruction,
-                totalItems,
-                orderAmount,
-                subTotal,
                 frequency,
+                totalItems,
                 bookingStatusId,
+                pickUpAddress,
+                dropOffAddress,
+                updatePickupAddress,
+                updateDropOffAddress,
+                dropOffSamePickUp,
                 services,
-                billingDetails
+                billingData,
+                preferencesArray,
+                tipAmount
             } = orderData;
 
             // Check if order exists
-            const orderExists = await booking.findOne({
+            const existingOrder = await booking.findOne({
                 where: { id: orderId },
                 include: [
                     {
@@ -323,96 +372,377 @@ class OrderService {
                             { model: categories, attributes: ['id', 'name'] }
                         ]
                     },
-                    { model: billingDetails }
+                    { 
+                        model: billingDetails,
+                        as: 'billingDetail'
+                    },
+                    {
+                        model: addressDb,
+                        as: 'pickupAddress',
+                        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'cityId', 'countryId']
+                    },
+                    {
+                        model: addressDb,
+                        as: 'dropOffAddress',
+                        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'cityId', 'countryId']
+                    },
+                    {
+                        model: tip,
+                        attributes: ['id', 'amount']
+                    }
                 ]
             });
 
-            if (!orderExists) {
-                throw new Error('Order not found');
+            if (!existingOrder) {
+                throw new NotFoundError('Order not found');
             }
 
-            // Update basic order fields
-            const orderUpdateData = {
-                orderTrackId,
-                collectionDate,
-                collectionTimeFrom,
-                collectionTimeTo,
-                deliveryDate,
-                deliveryTimeFrom,
-                deliveryTimeTo,
-                driverInstructionOptions,
-                driverInstructionOptions1,
-                driverInstruction,
-                totalItems,
-                orderAmount,
-                subTotal,
-                frequency,
-                bookingStatusId
-            };
+            // Prepare update data object (only include fields that are provided)
+            const orderUpdateData = {};
+            if (collectionDate !== undefined) orderUpdateData.collectionDate = collectionDate;
+            if (collectionTimeFrom !== undefined) orderUpdateData.collectionTimeFrom = collectionTimeFrom;
+            if (collectionTimeTo !== undefined) orderUpdateData.collectionTimeTo = collectionTimeTo;
+            if (deliveryDate !== undefined) orderUpdateData.deliveryDate = deliveryDate;
+            if (deliveryTimeFrom !== undefined) orderUpdateData.deliveryTimeFrom = deliveryTimeFrom;
+            if (deliveryTimeTo !== undefined) orderUpdateData.deliveryTimeTo = deliveryTimeTo;
+            if (driverInstruction !== undefined) orderUpdateData.driverInstruction = driverInstruction;
+            if (driverInstructionOptions !== undefined) orderUpdateData.driverInstructionOptions = driverInstructionOptions;
+            if (driverInstructionOptions1 !== undefined) orderUpdateData.driverInstructionOptions1 = driverInstructionOptions1;
+            if (frequency !== undefined) orderUpdateData.frequency = frequency;
+            if (totalItems !== undefined) orderUpdateData.totalItems = totalItems;
+            if (bookingStatusId !== undefined) orderUpdateData.bookingStatusId = bookingStatusId;
 
-            await booking.update(orderUpdateData, { where: { id: orderId } });
+            // Handle pickup address update
+            let pickupAddressId = existingOrder.pickupAddresId;
+            if (updatePickupAddress && pickUpAddress) {
+                // Validate and get zone info from pickup address
+                let findZone = await this.findZones(pickUpAddress.lat, pickUpAddress.lng);
+                if (!findZone || findZone.length === 0) {
+                    throw new NotFoundError("No Zone found for these pickup address coordinates");
+                }
+                
+                let cityId = pickUpAddress.cityId || findZone[0].city.id;
+                let countryId = pickUpAddress.countryId || findZone[0].city.country.id;
+                let zoneId = findZone[0].id;
 
-            // Update services
-            if (Array.isArray(services)) {
+                // Update existing pickup address
+                await addressDb.update(
+                    {
+                        title: pickUpAddress.title,
+                        streetAddress: pickUpAddress.streetAddress,
+                        district: pickUpAddress.district,
+                        province: pickUpAddress.province,
+                        lat: pickUpAddress.lat,
+                        lng: pickUpAddress.lng,
+                        postalcode: pickUpAddress.postalcode,
+                        cityId: cityId,
+                        countryId: countryId
+                    },
+                    { where: { id: existingOrder.pickupAddresId } }
+                );
+
+                // Update zone if changed
+                if (existingOrder.zoneId !== zoneId) {
+                    orderUpdateData.zoneId = zoneId;
+                }
+            }
+
+            // Handle drop off address update
+            let dropOffAddressId = existingOrder.dropOffAddressId;
+            if (dropOffSamePickUp) {
+                orderUpdateData.dropOffAddressId = pickupAddressId;
+            } else if (updateDropOffAddress && dropOffAddress) {
+                // Update existing drop off address
+                await addressDb.update(
+                    {
+                        title: dropOffAddress.title,
+                        streetAddress: dropOffAddress.streetAddress,
+                        district: dropOffAddress.district,
+                        province: dropOffAddress.province,
+                        lat: dropOffAddress.lat,
+                        lng: dropOffAddress.lng,
+                        postalcode: dropOffAddress.postalcode,
+                        cityId: dropOffAddress.cityId,
+                        countryId: dropOffAddress.countryId
+                    },
+                    { where: { id: existingOrder.dropOffAddressId } }
+                );
+            }
+
+            // Calculate totals from services
+            let categoryCharge = 0;
+            let orderAmount = 0;
+
+            // Update services if provided
+            if (Array.isArray(services) && services.length > 0) {
+                // Delete existing services
                 await customerSelectedService.destroy({ where: { bookingId: orderId } });
 
-                const serviceData = services.map(s => ({
-                    bookingId: orderId,
-                    serviceId: s.serviceId,
-                    categoryId: s.categoryId,
-                    date: s.date || new Date(),
-                    time: s.time || new Date().toTimeString().slice(0, 8),
-                    items: s.items || 1,
-                    servicePrice: s.servicePrice || 0,
-                    categoryPrice: s.categoryPrice || 0,
-                    status: s.status !== undefined ? s.status : true
-                }));
+                // Calculate charges
+                categoryCharge = services.reduce(
+                    (acc, svc) => acc + parseFloat(svc.categoryCharge || 0),
+                    0
+                );
+                orderAmount = categoryCharge;
+
+                const currentTime = new Date().toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                });
+                const currentDate = new Date().toISOString().split("T")[0];
+
+                // Create new services
+                const serviceData = services.map((svc) => {
+                    let serviceObj = {
+                        bookingId: orderId,
+                        serviceId: svc.serviceId,
+                        date: svc.date || currentDate,
+                        time: svc.time || currentTime,
+                        items: svc.items || 1,
+                        categoryPrice: svc.categoryCharge || 0
+                    };
+                    
+                    if (svc.categoryId) serviceObj.categoryId = svc.categoryId;
+                    if (svc.subCategoryId) serviceObj.subCategoryId = svc.subCategoryId;
+                    if (svc.servicePrice) serviceObj.servicePrice = svc.servicePrice;
+                    if (svc.status !== undefined) serviceObj.status = svc.status;
+
+                    return serviceObj;
+                });
 
                 await customerSelectedService.bulkCreate(serviceData);
+                
+                // Update order amount
+                if (orderAmount > 0) {
+                    orderUpdateData.orderAmount = orderAmount;
+                    orderUpdateData.subTotal = orderAmount;
+                }
             }
 
-            // Update billing details
-            if (billingDetails) {
-                const billingUpdateData = {
-                    upfrontAmount: billingDetails.upfrontAmount,
-                    discount: billingDetails.discount,
-                    total: billingDetails.total,
-                    zoneAdminCommission: billingDetails.zoneAdminCommission,
-                    serviceCharge: billingDetails.serviceCharge,
-                    categoryCharge: billingDetails.categoryCharge,
-                    pickupDriverEarning: billingDetails.pickupDriverEarning,
-                    deliveryDriverEarning: billingDetails.deliveryDriverEarning,
-                    paymentStatus: billingDetails.paymentStatus
-                };
+            // Update booking preferences
+            if (preferencesArray && Array.isArray(preferencesArray)) {
+                // Delete existing preferences
+                await bookingPreference.destroy({ where: { bookingId: orderId } });
+
+                if (preferencesArray.length > 0) {
+                    // Get service IDs from the booking
+                    const serviceIds = services ? services.map(s => s.serviceId) : 
+                        existingOrder.customerSelectedServices.map(s => s.serviceId);
+                    
+                    const bookingPreferencesToCreate = [];
+                    
+                    for (const pref of preferencesArray) {
+                        const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                        
+                        if (!preferenceTypeId || !preferenceValueId) {
+                            throw new ValidationError(
+                                "preferenceTypeId and preferenceValueId are required for each preference"
+                            );
+                        }
+                        
+                        // Validate preference belongs to service
+                        if (serviceId) {
+                            const servicePreferenceExists = await serviceWithPreferences.findOne({
+                                where: {
+                                    serviceId: serviceId,
+                                    preferenceTypeId: preferenceTypeId,
+                                    status: true
+                                }
+                            });
+                            
+                            if (!servicePreferenceExists) {
+                                throw new ValidationError(
+                                    `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
+                                );
+                            }
+                        } else {
+                            const servicePreferenceExists = await serviceWithPreferences.findOne({
+                                where: {
+                                    serviceId: { [Op.in]: serviceIds },
+                                    preferenceTypeId: preferenceTypeId,
+                                    status: true
+                                }
+                            });
+                            
+                            if (!servicePreferenceExists) {
+                                throw new ValidationError(
+                                    `Preference type ${preferenceTypeId} is not available for any selected services`
+                                );
+                            }
+                        }
+                        
+                        // Validate preference value
+                        const preferenceValue = await preferenceValues.findOne({
+                            where: {
+                                id: preferenceValueId,
+                                preferenceTypeId: preferenceTypeId,
+                                status: true
+                            }
+                        });
+                        
+                        if (!preferenceValue) {
+                            throw new ValidationError(
+                                `Preference value ${preferenceValueId} is invalid or does not belong to preference type ${preferenceTypeId}`
+                            );
+                        }
+                        
+                        bookingPreferencesToCreate.push({
+                            bookingId: orderId,
+                            preferenceTypeId: preferenceTypeId,
+                            preferenceValueId: preferenceValueId
+                        });
+                    }
+                    
+                    if (bookingPreferencesToCreate.length > 0) {
+                        await bookingPreference.bulkCreate(bookingPreferencesToCreate);
+                    }
+                }
+            }
+
+            // Update tip if provided
+            if (tipAmount !== undefined) {
+                if (existingOrder.tip) {
+                    await tip.update(
+                        { amount: tipAmount },
+                        { where: { id: existingOrder.tip.id } }
+                    );
+                } else {
+                    const newTip = await tip.create({
+                        bookingId: orderId,
+                        amount: tipAmount
+                    });
+                    orderUpdateData.tipId = newTip.id;
+                }
+            }
+
+            // Update billing details if provided
+            if (billingData) {
+                const billingUpdateData = {};
+                if (billingData.upfrontAmount !== undefined) billingUpdateData.upfrontAmount = billingData.upfrontAmount;
+                if (billingData.discount !== undefined) billingUpdateData.discount = billingData.discount;
+                if (billingData.total !== undefined) billingUpdateData.total = billingData.total;
+                if (billingData.serviceCharge !== undefined) billingUpdateData.serviceCharge = billingData.serviceCharge;
+                if (billingData.categoryCharge !== undefined) billingUpdateData.categoryCharge = billingData.categoryCharge;
+                if (categoryCharge > 0) billingUpdateData.categoryCharge = categoryCharge;
+                if (billingData.zoneAdminCommission !== undefined) billingUpdateData.zoneAdminCommission = billingData.zoneAdminCommission;
+                if (billingData.pickupDriverEarning !== undefined) billingUpdateData.pickupDriverEarning = billingData.pickupDriverEarning;
+                if (billingData.deliveryDriverEarning !== undefined) billingUpdateData.deliveryDriverEarning = billingData.deliveryDriverEarning;
+                if (billingData.paymentStatus !== undefined) billingUpdateData.paymentStatus = billingData.paymentStatus;
 
                 const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
 
                 if (existingBilling) {
                     await billingDetails.update(billingUpdateData, { where: { bookingId: orderId } });
                 } else {
-                    await billingDetails.create({ bookingId: orderId, ...billingUpdateData });
+                    await billingDetails.create({ 
+                        bookingId: orderId, 
+                        ...billingUpdateData 
+                    });
                 }
             }
 
-            // Fetch updated order
+            // Update the booking record
+            if (Object.keys(orderUpdateData).length > 0) {
+                await booking.update(orderUpdateData, { where: { id: orderId } });
+            }
+
+            // Fetch and return updated order with all relations
             const updatedOrder = await booking.findOne({
                 where: { id: orderId },
                 include: [
                     {
                         model: customerSelectedService,
                         include: [
-                            { model: service, attributes: ['id', 'name'] },
-                            { model: categories, attributes: ['id', 'name'] }
+                            { model: service, attributes: ['id', 'name', 'status'] },
+                            { model: categories, attributes: ['id', 'name', 'status'] }
                         ]
                     },
-                    { model: billingDetails },
-                    { model: bookingStatus, attributes: ['id', 'title', 'description'] },
-                    { model: addressDb, as: 'pickupAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] },
-                    { model: addressDb, as: 'dropOffAddress', attributes: ['id', 'title', 'streetAddress', 'district', 'province'] }
+                    { 
+                        model: billingDetails,
+                        as: 'billingDetail'
+                    },
+                    { 
+                        model: bookingStatus, 
+                        attributes: ['id', 'title', 'description'] 
+                    },
+                    { 
+                        model: addressDb, 
+                        as: 'pickupAddress', 
+                        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng'] 
+                    },
+                    { 
+                        model: addressDb, 
+                        as: 'dropOffAddress', 
+                        attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng'] 
+                    },
+                    {
+                        model: bookingPreference,
+                        as: 'bookingPreferences'
+                    },
+                    {
+                        model: tip,
+                        attributes: ['id', 'amount']
+                    },
+                    {
+                        model: zone,
+                        attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge']
+                    },
+                    {
+                        model: users,
+                        as: 'customer',
+                        attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                    },
+                    {
+                        model: users,
+                        as: 'driver',
+                        attributes: ['id', 'firstName', 'lastName', 'email']
+                    },
+                    {
+                        model: users,
+                        as: 'deliveryDriver',
+                        attributes: ['id', 'firstName', 'lastName', 'email']
+                    }
                 ]
             });
 
             return updatedOrder;
+    }
+
+    /**
+     * Helper function to find zones
+     * @param {number} lat - Latitude
+     * @param {number} lng - Longitude
+     * @returns {Array} Zone data
+     */
+    async findZones(lat, lng) {
+        const findZone = await zone.findAll({
+            where: {
+                status: true,
+                coordinates: sequelize.where(
+                    sequelize.fn(
+                        "ST_Contains",
+                        sequelize.col("coordinates"),
+                        sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
+                    ),
+                    true
+                ),
+            },
+            include: [
+                {
+                    model: cities,
+                    attributes: ["id", "name", "lat", "lng", "status"],
+                    include: [
+                        {
+                            model: countries,
+                            attributes: ["id", "name", "shortName", "status"],
+                        },
+                    ],
+                },
+            ],
+            attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
+        });
+        return findZone;
     }
     /**
      * Get all on hold bookings
@@ -435,3 +765,4 @@ class OrderService {
 }
 
 module.exports = new OrderService();
+
