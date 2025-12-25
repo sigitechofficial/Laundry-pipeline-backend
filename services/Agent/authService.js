@@ -614,8 +614,11 @@ class AgentAuthService {
             redisCli.hSet(`id-${socialUser.id}`, data.dvToken, accessToken);
 
             const featureData = await features.findAll({
-                where: { status: true },
-                attributes: ['id', 'title']
+                where: { 
+                    status: true,
+                    deletedAt: { [Op.is]: null }
+                },
+                attributes: ['id', 'title', 'key', 'featureOf']
             });
 
             return {
@@ -655,8 +658,11 @@ class AgentAuthService {
         redisCli.hSet(`id-${userFind.id}`, data.dvToken, accessToken);
 
         const featureData = await features.findAll({
-            where: { status: true },
-            attributes: ['id', 'title']
+            where: { 
+                status: true,
+                deletedAt: { [Op.is]: null }
+            },
+            attributes: ['id', 'title', 'key', 'featureOf']
         });
 
         // Get address and currency info
@@ -978,8 +984,11 @@ class AgentAuthService {
         redisCli.hSet(`id-${userData.id}`, data.dvToken, accessToken);
 
         const featureData = await features.findAll({
-            where: { status: true },
-            attributes: ['id', 'title', 'description']
+            where: { 
+                status: true,
+                deletedAt: { [Op.is]: null }  // Model has paranoid: true
+            },
+            attributes: ['id', 'title', 'key', 'featureOf']
         });
 
         return {

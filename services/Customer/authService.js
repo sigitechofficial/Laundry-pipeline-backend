@@ -352,9 +352,11 @@ class CustomerAuthService {
 
 
         // Handle case where user doesn't exist and no social login
-        if (!userFind && (signedFrom === null || signedFrom === 'null' || signedFrom === undefined)) {
+        // Check for any falsy value or 'null' string
+        if (!userFind && !socialProviders.includes(signedFrom)) {
             console.log("🚀 ~ Throwing NotFoundError for user not found");
-            throw new NotFoundError('User Not Exists with this email');
+            console.log("signedFrom value:", signedFrom);
+            throw new NotFoundError('User not found with this email. Please check your email or sign up.');
         }
 
         // Handle social login - user doesn't exist
@@ -534,6 +536,11 @@ class CustomerAuthService {
         let otpId = 0;
 
         console.log("User Find------------>", userFind);
+
+        // Check if user exists before accessing properties
+        if (!userFind) {
+            throw new NotFoundError('User not found with this email. Please check your email or sign up.');
+        }
 
         if (!userFind.status) {
             throw new UnauthorizedError("Blocked by admin Please contact admin to continue");
