@@ -44,14 +44,22 @@ const agentBusinessInfo = async (req, res) => {
 
 // Business info added
 const businesInfoAdded = async (req, res) => {
-    const data = { ...req.body };
+    const { userId } = req.params;
+    const data = { 
+        userId: userId,
+        ...req.body 
+    };
     const result = await authService.businesInfoAdded(data);
     return ResponseHelper.success(res, "Service added successfully", result);
 };
 
 // Working hours update
 const workingHoursUpdate = async (req, res) => {
-    const data = { ...req.body };
+    const { userId } = req.params;
+    const data = { 
+        userId: userId,
+        ...req.body 
+    };
     const result = await authService.workingHoursUpdate(data);
     return ResponseHelper.success(res, "Working hours updated successfully", result);
 };
