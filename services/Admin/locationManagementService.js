@@ -1,5 +1,6 @@
 const { countries, cities } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
+const { Op } = require('sequelize');
 
 class LocationManagementService {
     /**
@@ -30,12 +31,15 @@ class LocationManagementService {
     }
 
     /**
-     * Get all countries
-     * @returns {Array} List of all countries
+     * Get all countries (excluding soft deleted)
+     * @returns {Array} List of all active countries
      */
     async getCountries() {
         try {
             const getCountries = await countries.findAll({
+                where: {
+                    deletedAt: { [Op.is]: null }
+                },
                 order: [['createdAt', 'DESC']]
             });
             return getCountries;
@@ -52,7 +56,12 @@ class LocationManagementService {
      */
     async updateCountry(countryId, updateData) {
         try {
-            const countryExists = await countries.findOne({ where: { id: countryId } });
+            const countryExists = await countries.findOne({ 
+                where: { 
+                    id: countryId,
+                    deletedAt: { [Op.is]: null }
+                } 
+            });
             if (!countryExists) {
                 throw new NotFoundError('Country not found');
             }
@@ -91,19 +100,34 @@ class LocationManagementService {
     }
 
     /**
-     * Delete country
+     * Soft delete country
      * @param {number} countryId - Country ID
      * @returns {Object} Deleted country data
      */
     async deleteCountry(countryId) {
         try {
-            const countryToDelete = await countries.destroy({ where: { id: countryId } });
-            
-            if (!countryToDelete) {
-                throw new NotFoundError('Country not found');
+            // Check if country exists and is not already deleted
+            const countryExists = await countries.findOne({
+                where: {
+                    id: countryId,
+                    deletedAt: { [Op.is]: null }
+                }
+            });
+
+            if (!countryExists) {
+                throw new NotFoundError('Country not found or already deleted');
             }
+
+            // Soft delete by setting deletedAt timestamp
+            await countries.update(
+                { deletedAt: new Date() },
+                { where: { id: countryId } }
+            );
             
-            return { message: 'Country deleted successfully' };
+            return { 
+                message: 'Country deleted successfully',
+                deletedAt: new Date()
+            };
         } catch (error) {
             if (error instanceof NotFoundError) {
                 throw error;
@@ -140,20 +164,23 @@ class LocationManagementService {
     }
 
     /**
-     * Get all cities
+     * Get all cities (excluding soft deleted)
      * @param {number} countryId - Optional country ID to filter cities
-     * @returns {Array} List of all cities or cities for specific country
+     * @returns {Array} List of all active cities or cities for specific country
      */
     async getCities(countryId = null) {
         try {
-            const whereClause = countryId ? { countryId } : {};
+            const whereClause = countryId 
+                ? { countryId, deletedAt: { [Op.is]: null } } 
+                : { deletedAt: { [Op.is]: null } };
             
             const getCities = await cities.findAll({
                 where: whereClause,
                 include: [
                     {
                         model: countries,
-                        attributes: ['id', 'name', 'shortName', 'image', 'status']
+                        attributes: ['id', 'name', 'shortName', 'image', 'status'],
+                        where: { deletedAt: { [Op.is]: null } }
                     }
                 ],
                 order: [['createdAt', 'DESC']]
@@ -172,7 +199,12 @@ class LocationManagementService {
      */
     async updateCity(cityId, updateData) {
         try {
-            const cityExists = await cities.findOne({ where: { id: cityId } });
+            const cityExists = await cities.findOne({ 
+                where: { 
+                    id: cityId,
+                    deletedAt: { [Op.is]: null }
+                } 
+            });
             if (!cityExists) {
                 throw new NotFoundError('City not found');
             }
@@ -191,11 +223,16 @@ class LocationManagementService {
                 throw new ValidationError('No valid fields to update');
             }
 
-            // If countryId is being updated, verify it exists
+            // If countryId is being updated, verify it exists and is not deleted
             if (updateFields.countryId) {
-                const countryExists = await countries.findOne({ where: { id: updateFields.countryId } });
+                const countryExists = await countries.findOne({ 
+                    where: { 
+                        id: updateFields.countryId,
+                        deletedAt: { [Op.is]: null }
+                    } 
+                });
                 if (!countryExists) {
-                    throw new ValidationError('Invalid country ID');
+                    throw new ValidationError('Invalid country ID or country has been deleted');
                 }
             }
 
@@ -227,19 +264,34 @@ class LocationManagementService {
     }
 
     /**
-     * Delete city
+     * Soft delete city
      * @param {number} cityId - City ID
      * @returns {Object} Deleted city data
      */
     async deleteCity(cityId) {
         try {
-            const cityToDelete = await cities.destroy({ where: { id: cityId } });
-            
-            if (!cityToDelete) {
-                throw new NotFoundError('City not found');
+            // Check if city exists and is not already deleted
+            const cityExists = await cities.findOne({
+                where: {
+                    id: cityId,
+                    deletedAt: { [Op.is]: null }
+                }
+            });
+
+            if (!cityExists) {
+                throw new NotFoundError('City not found or already deleted');
             }
+
+            // Soft delete by setting deletedAt timestamp
+            await cities.update(
+                { deletedAt: new Date() },
+                { where: { id: cityId } }
+            );
             
-            return { message: 'City deleted successfully' };
+            return { 
+                message: 'City deleted successfully',
+                deletedAt: new Date()
+            };
         } catch (error) {
             if (error instanceof NotFoundError) {
                 throw error;

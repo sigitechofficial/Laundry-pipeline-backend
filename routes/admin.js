@@ -107,6 +107,8 @@ router.post('/addCountries', validateAccessToken, uploadFlagImg.single('flagImg'
 router.get('/getCountries', validateAccessToken, asyncMiddleware(adminController.getCountries))
 //Update Country
 router.put('/updateCountry/:countryId', validateAccessToken, uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.updateCountry))
+//Delete Country (Soft Delete)
+router.delete('/deleteCountry/:countryId', validateAccessToken, asyncMiddleware(adminController.deleteCountry))
 //Add Cities
 router.post('/addCities', validateAccessToken, asyncMiddleware(adminController.addCities))
 //Get Cities
@@ -115,6 +117,8 @@ router.get('/getCities', validateAccessToken, asyncMiddleware(adminController.ge
 router.get('/getCitiesByCountryId/:countryId', validateAccessToken, asyncMiddleware(adminController.getCitiesByCountryId))
 //Update City
 router.put('/updateCity/:cityId', validateAccessToken, asyncMiddleware(adminController.updateCity))
+//Delete City (Soft Delete)
+router.delete('/deleteCity/:cityId', validateAccessToken, asyncMiddleware(adminController.deleteCity))
 //!---------------------------------------Zones-----------------------------------------//
 //Add Zones
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))

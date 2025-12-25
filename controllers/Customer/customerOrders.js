@@ -49,6 +49,7 @@ const { sendNotification } = require("../../utils/notification");
 const customerOrderService = require('../../services/Customer/customerOrderService');
 const cancelBookingService = require('../../services/Customer/cancelBookingService');
 const ResponseHelper = require('../../utils/responseHelper');
+const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const {
     serviceManagementService,
 } = require('../../services/Admin');
@@ -255,8 +256,20 @@ async function fetchZoneAndCharges(req, res) {
  *  Create Intent Using Stripe
  */
 async function createIntentUsingStripe(req, res) {
+    console.log("=== Create Intent Using Stripe ===");
+    console.log("Request Body:", JSON.stringify(req.body, null, 2));
+    console.log("User ID:", req.user?.id);
+    
     const { amount, customerId } = req.body;
-    console.log(" req.body=====================>>>>", req.body)
+
+    // Validate required fields in controller
+    if (!amount) {
+        throw new ValidationError('Amount is required');
+    }
+
+    if (!customerId) {
+        throw new ValidationError('Customer ID is required');
+    }
 
     // Call service to handle business logic
     const result = await customerOrderService.createIntentUsingStripe({

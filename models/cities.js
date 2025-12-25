@@ -43,7 +43,11 @@ module.exports = (sequelize, DataTypes) => {
     status: {
       type:DataTypes.BOOLEAN,
     allowNull:true,
-  }
+  },
+    deletedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
+    }
   }, {
     sequelize,
     modelName: 'cities',

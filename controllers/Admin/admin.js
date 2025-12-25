@@ -1015,6 +1015,36 @@ async function updateCity(req, res) {
     return ResponseHelper.success(res, "City Updated Successfully", result);
 }
 
+/*
+ * Delete Country (Soft Delete)
+*/
+async function deleteCountry(req, res) {
+    const { countryId } = req.params;
+
+    // Validate required field
+    if (!countryId) {
+        throw new ValidationError('Country ID is required');
+    }
+
+    const result = await locationManagementService.deleteCountry(countryId);
+    return ResponseHelper.success(res, "Country Deleted Successfully", result);
+}
+
+/*
+ * Delete City (Soft Delete)
+*/
+async function deleteCity(req, res) {
+    const { cityId } = req.params;
+
+    // Validate required field
+    if (!cityId) {
+        throw new ValidationError('City ID is required');
+    }
+
+    const result = await locationManagementService.deleteCity(cityId);
+    return ResponseHelper.success(res, "City Deleted Successfully", result);
+}
+
 
 /*
    * Add Zones
@@ -1762,10 +1792,12 @@ module.exports = {
     addCountries,
     getCountries,
     updateCountry,
+    deleteCountry,
     addCities,
     getCities,
     getCitiesByCountryId,
     updateCity,
+    deleteCity,
     getCountries,
     //!-------------Add Zones--------//
     addZones,

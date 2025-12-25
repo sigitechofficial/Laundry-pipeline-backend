@@ -1234,26 +1234,37 @@ class CustomerOrderService {
     /**
      * Create Intent Using Stripe
      * @param {Object} data - Request data
-     * @param {string} data.amount - Payment amount
+     * @param {number|string} data.amount - Payment amount (in cents for Stripe)
      * @param {string} data.customerId - Stripe customer ID
      * @returns {Object} - Result object with intent data
      */
     async createIntentUsingStripe(data) {
         const { amount, customerId } = data;
 
-        if (!amount || !customerId) {
-            throw new ValidationError("Amount and Customer ID are required");
+        // Detailed validation
+        if (!amount) {
+            throw new ValidationError("Amount is required");
         }
 
-        console.log("Req.body ===================================>>>>", { amount, customerId });
+        if (!customerId) {
+            throw new ValidationError("Customer ID is required");
+        }
 
-        const intent = await createPaymentIntend(amount, customerId);
-        console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent);
+        // Validate amount is a positive number
+        const numAmount = parseFloat(amount);
+        if (isNaN(numAmount) || numAmount <= 0) {
+            throw new ValidationError("Amount must be a valid positive number");
+        }
+
+        console.log("Creating payment intent with:", { amount: numAmount, customerId });
+
+        const intent = await createPaymentIntend(numAmount, customerId);
+        console.log("🚀 ~ createIntentUsingStripe ~ intent created:", intent.id);
 
         let intentData = {
             intentId: intent.id,
             clientSecret: intent.client_secret,
-            amount: amount,
+            amount: numAmount,
             customerId: customerId,
         };
 
