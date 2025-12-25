@@ -118,7 +118,6 @@ exports.agentAddressAdd = async (req, res) => {
         userId: userId,
         zoneId: fetchZones[0].id,
         addressType,
-        userId,
     });
 
     return ResponseHelper.success(res, "Laundary Shhop Address Added", { registerShop });

@@ -74,7 +74,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull:false
     },
     driverInstructionOptions:{
-      type:DataTypes.ENUM('Collect from me in person','Collect from Outside','Collect from reception/Porter'),
+      type:DataTypes.ENUM('Collect from me in person','Collect from Outside','Collect from reception/Porter','Collect from the reception'),
       allowNull:false,
     },
     driverInstructionOptions1:{
