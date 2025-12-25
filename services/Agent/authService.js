@@ -394,9 +394,27 @@ class AgentAuthService {
     /**
      * Login User
      * @param {Object} data - Login data
+     * @param {string} data.email - User email
+     * @param {string} data.password - User password (not required for social login)
+     * @param {string} data.dvToken - Device token
+     * @param {string} data.signedFrom - Sign in method (google, facebook, apple, or undefined for email)
      * @returns {Object} Login result
      */
     async loginUser(data) {
+        // Validate required fields
+        if (!data.email) {
+            throw new ValidationError('Email is required');
+        }
+
+        if (!data.dvToken) {
+            throw new ValidationError('Device token is required');
+        }
+
+        // Validate password for non-social login
+        if (!data.signedFrom && !data.password) {
+            throw new ValidationError('Password is required');
+        }
+
         const userFind = await users.findOne({
             where: {
                 email: data.email,
@@ -574,11 +592,15 @@ class AgentAuthService {
                 ]
             });
 
+            if (!socialUser) {
+                throw new NotFoundError('User not found with this email');
+            }
+
             if (!socialUser.status) {
                 throw new UnauthorizedError('Blocked by admin. Please contact admin to continue');
             }
 
-            const dvTokenFound = socialUser.deviceToken.find(ele => ele.tokenId === data.dvToken);
+            const dvTokenFound = socialUser.deviceToken?.find(ele => ele.tokenId === data.dvToken);
             if (!dvTokenFound) {
                 await deviceToken.create({ tokenId: data.dvToken, status: true, userId: socialUser.id });
             }
@@ -619,7 +641,7 @@ class AgentAuthService {
             });
         }
 
-        const dvTokenFound = userFind.deviceToken.find(ele => ele.tokenId === data.dvToken);
+        const dvTokenFound = userFind.deviceToken?.find(ele => ele.tokenId === data.dvToken);
         if (!dvTokenFound) {
             await deviceToken.create({ tokenId: data.dvToken, status: true, userId: userFind.id });
         }
