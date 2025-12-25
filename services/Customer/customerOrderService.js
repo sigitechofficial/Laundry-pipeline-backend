@@ -50,7 +50,8 @@ const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend } = requir
 
 // Find zones function
 async function findZones(lat, lng) {
-    console.log("Going into this function", lat, lng);
+    console.log("Finding zones for coordinates:", { lat, lng });
+    
     const findZone = await zone.findAll({
         where: {
             status: true,
@@ -66,17 +67,37 @@ async function findZones(lat, lng) {
         include: [
             {
                 model: cities,
+                required: true,
                 attributes: ["id", "name", "lat", "lng", "status"],
+                where: {
+                    deletedAt: { [Op.is]: null }
+                },
                 include: [
                     {
                         model: countries,
+                        required: true,
                         attributes: ["id", "name", "shortName", "status"],
+                        where: {
+                            deletedAt: { [Op.is]: null }
+                        },
                     },
                 ],
             },
         ],
-        attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
+        attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates"],
     });
+    
+    console.log(`Found ${findZone.length} zone(s)`);
+    if (findZone.length > 0) {
+        console.log("Zone details:", {
+            id: findZone[0].id,
+            name: findZone[0].name,
+            cityId: findZone[0].city?.id,
+            cityName: findZone[0].city?.name,
+            countryName: findZone[0].city?.country?.name
+        });
+    }
+    
     return findZone;
 }
 
@@ -1209,25 +1230,63 @@ class CustomerOrderService {
     async fetchZoneAndCharges(data) {
         const { lat, lng } = data;
 
+        console.log("=== Fetch Zone and Charges ===");
+        console.log("Coordinates:", { lat, lng });
+
         if (!lat || !lng) {
-            throw new NotFoundError("Latitude and Longitude are required");
+            throw new ValidationError("Latitude and Longitude are required");
         }
 
-        const zoneData = await findZones(lat, lng);
+        // Validate coordinates
+        const numLat = parseFloat(lat);
+        const numLng = parseFloat(lng);
+        
+        if (isNaN(numLat) || isNaN(numLng)) {
+            throw new ValidationError("Invalid latitude or longitude values");
+        }
+
+        if (numLat < -90 || numLat > 90) {
+            throw new ValidationError("Latitude must be between -90 and 90");
+        }
+
+        if (numLng < -180 || numLng > 180) {
+            throw new ValidationError("Longitude must be between -180 and 180");
+        }
+
+        const zoneData = await findZones(numLat, numLng);
 
         if (!zoneData || zoneData.length === 0) {
-            throw new NotFoundError("No Zone Found");
+            throw new NotFoundError(
+                "No active zone found for the provided coordinates. Please ensure:\n" +
+                "1. The zone exists and status is set to true\n" +
+                "2. The zone's city and country are not deleted\n" +
+                "3. The coordinates are within the zone's polygon boundaries"
+            );
         }
 
         let zoneId = zoneData[0].id;
+        let zoneName = zoneData[0].name;
         let zoneUpfrontAmount = zoneData[0].zoneMinimumAmount;
         let zoneSeviceCharge = zoneData[0].serviceCharge;
         let cityId = zoneData[0].city.id;
+        let cityName = zoneData[0].city.name;
         let countryId = zoneData[0].city.country.id;
+        let countryName = zoneData[0].city.country.name;
+
+        console.log("Zone found successfully:", { zoneId, zoneName, cityName, countryName });
 
         return {
             message: "Zone and Charges",
-            data: { zoneId, zoneUpfrontAmount, zoneSeviceCharge, cityId, countryId }
+            data: { 
+                zoneId, 
+                zoneName,
+                zoneUpfrontAmount, 
+                zoneSeviceCharge, 
+                cityId,
+                cityName,
+                countryId,
+                countryName
+            }
         };
     }
 
