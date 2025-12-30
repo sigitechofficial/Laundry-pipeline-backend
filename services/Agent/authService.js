@@ -427,6 +427,10 @@ class AgentAuthService {
                 },
                 {
                     model: addressDb,
+                    where: {
+                        addressType: 'LaundaryShopAddress'
+                    },
+                    required: false,
                     attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
                     include: [
                         {
@@ -666,7 +670,18 @@ class AgentAuthService {
         });
 
         // Get address and currency info
-        const userAddress = userFind.addressDb?.[0];
+        // Handle addressDb whether it's an array (hasMany) or single object (hasOne/belongsTo)
+        let userAddress = null;
+        if (userFind.addressDb) {
+            if (Array.isArray(userFind.addressDb)) {
+                // If it's an array, find the LaundaryShopAddress or use the first one
+                userAddress = userFind.addressDb.find(addr => addr.addressType === 'LaundaryShopAddress') || userFind.addressDb[0];
+            } else {
+                // If it's a single object
+                userAddress = userFind.addressDb;
+            }
+        }
+        
         const currencyUnit = userAddress?.zone?.currencyUnitZ?.symbol || '$';
 
         return {
@@ -851,6 +866,10 @@ class AgentAuthService {
                 },
                 {
                     model: addressDb,
+                    where: {
+                        addressType: 'LaundaryShopAddress'
+                    },
+                    required: false,
                     attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
                     include: [
                         {
