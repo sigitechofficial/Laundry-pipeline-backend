@@ -34,35 +34,86 @@ const intilizeSocketFunc = (server) => {
                 console.log("🚀 ~ socket.on ~ data:", data)
                 const userId = data.userId
                 const userTypeId = data.userTypeId
-                socket.join(userId)
-                console.log(`Socket ${socket.id} joined room ${userId}`);
+                
+                // Validate userId - ensure it's not null, undefined, or string 'null'
+                if (!userId || userId === 'null' || userId === 'undefined' || userId === null || userId === undefined) {
+                    console.error(`❌ Invalid userId received: ${userId}. Cannot join room.`);
+                    socket.emit('error', { 
+                        message: 'Invalid user ID. Please authenticate first.',
+                        code: 'INVALID_USER_ID'
+                    });
+                    return;
+                }
+                
+                socket.join(userId.toString())
+                console.log(`✅ Socket ${socket.id} joined room ${userId}`);
+                
+                // Confirm to client
+                socket.emit('roomJoined', { 
+                    userId: userId,
+                    message: 'Successfully joined room'
+                });
             } catch (error) {
-                console.error("Error in joinRoom", error)
-
+                console.error("❌ Error in joinRoom:", error)
+                socket.emit('error', { 
+                    message: 'Failed to join room',
+                    code: 'JOIN_ROOM_ERROR'
+                });
             }
         })
         //Reconnect User Event
         socket.on('re-connect', async (message) => {
-            let data = JSON.parse(message)
-            const userId = data.userId
-            console.log('🚀 ~ RECONNECT ROOM JOIN:', userId)
-            socket.join(userId)
-            const rows = await unAcknowledgedEvents.findAll({ where: { to: userId } })
-            rows.forEach((event) => {
-                //console.log(`🚀ðŸš€ðŸš€Even a`, event)
+            try {
+                let data = JSON.parse(message)
+                const userId = data.userId
+                console.log('🚀 ~ RECONNECT ROOM JOIN:', userId)
+                
+                // Validate userId
+                if (!userId || userId === 'null' || userId === 'undefined' || userId === null || userId === undefined) {
+                    console.error(`❌ Invalid userId on reconnect: ${userId}`);
+                    socket.emit('error', { 
+                        message: 'Invalid user ID on reconnect. Please authenticate first.',
+                        code: 'INVALID_USER_ID'
+                    });
+                    return;
+                }
+                
+                socket.join(userId.toString())
+                console.log(`✅ Socket ${socket.id} reconnected to room ${userId}`);
+                
+                const rows = await unAcknowledgedEvents.findAll({ 
+                    where: { to: userId.toString() } 
+                })
+                
+                rows.forEach((event) => {
+                    //console.log(`🚀🚀🚀Even a`, event)
 
-                socket_Instance
-                    .to(event.to)
-                    .emit(event.type, JSON.parse(event.data), async (ack) => {
-                        if (ack) {
-                            console.log(`🚀ðŸš€ðŸš€Even acknowledged by `)
-                            await unAcknowledgedEvents.destroy({ where: { id: event.id } })
-                            // Event was acknowledged, no further action needed
-                        } else {
-                            console.log(`🚀ðŸš€ðŸš€Event not acknowledged by `)
-                        }
-                    })
-            })
+                    socket_Instance
+                        .to(event.to)
+                        .emit(event.type, JSON.parse(event.data), async (ack) => {
+                            if (ack) {
+                                console.log(`✅ Event acknowledged by ${event.to}`)
+                                await unAcknowledgedEvents.destroy({ where: { id: event.id } })
+                                // Event was acknowledged, no further action needed
+                            } else {
+                                console.log(`⚠️ Event not acknowledged by ${event.to}`)
+                            }
+                        })
+                })
+                
+                // Confirm reconnection to client
+                socket.emit('reconnected', {
+                    userId: userId,
+                    message: 'Successfully reconnected',
+                    pendingEvents: rows.length
+                });
+            } catch (error) {
+                console.error("❌ Error in re-connect:", error);
+                socket.emit('error', { 
+                    message: 'Reconnection failed',
+                    code: 'RECONNECT_ERROR'
+                });
+            }
         })
         //Agent Accept Order
         socket.on('agentAcceptOrder', async (bookingData) => {

@@ -420,6 +420,10 @@ exports.loginUser = async (req, res) => {
             },
             {
                 model: addressDb,
+                where: {
+                    addressType: 'LaundaryShopAddress'
+                },
+                required: false,
                 attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
                 include: [
                     {
@@ -830,6 +834,10 @@ exports.session = async (req, res) => {
             },
             {
                 model: addressDb,
+                where: {
+                    addressType: 'LaundaryShopAddress'
+                },
+                required: false,
                 attributes: ['id', 'streetAddress', 'userId', 'addressType', 'province', 'postalCode', 'district', 'lat', 'lng', 'coordinates'],
                 include: [
                     {
@@ -1062,6 +1070,18 @@ const registerData = (userData, accessToken, isGuest) => {
 };
 
 const loginData = (userData, accessToken, isGuest, features) => {
+    // Handle addressDb whether it's an array (hasMany) or single object (hasOne/belongsTo)
+    let address = null;
+    if (userData?.addressDb) {
+        if (Array.isArray(userData.addressDb)) {
+            // If it's an array, find the LaundaryShopAddress or use the first one
+            address = userData.addressDb.find(addr => addr.addressType === 'LaundaryShopAddress') || userData.addressDb[0];
+        } else {
+            // If it's a single object
+            address = userData.addressDb;
+        }
+    }
+    
     return {
         status: "1",
         message: "Login successful",
@@ -1072,8 +1092,8 @@ const loginData = (userData, accessToken, isGuest, features) => {
             email: `${userData.email}`,
             accessToken: `${accessToken}`,
             userTypeId: `${userData.userTypeId}`,
-            addressId: `${userData?.addressDb?.id}`,
-            currencyUnit: `${userData?.addressDb?.zone?.currencyUnitZ?.symbol}`,
+            addressId: address?.id || null,
+            currencyUnit: address?.zone?.currencyUnitZ?.symbol || "$",
             isGuest,
             joinedOn: userData.dataValues.joinedOn
                 ? userData.dataValues.joinedOn
