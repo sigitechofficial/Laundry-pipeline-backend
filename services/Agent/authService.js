@@ -122,11 +122,12 @@ class AgentAuthService {
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store access token in Redis
-            redisCli.hSet(
-                `id-${userCreate.id}`,
-                data.dvToken,
-                accessToken
-            );
+            if (data.dvToken) {
+                await redisCli.hSet(
+                    `id-${userCreate.id}`,
+                    { [data.dvToken]: accessToken }
+                );
+            }
 
             return {
                 otpId: otpCreation.id,
@@ -615,7 +616,9 @@ class AgentAuthService {
                 dvToken: data.dvToken
             }, process.env.JWT_ACCESS_SECRET);
 
-            redisCli.hSet(`id-${socialUser.id}`, data.dvToken, accessToken);
+            if (data.dvToken) {
+                await redisCli.hSet(`id-${socialUser.id}`, { [data.dvToken]: accessToken });
+            }
 
             const featureData = await features.findAll({
                 where: { 
@@ -659,7 +662,9 @@ class AgentAuthService {
             dvToken: data.dvToken
         }, process.env.JWT_ACCESS_SECRET);
 
-        redisCli.hSet(`id-${userFind.id}`, data.dvToken, accessToken);
+        if (data.dvToken) {
+            await redisCli.hSet(`id-${userFind.id}`, { [data.dvToken]: accessToken });
+        }
 
         const featureData = await features.findAll({
             where: { 
@@ -1000,7 +1005,9 @@ class AgentAuthService {
             dvToken: data.dvToken
         }, process.env.JWT_ACCESS_SECRET);
 
-        redisCli.hSet(`id-${userData.id}`, data.dvToken, accessToken);
+        if (data.dvToken) {
+            await redisCli.hSet(`id-${userData.id}`, { [data.dvToken]: accessToken });
+        }
 
         const featureData = await features.findAll({
             where: { 

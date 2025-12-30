@@ -193,11 +193,12 @@ async function registerCustomer(req, res) {
     }, process.env.JWT_ACCESS_SECRET
     )
 
-    redisCli.hSet(
-        `id-${userfind.id}`,
-        dvToken,
-        accessToken
-    )
+    if (dvToken) {
+        await redisCli.hSet(
+            `id-${userfind.id}`,
+            { [dvToken]: accessToken }
+        )
+    }
 
 
     let outputObj = registerData(updatedUser, accessToken, false)

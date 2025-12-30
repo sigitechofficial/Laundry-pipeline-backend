@@ -211,11 +211,12 @@ class CustomerAuthService {
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            redisCli.hSet(
-                `id-${userData.id}`,
-                dvToken,
-                accessToken
-            );
+            if (dvToken) {
+                await redisCli.hSet(
+                    `id-${userData.id}`,
+                    { [dvToken]: accessToken }
+                );
+            }
 
             return {
                 userData,
@@ -255,11 +256,12 @@ class CustomerAuthService {
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            redisCli.hSet(
-                `id-${userData.id}`,
-                dvToken,
-                accessToken
-            );
+            if (dvToken) {
+                await redisCli.hSet(
+                    `id-${userData.id}`,
+                    { [dvToken]: accessToken }
+                );
+            }
 
             return {
                 userData,
@@ -431,10 +433,9 @@ class CustomerAuthService {
 
             // Store token in Redis
             if (dvToken) {
-                redisCli.hSet(
+                await redisCli.hSet(
                     `id-${userData.id}`,
-                    dvToken,
-                    accessToken
+                    { [dvToken]: accessToken }
                 );
             }
 
@@ -518,11 +519,12 @@ class CustomerAuthService {
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store in Redis
-            redisCli.hSet(
-                `id-${userFind.id}`,
-                dvToken,
-                accessToken
-            );
+            if (dvToken) {
+                await redisCli.hSet(
+                    `id-${userFind.id}`,
+                    { [dvToken]: accessToken }
+                );
+            }
 
             return {
                 type: 'success',
@@ -606,11 +608,12 @@ class CustomerAuthService {
         }, process.env.JWT_ACCESS_SECRET);
 
         // Store in Redis
-        redisCli.hSet(
-            `id-${userFind.id}`,
-            dvToken,
-            accessToken
-        );
+        if (dvToken) {
+            await redisCli.hSet(
+                `id-${userFind.id}`,
+                { [dvToken]: accessToken }
+            );
+        }
 
         return {
             type: 'success',

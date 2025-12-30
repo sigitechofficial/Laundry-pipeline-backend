@@ -401,7 +401,9 @@ async function driverRegister3(req, res) {
         uiserTypeId: userData.userTypeId
     }, process.env.JWT_ACCESS_SECRET)
 
-    redisCli.hSet(`id-${userData.id}`, dvToken, accessToken)
+    if (dvToken) {
+        await redisCli.hSet(`id-${userData.id}`, { [dvToken]: accessToken })
+    }
     const firebaseSet = await axios.get(
         "https://theshippinghack-default-rtdb.firebaseio.com/ShippingHack_driver/" +
         `${userData.id}` +
@@ -552,7 +554,9 @@ async function driverLogin(req, res) {
         userTypeId: userData.userTypeId
     }, process.env.JWT_ACCESS_SECRET)
 
-    redisCli.hSet(`id-${userData.id}`, dvToken, accessToken)
+    if (dvToken) {
+        await redisCli.hSet(`id-${userData.id}`, { [dvToken]: accessToken })
+    }
     let output = loginDataForDriver(userData, accessToken, online_status, dvToken)
     return res.json(output)
 }

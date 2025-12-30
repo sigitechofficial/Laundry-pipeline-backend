@@ -75,7 +75,9 @@ class AuthService {
             const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            redisCli.hSet(`tsh${adminData.id}`, dvToken, accessToken);
+            if (dvToken) {
+                await redisCli.hSet(`tsh${adminData.id}`, { [dvToken]: accessToken });
+            }
 
             // Prepare response data
             const output = {

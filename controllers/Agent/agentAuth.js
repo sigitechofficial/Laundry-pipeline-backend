@@ -135,11 +135,12 @@ exports.registerAgentWithOTP = async (req, res) => {
         }, process.env.JWT_ACCESS_SECRET);
 
         // Store access token in Redis
-        redisCli.hSet(
-            `id-${userCreate.id}`,
-            dvToken,
-            accessToken
-        );
+        if (dvToken) {
+            await redisCli.hSet(
+                `id-${userCreate.id}`,
+                { [dvToken]: accessToken }
+            );
+        }
 
         // Set access token in cookies
         res.cookie("accessToken", accessToken, {
@@ -598,7 +599,9 @@ exports.loginUser = async (req, res) => {
             dvToken: dvToken
         }, process.env.JWT_ACCESS_SECRET);
 
-        redisCli.hSet(`id-${socialUser.id}`, dvToken, accessToken);
+        if (dvToken) {
+            await redisCli.hSet(`id-${socialUser.id}`, { [dvToken]: accessToken });
+        }
 
         res.cookie("accessToken", accessToken, {
             httpOnly: true,
@@ -653,7 +656,9 @@ exports.loginUser = async (req, res) => {
         dvToken: dvToken
     }, process.env.JWT_ACCESS_SECRET);
 
-    redisCli.hSet(`id-${userFind.id}`, dvToken, accessToken);
+    if (dvToken) {
+        await redisCli.hSet(`id-${userFind.id}`, { [dvToken]: accessToken });
+    }
 
     res.cookie("accessToken", accessToken, {
         httpOnly: true,
@@ -964,7 +969,9 @@ exports.session = async (req, res) => {
         dvToken: dvToken
     }, process.env.JWT_ACCESS_SECRET);
 
-    redisCli.hSet(`id-${userData.id}`, dvToken, accessToken);
+    if (dvToken) {
+        await redisCli.hSet(`id-${userData.id}`, { [dvToken]: accessToken });
+    }
 
     res.cookie("accessToken", accessToken, {
         httpOnly: true,
