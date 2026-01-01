@@ -50,6 +50,7 @@ const corsOptions = {
       'https://backendlaundary.fomino.ch',
       'https://testlaundaryb.fomino.ch',
       'https://main.dwc10i0wbe49w.amplifyapp.com',
+      'https://main.d1bc8mk6y6halh.amplifyapp.com',
       'http://192.168.18.36:3001'
     ];
     
