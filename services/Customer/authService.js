@@ -191,6 +191,14 @@ class CustomerAuthService {
             });
         }
 
+        // Handle device token - generate one if not provided
+        let finalDvToken = dvToken;
+        if (!finalDvToken || finalDvToken.trim() === '') {
+            // Generate a default device token if none provided
+            finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+            console.log("⚠️ No dvToken provided during OTP verification, generated:", finalDvToken);
+        }
+
         // Handle special test OTP
         if (OTP === '5678') {
             // Update user verification status
@@ -206,17 +214,15 @@ class CustomerAuthService {
             const accessToken = jwt.sign({
                 id: userData.id,
                 email: userData.email,
-                dvToken: dvToken,
+                dvToken: finalDvToken,
                 userTypeId: userData.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            if (dvToken) {
-                await redisCli.hSet(
-                    `id-${userData.id}`,
-                    { [dvToken]: accessToken }
-                );
-            }
+            await redisCli.hSet(
+                `id-${userData.id}`,
+                { [finalDvToken]: accessToken }
+            );
 
             return {
                 userData,
@@ -251,17 +257,15 @@ class CustomerAuthService {
             const accessToken = jwt.sign({
                 id: userData.id,
                 email: userData.email,
-                dvToken: dvToken,
+                dvToken: finalDvToken,
                 userTypeId: userData.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            if (dvToken) {
-                await redisCli.hSet(
-                    `id-${userData.id}`,
-                    { [dvToken]: accessToken }
-                );
-            }
+            await redisCli.hSet(
+                `id-${userData.id}`,
+                { [finalDvToken]: accessToken }
+            );
 
             return {
                 userData,
@@ -389,14 +393,19 @@ class CustomerAuthService {
                 phoneNum: typeof phoneNum === 'string' ? phoneNum.trim() : phoneNum
             });
 
-            // Handle device token
-            if (dvToken) {
-                await deviceToken.create({
-                    tokenId: dvToken,
-                    status: true,
-                    userId: createUser.id
-                });
+            // Handle device token - generate one if not provided
+            let finalDvToken = dvToken;
+            if (!finalDvToken || finalDvToken.trim() === '') {
+                // Generate a default device token if none provided
+                finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+                console.log("⚠️ No dvToken provided, generated:", finalDvToken);
             }
+
+            await deviceToken.create({
+                tokenId: finalDvToken,
+                status: true,
+                userId: createUser.id
+            });
 
             // Fetch created user with all attributes including joinedOn
             const userData = await users.findOne({
@@ -427,17 +436,15 @@ class CustomerAuthService {
             const accessToken = jwt.sign({
                 id: userData.id,
                 email: userData.email,
-                dvToken: dvToken || '',
+                dvToken: finalDvToken,
                 userTypeId: userData.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store token in Redis
-            if (dvToken) {
-                await redisCli.hSet(
-                    `id-${userData.id}`,
-                    { [dvToken]: accessToken }
-                );
-            }
+            await redisCli.hSet(
+                `id-${userData.id}`,
+                { [finalDvToken]: accessToken }
+            );
 
             // Return success data with full user details
             return {
@@ -501,11 +508,18 @@ class CustomerAuthService {
                 });
             }
 
-            // Handle device token
-            const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === dvToken);
+            // Handle device token - generate one if not provided
+            let finalDvToken = dvToken;
+            if (!finalDvToken || finalDvToken.trim() === '') {
+                // Generate a default device token if none provided
+                finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+                console.log("⚠️ No dvToken provided, generated:", finalDvToken);
+            }
+
+            const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === finalDvToken);
             if (!dvTokenFound) {
                 await deviceToken.create({
-                    tokenId: dvToken,
+                    tokenId: finalDvToken,
                     status: true,
                     userId: userFind.id
                 });
@@ -515,16 +529,15 @@ class CustomerAuthService {
             const accessToken = jwt.sign({
                 id: userFind.id,
                 email: userFind.email,
-                dvToken: dvToken
+                dvToken: finalDvToken,
+                userTypeId: userFind.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store in Redis
-            if (dvToken) {
-                await redisCli.hSet(
-                    `id-${userFind.id}`,
-                    { [dvToken]: accessToken }
-                );
-            }
+            await redisCli.hSet(
+                `id-${userFind.id}`,
+                { [finalDvToken]: accessToken }
+            );
 
             return {
                 type: 'success',
@@ -589,12 +602,19 @@ class CustomerAuthService {
             );
         }
 
-        // Handle device token
-        const dvTokenFound = userFind.deviceTokens?.find((ele) => ele.tokenId === dvToken);
+        // Handle device token - generate one if not provided
+        let finalDvToken = dvToken;
+        if (!finalDvToken || finalDvToken.trim() === '') {
+            // Generate a default device token if none provided
+            finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+            console.log("⚠️ No dvToken provided, generated:", finalDvToken);
+        }
+
+        const dvTokenFound = userFind.deviceTokens?.find((ele) => ele.tokenId === finalDvToken);
         console.log("🚀 ~ loginUser ~ dvTokenFound:", dvTokenFound);
         if (!dvTokenFound) {
             await deviceToken.create({
-                tokenId: dvToken,
+                tokenId: finalDvToken,
                 status: true,
                 userId: userFind.id
             });
@@ -604,16 +624,15 @@ class CustomerAuthService {
         const accessToken = jwt.sign({
             id: userFind.id,
             email: userFind.email,
-            dvToken: dvToken
+            dvToken: finalDvToken,
+            userTypeId: userFind.userTypeId
         }, process.env.JWT_ACCESS_SECRET);
 
         // Store in Redis
-        if (dvToken) {
-            await redisCli.hSet(
-                `id-${userFind.id}`,
-                { [dvToken]: accessToken }
-            );
-        }
+        await redisCli.hSet(
+            `id-${userFind.id}`,
+            { [finalDvToken]: accessToken }
+        );
 
         return {
             type: 'success',
