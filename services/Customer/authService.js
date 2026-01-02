@@ -659,12 +659,22 @@ class CustomerAuthService {
                 userTypeId: { [Op.or]: [2] },
             },
             include: { model: otpVerification, attributes: ["id"] },
-            attributes: ["id"],
+            attributes: ["id", "signedFrom"],
         });
 
         // User not found
         if (!userData) {
             throw new NotFoundError("No user exists against this email");
+        }
+
+        // Check if user signed in via social login (Google, Facebook, Apple)
+        const socialProviders = ['google', 'facebook', 'apple'];
+        if (userData.signedFrom && socialProviders.includes(userData.signedFrom.toLowerCase())) {
+            const providerName = userData.signedFrom.charAt(0).toUpperCase() + userData.signedFrom.slice(1);
+            throw new ValidationError(
+                `This account is linked to ${providerName} login`,
+                `You cannot reset password for social login accounts. Please sign in using ${providerName} instead.`
+            );
         }
 
         // Generate OTP
