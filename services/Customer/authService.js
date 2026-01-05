@@ -685,11 +685,11 @@ class CustomerAuthService {
         });
 
         // Send OTP email
-        otpMail({
-            type: 'ForgetPassword',
-            email: email,
-            OTP: OTP
-        });
+        // otpMail({
+        //     type: 'ForgetPassword',
+        //     email: email,
+        //     OTP: OTP
+        // });
 
         let dt = new Date();
 
