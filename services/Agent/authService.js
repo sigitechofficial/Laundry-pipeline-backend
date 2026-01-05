@@ -29,7 +29,8 @@ class AgentAuthService {
      * @returns {Object} Registration result
      */
     async registerAgentWithOTP(data, profileImg = null) {
-        const userfind = await users.findOne({
+        // Check for existing user by email
+        const userfindByEmail = await users.findOne({
             where: {
                 email: data.email,
                 deletedAt: {
@@ -39,7 +40,7 @@ class AgentAuthService {
             include: [{
                 model: otpVerification,
                 required: false,
-                attributes: ['OTP']
+                attributes: ['id', 'OTP']
             }, {
                 model: deviceToken,
                 required: false,
@@ -60,9 +61,141 @@ class AgentAuthService {
             ],
         });
 
-        if (userfind?.email === data.email && userfind?.userTypeId === 4) {
-            throw new ConflictError('User With This Email Already Exists');
+        // Check for existing user by phone number
+        const userfindByPhone = await users.findOne({
+            where: {
+                phoneNum: data.phoneNum,
+                deletedAt: {
+                    [Op.is]: null
+                },
+                userTypeId: 4
+            },
+            attributes: [
+                "id",
+                "email",
+                "phoneNum",
+                "userTypeId",
+                "verifiedAt"
+            ],
+        });
+
+        // Check if phone number exists (with different email) - Always block
+        if (userfindByPhone && userfindByPhone.email !== data.email) {
+            if (userfindByPhone.verifiedAt) {
+                throw new ConflictError('User With This Phone Number Already Exists');
+            } else {
+                throw new ConflictError('User With This Phone Number Already Exists (Not Verified). Please use the same email to update your account.');
+            }
+        }
+
+        // Check if user exists by email and is verified
+        if (userfindByEmail?.email === data.email && userfindByEmail?.userTypeId === 4) {
+            // If user is verified, don't allow re-registration
+            if (userfindByEmail.verifiedAt) {
+                throw new ConflictError('User With This Email Already Exists');
+            }
+            
+            // User exists but NOT verified - Allow updating details and resending OTP
+            console.log("🔄 User exists but not verified. Updating details and resending OTP...");
+            
+            // Update user details
+            const hashedPassword = await bcrypt.hash(data.password, 8);
+            await users.update({
+                firstName: data.firstName,
+                lastName: data.lastName,
+                phoneNum: data.phoneNum,
+                password: hashedPassword,
+                countryCode: data.countryCode,
+                countryId: data.countryId,
+                cityId: data.cityId,
+                image: profileImg || userfindByEmail.image, // Keep existing image if new one not provided
+            }, {
+                where: { id: userfindByEmail.id }
+            });
+
+            // Update Stripe customer name if needed
+            if (data.firstName !== userfindByEmail.firstName) {
+                const stripeCustomer = await stripe.createStripeCustomer(data.firstName, data.email);
+                await users.update({
+                    stripeCustomerId: stripeCustomer
+                }, {
+                    where: { id: userfindByEmail.id }
+                });
+            }
+
+            // Generate new OTP
+            const otp = otpGenerator.generate(4, {
+                lowerCaseAlphabets: false,
+                upperCaseAlphabets: false,
+                specialChars: false
+            });
+
+            // Send new OTP
+            otpMail({
+                type: 'RegisterOTP',
+                email: data.email,
+                OTP: otp
+            });
+
+            let dt = new Date();
+
+            // Update or create OTP record
+            if (userfindByEmail.otpVerification && userfindByEmail.otpVerification.id) {
+                await otpVerification.update({
+                    OTP: otp,
+                    reqAt: dt,
+                }, {
+                    where: { userId: userfindByEmail.id }
+                });
+            } else {
+                await otpVerification.create({
+                    OTP: otp,
+                    reqAt: dt,
+                    userId: userfindByEmail.id
+                });
+            }
+
+            // Handle device token
+            if (data.dvToken) {
+                const existingDeviceToken = userfindByEmail.deviceToken?.find(dt => dt.tokenId === data.dvToken);
+                if (!existingDeviceToken) {
+                    await deviceToken.create({
+                        tokenId: data.dvToken,
+                        status: true,
+                        userId: userfindByEmail.id
+                    });
+                }
+            }
+
+            // Generate access token
+            const accessToken = jwt.sign({
+                id: userfindByEmail.id,
+                email: userfindByEmail.email,
+                dvToken: data.dvToken,
+                userTypeId: userfindByEmail.userTypeId
+            }, process.env.JWT_ACCESS_SECRET);
+
+            // Store access token in Redis
+            if (data.dvToken) {
+                await redisCli.hSet(
+                    `id-${userfindByEmail.id}`,
+                    { [data.dvToken]: accessToken }
+                );
+            }
+
+            // Get updated OTP record
+            const updatedOtp = await otpVerification.findOne({
+                where: { userId: userfindByEmail.id }
+            });
+
+            return {
+                otpId: updatedOtp.id,
+                userId: userfindByEmail.id,
+                accessToken,
+                message: "User details updated. New OTP sent to your email."
+            };
         } else {
+            // User doesn't exist - Create new user
             let userTypeId = 4;
             const hashedPassword = await bcrypt.hash(data.password, 8);
             const userCreate = await users.create({
