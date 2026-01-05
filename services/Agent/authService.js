@@ -88,8 +88,14 @@ class AgentAuthService {
             }
         }
 
-        // Check if user exists by email and is verified
-        if (userfindByEmail?.email === data.email && userfindByEmail?.userTypeId === 4) {
+        // Check if user exists by email
+        if (userfindByEmail && userfindByEmail.email === data.email) {
+            // If user exists with different userTypeId, throw error
+            if (userfindByEmail.userTypeId === 4) {
+                throw new ConflictError('User With This Email Already Exists');
+            }
+            
+            // User exists with userTypeId 4 (Agent)
             // If user is verified, don't allow re-registration
             if (userfindByEmail.verifiedAt) {
                 throw new ConflictError('User With This Email Already Exists');
