@@ -666,7 +666,8 @@ class AgentAuthService {
         if (!userFind.addressDb || userFind.addressDb.length === 0) {
             throw new ValidationError("Cannot login without adding an address", { 
                 userId: userFind.id,
-                message: "Please add your address to continue"
+                message: "Please add your address to continue",
+                addressMissing: true
             });
         }
 
@@ -1108,6 +1109,7 @@ class AgentAuthService {
         if (!userData.addressDb || userData.addressDb.length === 0) {
             throw new ValidationError("Cannot proceed without adding an address", { 
                 userId: userData.id,
+                addressMissing: true
             });
         }
 
