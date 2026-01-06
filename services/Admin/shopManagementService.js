@@ -1,4 +1,4 @@
-const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users } = require('../../models');
+const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users, roles } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { 
@@ -232,6 +232,109 @@ class ShopManagementService {
                 }
             });
             return findEmployees;
+    }
+
+    /**
+     * Get all employees with their shop information
+     * @returns {Array} List of all employees with shop details
+     */
+    async getAllEmployeesWithShopInfo() {
+        const allEmployees = await users.findAll({
+            where: {
+                classifiedAsId: 1,
+                deletedAt: { [Op.is]: null }
+            },
+            attributes: [
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'phoneNum',
+                'status',
+                'image',
+                'countryCode',
+                'employeeOff',
+                'roleId',
+                'createdAt',
+                'updatedAt'
+            ],
+            include: [
+                {
+                    model: roles,
+                    attributes: ['id', 'name']
+                }
+            ],
+            order: [['createdAt', 'DESC']]
+        });
+
+        // Get all unique agent IDs from employees
+        const agentIds = [...new Set(allEmployees.map(emp => emp.employeeOff).filter(Boolean))];
+        
+        // Fetch all shops for these agents
+        const shops = await bussinessInformation.findAll({
+            where: {
+                agentId: { [Op.in]: agentIds }
+            },
+            attributes: [
+                'id',
+                'shopName',
+                'matchProfileOptions',
+                'otherText',
+                'shopAddressId',
+                'agentId'
+            ],
+            include: [
+                {
+                    model: addressDb,
+                    attributes: [
+                        'id',
+                        'streetAddress',
+                        'province',
+                        'district',
+                        'postalCode',
+                        'addressType',
+                        'cityId',
+                        'countryId',
+                        'lat',
+                        'lng'
+                    ],
+                    include: [
+                        {
+                            model: countries,
+                            attributes: ['id', 'name', 'shortName', 'image']
+                        },
+                        {
+                            model: cities,
+                            attributes: ['id', 'name']
+                        },
+                        {
+                            model: zone,
+                            attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                        }
+                    ]
+                }
+            ]
+        });
+
+        // Create a map of agentId -> shop info
+        const shopMap = {};
+        shops.forEach(shop => {
+            shopMap[shop.agentId] = shop;
+        });
+
+        // Attach shop info to each employee
+        const employeesWithShops = allEmployees.map(employee => {
+            const employeeData = employee.toJSON();
+            const shopInfo = employeeData.employeeOff ? shopMap[employeeData.employeeOff] : null;
+            return {
+                ...employeeData,
+                shopInfo: shopInfo || null
+            };
+        });
+
+        return {
+            employees: employeesWithShops
+        };
     }
 }
 

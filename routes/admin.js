@@ -320,6 +320,8 @@ router.get('/getShopsData', validateAccessToken, asyncMiddleware(adminController
 router.get('/singleShopData/:Id', validateAccessToken, asyncMiddleware(adminController.singleShopData))
 //Get Shop Employees 
 router.get('/getShopEmployees/:bussinessId', validateAccessToken, asyncMiddleware(adminController.getShopEmployees))
+//Get All Employees with Shop Information
+router.get('/getAllEmployeesWithShopInfo', validateAccessToken, asyncMiddleware(adminController.getAllEmployeesWithShopInfo))
 
 
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>

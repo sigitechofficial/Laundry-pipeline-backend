@@ -810,6 +810,14 @@ async function getShopEmployees(req, res) {
 
 }
 
+/*
+ * Get All Employees with Shop Information
+ */
+async function getAllEmployeesWithShopInfo(req, res) {
+    const result = await shopManagementService.getAllEmployeesWithShopInfo();
+    return ResponseHelper.success(res, "All Employees with Shop Information Fetched", result);
+}
+
 
 //!---------------------------------Cancellation Policy Management--------------------------------------->>
 
@@ -1905,6 +1913,7 @@ module.exports = {
     shopsData,
     singleShopData,
     getShopEmployees,
+    getAllEmployeesWithShopInfo,
     //!------------Cancellation Policy Management-----------//
     createCancellationPolicyController,
     getCancellationPolicyByIdController,
