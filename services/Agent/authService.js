@@ -694,7 +694,7 @@ class AgentAuthService {
                 services: services,
                 agentInfo: agentInfo,
                 userMachineInfo: userMachineInfo,
-                message: "Please complete your business information and services setup"
+                addBusinessInformationMissing: true,
             });
         }
 
