@@ -481,18 +481,25 @@ class AgentAuthService {
 
         const existingServiceIds = new Set(existingServices.map(s => s.serviceId));
 
-        const duplicateServices = data.services
+        // Filter out duplicate services - only keep new services that don't already exist
+        const newServices = data.services.filter(service => !existingServiceIds.has(service.serviceId));
+        
+        // Get list of duplicate service IDs that were ignored
+        const duplicateServiceIds = data.services
             .filter(service => existingServiceIds.has(service.serviceId))
             .map(service => service.serviceId);
 
-        if (duplicateServices.length > 0) {
-            throw new ConflictError(
-                `Some services already exist for this agent.`,
-                { duplicateServiceIds: duplicateServices }
-            );
+        // If no new services to add, return early
+        if (newServices.length === 0) {
+            return {
+                message: "All services already exist. No new services added.",
+                duplicateServiceIds: duplicateServiceIds,
+                addedServices: []
+            };
         }
 
-        const servicesToCreate = data.services.map(service => ({
+        // Create only the new services (non-duplicates)
+        const servicesToCreate = newServices.map(service => ({
             serviceId: service.serviceId,
             status: true,
             agentServiceId: data.userId
@@ -502,6 +509,11 @@ class AgentAuthService {
 
         return {
             serviceCreate,
+            message: duplicateServiceIds.length > 0 
+                ? `${newServices.length} new service(s) added. ${duplicateServiceIds.length} duplicate service(s) ignored.`
+                : `${newServices.length} service(s) added successfully.`,
+            duplicateServiceIds: duplicateServiceIds,
+            addedServiceIds: newServices.map(s => s.serviceId)
         };
     }
 
