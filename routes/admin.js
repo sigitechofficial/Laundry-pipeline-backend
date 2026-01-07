@@ -325,24 +325,24 @@ router.get('/getAllEmployeesWithShopInfo', validateAccessToken, asyncMiddleware(
 
 
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>
-// Create Cancellation Policy
-router.post('/cancellation-policy', validateAccessToken, asyncMiddleware(adminController.createCancellationPolicyController))
+// Add Cancellation Policy
+router.post('/addCancellationPolicy', validateAccessToken, asyncMiddleware(adminController.createCancellationPolicyController))
 // Get All Cancellation Policies
-router.get('/cancellation-policies', validateAccessToken, asyncMiddleware(adminController.getAllCancellationPoliciesController))
+router.get('/getCancellationPolicies', validateAccessToken, asyncMiddleware(adminController.getAllCancellationPoliciesController))
 // Get Cancellation Policy by ID
-router.get('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyByIdController))
+router.get('/getCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyByIdController))
 // Update Cancellation Policy
-router.put('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.updateCancellationPolicyController))
+router.put('/updateCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateCancellationPolicyController))
 // Delete Cancellation Policy
-router.delete('/cancellation-policy/:id', validateAccessToken, asyncMiddleware(adminController.deleteCancellationPolicyController))
+router.delete('/deleteCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteCancellationPolicyController))
 // Set Default Cancellation Policy
-router.patch('/cancellation-policy/:id/set-default', validateAccessToken, asyncMiddleware(adminController.setDefaultCancellationPolicyController))
+router.patch('/setDefaultCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultCancellationPolicyController))
 // Toggle Cancellation Policy Status
-router.patch('/cancellation-policy/:id/toggle-status', validateAccessToken, asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
+router.patch('/toggleCancellationPolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
 // Get Active Cancellation Policy
-router.get('/cancellation-policy/active/current', validateAccessToken, asyncMiddleware(adminController.getActiveCancellationPolicyController))
+router.get('/getActiveCancellationPolicy', validateAccessToken, asyncMiddleware(adminController.getActiveCancellationPolicyController))
 // Get Cancellation Policy Statistics
-router.get('/cancellation-policy/statistics/summary', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
+router.get('/getCancellationPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
 
 
 module.exports = router
