@@ -88,6 +88,7 @@ const {
     vehicleManagementService,
     roleManagementService,
     cancellationPolicyService: cancellationPolicyServiceImport,
+    noShowPolicyService,
     featureManagementService,
     locationManagementService,
     agentRegistrationService
@@ -910,6 +911,100 @@ async function getActiveCancellationPolicyController(req, res) {
 async function getCancellationPolicyStatisticsController(req, res) {
     const result = await cancellationPolicyServiceImport.getCancellationPolicyStatistics();
     return ResponseHelper.success(res, "Cancellation policy statistics", result);
+}
+
+
+//!---------------------------------No-Show Policy Management--------------------------------------->>
+
+/*
+ * Create No-Show Policy
+ */
+async function createNoShowPolicyController(req, res) {
+    const userId = req.user.id;
+    const policyData = {
+        ...req.body,
+        createdBy: userId
+    };
+    const result = await noShowPolicyService.createNoShowPolicy(policyData);
+    return ResponseHelper.success(res, "No-show policy created successfully", result);
+}
+
+/*
+ * Get No-Show Policy by ID
+ */
+async function getNoShowPolicyByIdController(req, res) {
+    const { id } = req.params;
+    const result = await noShowPolicyService.getNoShowPolicyById(id);
+    return ResponseHelper.success(res, "No-show policy details", result);
+}
+
+/*
+ * Get All No-Show Policies
+ */
+async function getAllNoShowPoliciesController(req, res) {
+    const filters = {
+        isActive: req.query.isActive,
+        isDefault: req.query.isDefault,
+        page: parseInt(req.query.page) || 1,
+        limit: parseInt(req.query.limit) || 10
+    };
+    const result = await noShowPolicyService.getAllNoShowPolicies(filters);
+    return ResponseHelper.success(res, "All no-show policies", result);
+}
+
+/*
+ * Update No-Show Policy
+ */
+async function updateNoShowPolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await noShowPolicyService.updateNoShowPolicy(id, req.body, userId);
+    return ResponseHelper.success(res, "No-show policy updated successfully", result);
+}
+
+/*
+ * Delete No-Show Policy
+ */
+async function deleteNoShowPolicyController(req, res) {
+    const { id } = req.params;
+    const result = await noShowPolicyService.deleteNoShowPolicy(id);
+    return ResponseHelper.success(res, result.message, { policyId: result.policyId });
+}
+
+/*
+ * Set Default No-Show Policy
+ */
+async function setDefaultNoShowPolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await noShowPolicyService.setDefaultNoShowPolicy(id, userId);
+    return ResponseHelper.success(res, "Default no-show policy set successfully", result);
+}
+
+/*
+ * Toggle No-Show Policy Status
+ */
+async function toggleNoShowPolicyStatusController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await noShowPolicyService.toggleNoShowPolicyStatus(id, userId);
+    return ResponseHelper.success(res, "No-show policy status toggled successfully", result);
+}
+
+/*
+ * Get Active No-Show Policy
+ */
+async function getActiveNoShowPolicyController(req, res) {
+    const result = await noShowPolicyService.getActiveNoShowPolicy();
+    return ResponseHelper.success(res, "Active no-show policy", result);
+}
+
+/*
+ * Get No-Show Policy Statistics
+ */
+async function getNoShowPolicyStatisticsController(req, res) {
+    const result = await noShowPolicyService.getNoShowPolicyStatistics();
+    return ResponseHelper.success(res, "No-show policy statistics", result);
 }
 
 
@@ -1923,5 +2018,15 @@ module.exports = {
     setDefaultCancellationPolicyController,
     toggleCancellationPolicyStatusController,
     getActiveCancellationPolicyController,
-    getCancellationPolicyStatisticsController
+    getCancellationPolicyStatisticsController,
+    //!-------------No-Show Policy--------//
+    createNoShowPolicyController,
+    getNoShowPolicyByIdController,
+    getAllNoShowPoliciesController,
+    updateNoShowPolicyController,
+    deleteNoShowPolicyController,
+    setDefaultNoShowPolicyController,
+    toggleNoShowPolicyStatusController,
+    getActiveNoShowPolicyController,
+    getNoShowPolicyStatisticsController
 }

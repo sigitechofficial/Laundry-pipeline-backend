@@ -345,4 +345,25 @@ router.get('/getActiveCancellationPolicy', validateAccessToken, asyncMiddleware(
 router.get('/getCancellationPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
 
 
+//!-----------------------------------No-Show Policy Management------------------------------------>>>>
+// Add No-Show Policy
+router.post('/addNoShowPolicy', validateAccessToken, asyncMiddleware(adminController.createNoShowPolicyController))
+// Get All No-Show Policies
+router.get('/getNoShowPolicies', validateAccessToken, asyncMiddleware(adminController.getAllNoShowPoliciesController))
+// Get No-Show Policy by ID
+router.get('/getNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyByIdController))
+// Update No-Show Policy
+router.put('/updateNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateNoShowPolicyController))
+// Delete No-Show Policy
+router.delete('/deleteNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteNoShowPolicyController))
+// Set Default No-Show Policy
+router.patch('/setDefaultNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultNoShowPolicyController))
+// Toggle No-Show Policy Status
+router.patch('/toggleNoShowPolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleNoShowPolicyStatusController))
+// Get Active No-Show Policy
+router.get('/getActiveNoShowPolicy', validateAccessToken, asyncMiddleware(adminController.getActiveNoShowPolicyController))
+// Get No-Show Policy Statistics
+router.get('/getNoShowPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyStatisticsController))
+
+
 module.exports = router
