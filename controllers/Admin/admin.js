@@ -1546,11 +1546,20 @@ async function addMachines(req, res) {
 
 //!--------------------------------------------Reason Management-----------------------------------------------//
 /*
-  * Create Reason
+  * Create Reason(s) - Supports single reason or array of reasons
+  * Single: { "cancelReason": "reason text" }
+  * Array: { "cancelReasons": ["reason1", "reason2", "reason3"] }
 */
 async function createReason(req, res) {
-    const newReason = await reasonService.createReason(req.body);
-    return ResponseHelper.success(res, "Reason Added Successfully", newReason);
+    const result = await reasonService.createReason(req.body);
+    
+    // Handle array response (bulk create)
+    if (result.created && Array.isArray(result.created)) {
+        return ResponseHelper.success(res, result.message, result);
+    }
+    
+    // Handle single reason response
+    return ResponseHelper.success(res, "Reason Added Successfully", result);
 }
 
 /*
