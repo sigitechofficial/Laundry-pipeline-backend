@@ -91,7 +91,8 @@ const {
     noShowPolicyService,
     featureManagementService,
     locationManagementService,
-    agentRegistrationService
+    agentRegistrationService,
+    reasonService
 } = require('../../services/Admin');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
@@ -1543,6 +1544,50 @@ async function addMachines(req, res) {
 }
 
 
+//!--------------------------------------------Reason Management-----------------------------------------------//
+/*
+  * Create Reason
+*/
+async function createReason(req, res) {
+    const newReason = await reasonService.createReason(req.body);
+    return ResponseHelper.success(res, "Reason Added Successfully", newReason);
+}
+
+/*
+  * Get All Reasons
+*/
+async function getAllReasons(req, res) {
+    const reasons = await reasonService.getAllReasons();
+    return ResponseHelper.success(res, "Reasons Retrieved Successfully", reasons);
+}
+
+/*
+  * Get Reason By ID
+*/
+async function getReasonById(req, res) {
+    const { reasonId } = req.params;
+    const reason = await reasonService.getReasonById(reasonId);
+    return ResponseHelper.success(res, "Reason Retrieved Successfully", reason);
+}
+
+/*
+  * Update Reason
+*/
+async function updateReason(req, res) {
+    const { reasonId } = req.params;
+    const updatedReason = await reasonService.updateReason(reasonId, req.body);
+    return ResponseHelper.success(res, "Reason Updated Successfully", updatedReason);
+}
+
+/*
+  * Delete Reason
+*/
+async function deleteReason(req, res) {
+    const { reasonId } = req.params;
+    await reasonService.deleteReason(reasonId);
+    return ResponseHelper.success(res, "Reason Deleted Successfully", null);
+}
+
 
 //!-----------------------------Add Match Preferences-------------------------//
 /*
@@ -1935,6 +1980,12 @@ module.exports = {
     laundryRoles,
     //!-------------Machinery--------//
     addMachines,
+    //!-------------Reason Management--------//
+    createReason,
+    getAllReasons,
+    getReasonById,
+    updateReason,
+    deleteReason,
     //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,

@@ -168,6 +168,19 @@ router.get('/adminDashboard', validateAccessToken, asyncMiddleware(adminControll
 
 //!-------------------------Machinery-----------------------------------------------------------------------------//
 router.post('/addMachines', validateAccessToken, asyncMiddleware(adminController.addMachines))
+
+//!-------------------------Reason Management------------------------------------------------------------------//
+//Create Reason
+router.post('/createReason', validateAccessToken, asyncMiddleware(adminController.createReason))
+//Get All Reasons
+router.get('/getAllReasons', validateAccessToken, asyncMiddleware(adminController.getAllReasons))
+//Get Reason By ID
+router.get('/getReasonById/:reasonId', validateAccessToken, asyncMiddleware(adminController.getReasonById))
+//Update Reason
+router.patch('/updateReason/:reasonId', validateAccessToken, asyncMiddleware(adminController.updateReason))
+//Delete Reason
+router.delete('/deleteReason/:reasonId', validateAccessToken, asyncMiddleware(adminController.deleteReason))
+
 //!-------------------------Account Preferences------------------------------------------------------------------//
 //Add Preference Types
 router.post('/createPreferenceType', validateAccessToken, asyncMiddleware(adminController.createPreferenceType))
