@@ -9,6 +9,7 @@ const employeeManagementService = require('./employeeManagementService');
 const authService = require('./authService');
 const prefrencesServices = require('./prefrencesServices');
 const zoneManagementService = require('./zoneManagementService');
+const postcodeZoneService = require('./postcodeZoneService');
 const vehicleManagementService = require('./vehicleManagementService');
 const roleManagementService = require('./roleManagementService');
 const featureManagementService = require('./featureManagementService');
@@ -30,6 +31,7 @@ module.exports = {
     authService,
     prefrencesServices,
     zoneManagementService,
+    postcodeZoneService,
     vehicleManagementService,
     roleManagementService,
     featureManagementService,

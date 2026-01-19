@@ -122,6 +122,8 @@ router.delete('/deleteCity/:cityId', validateAccessToken, asyncMiddleware(adminC
 //!---------------------------------------Zones-----------------------------------------//
 //Add Zones
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))
+//Add Zones by Postcodes
+router.post('/addZoneByPostcodes', validateAccessToken, asyncMiddleware(adminController.addZonesByPostcodes))
 // Get Zones
 router.get('/getZones', validateAccessToken, asyncMiddleware(adminController.getZones))
 //Delete Zone

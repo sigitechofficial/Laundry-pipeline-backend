@@ -85,6 +85,7 @@ const {
     prefrencesServices,
     employeeManagementService,
     zoneManagementService,
+    postcodeZoneService,
     vehicleManagementService,
     roleManagementService,
     cancellationPolicyService: cancellationPolicyServiceImport,
@@ -1180,6 +1181,15 @@ async function addZones(req, res) {
 
 
 /*
+ * Add Zones by Postcodes
+*/
+async function addZonesByPostcodes(req, res) {
+    const zoneCreate = await postcodeZoneService.addZoneByPostcodes(req.body);
+    return ResponseHelper.success(res, "Zone Added Successfully Using Postcodes", zoneCreate);
+}
+
+
+/*
    * Get Zones
 */
 
@@ -1958,6 +1968,7 @@ module.exports = {
     getCountries,
     //!-------------Add Zones--------//
     addZones,
+    addZonesByPostcodes,
     getZones,
     deleteZone,
     updateZone,
