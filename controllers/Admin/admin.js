@@ -1184,6 +1184,10 @@ async function addZones(req, res) {
  * Add Zones by Postcodes
 */
 async function addZonesByPostcodes(req, res) {
+    console.log('=== Controller: addZonesByPostcodes ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Content-Type:', req.headers['content-type']);
+    
     const zoneCreate = await postcodeZoneService.addZoneByPostcodes(req.body);
     return ResponseHelper.success(res, "Zone Added Successfully Using Postcodes", zoneCreate);
 }
