@@ -25,7 +25,8 @@ const {
     bookingPreference,
     serviceWithPreferences,
     preferenceTypes,
-    preferenceValues
+    preferenceValues,
+    proofOfDeliveries
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -1037,8 +1038,12 @@ class CustomerOrderService {
                     ],
                 },
                 {
-                    model:zone,
-                    attributes:["id","name","zoneMinimumAmount","serviceCharge"],
+                    model: zone,
+                    attributes: ["id","name","zoneMinimumAmount","serviceCharge"],
+                },
+                {
+                    model: proofOfDeliveries,
+                    attributes: ["id", "imgUpload", "noOfItems", "note", "deliveryType", "createdAt", "updatedAt"],
                 }
             ],
         });
