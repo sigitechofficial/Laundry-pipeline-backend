@@ -1022,6 +1022,20 @@ class CustomerOrderService {
                         "subCategoryId",
                         "items",
                     ],
+                    include: [
+                        {
+                            model: service,
+                            attributes: ["id", "name", "status", "image"],
+                        },
+                        {
+                            model: categories,
+                            attributes: ["id", "name", "status", "image", "description"],
+                        },
+                        {
+                            model: subCategories,
+                            attributes: ["id", "name", "status", "price"],
+                        },
+                    ],
                 },
                 {
                     model: bookingStatus,
