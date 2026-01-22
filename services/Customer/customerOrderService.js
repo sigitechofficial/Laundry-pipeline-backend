@@ -1026,14 +1026,17 @@ class CustomerOrderService {
                         {
                             model: service,
                             attributes: ["id", "name", "status", "image"],
+                            required: false,
                         },
                         {
                             model: categories,
                             attributes: ["id", "name", "status", "image", "description"],
+                            required: false,
                         },
                         {
                             model: subCategories,
                             attributes: ["id", "name", "status", "price"],
+                            required: false,
                         },
                     ],
                 },
