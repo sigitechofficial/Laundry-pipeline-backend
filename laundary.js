@@ -134,9 +134,56 @@ intilizeSocketFunc(server);
 const server_port = process.env.PORT;
 let syncDb = 0;
 
+/**
+ * Cleanup orphaned records before database sync
+ * Removes records with foreign keys that reference non-existent parent records
+ */
+async function cleanupOrphanedRecords() {
+  try {
+    const { sequelize } = db;
+    console.log('\x1b[33m%s\x1b[0m', '<================= Starting orphaned records cleanup =======================>');
+    
+    // Clean up orphaned addresses (userId doesn't exist in users table)
+    const [addressResults] = await sequelize.query(`
+      DELETE FROM addressDbs 
+      WHERE userId IS NOT NULL 
+      AND userId NOT IN (
+        SELECT id FROM (
+          SELECT id FROM users WHERE deletedAt IS NULL
+        ) AS valid_users
+      )
+    `);
+    const addressCount = addressResults?.affectedRows || 0;
+    if (addressCount > 0) {
+      console.log(`\x1b[33m%s\x1b[0m`, `  ✓ Cleaned up ${addressCount} orphaned address records`);
+    } else {
+      console.log(`\x1b[32m%s\x1b[0m`, `  ✓ No orphaned address records found`);
+    }
+    
+    // Add more cleanup queries here for other tables if needed
+    // Example:
+    // const [bookingResults] = await sequelize.query(`
+    //   DELETE FROM bookings 
+    //   WHERE customerId IS NOT NULL 
+    //   AND customerId NOT IN (SELECT id FROM users WHERE deletedAt IS NULL)
+    // `);
+    // console.log(`  ✓ Cleaned up ${bookingResults?.affectedRows || 0} orphaned booking records`);
+    
+    console.log('\x1b[32m%s\x1b[0m', '<================= Orphaned records cleanup completed =======================>');
+    
+  } catch (error) {
+    console.error('\x1b[31m%s\x1b[0m', 'Error cleaning up orphaned records:', error.message);
+    // Don't throw - allow sync to continue even if cleanup fails
+    // Log the error but don't block server startup
+  }
+}
+
 async function startServer() {
   try {
     if (syncDb) {
+      // Clean up orphaned records BEFORE sync
+      await cleanupOrphanedRecords();
+      
       await db.sequelize.sync({ alter: true });
       console.log('\x1b[32m%s\x1b[0m', '<================= Database synchronized =======================>');
     }
