@@ -17,8 +17,12 @@ module.exports = (sequelize, DataTypes) => {
       models.booking.belongsTo(categories)
 
       // Relation with Model customerSelectedService
-      categories.hasMany(models.customerSelectedService)
-      models.customerSelectedService.belongsTo(categories)
+      categories.hasMany(models.customerSelectedService, {
+        foreignKey: 'categoryId'
+      })
+      models.customerSelectedService.belongsTo(categories, {
+        foreignKey: 'categoryId'
+      })
 
       //Relation with Model serviceCategories
       categories.hasMany(models.serviceCategories)

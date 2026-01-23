@@ -15,8 +15,12 @@ module.exports = (sequelize, DataTypes) => {
       models.booking.belongsTo(subCategories)
 
       //Relation with Model customerSelectedService
-      subCategories.hasMany(models.customerSelectedService)
-      models.customerSelectedService.belongsTo(subCategories)
+      subCategories.hasMany(models.customerSelectedService, {
+        foreignKey: 'subCategoryId'
+      })
+      models.customerSelectedService.belongsTo(subCategories, {
+        foreignKey: 'subCategoryId'
+      })
 
       //Relation with Model on Hold Conformations
       subCategories.hasMany(models.OnHoldConfirmation)

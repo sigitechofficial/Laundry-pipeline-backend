@@ -15,8 +15,12 @@ module.exports = (sequelize, DataTypes) => {
       models.booking.belongsTo(service)
 
       //Realtion with Model customerSelectedService
-      service.hasMany(models.customerSelectedService)
-      models.customerSelectedService.belongsTo(service)
+      service.hasMany(models.customerSelectedService, {
+        foreignKey: 'serviceId'
+      })
+      models.customerSelectedService.belongsTo(service, {
+        foreignKey: 'serviceId'
+      })
 
       //Relation with Model AgentSelectServices
       service.hasOne(models.agentSelectServices)
