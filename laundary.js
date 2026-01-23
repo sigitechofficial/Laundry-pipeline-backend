@@ -135,46 +135,114 @@ const server_port = process.env.PORT;
 let syncDb = 0;
 
 /**
- * Cleanup orphaned records before database sync
- * Removes records with foreign keys that reference non-existent parent records
+ * Generic cleanup for orphaned records across ALL tables
+ * Automatically discovers foreign key relationships and cleans up orphaned records
  */
 async function cleanupOrphanedRecords() {
   try {
     const { sequelize } = db;
-    console.log('\x1b[33m%s\x1b[0m', '<================= Starting orphaned records cleanup =======================>');
+    const dbName = sequelize.config.database;
     
-    // Clean up orphaned addresses (userId doesn't exist in users table)
-    const [addressResults] = await sequelize.query(`
-      DELETE FROM addressDbs 
-      WHERE userId IS NOT NULL 
-      AND userId NOT IN (
-        SELECT id FROM (
-          SELECT id FROM users WHERE deletedAt IS NULL
-        ) AS valid_users
-      )
+    console.log('\x1b[33m%s\x1b[0m', '<================= Starting generic orphaned records cleanup =======================>');
+    
+    // Get all foreign key constraints from the database
+    const [foreignKeys] = await sequelize.query(`
+      SELECT 
+        TABLE_NAME as tableName,
+        COLUMN_NAME as columnName,
+        REFERENCED_TABLE_NAME as referencedTable,
+        REFERENCED_COLUMN_NAME as referencedColumn,
+        CONSTRAINT_NAME as constraintName
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = '${dbName}'
+        AND REFERENCED_TABLE_NAME IS NOT NULL
+      ORDER BY TABLE_NAME, COLUMN_NAME
     `);
-    const addressCount = addressResults?.affectedRows || 0;
-    if (addressCount > 0) {
-      console.log(`\x1b[33m%s\x1b[0m`, `  ✓ Cleaned up ${addressCount} orphaned address records`);
-    } else {
-      console.log(`\x1b[32m%s\x1b[0m`, `  ✓ No orphaned address records found`);
+    
+    if (!foreignKeys || foreignKeys.length === 0) {
+      console.log('\x1b[32m%s\x1b[0m', '  ✓ No foreign keys found to clean up');
+      console.log('\x1b[32m%s\x1b[0m', '<================= Orphaned records cleanup completed =======================>');
+      return;
     }
     
-    // Add more cleanup queries here for other tables if needed
-    // Example:
-    // const [bookingResults] = await sequelize.query(`
-    //   DELETE FROM bookings 
-    //   WHERE customerId IS NOT NULL 
-    //   AND customerId NOT IN (SELECT id FROM users WHERE deletedAt IS NULL)
-    // `);
-    // console.log(`  ✓ Cleaned up ${bookingResults?.affectedRows || 0} orphaned booking records`);
+    console.log(`\x1b[36m%s\x1b[0m`, `  Found ${foreignKeys.length} foreign key relationships to check`);
+    
+    let totalCleaned = 0;
+    const criticalTables = ['bookings', 'billingDetails', 'bookingHistories', 'customerSelectedServices'];
+    
+    for (const fk of foreignKeys) {
+      try {
+        const { tableName, columnName, referencedTable, referencedColumn } = fk;
+        
+        // Check if referenced table has paranoid (soft delete) support
+        const [tableInfo] = await sequelize.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = '${dbName}' 
+            AND TABLE_NAME = '${referencedTable}' 
+            AND COLUMN_NAME = 'deletedAt'
+        `);
+        
+        const hasParanoid = tableInfo && tableInfo.length > 0;
+        const paranoidCondition = hasParanoid ? 'AND deletedAt IS NULL' : '';
+        
+        // For critical tables, UPDATE to NULL instead of DELETE
+        const isCriticalTable = criticalTables.includes(tableName);
+        
+        if (isCriticalTable) {
+          // Set foreign key to NULL for critical tables
+          const [result] = await sequelize.query(`
+            UPDATE ${tableName}
+            SET ${columnName} = NULL
+            WHERE ${columnName} IS NOT NULL
+              AND ${columnName} NOT IN (
+                SELECT ${referencedColumn} FROM (
+                  SELECT ${referencedColumn} FROM ${referencedTable} WHERE 1=1 ${paranoidCondition}
+                ) AS valid_refs
+              )
+          `);
+          
+          const affectedRows = result?.affectedRows || 0;
+          if (affectedRows > 0) {
+            console.log(`\x1b[33m%s\x1b[0m`, `  ✓ ${tableName}.${columnName}: Set ${affectedRows} orphaned references to NULL`);
+            totalCleaned += affectedRows;
+          }
+        } else {
+          // Delete orphaned records for non-critical tables
+          const [result] = await sequelize.query(`
+            DELETE FROM ${tableName}
+            WHERE ${columnName} IS NOT NULL
+              AND ${columnName} NOT IN (
+                SELECT ${referencedColumn} FROM (
+                  SELECT ${referencedColumn} FROM ${referencedTable} WHERE 1=1 ${paranoidCondition}
+                ) AS valid_refs
+              )
+          `);
+          
+          const affectedRows = result?.affectedRows || 0;
+          if (affectedRows > 0) {
+            console.log(`\x1b[33m%s\x1b[0m`, `  ✓ ${tableName}.${columnName}: Deleted ${affectedRows} orphaned records`);
+            totalCleaned += affectedRows;
+          }
+        }
+      } catch (fkError) {
+        // Log but continue with other foreign keys
+        console.log(`\x1b[31m%s\x1b[0m`, `  ✗ Error cleaning ${fk.tableName}.${fk.columnName}: ${fkError.message}`);
+      }
+    }
+    
+    if (totalCleaned > 0) {
+      console.log(`\x1b[33m%s\x1b[0m`, `  Total: Cleaned ${totalCleaned} orphaned references`);
+    } else {
+      console.log(`\x1b[32m%s\x1b[0m`, `  ✓ No orphaned records found - database is clean!`);
+    }
     
     console.log('\x1b[32m%s\x1b[0m', '<================= Orphaned records cleanup completed =======================>');
     
   } catch (error) {
-    console.error('\x1b[31m%s\x1b[0m', 'Error cleaning up orphaned records:', error.message);
+    console.error('\x1b[31m%s\x1b[0m', 'Error in generic cleanup function:', error.message);
+    console.error('\x1b[31m%s\x1b[0m', 'Stack:', error.stack);
     // Don't throw - allow sync to continue even if cleanup fails
-    // Log the error but don't block server startup
   }
 }
 
