@@ -77,9 +77,12 @@ class CancelBookingService {
             userId: customerId
         });
 
-        // Step 8: Update booking status to Cancelled (19)
+        // Step 8: Update booking status to Cancelled (19) and set cancellation policy ID
         await booking.update(
-            { bookingStatusId: 19 },
+            { 
+                bookingStatusId: 19,
+                cancellationPolicyId: activeCancellationPolicy?.id || null
+            },
             { where: { id: bookingId } }
         );
 
