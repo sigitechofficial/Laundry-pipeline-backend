@@ -20,7 +20,28 @@ module.exports = (sequelize, DataTypes) => {
         as: 'cancellationConfig'
       })
       models.cancellationPolicyConfig.belongsTo(policy)
+
+
+     //Realtion with the Booking Table as Cancellation Policy 
+      policy.hasMany(models.booking,{foreignKey:'cancellationPolicyId',as:'cancellationPolicyBookings'})
+     models.booking.belongsTo(policy, {
+      foreignKey: 'cancellationPolicyId',
+      as: 'cancellationPolicyBookings'
+    })
+
+         //Realtion with the Booking Table as No Show Policy 
+      policy.hasMany(models.booking,{foreignKey:'noShowPolicyId',as:'noShowPolicyBookings'})
+     models.booking.belongsTo(policy, {
+      foreignKey: 'noShowPolicyId',
+      as: 'noShowPolicyBookings'
+    })
+
+
+
+
     }
+
+
   }
   policy.init({
     id: {
