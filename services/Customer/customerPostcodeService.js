@@ -44,16 +44,17 @@ class CustomerPostcodeService {
                 throw new ValidationError('getAddress.io API key is not configured');
             }
 
-            // Call getAddress.io API (try without space first, as API normalizes it)
-            const apiUrl = `https://api.getaddress.io/find/${normalizedPostcode}`;
+            // Call getAddress.io API using autocomplete endpoint (works with free/basic plans)
+            // Note: Using /autocomplete instead of /find as it's available on more subscription tiers
+            const apiUrl = `https://api.getaddress.io/autocomplete/${normalizedPostcode}`;
             console.log(`🔍 Fetching addresses for postcode: ${normalizedPostcode} (spaced: ${spacedPostcode})`);
             console.log(`🔑 API Key configured: ${process.env.GETADDRESS_API_KEY ? 'Yes (first 8 chars: ' + process.env.GETADDRESS_API_KEY.substring(0, 8) + '...)' : 'NO - MISSING!'}`);
-            console.log(`🌐 Full API URL: ${apiUrl}`);
+            console.log(`🌐 Full API URL: ${apiUrl}?all=true`);
             
             const response = await axios.get(apiUrl, {
                 params: {
                     'api-key': process.env.GETADDRESS_API_KEY,
-                    'expand': true
+                    'all': true  // Get all addresses for this postcode
                 },
                 timeout: 10000,
                 validateStatus: function (status) {
@@ -98,23 +99,31 @@ class CustomerPostcodeService {
                 );
             }
 
-            if (response.data && response.data.addresses) {
+            if (response.data && response.data.suggestions && response.data.suggestions.length > 0) {
                 // Format addresses for response
-                // getAddress.io returns addresses as arrays of strings
-                const formattedAddresses = response.data.addresses.map((address, index) => {
-                    // Each address is an array: [line1, line2, line3, locality, town, county]
-                    const addressParts = Array.isArray(address) ? address : address.split(',');
+                // Autocomplete endpoint returns suggestions array with address, url, and id
+                const formattedAddresses = response.data.suggestions.map((suggestion, index) => {
+                    // Each suggestion has: { address, url, id }
+                    // Address format: "Street, Locality, Town, County, Postcode"
+                    const addressParts = suggestion.address.split(',').map(part => part.trim());
+                    
+                    // Parse address parts (typically: line1, line2, town, county, postcode)
+                    const line1 = addressParts[0] || '';
+                    const line2 = addressParts[1] || '';
+                    const town = addressParts[2] || '';
+                    const county = addressParts[3] || '';
                     
                     return {
                         id: index,
-                        line1: addressParts[0] || '',
-                        line2: addressParts[1] || '',
-                        line3: addressParts[2] || '',
-                        locality: addressParts[3] || '',
-                        town: addressParts[4] || '',
-                        county: addressParts[5] || '',
+                        suggestionId: suggestion.id,  // getAddress.io's unique ID
+                        line1: line1,
+                        line2: line2,
+                        line3: '',
+                        locality: line2,
+                        town: town,
+                        county: county,
                         postcode: normalizedPostcode,
-                        fullAddress: addressParts.filter(part => part && part.trim()).join(', ') + ', ' + normalizedPostcode
+                        fullAddress: suggestion.address
                     };
                 });
 
@@ -122,8 +131,8 @@ class CustomerPostcodeService {
                     postcode: normalizedPostcode,
                     addressCount: formattedAddresses.length,
                     addresses: formattedAddresses,
-                    latitude: response.data.latitude || null,
-                    longitude: response.data.longitude || null
+                    latitude: null,  // Autocomplete endpoint doesn't return coordinates
+                    longitude: null
                 };
             } else {
                 throw new NotFoundError('No addresses found for this postcode');
