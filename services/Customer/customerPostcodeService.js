@@ -17,8 +17,13 @@ class CustomerPostcodeService {
      */
     async getAddressesByPostcode(postcode) {
         try {
-            // Normalize postcode (remove spaces, uppercase)
+            // Normalize postcode (remove extra spaces, uppercase, but keep format)
+            // UK postcodes can be: SW1A1AA or SW1A 1AA
             const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
+            
+            // Also create a version with proper spacing for display
+            // Format: [A-Z]{1,2}[0-9]{1,2}[A-Z]?[space][0-9][A-Z]{2}
+            const spacedPostcode = normalizedPostcode.replace(/^([A-Z]{1,2}\d{1,2}[A-Z]?)(\d[A-Z]{2})$/, '$1 $2');
             
             if (!normalizedPostcode) {
                 throw new ValidationError('Postcode is required');
@@ -35,7 +40,10 @@ class CustomerPostcodeService {
                 throw new ValidationError('getAddress.io API key is not configured');
             }
 
-            // Call getAddress.io API
+            // Call getAddress.io API (try without space first, as API normalizes it)
+            console.log(`🔍 Fetching addresses for postcode: ${normalizedPostcode} (spaced: ${spacedPostcode})`);
+            console.log(`🔑 API Key configured: ${process.env.GETADDRESS_API_KEY ? 'Yes (hidden)' : 'NO - MISSING!'}`);
+            
             const response = await axios.get(
                 `https://api.getaddress.io/find/${normalizedPostcode}`,
                 {
@@ -46,6 +54,9 @@ class CustomerPostcodeService {
                     timeout: 10000
                 }
             );
+
+            console.log(`✅ API Response Status: ${response.status}`);
+            console.log(`📦 Response Data:`, JSON.stringify(response.data, null, 2));
 
             if (response.data && response.data.addresses) {
                 // Format addresses for response
@@ -78,16 +89,37 @@ class CustomerPostcodeService {
                 throw new NotFoundError('No addresses found for this postcode');
             }
         } catch (error) {
+            // Log the full error for debugging
+            console.error(`❌ getAddress.io API Error:`, {
+                postcode: normalizedPostcode,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                message: error.message
+            });
+
             if (error.response) {
                 // API error responses
                 if (error.response.status === 404) {
-                    throw new NotFoundError(`Postcode not found: ${postcode}`);
+                    throw new NotFoundError(
+                        `Postcode "${postcode}" not found. ` +
+                        `Please verify: (1) The postcode exists and is valid, (2) Try format like "SW1A 1AA", ` +
+                        `(3) Check if your getAddress.io subscription includes this postcode. ` +
+                        `Test with known postcodes: SW1A1AA, M11AE, B11AA`
+                    );
                 } else if (error.response.status === 401 || error.response.status === 403) {
-                    throw new ValidationError('Invalid API key. Please check your getAddress.io configuration.');
+                    throw new ValidationError(
+                        'Invalid or missing API key. Please add GETADDRESS_API_KEY to your .env file. ' +
+                        'Get your key from: https://getaddress.io/dashboard'
+                    );
                 } else if (error.response.status === 429) {
-                    throw new ValidationError('API rate limit exceeded. Please try again later.');
+                    throw new ValidationError('API rate limit exceeded. You have used all available lookups for this billing period.');
                 } else if (error.response.status === 400) {
-                    throw new ValidationError('Invalid postcode format');
+                    throw new ValidationError(
+                        `Invalid postcode format: "${postcode}". ` +
+                        `UK postcodes should be like: SW1A1AA, EC1A1BB, M11AE. ` +
+                        `Error: ${error.response.data?.Message || JSON.stringify(error.response.data)}`
+                    );
                 }
             }
             
