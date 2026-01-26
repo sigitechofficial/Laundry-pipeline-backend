@@ -26,7 +26,9 @@ const {
     serviceWithPreferences,
     preferenceTypes,
     preferenceValues,
-    proofOfDeliveries
+    proofOfDeliveries,
+    policy,
+    cancellationPolicyConfig
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -1064,6 +1066,38 @@ class CustomerOrderService {
                 {
                     model: proofOfDeliveries,
                     attributes: ["id", "imgUpload", "noOfItems", "note", "deliveryType", "createdAt", "updatedAt"],
+                },
+                {
+                    model: policy,
+                    as: "cancellationPolicyBookings",
+                    attributes: ["id", "name", "type", "isActive", "isDefault", "description"],
+                    required: false,
+                    include: [
+                        {
+                            model: cancellationPolicyConfig,
+                            as: "cancellationConfig",
+                            attributes: [
+                                "id",
+                                "isActive",
+                                "prePickupAbsoluteCurrency",
+                                "prePickupAbsoluteAmount",
+                                "prePickupPercentage",
+                                "prePickupFreeChargeWindowMinutes",
+                                "prePickupFirstCancellationLeniency",
+                                "unprocessedAbsoluteCurrency",
+                                "unprocessedAbsoluteAmount",
+                                "unprocessedPercentage",
+                                "unprocessedAfterPickupMinutes",
+                                "unprocessedOrderValuePercentage",
+                                "allowCancelUnprocessed",
+                                "courtesyWindowDays",
+                                "courtesyCapAmount",
+                                "courtesyCount",
+                                "customerLeniencyEnabled"
+                            ],
+                            required: false
+                        }
+                    ]
                 }
             ],
         });
