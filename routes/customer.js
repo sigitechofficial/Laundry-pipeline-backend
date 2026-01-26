@@ -97,4 +97,13 @@ router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOt
 router.post('/cancelBooking', validateAccessToken, asyncMiddleware(customerOtherController.cancelCustomerBooking));
 //Get Customer Cancellation History
 router.get('/cancellationHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerCancellationHistory));
+
+//!----------------------------Customer Postcode Address Lookup---------------------//
+//Get addresses by UK postcode
+router.get('/postcode/:postcode', validateAccessToken, asyncMiddleware(customerOtherController.getAddressesByPostcode));
+//Get specific address by postcode and index
+router.get('/postcode/:postcode/address/:index', validateAccessToken, asyncMiddleware(customerOtherController.getAddressById));
+//Validate UK postcode format
+router.post('/postcode/validate', validateAccessToken, asyncMiddleware(customerOtherController.validatePostcode));
+
 module.exports=router

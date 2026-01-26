@@ -53,6 +53,9 @@ const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const {
     serviceManagementService,
 } = require('../../services/Admin');
+
+const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+
 //!------------------------Boooking Management-------------------------------//
 /*
  *   Customer Create Booking
@@ -820,10 +823,97 @@ function getTimePlusMinutes(mins = 40) {
 
 //!--------------------------------------------------------------------------------------------------------------->>>
 
+/**
+ * ====================================
+ * POSTCODE ADDRESS LOOKUP ENDPOINTS
+ * ====================================
+ */
 
+/**
+ * Get addresses by UK postcode using getAddress.io API
+ * @route GET /api/customer/postcode/:postcode
+ * @access Private (Customer only)
+ * @param {string} postcode - UK postcode parameter (e.g., "SW1A1AA")
+ * @returns {Object} - List of addresses for the given postcode with coordinates
+ * @description Fetches all addresses associated with a UK postcode for address selection during booking
+ */
+const getAddressesByPostcode = async (req, res) => {
+    const { postcode } = req.params;
+    
+    if (!postcode) {
+        throw new customError('Postcode is required', 400);
+    }
 
+    const result = await customerPostcodeService.getAddressesByPostcode(postcode);
+    
+    return res.json({
+        status: "1",
+        message: "Addresses fetched successfully",
+        statusCode: 200,
+        data: result,
+        error: "",
+        timestamp: new Date().toISOString()
+    });
+};
 
+/**
+ * Get specific address details by postcode and index
+ * @route GET /api/customer/postcode/:postcode/address/:index
+ * @access Private (Customer only)
+ * @param {string} postcode - UK postcode parameter
+ * @param {number} index - Address index from the address list
+ * @returns {Object} - Specific address details with coordinates
+ * @description Retrieves detailed information for a specific address after customer selection
+ */
+const getAddressById = async (req, res) => {
+    const { postcode, index } = req.params;
+    
+    if (!postcode) {
+        throw new customError('Postcode is required', 400);
+    }
+    
+    if (!index) {
+        throw new customError('Address index is required', 400);
+    }
+    
+    const result = await customerPostcodeService.getAddressById(postcode, index);
+    
+    return res.json({
+        status: "1",
+        message: "Address details fetched successfully",
+        statusCode: 200,
+        data: result,
+        error: "",
+        timestamp: new Date().toISOString()
+    });
+};
 
+/**
+ * Validate UK postcode format
+ * @route POST /api/customer/postcode/validate
+ * @access Private (Customer only)
+ * @body {string} postcode - UK postcode to validate
+ * @returns {Object} - Validation result with normalized postcode
+ * @description Validates UK postcode format before making API calls
+ */
+const validatePostcode = async (req, res) => {
+    const { postcode } = req.body;
+    
+    if (!postcode) {
+        throw new customError('Postcode is required', 400);
+    }
+
+    const result = customerPostcodeService.validatePostcodeFormat(postcode);
+    
+    return res.json({
+        status: result.isValid ? "1" : "0",
+        message: result.message,
+        statusCode: result.isValid ? 200 : 400,
+        data: result,
+        error: result.isValid ? "" : result.message,
+        timestamp: new Date().toISOString()
+    });
+};
 
 module.exports = {
     createBooking,
@@ -847,5 +937,9 @@ module.exports = {
     getAllServiceWithPreferenceDetails,
     getAllOrderStatus,
     cancelCustomerBooking,
-    getCustomerCancellationHistory
+    getCustomerCancellationHistory,
+    //---Customer Postcode Address Lookup----//
+    getAddressesByPostcode,
+    getAddressById,
+    validatePostcode
 };
