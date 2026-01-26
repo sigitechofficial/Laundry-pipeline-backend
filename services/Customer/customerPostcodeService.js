@@ -16,14 +16,18 @@ class CustomerPostcodeService {
      * @returns {Object} - List of addresses with formatted data
      */
     async getAddressesByPostcode(postcode) {
+        // Declare variables outside try block so they're accessible in catch
+        let normalizedPostcode = '';
+        let spacedPostcode = '';
+        
         try {
             // Normalize postcode (remove extra spaces, uppercase, but keep format)
             // UK postcodes can be: SW1A1AA or SW1A 1AA
-            const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
+            normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
             
             // Also create a version with proper spacing for display
             // Format: [A-Z]{1,2}[0-9]{1,2}[A-Z]?[space][0-9][A-Z]{2}
-            const spacedPostcode = normalizedPostcode.replace(/^([A-Z]{1,2}\d{1,2}[A-Z]?)(\d[A-Z]{2})$/, '$1 $2');
+            spacedPostcode = normalizedPostcode.replace(/^([A-Z]{1,2}\d{1,2}[A-Z]?)(\d[A-Z]{2})$/, '$1 $2');
             
             if (!normalizedPostcode) {
                 throw new ValidationError('Postcode is required');
@@ -91,7 +95,7 @@ class CustomerPostcodeService {
         } catch (error) {
             // Log the full error for debugging
             console.error(`❌ getAddress.io API Error:`, {
-                postcode: normalizedPostcode,
+                postcode: normalizedPostcode || postcode,
                 status: error.response?.status,
                 statusText: error.response?.statusText,
                 data: error.response?.data,
