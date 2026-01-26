@@ -45,22 +45,58 @@ class CustomerPostcodeService {
             }
 
             // Call getAddress.io API (try without space first, as API normalizes it)
+            const apiUrl = `https://api.getaddress.io/find/${normalizedPostcode}`;
             console.log(`🔍 Fetching addresses for postcode: ${normalizedPostcode} (spaced: ${spacedPostcode})`);
-            console.log(`🔑 API Key configured: ${process.env.GETADDRESS_API_KEY ? 'Yes (hidden)' : 'NO - MISSING!'}`);
+            console.log(`🔑 API Key configured: ${process.env.GETADDRESS_API_KEY ? 'Yes (first 8 chars: ' + process.env.GETADDRESS_API_KEY.substring(0, 8) + '...)' : 'NO - MISSING!'}`);
+            console.log(`🌐 Full API URL: ${apiUrl}`);
             
-            const response = await axios.get(
-                `https://api.getaddress.io/find/${normalizedPostcode}`,
-                {
-                    params: {
-                        'api-key': process.env.GETADDRESS_API_KEY,
-                        'expand': true
-                    },
-                    timeout: 10000
+            const response = await axios.get(apiUrl, {
+                params: {
+                    'api-key': process.env.GETADDRESS_API_KEY,
+                    'expand': true
+                },
+                timeout: 10000,
+                validateStatus: function (status) {
+                    // Don't throw on any status, we'll handle it
+                    return true;
                 }
-            );
+            });
 
-            console.log(`✅ API Response Status: ${response.status}`);
+            console.log(`📊 API Response Status: ${response.status}`);
             console.log(`📦 Response Data:`, JSON.stringify(response.data, null, 2));
+            console.log(`📋 Response Headers:`, JSON.stringify(response.headers, null, 2));
+
+            // Handle error responses
+            if (response.status === 404) {
+                throw new NotFoundError(
+                    `Postcode "${postcode}" not found. ` +
+                    `API Response: ${JSON.stringify(response.data)}. ` +
+                    `Please verify: (1) The postcode exists and is valid, (2) Your API key has available lookups, ` +
+                    `(3) Your subscription includes this postcode. Test with: SW1A1AA, M11AE, B11AA`
+                );
+            } else if (response.status === 401 || response.status === 403) {
+                throw new ValidationError(
+                    `Invalid or missing API key. Status: ${response.status}. ` +
+                    `Response: ${JSON.stringify(response.data)}. ` +
+                    `Please check GETADDRESS_API_KEY in your .env file. Get your key from: https://getaddress.io/dashboard`
+                );
+            } else if (response.status === 429) {
+                throw new ValidationError(
+                    `API rate limit exceeded. Status: ${response.status}. ` +
+                    `Response: ${JSON.stringify(response.data)}. ` +
+                    `You have used all available lookups for this billing period.`
+                );
+            } else if (response.status === 400) {
+                throw new ValidationError(
+                    `Invalid postcode format: "${postcode}". Status: ${response.status}. ` +
+                    `API Response: ${JSON.stringify(response.data)}`
+                );
+            } else if (response.status !== 200) {
+                throw new ValidationError(
+                    `Unexpected API response. Status: ${response.status}. ` +
+                    `Response: ${JSON.stringify(response.data)}`
+                );
+            }
 
             if (response.data && response.data.addresses) {
                 // Format addresses for response
@@ -99,37 +135,22 @@ class CustomerPostcodeService {
                 status: error.response?.status,
                 statusText: error.response?.statusText,
                 data: error.response?.data,
-                message: error.message
+                message: error.message,
+                code: error.code
             });
-
-            if (error.response) {
-                // API error responses
-                if (error.response.status === 404) {
-                    throw new NotFoundError(
-                        `Postcode "${postcode}" not found. ` +
-                        `Please verify: (1) The postcode exists and is valid, (2) Try format like "SW1A 1AA", ` +
-                        `(3) Check if your getAddress.io subscription includes this postcode. ` +
-                        `Test with known postcodes: SW1A1AA, M11AE, B11AA`
-                    );
-                } else if (error.response.status === 401 || error.response.status === 403) {
-                    throw new ValidationError(
-                        'Invalid or missing API key. Please add GETADDRESS_API_KEY to your .env file. ' +
-                        'Get your key from: https://getaddress.io/dashboard'
-                    );
-                } else if (error.response.status === 429) {
-                    throw new ValidationError('API rate limit exceeded. You have used all available lookups for this billing period.');
-                } else if (error.response.status === 400) {
-                    throw new ValidationError(
-                        `Invalid postcode format: "${postcode}". ` +
-                        `UK postcodes should be like: SW1A1AA, EC1A1BB, M11AE. ` +
-                        `Error: ${error.response.data?.Message || JSON.stringify(error.response.data)}`
-                    );
-                }
-            }
             
             // Re-throw known errors
             if (error instanceof ValidationError || error instanceof NotFoundError) {
                 throw error;
+            }
+            
+            // Network/timeout errors
+            if (error.code === 'ECONNABORTED') {
+                throw new ValidationError('Request timeout. Please try again.');
+            }
+            
+            if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+                throw new ValidationError('Cannot connect to getAddress.io API. Please check your internet connection.');
             }
             
             // Generic error
