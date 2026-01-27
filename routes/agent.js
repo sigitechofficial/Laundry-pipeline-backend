@@ -520,4 +520,27 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getPerformanceDashboard)
 );
+
+//!----------------------------Agent Postcode Lookup---------------------//
+// Route to get all addresses for a given postcode
+router.get(
+    '/postcode/:postcode',
+    validateAccessToken,
+    asyncMiddleware(agentController.getAddressesByPostcode)
+);
+
+// Route to get a specific address by postcode and index
+router.get(
+    '/postcode/:postcode/address/:index',
+    validateAccessToken,
+    asyncMiddleware(agentController.getAddressById)
+);
+
+// Route to validate a postcode format
+router.post(
+    '/postcode/validate',
+    validateAccessToken,
+    asyncMiddleware(agentController.validatePostcode)
+);
+
 module.exports = router;

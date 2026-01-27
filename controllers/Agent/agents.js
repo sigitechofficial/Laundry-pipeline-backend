@@ -65,6 +65,8 @@ const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent } = require("../stripe");
 const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
+const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+const ResponseHelper = require('../../helper/response');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -3672,6 +3674,53 @@ const getNextHourTime = (time) => {
         .toString()
         .padStart(2, "0")}`;
 }
+
+
+//!----------------------------Agent Postcode Lookup---------------------//
+
+
+
+/**
+ * @route GET /api/agent/postcode/:postcode
+ * @access Private (Agent)
+ * @description Get a list of addresses for a given UK postcode using getAddress.io.
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Object} - JSON response with postcode details and a list of addresses.
+ */
+exports.getAddressesByPostcode = async (req, res) => {
+    const { postcode } = req.params;
+    const result = await customerPostcodeService.getAddressesByPostcode(postcode);
+    return ResponseHelper.success(res, "Addresses fetched successfully", result);
+};
+
+/**
+ * @route GET /api/agent/postcode/:postcode/address/:index
+ * @access Private (Agent)
+ * @description Get a specific address by postcode and index.
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Object} - JSON response with address details.
+ */
+exports.getAddressById = async (req, res) => {
+    const { postcode, index } = req.params;
+    const result = await customerPostcodeService.getAddressById(postcode, parseInt(index));
+    return ResponseHelper.success(res, "Address fetched successfully", result);
+};
+
+/**
+ * @route POST /api/agent/postcode/validate
+ * @access Private (Agent)
+ * @description Validate UK postcode format.
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @returns {Object} - JSON response with validation result.
+ */
+exports.validatePostcode = async (req, res) => {
+    const { postcode } = req.body;
+    const result = await customerPostcodeService.validatePostcodeFormat(postcode);
+    return ResponseHelper.success(res, "Postcode validation result", result);
+};
 
 
 //!---------------------------------------------Controllers Converted to Export Approach----------------------------------------//

@@ -5,6 +5,7 @@ const multer=require('multer')
 const path=require('path')
 const validateAccessToken=require('../middlewares/accessToken')
 const driverController=require('../controllers/Driver/driverAuth')
+const driverOtherController=require('../controllers/Driver/driver')
 
 
 //!----------------------Multer Middlewares------------------//
@@ -97,5 +98,27 @@ router.post('/session',validateAccessToken,asyncMiddleware(driverController.sess
 
 
 
+
+//!----------------------------Driver Postcode Lookup---------------------//
+// Route to get all addresses for a given postcode
+router.get(
+    '/postcode/:postcode',
+    validateAccessToken,
+    asyncMiddleware(driverOtherController.getAddressesByPostcode)
+);
+
+// Route to get a specific address by postcode and index
+router.get(
+    '/postcode/:postcode/address/:index',
+    validateAccessToken,
+    asyncMiddleware(driverOtherController.getAddressById)
+);
+
+// Route to validate a postcode format
+router.post(
+    '/postcode/validate',
+    validateAccessToken,
+    asyncMiddleware(driverOtherController.validatePostcode)
+);
 
 module.exports=router
