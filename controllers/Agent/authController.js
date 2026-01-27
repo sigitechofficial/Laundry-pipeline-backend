@@ -24,6 +24,18 @@ const registerAgentWithOTP = async (req, res) => {
 const verifyOTpSignUp = async (req, res) => {
     const data = { ...req.body };
     const result = await authService.verifyOTpSignUp(data);
+    
+    // Set HTTP-only cookie after successful OTP verification (same as customer)
+    if (result.accessToken) {
+        res.cookie("accessToken", result.accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        });
+    }
+    
     return ResponseHelper.success(res, "OTP verified successfully", result);
 };
 
@@ -69,6 +81,18 @@ const loginUser = async (req, res) => {
     logRequestData('loginUser', req);
     const data = { ...req.body };
     const result = await authService.loginUser(data);
+    
+    // Set HTTP-only cookie (same as customer and admin)
+    if (result.accessToken) {
+        res.cookie("accessToken", result.accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        });
+    }
+    
     return ResponseHelper.success(res, "Login successful", result);
 };
 
@@ -101,6 +125,12 @@ const logout = async (req, res) => {
         dvToken: req.user.dvToken
     };
     await authService.logout(data);
+    
+    // Clear the cookie
+    res.clearCookie("accessToken", {
+        path: "/agent",
+    });
+    
     return ResponseHelper.success(res, "Log-out successfully", {});
 };
 
