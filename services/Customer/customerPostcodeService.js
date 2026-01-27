@@ -100,6 +100,24 @@ class CustomerPostcodeService {
             }
 
             if (response.data && response.data.suggestions && response.data.suggestions.length > 0) {
+                // Get coordinates from postcodes.io (free API for lat/lng)
+                let latitude = null;
+                let longitude = null;
+                
+                try {
+                    console.log('📍 Fetching coordinates from postcodes.io...');
+                    const coordResponse = await axios.get(`https://api.postcodes.io/postcodes/${spacedPostcode}`);
+                    
+                    if (coordResponse.data && coordResponse.data.result) {
+                        latitude = coordResponse.data.result.latitude;
+                        longitude = coordResponse.data.result.longitude;
+                        console.log(`✅ Coordinates found: ${latitude}, ${longitude}`);
+                    }
+                } catch (coordError) {
+                    console.warn(`⚠️ Could not fetch coordinates: ${coordError.message}`);
+                    // Continue without coordinates - not critical
+                }
+                
                 // Format addresses for response
                 // Autocomplete endpoint returns suggestions array with address, url, and id
                 const formattedAddresses = response.data.suggestions.map((suggestion, index) => {
@@ -123,7 +141,9 @@ class CustomerPostcodeService {
                         town: town,
                         county: county,
                         postcode: normalizedPostcode,
-                        fullAddress: suggestion.address
+                        fullAddress: suggestion.address,
+                        latitude: latitude,  // Add coordinates to each address
+                        longitude: longitude
                     };
                 });
 
@@ -131,8 +151,8 @@ class CustomerPostcodeService {
                     postcode: normalizedPostcode,
                     addressCount: formattedAddresses.length,
                     addresses: formattedAddresses,
-                    latitude: null,  // Autocomplete endpoint doesn't return coordinates
-                    longitude: null
+                    latitude: latitude,
+                    longitude: longitude
                 };
             } else {
                 throw new NotFoundError('No addresses found for this postcode');
