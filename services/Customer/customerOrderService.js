@@ -44,7 +44,7 @@ const { literal, fn, col } = require("sequelize");
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent } = require('../../controllers/stripe');
 
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
@@ -468,11 +468,14 @@ class CustomerOrderService {
      * @param {string} data.driverInstructionOptions - Driver instruction options
      * @param {string} data.driverInstructionOptions1 - Driver instruction options 1
      * @param {Array} data.preferencesArray - Preferences array with {preferenceTypeId, preferenceValueId, serviceId?}
-     * @param {string} data.paymentMethodId - Payment method ID
-     * @param {string} data.paymentIntentId - Payment intent ID
+     * @param {string} data.setupIntentId - Setup Intent ID (from frontend after confirmation)
+     * @param {string} data.paymentMethodId - Payment Method ID (from frontend after confirmation)
      * @param {string} data.stripeCustomerId - Stripe customer ID
      * @param {number} userId - User ID
      * @returns {Object} Booking creation result
+     * 
+     * NOTE: Both setupIntentId and paymentMethodId are saved.
+     * Payment will be charged at Status 4 using paymentMethodId.
      */
     async createBooking(data, userId) {
         const {
@@ -497,8 +500,8 @@ class CustomerOrderService {
             driverInstructionOptions,
             driverInstructionOptions1,
             preferencesArray,
+            setupIntentId,
             paymentMethodId,
-            paymentIntentId,
             stripeCustomerId,
             tipAmount
         } = data;
@@ -563,6 +566,8 @@ class CustomerOrderService {
         });
 
         // Create booking
+        // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
+        // paymentIntentId will be set at Status 4 when payment is captured.
         const bookingData = await booking.create({
             collectionDate,
             collectionTimeFrom,
@@ -583,8 +588,9 @@ class CustomerOrderService {
             driverInstructionOptions,
             driverInstructionOptions1,
             subTotal: 0,
+            setupIntentId: setupIntentId,
             paymentMethodId: paymentMethodId,
-            paymentIntentId: paymentIntentId,
+            // paymentIntentId will be set at Status 4 when payment is captured
         });
 
         // Create booking preferences from serviceWithPreferences
@@ -1350,44 +1356,37 @@ class CustomerOrderService {
     }
 
     /**
-     * Create Intent Using Stripe
+     * Create Setup Intent Using Stripe
      * @param {Object} data - Request data
-     * @param {number|string} data.amount - Payment amount (in cents for Stripe)
      * @param {string} data.customerId - Stripe customer ID
-     * @returns {Object} - Result object with intent data
+     * @returns {Object} - Result object with setup intent data
+     * 
+     * NOTE: Setup Intent is used to save payment method without charging.
+     * Payment will be charged later when booking reaches laundry shop (status 8).
      */
     async createIntentUsingStripe(data) {
-        const { amount, customerId } = data;
+        const { customerId } = data;
 
         // Detailed validation
-        if (!amount) {
-            throw new ValidationError("Amount is required");
-        }
-
         if (!customerId) {
             throw new ValidationError("Customer ID is required");
         }
 
-        // Validate amount is a positive number
-        const numAmount = parseFloat(amount);
-        if (isNaN(numAmount) || numAmount <= 0) {
-            throw new ValidationError("Amount must be a valid positive number");
-        }
+        console.log("Creating setup intent for customer:", customerId);
 
-        console.log("Creating payment intent with:", { amount: numAmount, customerId });
-
-        const intent = await createPaymentIntend(numAmount, customerId);
-        console.log("🚀 ~ createIntentUsingStripe ~ intent created:", intent.id);
+        // Create Setup Intent instead of Payment Intent
+        const setupIntent = await createSetupIntent(customerId);
+        console.log("🚀 ~ createIntentUsingStripe ~ setup intent created:", setupIntent.id);
 
         let intentData = {
-            intentId: intent.id,
-            clientSecret: intent.client_secret,
-            amount: numAmount,
+            setupIntentId: setupIntent.id,
+            clientSecret: setupIntent.client_secret,
             customerId: customerId,
+            status: setupIntent.status
         };
 
         return {
-            message: "Intent Created",
+            message: "Setup Intent Created - Card will be saved without charging",
             data: intentData
         };
     }

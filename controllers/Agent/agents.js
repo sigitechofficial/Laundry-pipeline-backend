@@ -884,25 +884,54 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new NotFoundError("No driver is assigned to this booking yet");
     }
 
-
+    // Validate required payment data
     if (!bookingfind.customer.stripeCustomerId) {
-        throw new NotFoundError("PaymentIntent or PaymentMethod not found for this booking");
+        throw new ValidationError("Stripe customer ID not found for this booking");
     }
 
+    if (!bookingfind.paymentMethodId) {
+        throw new ValidationError("Payment method not found. Setup Intent was not completed properly.");
+    }
+
+    const upfrontAmount = bookingfind.billingDetail?.upfrontAmount || 0;
+
+    if (!upfrontAmount || upfrontAmount <= 0) {
+        throw new ValidationError("Upfront amount not set for this booking");
+    }
+
+    console.log("💳 Creating payment intent for booking:", bookingId);
+    console.log("💰 Upfront Amount:", upfrontAmount);
+    console.log("👤 Customer:", bookingfind.customer.stripeCustomerId);
+    console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
+    console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
+
+    // Step 1: Create Payment Intent with the upfront amount
+    const paymentIntent = await createPaymentIntend(upfrontAmount, bookingfind.customer.stripeCustomerId);
+    console.log("✅ Payment Intent created:", paymentIntent.id);
+
+    // Step 2: Confirm and Capture the payment using saved payment method
     const stripeResult = await confirmAndCapturePayment(
-        bookingfind.paymentIntentId,
-        bookingfind.paymentMethodId,
+        paymentIntent.id,
+        bookingfind.paymentMethodId,  // Using payment method saved at booking creation
         bookingfind.customer.stripeCustomerId
     );
 
-    console.log("ðŸš€ ~ agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);
+    console.log("🚀 agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);
 
     if (stripeResult.status !== 'succeeded') {
         throw new ValidationError(`Payment failed or incomplete. Current status: ${stripeResult.status}`);
     }
 
+    console.log("✅ Payment captured successfully! Amount:", upfrontAmount);
+
+    // Step 3: Update booking with payment intent ID and status
+    // NOTE: paymentMethodId is already saved, we just add paymentIntentId
     await booking.update(
-        { bookingStatusId: 4 },
+        { 
+            bookingStatusId: 4,
+            paymentIntentId: paymentIntent.id,
+            paymentConfirmed: true
+        },
         { where: { id: bookingId } }
     );
 
@@ -930,7 +959,11 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     }
     sendNotification(customerId,title,body,data);
 
-    return ResponseHelper.success(res, "Booking status updated and payment captured", {});
+    return ResponseHelper.success(res, "Booking status updated and payment captured", {
+        paymentIntentId: paymentIntent.id,
+        paymentStatus: 'succeeded',
+        amountCharged: upfrontAmount
+    });
 }
 
 /*

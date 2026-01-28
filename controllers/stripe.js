@@ -78,6 +78,23 @@ async function createPaymentIntend(amount, customerId) {
 
 
 /*
+ *   Create Setup Intent (for saving card without charging)
+ */
+async function createSetupIntent(customerId) {
+    try {
+        const setupIntent = await stripe.setupIntents.create({
+            customer: customerId,
+            payment_method_types: ['card'],
+            usage: 'off_session',
+        })
+        return setupIntent
+    } catch (error) {
+        throw new customError(`${error.message} `, 200)
+    }
+}
+
+
+/*
  *   GET Payment Method
  */
 async function paymentIntentGet(paymentIntentId) {
@@ -178,6 +195,7 @@ module.exports = {
     createStripeCustomer,
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
+    createSetupIntent,
     paymentIntentGet,
     confirmIntend,
     getIntent,

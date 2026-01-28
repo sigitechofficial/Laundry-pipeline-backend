@@ -84,8 +84,8 @@ async function createBooking(req, res) {
         driverInstructionOptions,
         driverInstructionOptions1,
         preferencesArray,
+        setupIntentId,
         paymentMethodId,
-        paymentIntentId,
         stripeCustomerId,
         tipAmount
     } = req.body;
@@ -93,6 +93,8 @@ async function createBooking(req, res) {
     const userId = req.user.id;
 
     // Call service to handle business logic
+    // NOTE: Both setupIntentId and paymentMethodId are saved.
+    // Payment will be charged at Status 4 using paymentMethodId.
     const result = await customerOrderService.createBooking({
         collectionDate,
         collectionTimeFrom,
@@ -115,8 +117,8 @@ async function createBooking(req, res) {
         driverInstructionOptions,
         driverInstructionOptions1,
         preferencesArray,
+        setupIntentId,
         paymentMethodId,
-        paymentIntentId,
         stripeCustomerId,
         tipAmount
     }, userId);
@@ -259,24 +261,21 @@ async function fetchZoneAndCharges(req, res) {
  *  Create Intent Using Stripe
  */
 async function createIntentUsingStripe(req, res) {
-    console.log("=== Create Intent Using Stripe ===");
+    console.log("=== Create Setup Intent Using Stripe ===");
     console.log("Request Body:", JSON.stringify(req.body, null, 2));
     console.log("User ID:", req.user?.id);
     
-    const { amount, customerId } = req.body;
+    const { customerId } = req.body;
 
     // Validate required fields in controller
-    if (!amount) {
-        throw new ValidationError('Amount is required');
-    }
-
     if (!customerId) {
         throw new ValidationError('Customer ID is required');
     }
 
     // Call service to handle business logic
+    // NOTE: Setup Intent is created to save payment method without charging
+    // Payment will be charged later when booking reaches laundry shop (status 8)
     const result = await customerOrderService.createIntentUsingStripe({
-        amount,
         customerId
     });
 
