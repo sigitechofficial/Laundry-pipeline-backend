@@ -28,7 +28,8 @@ const {
     preferenceValues,
     proofOfDeliveries,
     policy,
-    cancellationPolicyConfig
+    cancellationPolicyConfig,
+    units
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -86,8 +87,14 @@ async function findZones(lat, lng) {
                     },
                 ],
             },
+            {
+                model: units,
+                as: 'currencyUnit',
+                required: false,
+                attributes: ["id", "name", "shortName"]
+            }
         ],
-        attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates"],
+        attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates", "currencyUnitId"],
     });
     
     console.log(`Found ${findZone.length} zone(s)`);
@@ -1337,8 +1344,10 @@ class CustomerOrderService {
         let cityName = zoneData[0].city.name;
         let countryId = zoneData[0].city.country.id;
         let countryName = zoneData[0].city.country.name;
+        let currencyUnitId = zoneData[0].currencyUnitId;
+        let currencyUnit = zoneData[0].currencyUnit;
 
-        console.log("Zone found successfully:", { zoneId, zoneName, cityName, countryName });
+        console.log("Zone found successfully:", { zoneId, zoneName, cityName, countryName, currency: currencyUnit?.name });
 
         return {
             message: "Zone and Charges",
@@ -1350,7 +1359,13 @@ class CustomerOrderService {
                 cityId,
                 cityName,
                 countryId,
-                countryName
+                countryName,
+                currencyUnitId,
+                currency: currencyUnit ? {
+                    id: currencyUnit.id,
+                    name: currencyUnit.name,
+                    shortName: currencyUnit.shortName
+                } : null
             }
         };
     }
