@@ -151,9 +151,7 @@ async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, custom
             paymentMethodId
         ) {
             intent = await stripe.paymentIntents.confirm(paymentIntentId, {
-                payment_method: paymentMethodId,
-                off_session: true,
-                customer: customerId,
+                payment_method: paymentMethodId
             });
         }
 
