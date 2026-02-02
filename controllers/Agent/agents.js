@@ -872,8 +872,13 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 model: users,
                 as: 'customer',
                 attributes: ['id', 'stripeCustomerId'],
-            }
-        ]
+            },
+            {
+                model: billingDetails,
+                required: false,
+                attributes: ['upfrontAmount', 'total', 'paymentStatus'],
+            },
+        ],
     });
 
     if (!bookingfind) {
