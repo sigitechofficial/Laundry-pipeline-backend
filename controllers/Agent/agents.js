@@ -62,7 +62,7 @@ const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
-const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent } = require("../stripe");
+const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
 const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
@@ -910,27 +910,20 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
     console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
 
-    // Step 1: Create Payment Intent with the upfront amount
-    const paymentIntent = await createPaymentIntend(upfrontAmount, bookingfind.customer.stripeCustomerId);
-    console.log("✅ Payment Intent created:", paymentIntent.id);
-
-    // Step 2: Confirm and Capture the payment using saved payment method
-    const stripeResult = await confirmAndCapturePayment(
-        paymentIntent.id,
-        bookingfind.paymentMethodId,  // Using payment method saved at booking creation
-        bookingfind.customer.stripeCustomerId
+    // Charge immediately using saved payment method (ONE STEP - no user interaction)
+    const paymentIntent = await chargeOffSession(
+        upfrontAmount, 
+        bookingfind.customer.stripeCustomerId,
+        bookingfind.paymentMethodId
     );
 
-    console.log("🚀 agentBookingStatusOnTheWay ~ stripeResult:", stripeResult);
+    console.log("✅ Payment charged successfully:", paymentIntent.id, "Status:", paymentIntent.status);
 
-    if (stripeResult.status !== 'succeeded') {
-        throw new ValidationError(`Payment failed or incomplete. Current status: ${stripeResult.status}`);
+    if (paymentIntent.status !== 'succeeded') {
+        throw new ValidationError(`Payment failed. Status: ${paymentIntent.status}`);
     }
 
-    console.log("✅ Payment captured successfully! Amount:", upfrontAmount);
-
-    // Step 3: Update booking with payment intent ID and status
-    // NOTE: paymentMethodId is already saved, we just add paymentIntentId
+    // Update booking with payment intent ID and status
     await booking.update(
         { 
             bookingStatusId: 4,

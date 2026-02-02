@@ -59,20 +59,49 @@ async function createPaymentIntendForUpFrontPayments(
 
 
 /*
- *   Create PaymentIntent
+ *   Create PaymentIntent (with optional payment method for off-session use)
  */
-async function createPaymentIntend(amount, customerId) {
+async function createPaymentIntend(amount, customerId, paymentMethodId = null) {
+    try {
+        const params = {
+            amount: convertToCents(amount),
+            currency: 'usd',
+            customer: customerId,
+            capture_method: 'manual',
+        };
+
+        // If payment method provided, attach it to avoid automatic payment methods
+        if (paymentMethodId) {
+            params.payment_method = paymentMethodId;
+            params.off_session = true;
+            params.confirm = false;
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create(params);
+        return paymentIntent;
+    } catch (error) {
+        throw new customError(`${error.message} `, 200);
+    }
+}
+
+
+/*
+ *   Charge immediately using saved payment method (ONE STEP - no user interaction)
+ */
+async function chargeOffSession(amount, customerId, paymentMethodId) {
     try {
         const paymentIntent = await stripe.paymentIntents.create({
             amount: convertToCents(amount),
             currency: 'usd',
             customer: customerId,
-            capture_method: 'manual',
-            setup_future_usage: "off_session",
-        })
-        return paymentIntent
+            payment_method: paymentMethodId,
+            off_session: true,
+            confirm: true,  // Confirm immediately
+            // No capture_method means it auto-captures (charges immediately)
+        });
+        return paymentIntent;
     } catch (error) {
-        throw new customError(`${error.message} `, 200)
+        throw new customError(`${error.message}`, 400);
     }
 }
 
@@ -215,5 +244,6 @@ module.exports = {
     getIntent,
     confirmAndCapturePayment,
     createPaymentIntentForAgent,
-    attachPaymentMethodToCustomer
+    attachPaymentMethodToCustomer,
+    chargeOffSession
 };
