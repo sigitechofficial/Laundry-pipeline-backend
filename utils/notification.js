@@ -24,7 +24,7 @@ async function sendNotification(userId, title, body, data = {}) {
     });
 
     if (!tokens || tokens.length === 0) {
-      console.log(`No device tokens found for user ${userId}`);
+      console.log(`No device tokens found for user ++++++++++++++++++++++++++ ${userId}`);
       return;
     }
 

@@ -516,6 +516,38 @@ class CustomerOrderService {
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
         console.log("🚀 ~ createBooking ~ req.body:", data);
 
+        // IDEMPOTENCY CHECK: Prevent duplicate bookings with same setupIntentId
+        if (setupIntentId) {
+            const existingBooking = await booking.findOne({
+                where: {
+                    setupIntentId: setupIntentId,
+                    customerId: userId
+                },
+                attributes: ['id', 'bookingStatusId', 'paymentConfirmed', 'createdAt']
+            });
+
+            if (existingBooking) {
+                console.log("⚠️ DUPLICATE DETECTED: Booking already exists with this setupIntentId");
+                console.log(`📋 Existing Booking ID: ${existingBooking.id}`);
+                console.log(`📅 Created at: ${existingBooking.createdAt}`);
+                
+                // Return existing booking instead of creating duplicate
+                return {
+                    message: "Booking already created (duplicate prevented)",
+                    data: {
+                        bookingId: existingBooking.id,
+                        isDuplicate: true,
+                        existingBooking: {
+                            id: existingBooking.id,
+                            bookingStatusId: existingBooking.bookingStatusId,
+                            paymentConfirmed: existingBooking.paymentConfirmed,
+                            createdAt: existingBooking.createdAt
+                        }
+                    }
+                };
+            }
+        }
+
         let userAddressId;
         let userPickUpAddressId;
         let userDropOffAddressId;

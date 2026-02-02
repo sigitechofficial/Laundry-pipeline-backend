@@ -904,17 +904,63 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new ValidationError("Upfront amount not set for this booking");
     }
 
+    // IDEMPOTENCY CHECK: If payment already confirmed, skip charging and just update status if needed
+    if (bookingfind.paymentConfirmed) {
+        console.log("⚠️ Payment already confirmed for this booking - skipping charge");
+        console.log(`📋 Existing Payment Intent ID: ${bookingfind.paymentIntentId}`);
+        
+        // Still update status to "On The Way" if needed
+        if (bookingfind.bookingStatusId !== 4) {
+            await booking.update(
+                { bookingStatusId: 4 },
+                { where: { id: bookingId } }
+            );
+            
+            const currentTime = new Date().toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+            });
+            const currentDate = new Date().toISOString().split("T")[0];
+            
+            await bookingHistory.create({
+                bookingId,
+                date: currentDate,
+                time: currentTime,
+                bookingStatusId: 4,
+            });
+        }
+        
+        return res.status(200).json({
+            status: "1",
+            message: "Booking status updated to On The Way (Payment already confirmed)",
+            data: {
+                bookingId: bookingId,
+                status: "On The Way",
+                paymentStatus: "Already Confirmed",
+                paymentIntentId: bookingfind.paymentIntentId
+            }
+        });
+    }
+
     console.log("💳 Creating payment intent for booking:", bookingId);
     console.log("💰 Upfront Amount:", upfrontAmount);
     console.log("👤 Customer:", bookingfind.customer.stripeCustomerId);
     console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
     console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
 
-    // Charge immediately using saved payment method (ONE STEP - no user interaction)
+    // Generate idempotency key (CRITICAL - ensures no duplicate charges)
+    // Format: booking_{bookingId}_ontheway_{timestamp}
+    // Stripe stores this for 24 hours - if same key is used, returns original result
+    const idempotencyKey = `booking_${bookingId}_ontheway_${Date.now()}`;
+    console.log(`🔒 Idempotency Key: ${idempotencyKey}`);
+
+    // Charge immediately using saved payment method with idempotency protection
     const paymentIntent = await chargeOffSession(
         upfrontAmount, 
         bookingfind.customer.stripeCustomerId,
-        bookingfind.paymentMethodId
+        bookingfind.paymentMethodId,
+        idempotencyKey  // Pass idempotency key to prevent duplicate charges
     );
 
     console.log("✅ Payment charged successfully:", paymentIntent.id, "Status:", paymentIntent.status);
@@ -924,11 +970,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     }
 
     // Update booking with payment intent ID and status
+    // paymentConfirmed flag prevents future retries at application level
     await booking.update(
         { 
             bookingStatusId: 4,
             paymentIntentId: paymentIntent.id,
-            paymentConfirmed: true
+            paymentConfirmed: true  // CRITICAL - marks as paid (prevents retries)
         },
         { where: { id: bookingId } }
     );

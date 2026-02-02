@@ -87,10 +87,17 @@ async function createPaymentIntend(amount, customerId, paymentMethodId = null) {
 
 /*
  *   Charge immediately using saved payment method (ONE STEP - no user interaction)
+ *   With Idempotency Key support to prevent duplicate charges
+ * 
+ *   @param {number} amount - Amount to charge
+ *   @param {string} customerId - Stripe customer ID
+ *   @param {string} paymentMethodId - Saved payment method ID
+ *   @param {string} idempotencyKey - Optional idempotency key for preventing duplicate charges
+ *   @returns {Object} Stripe PaymentIntent object
  */
-async function chargeOffSession(amount, customerId, paymentMethodId) {
+async function chargeOffSession(amount, customerId, paymentMethodId, idempotencyKey = null) {
     try {
-        const paymentIntent = await stripe.paymentIntents.create({
+        const params = {
             amount: convertToCents(amount),
             currency: 'usd',
             customer: customerId,
@@ -98,10 +105,27 @@ async function chargeOffSession(amount, customerId, paymentMethodId) {
             off_session: true,
             confirm: true,  // Confirm immediately
             // No capture_method means it auto-captures (charges immediately)
-        });
+        };
+
+        // Add idempotency key if provided (CRITICAL for preventing duplicate charges)
+        const options = {};
+        if (idempotencyKey) {
+            options.idempotencyKey = idempotencyKey;
+            console.log(`🔒 Using idempotency key: ${idempotencyKey}`);
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create(params, options);
+        
+        console.log(`✅ Payment charged successfully: ${paymentIntent.id}, Status: ${paymentIntent.status}`);
         return paymentIntent;
     } catch (error) {
-        throw new customError(`${error.message}`, 400);
+        // Stripe returns the SAME result if idempotency key is reused (safe retry)
+        if (error.type === 'idempotency_error') {
+            console.log('⚠️ Idempotency key already used - returning previous result');
+            // Re-throw with clearer message
+            throw new customError(`Payment already processed with this idempotency key: ${error.message}`, 400);
+        }
+        throw new customError(`Stripe Error: ${error.message}`, 400);
     }
 }
 
