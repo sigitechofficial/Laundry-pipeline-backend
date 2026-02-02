@@ -96,6 +96,10 @@ const {
     reasonService
 } = require('../../services/Admin');
 
+// Import FAQ and Blog services
+const faqService = require('../../services/Admin/faqService');
+const blogService = require('../../services/Admin/blogService');
+
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
     
@@ -1951,6 +1955,173 @@ function calculateZoneRadius(polygon) {
     return (maxDistance / 1000).toFixed(2); // return km
 }
 
+//!----------------------------------FAQ Management-----------------------------------------//
+
+/**
+ * Create new FAQ
+ */
+async function createFAQ(req, res) {
+    try {
+        const faq = await faqService.createFAQ(req.body);
+        return ResponseHelper.success(res, faq, "FAQ created successfully", 201);
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Get all FAQs
+ */
+async function getAllFAQs(req, res) {
+    try {
+        const { status } = req.query;
+        const filters = status !== undefined ? { status: status === 'true' } : {};
+        const faqs = await faqService.getAllFAQs(filters);
+        return ResponseHelper.success(res, faqs, "FAQs retrieved successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Get FAQ by ID
+ */
+async function getFAQById(req, res) {
+    try {
+        const { faqId } = req.params;
+        const faq = await faqService.getFAQById(faqId);
+        return ResponseHelper.success(res, faq, "FAQ retrieved successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Update FAQ
+ */
+async function updateFAQ(req, res) {
+    try {
+        const { faqId } = req.params;
+        const faq = await faqService.updateFAQ(faqId, req.body);
+        return ResponseHelper.success(res, faq, "FAQ updated successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Delete FAQ
+ */
+async function deleteFAQ(req, res) {
+    try {
+        const { faqId } = req.params;
+        const result = await faqService.deleteFAQ(faqId);
+        return ResponseHelper.success(res, result, "FAQ deleted successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Toggle FAQ status
+ */
+async function toggleFAQStatus(req, res) {
+    try {
+        const { faqId } = req.params;
+        const faq = await faqService.toggleFAQStatus(faqId);
+        return ResponseHelper.success(res, faq, "FAQ status toggled successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+//!----------------------------------Blog Management-----------------------------------------//
+
+/**
+ * Create new Blog
+ */
+async function createBlog(req, res) {
+    try {
+        const blogData = {
+            ...req.body,
+            image: req.file ? `Public/BlogImages/${req.file.filename}` : null
+        };
+        const blog = await blogService.createBlog(blogData);
+        return ResponseHelper.success(res, blog, "Blog created successfully", 201);
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Get all Blogs
+ */
+async function getAllBlogs(req, res) {
+    try {
+        const { status } = req.query;
+        const filters = status !== undefined ? { status: status === 'true' } : {};
+        const blogs = await blogService.getAllBlogs(filters);
+        return ResponseHelper.success(res, blogs, "Blogs retrieved successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Get Blog by ID
+ */
+async function getBlogById(req, res) {
+    try {
+        const { blogId } = req.params;
+        const blog = await blogService.getBlogById(blogId);
+        return ResponseHelper.success(res, blog, "Blog retrieved successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Update Blog
+ */
+async function updateBlog(req, res) {
+    try {
+        const { blogId } = req.params;
+        const blogData = {
+            ...req.body,
+            image: req.file ? `Public/BlogImages/${req.file.filename}` : undefined
+        };
+        const blog = await blogService.updateBlog(blogId, blogData);
+        return ResponseHelper.success(res, blog, "Blog updated successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Delete Blog
+ */
+async function deleteBlog(req, res) {
+    try {
+        const { blogId } = req.params;
+        const result = await blogService.deleteBlog(blogId);
+        return ResponseHelper.success(res, result, "Blog deleted successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
+
+/**
+ * Toggle Blog status
+ */
+async function toggleBlogStatus(req, res) {
+    try {
+        const { blogId } = req.params;
+        const blog = await blogService.toggleBlogStatus(blogId);
+        return ResponseHelper.success(res, blog, "Blog status toggled successfully");
+    } catch (error) {
+        return ResponseHelper.error(res, error);
+    }
+}
 
 
 //!-------------------Exports----------------//
@@ -2103,5 +2274,19 @@ module.exports = {
     setDefaultNoShowPolicyController,
     toggleNoShowPolicyStatusController,
     getActiveNoShowPolicyController,
-    getNoShowPolicyStatisticsController
+    getNoShowPolicyStatisticsController,
+    //!-------------FAQ Management--------//
+    createFAQ,
+    getAllFAQs,
+    getFAQById,
+    updateFAQ,
+    deleteFAQ,
+    toggleFAQStatus,
+    //!-------------Blog Management--------//
+    createBlog,
+    getAllBlogs,
+    getBlogById,
+    updateBlog,
+    deleteBlog,
+    toggleBlogStatus
 }

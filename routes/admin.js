@@ -89,6 +89,21 @@ const uploadDriverProfile = multer({
     storage: uploadDriverProfilePic
 })
 
+//Blog Image Multer
+const uploadBlogPic = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = './Public/BlogImages';
+        createDestinationDirectory(destinationPath, cb);
+    },
+    filename: (req, file, cb) => {
+        cb(null, `BlogImg-${Date.now()}${path.extname(file.originalname)}`);
+    },
+});
+
+const uploadBlogImage = multer({
+    storage: uploadBlogPic
+})
+
 
 
 
@@ -379,6 +394,36 @@ router.patch('/toggleNoShowPolicyStatus/:id', validateAccessToken, asyncMiddlewa
 router.get('/getActiveNoShowPolicy', validateAccessToken, asyncMiddleware(adminController.getActiveNoShowPolicyController))
 // Get No-Show Policy Statistics
 router.get('/getNoShowPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyStatisticsController))
+
+
+//!-----------------------------------FAQ Management------------------------------------>>>>
+// Create FAQ
+router.post('/createFAQ', validateAccessToken, asyncMiddleware(adminController.createFAQ))
+// Get All FAQs
+router.get('/getAllFAQs', validateAccessToken, asyncMiddleware(adminController.getAllFAQs))
+// Get FAQ by ID
+router.get('/getFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.getFAQById))
+// Update FAQ
+router.put('/updateFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.updateFAQ))
+// Delete FAQ
+router.delete('/deleteFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.deleteFAQ))
+// Toggle FAQ Status
+router.patch('/toggleFAQStatus/:faqId', validateAccessToken, asyncMiddleware(adminController.toggleFAQStatus))
+
+
+//!-----------------------------------Blog Management------------------------------------>>>>
+// Create Blog
+router.post('/createBlog', validateAccessToken, uploadBlogImage.single('image'), asyncMiddleware(adminController.createBlog))
+// Get All Blogs
+router.get('/getAllBlogs', validateAccessToken, asyncMiddleware(adminController.getAllBlogs))
+// Get Blog by ID
+router.get('/getBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.getBlogById))
+// Update Blog
+router.put('/updateBlog/:blogId', validateAccessToken, uploadBlogImage.single('image'), asyncMiddleware(adminController.updateBlog))
+// Delete Blog
+router.delete('/deleteBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.deleteBlog))
+// Toggle Blog Status
+router.patch('/toggleBlogStatus/:blogId', validateAccessToken, asyncMiddleware(adminController.toggleBlogStatus))
 
 
 module.exports = router
