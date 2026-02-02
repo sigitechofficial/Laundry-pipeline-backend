@@ -143,9 +143,25 @@ async function confirmIntend(paymentIntentId, paymentMethodId) {
 async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, customerId) {
     console.log("customerId------->", customerId)
     try {
-        const captured = await stripe.paymentIntents.capture(paymentIntentId);
+        let intent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-        return captured;
+        if (
+            (intent.status === "requires_payment_method" ||
+                intent.status === "requires_confirmation") &&
+            paymentMethodId
+        ) {
+            intent = await stripe.paymentIntents.confirm(paymentIntentId, {
+                payment_method: paymentMethodId,
+                off_session: true,
+                customer: customerId,
+            });
+        }
+
+        if (intent.status === "requires_capture") {
+            intent = await stripe.paymentIntents.capture(paymentIntentId);
+        }
+
+        return intent;
     } catch (error) {
         throw new customError(`Stripe Error: ${error.message}`, 400);
     }
