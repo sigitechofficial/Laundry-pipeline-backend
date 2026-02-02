@@ -148,6 +148,10 @@ module.exports = (sequelize, DataTypes) => {
   paymentIntentId:{
     type:DataTypes.STRING,
     allowNull:true
+  },
+  setupIntentId:{
+    type:DataTypes.STRING,
+    allowNull:true
   }
   }, {
     sequelize,
