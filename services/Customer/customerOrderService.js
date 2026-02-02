@@ -89,7 +89,7 @@ async function findZones(lat, lng) {
             },
             {
                 model: units,
-                as: 'currencyUnit',
+                as: 'currencyUnitZ',
                 required: false,
                 attributes: ["id", "name", "shortName"]
             }
@@ -1345,7 +1345,7 @@ class CustomerOrderService {
         let countryId = zoneData[0].city.country.id;
         let countryName = zoneData[0].city.country.name;
         let currencyUnitId = zoneData[0].currencyUnitId;
-        let currencyUnit = zoneData[0].currencyUnit;
+        let currencyUnit = zoneData[0].currencyUnitZ;
 
         console.log("Zone found successfully:", { zoneId, zoneName, cityName, countryName, currency: currencyUnit?.name });
 
