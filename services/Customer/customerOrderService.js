@@ -91,7 +91,7 @@ async function findZones(lat, lng) {
                 model: units,
                 as: 'currencyUnitZ',
                 required: false,
-                attributes: ["id", "name", "shortName"]
+                attributes: ["id", "name", "symbol"]
             }
         ],
         attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates", "currencyUnitId"],
@@ -1364,7 +1364,7 @@ class CustomerOrderService {
                 currency: currencyUnit ? {
                     id: currencyUnit.id,
                     name: currencyUnit.name,
-                    shortName: currencyUnit.shortName
+                    symbol: currencyUnit.symbol
                 } : null
             }
         };
