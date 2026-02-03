@@ -72,7 +72,7 @@ router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(custo
 //get All Services
 router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail
-router.get('/serviceDetail',validateAccessToken,asyncMiddleware(customerOtherController.serviceDetail))
+router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 

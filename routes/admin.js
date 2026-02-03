@@ -400,7 +400,7 @@ router.get('/getNoShowPolicyStatistics', validateAccessToken, asyncMiddleware(ad
 // Create FAQ
 router.post('/createFAQ', validateAccessToken, asyncMiddleware(adminController.createFAQ))
 // Get All FAQs
-router.get('/getAllFAQs', validateAccessToken, asyncMiddleware(adminController.getAllFAQs))
+router.get('/getAllFAQs', asyncMiddleware(adminController.getAllFAQs))
 // Get FAQ by ID
 router.get('/getFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.getFAQById))
 // Update FAQ
