@@ -2042,9 +2042,25 @@ async function toggleFAQStatus(req, res) {
  */
 async function createBlog(req, res) {
     try {
+        // Handle single image
+        let imagePath = null;
+        if (req.files && req.files.image && req.files.image[0]) {
+            imagePath = `Public/BlogImages/${req.files.image[0].filename}`;
+        } else if (req.file) {
+            // Fallback for single file upload
+            imagePath = `Public/BlogImages/${req.file.filename}`;
+        }
+
+        // Handle multiple description images
+        let descriptionImages = [];
+        if (req.files && req.files.descriptionImages && Array.isArray(req.files.descriptionImages)) {
+            descriptionImages = req.files.descriptionImages.map(file => `Public/BlogImages/${file.filename}`);
+        }
+
         const blogData = {
             ...req.body,
-            image: req.file ? `Public/BlogImages/${req.file.filename}` : null
+            image: imagePath,
+            descriptionImages: descriptionImages
         };
         const blog = await blogService.createBlog(blogData);
         return ResponseHelper.success(res, blog, "Blog created successfully", 201);
@@ -2086,9 +2102,26 @@ async function getBlogById(req, res) {
 async function updateBlog(req, res) {
     try {
         const { blogId } = req.params;
+        
+        // Handle single image
+        let imagePath = undefined;
+        if (req.files && req.files.image && req.files.image[0]) {
+            imagePath = `Public/BlogImages/${req.files.image[0].filename}`;
+        } else if (req.file) {
+            // Fallback for single file upload
+            imagePath = `Public/BlogImages/${req.file.filename}`;
+        }
+
+        // Handle multiple description images
+        let descriptionImages = undefined;
+        if (req.files && req.files.descriptionImages && Array.isArray(req.files.descriptionImages)) {
+            descriptionImages = req.files.descriptionImages.map(file => `Public/BlogImages/${file.filename}`);
+        }
+
         const blogData = {
             ...req.body,
-            image: req.file ? `Public/BlogImages/${req.file.filename}` : undefined
+            image: imagePath,
+            descriptionImages: descriptionImages
         };
         const blog = await blogService.updateBlog(blogId, blogData);
         return ResponseHelper.success(res, blog, "Blog updated successfully");

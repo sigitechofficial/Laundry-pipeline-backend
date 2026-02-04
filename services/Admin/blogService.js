@@ -16,7 +16,7 @@ class BlogService {
      * @returns {Object} Created Blog data
      */
     async createBlog(blogData) {
-        const { title, description, image } = blogData;
+        const { title, description, image, descriptionImages } = blogData;
 
         // Validate required fields
         if (!title || !title.trim()) {
@@ -38,11 +38,22 @@ class BlogService {
             throw new ConflictError("Blog with this title already exists");
         }
 
+        // Process descriptionImages - ensure it's an array
+        let descriptionImagesArray = [];
+        if (descriptionImages) {
+            if (Array.isArray(descriptionImages)) {
+                descriptionImagesArray = descriptionImages;
+            } else {
+                descriptionImagesArray = [descriptionImages];
+            }
+        }
+
         // Create new Blog
         const newBlog = await Blog.create({
             title: title.trim(),
             description: description.trim(),
             image: image || null,
+            descriptionImages: descriptionImagesArray,
             status: true
         });
 
@@ -96,7 +107,7 @@ class BlogService {
      * @returns {Object} Updated Blog data
      */
     async updateBlog(blogId, blogData) {
-        const { title, description, image, status } = blogData;
+        const { title, description, image, descriptionImages, status } = blogData;
 
         if (!blogId) {
             throw new ValidationError("Blog ID is required");
@@ -132,11 +143,35 @@ class BlogService {
             }
         }
 
+        // Handle descriptionImages update
+        let descriptionImagesArray = existingBlog.descriptionImages || [];
+        if (descriptionImages !== undefined) {
+            // Delete old description images if new ones are provided
+            if (existingBlog.descriptionImages && existingBlog.descriptionImages.length > 0) {
+                existingBlog.descriptionImages.forEach(oldImage => {
+                    const oldImagePath = path.join(__dirname, '../../', oldImage);
+                    if (fs.existsSync(oldImagePath)) {
+                        fs.unlinkSync(oldImagePath);
+                    }
+                });
+            }
+            
+            // Process new descriptionImages
+            if (Array.isArray(descriptionImages)) {
+                descriptionImagesArray = descriptionImages;
+            } else if (descriptionImages) {
+                descriptionImagesArray = [descriptionImages];
+            } else {
+                descriptionImagesArray = [];
+            }
+        }
+
         // Update Blog
         const updatedBlog = await existingBlog.update({
             title: title ? title.trim() : existingBlog.title,
             description: description ? description.trim() : existingBlog.description,
             image: image !== undefined ? image : existingBlog.image,
+            descriptionImages: descriptionImagesArray,
             status: status !== undefined ? status : existingBlog.status
         });
 
@@ -165,6 +200,16 @@ class BlogService {
             if (fs.existsSync(imagePath)) {
                 fs.unlinkSync(imagePath);
             }
+        }
+
+        // Delete description images if they exist
+        if (existingBlog.descriptionImages && Array.isArray(existingBlog.descriptionImages)) {
+            existingBlog.descriptionImages.forEach(imagePath => {
+                const fullImagePath = path.join(__dirname, '../../', imagePath);
+                if (fs.existsSync(fullImagePath)) {
+                    fs.unlinkSync(fullImagePath);
+                }
+            });
         }
 
         // Soft delete (paranoid mode)

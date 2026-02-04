@@ -96,13 +96,20 @@ const uploadBlogPic = multer.diskStorage({
         createDestinationDirectory(destinationPath, cb);
     },
     filename: (req, file, cb) => {
-        cb(null, `BlogImg-${Date.now()}${path.extname(file.originalname)}`);
+        const timestamp = Date.now();
+        const random = Math.round(Math.random() * 1E9);
+        cb(null, `BlogImg-${timestamp}-${random}${path.extname(file.originalname)}`);
     },
 });
 
 const uploadBlogImage = multer({
     storage: uploadBlogPic
-})
+});
+
+// Multer for multiple description images
+const uploadBlogDescriptionImages = multer({
+    storage: uploadBlogPic
+});
 
 
 
@@ -413,13 +420,19 @@ router.patch('/toggleFAQStatus/:faqId', validateAccessToken, asyncMiddleware(adm
 
 //!-----------------------------------Blog Management------------------------------------>>>>
 // Create Blog
-router.post('/createBlog', validateAccessToken, uploadBlogImage.single('image'), asyncMiddleware(adminController.createBlog))
+router.post('/createBlog', validateAccessToken, uploadBlogImage.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'descriptionImages', maxCount: 10 }
+]), asyncMiddleware(adminController.createBlog))
 // Get All Blogs
 router.get('/getAllBlogs', validateAccessToken, asyncMiddleware(adminController.getAllBlogs))
 // Get Blog by ID
 router.get('/getBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.getBlogById))
 // Update Blog
-router.put('/updateBlog/:blogId', validateAccessToken, uploadBlogImage.single('image'), asyncMiddleware(adminController.updateBlog))
+router.put('/updateBlog/:blogId', validateAccessToken, uploadBlogImage.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'descriptionImages', maxCount: 10 }
+]), asyncMiddleware(adminController.updateBlog))
 // Delete Blog
 router.delete('/deleteBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.deleteBlog))
 // Toggle Blog Status

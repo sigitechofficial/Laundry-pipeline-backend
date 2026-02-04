@@ -24,6 +24,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true
     },
+    descriptionImages: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: []
+    },
     status: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
