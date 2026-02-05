@@ -403,46 +403,29 @@ class AgentAuthService {
             },
         });
 
+        // Get user email for Stripe Connect
+        const userData = await users.findOne({
+            where: { id: data.userId },
+            attributes: ['email', 'firstName', 'lastName']
+        });
+
+        let agentInfo;
         if (data.matchProfileOptions === 'Other') {
-            const agentInfo = await bussinessInformation.create({
+            agentInfo = await bussinessInformation.create({
                 shopName: data.shopName,
                 matchProfileOptions: data.matchProfileOptions,
                 otherText: data.otherText,
                 agentId: data.userId,
                 shopAddressId: agentAddress ? agentAddress.id : null
             });
-
-            const machinesCountCreate = data.machineryCount.map(ele => ({
-                total: ele.total,
-                status: true,
-                machineId: ele.machineId,
-                bussinessInformationId: agentInfo.id
-            }));
-
-            await machineCount.bulkCreate(machinesCountCreate);
-
-            await Promise.all(
-                data.serviceTimes.map(async (ele) => {
-                    await agentSelectServices.update({
-                        serviceTimeRequired: ele.serviceTimeRequired
-                    }, { where: { agentServiceId: data.userId, serviceId: ele.serviceId } });
-                })
-            );
-
-            await users.update({
-                bussinessInformationId: agentInfo.id
-            }, { where: { id: data.userId } });
-
-            return {
-            };
+        } else {
+            agentInfo = await bussinessInformation.create({
+                shopName: data.shopName,
+                matchProfileOptions: data.matchProfileOptions,
+                agentId: data.userId,
+                shopAddressId: agentAddress ? agentAddress.id : null
+            });
         }
-
-        const agentInfo = await bussinessInformation.create({
-            shopName: data.shopName,
-            matchProfileOptions: data.matchProfileOptions,
-            agentId: data.userId,
-            shopAddressId: agentAddress ? agentAddress.id : null
-        });
 
         const machinesCountCreate = data.machineryCount.map(ele => ({
             total: ele.total,
@@ -461,8 +444,42 @@ class AgentAuthService {
             })
         );
 
+        await users.update({
+            bussinessInformationId: agentInfo.id
+        }, { where: { id: data.userId } });
+
+        // Create Stripe Connect Account
+        let onboardingUrl = null;
+        let connectAccountId = null;
+        try {
+            connectAccountId = await stripe.createStripeConnectAccount(
+                userData.email,
+                data.shopName
+            );
+
+            const returnUrl = `${process.env.FRONTEND_URL}/agent/stripe-return`;
+            const refreshUrl = `${process.env.FRONTEND_URL}/agent/stripe-refresh`;
+            
+            onboardingUrl = await stripe.createStripeOnboardingLink(
+                connectAccountId,
+                returnUrl,
+                refreshUrl
+            );
+
+            await bussinessInformation.update({
+                connectAccountId: connectAccountId,
+                isConnectAccountConnected: false
+            }, {
+                where: { id: agentInfo.id }
+            });
+        } catch (error) {
+            console.error('Stripe Connect Account creation failed:', error);
+        }
+
         return {
-            agentInfo
+            agentInfo,
+            onboardingUrl: onboardingUrl,
+            connectAccountId: connectAccountId
         };
     }
 
@@ -601,7 +618,7 @@ class AgentAuthService {
                 {
                     model: bussinessInformation,
                     as: 'agentInfo',
-                    attributes: ['id', 'shopName', 'matchProfileOptions'],
+                    attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
                     include: [
                         {
                             model: machineCount,
@@ -840,6 +857,7 @@ class AgentAuthService {
         }
         
         const currencyUnit = userAddress?.zone?.currencyUnitZ?.symbol || '$';
+        // agentInfo is already declared above in the validation section
 
         return {
             userId: String(userFind.id),
@@ -853,7 +871,8 @@ class AgentAuthService {
             isGuest: false,
             joinedOn: userFind.dataValues.joinedOn,
             phoneNum: userFind.phoneNum,
-            features: featureData
+            features: featureData,
+            isConnectAccountConnected: agentInfo?.[0]?.isConnectAccountConnected || false
         };
     }
 
@@ -1045,7 +1064,7 @@ class AgentAuthService {
                 {
                     model: bussinessInformation,
                     as: 'agentInfo',
-                    attributes: ['id', 'shopName', 'matchProfileOptions'],
+                    attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
                     include: [
                         {
                             model: machineCount,
@@ -1170,11 +1189,14 @@ class AgentAuthService {
             attributes: ['id', 'title', 'key', 'featureOf']
         });
 
+        // agentInfo is already declared above in the validation section
+
         return {
             userData,
             accessToken,
             isGuest: data.guestUser,
             featureData,
+            isConnectAccountConnected: agentInfo?.[0]?.isConnectAccountConnected || false
         };
     }
 

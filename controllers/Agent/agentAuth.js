@@ -1089,6 +1089,8 @@ const loginData = (userData, accessToken, isGuest, features) => {
         }
     }
     
+    const agentInfo = userData?.agentInfo ?? [];
+    
     return {
         status: "1",
         message: "Login successful",
@@ -1106,7 +1108,8 @@ const loginData = (userData, accessToken, isGuest, features) => {
                 ? userData.dataValues.joinedOn
                 : "2023",
             phoneNum: `${userData.phoneNum}`,
-            features: Array.isArray(features) && features.length > 0 ? features : []
+            features: Array.isArray(features) && features.length > 0 ? features : [],
+            isConnectAccountConnected: agentInfo?.[0]?.isConnectAccountConnected || false
         },
         error: "",
     };

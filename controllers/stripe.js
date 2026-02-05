@@ -251,6 +251,62 @@ async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
     }
 }
 
+/*
+ *   Create Stripe Connect Account
+ */
+async function createStripeConnectAccount(email, businessName) {
+    try {
+        const account = await stripe.accounts.create({
+            type: 'express',
+            country: 'US', // Change to your country code
+            email: email,
+            capabilities: {
+                card_payments: { requested: true },
+                transfers: { requested: true },
+            },
+            business_type: 'individual', // or 'company' based on your needs
+            business_profile: {
+                name: businessName,
+            },
+        });
+        return account.id; // Returns the Connect account ID
+    } catch (error) {
+        throw new customError(`Stripe Connect Account Error: ${error.message}`, 400);
+    }
+}
+
+/*
+ *   Create Stripe Onboarding Link
+ */
+async function createStripeOnboardingLink(accountId, returnUrl, refreshUrl) {
+    try {
+        const accountLink = await stripe.accountLinks.create({
+            account: accountId,
+            refresh_url: refreshUrl,
+            return_url: returnUrl,
+            type: 'account_onboarding',
+        });
+        return accountLink.url; // Returns the onboarding URL
+    } catch (error) {
+        throw new customError(`Stripe Onboarding Link Error: ${error.message}`, 400);
+    }
+}
+
+/*
+ *   Check if Connect Account is fully onboarded
+ */
+async function checkConnectAccountStatus(accountId) {
+    try {
+        const account = await stripe.accounts.retrieve(accountId);
+        return {
+            chargesEnabled: account.charges_enabled,
+            payoutsEnabled: account.payouts_enabled,
+            detailsSubmitted: account.details_submitted
+        };
+    } catch (error) {
+        throw new customError(`Stripe Account Status Error: ${error.message}`, 400);
+    }
+}
 
 
 
@@ -269,5 +325,8 @@ module.exports = {
     confirmAndCapturePayment,
     createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,
-    chargeOffSession
+    chargeOffSession,
+    createStripeConnectAccount,
+    createStripeOnboardingLink,
+    checkConnectAccountStatus
 };
