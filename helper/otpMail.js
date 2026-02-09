@@ -29,7 +29,7 @@ module.exports = function ({ type, email, OTP }) {
   if (type === 'RegisterOTP') {
     transpoter.sendMail({
       from: process.env.EMAIL_USERNAME,
-      to: [email, 'sigidevelopers@gmail.com'],
+      to: ['sigidevelopers@gmail.com'],
       subject: `OTP for Registration in Laundry Service App`,
       html: `
 <!DOCTYPE html>
@@ -1324,7 +1324,7 @@ module.exports = function ({ type, email, OTP }) {
   if(type === 'ForgetPassword'){
     transpoter.sendMail({
       from: process.env.EMAIL_USERNAME,
-      to: [email, 'sigidevelopers@gmail.com'],
+      to: ['sigidevelopers@gmail.com'],
       subject: `OTP for Registration in Laundry Service App`,
       html: `
 <!DOCTYPE html>
