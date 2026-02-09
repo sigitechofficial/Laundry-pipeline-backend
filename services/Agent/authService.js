@@ -466,6 +466,9 @@ class AgentAuthService {
                 refreshUrl
             );
 
+            console.log('🔗 Stripe Onboarding Link Generated:', onboardingUrl);
+            console.log('📝 Connect Account ID:', connectAccountId);
+
             await bussinessInformation.update({
                 connectAccountId: connectAccountId,
                 isConnectAccountConnected: false
@@ -481,6 +484,51 @@ class AgentAuthService {
             onboardingUrl: onboardingUrl,
             connectAccountId: connectAccountId
         };
+    }
+
+    /**
+     * Generate Stripe Onboarding Link
+     * @param {Object} data - Data containing userId
+     * @returns {Object} Onboarding link result
+     */
+    async generateStripeOnboardingLink(data) {
+        // Get business information for the agent
+        const businessInfo = await bussinessInformation.findOne({
+            where: { agentId: data.userId },
+            attributes: ['id', 'connectAccountId', 'shopName']
+        });
+
+        if (!businessInfo) {
+            throw new NotFoundError('Business information not found. Please complete business registration first.');
+        }
+
+        if (!businessInfo.connectAccountId) {
+            throw new NotFoundError('Stripe Connect account not found. Please contact support.');
+        }
+
+        try {
+            const returnUrl = `${process.env.FRONTEND_URL}/agent/stripe-return`;
+            const refreshUrl = `${process.env.FRONTEND_URL}/agent/stripe-refresh`;
+            
+            const onboardingUrl = await stripe.createStripeOnboardingLink(
+                businessInfo.connectAccountId,
+                returnUrl,
+                refreshUrl
+            );
+
+            console.log('🔗 Stripe Onboarding Link Regenerated:', onboardingUrl);
+            console.log('📝 Connect Account ID:', businessInfo.connectAccountId);
+            console.log('👤 Agent ID:', data.userId);
+
+            return {
+                onboardingUrl: onboardingUrl,
+                connectAccountId: businessInfo.connectAccountId,
+                shopName: businessInfo.shopName
+            };
+        } catch (error) {
+            console.error('Stripe Onboarding Link generation failed:', error);
+            throw new UnprocessableEntityError(`Failed to generate onboarding link: ${error.message}`);
+        }
     }
 
     /**

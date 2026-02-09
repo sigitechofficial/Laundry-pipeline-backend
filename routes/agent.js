@@ -137,6 +137,13 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
+// Generate Stripe Onboarding Link
+router.post(
+    "/generateStripeOnboardingLink",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.generateStripeOnboardingLink)
+);
+
 //!-----------------------------------------------------------Drawer-----------------------------------------------------------------------//
 //get Profile
 router.get(

@@ -168,6 +168,17 @@ const updateUserProfile = async (req, res) => {
     return ResponseHelper.success(res, "Profile updated successfully", result);
 };
 
+// Generate Stripe onboarding link
+const generateStripeOnboardingLink = async (req, res) => {
+    logRequestData('generateStripeOnboardingLink', req);
+    const data = { 
+        userId: req.user.id
+    };
+
+    const result = await authService.generateStripeOnboardingLink(data);
+    return ResponseHelper.success(res, "Stripe onboarding link generated successfully", result);
+};
+
 module.exports = {
     registerAgentWithOTP,
     verifyOTpSignUp,
@@ -182,5 +193,6 @@ module.exports = {
     logout,
     session,
     getUserProfile,
-    updateUserProfile
+    updateUserProfile,
+    generateStripeOnboardingLink
 };
