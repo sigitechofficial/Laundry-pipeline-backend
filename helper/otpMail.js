@@ -1302,9 +1302,22 @@ module.exports = function ({ type, email, OTP }) {
 </html>`,
     },function(error, info){
       if(error){
-        console.log("Error in OTP mail",error)
+        console.error("❌ Error in OTP mail (RegisterOTP):", error.message);
+        console.error("Error code:", error.code);
+        console.error("Response:", error.response);
+        console.error("Command:", error.command);
+        
+        // Provide specific error guidance
+        if(error.code === 'EAUTH'){
+          console.error("\n🔐 Authentication Error Details:");
+          console.error("- The email username or password is incorrect");
+          console.error("- If using Gmail: You need an App-Specific Password");
+          console.error("- Check your EMAIL_USERNAME and EMAIL_PASSWORD environment variables");
+        }
       }else{
-        console.log("Info from mail",info)
+        console.log("✅ OTP email sent successfully (RegisterOTP)");
+        console.log("📧 Message ID:", info.messageId);
+        console.log("📬 Response:", info.response);
       }
     });
   }
@@ -2582,9 +2595,22 @@ module.exports = function ({ type, email, OTP }) {
 </html>`,
     },function(error, info){
       if(error){
-        console.log("Error in OTP mail",error)
+        console.error("❌ Error in OTP mail (ForgetPassword):", error.message);
+        console.error("Error code:", error.code);
+        console.error("Response:", error.response);
+        console.error("Command:", error.command);
+        
+        // Provide specific error guidance
+        if(error.code === 'EAUTH'){
+          console.error("\n🔐 Authentication Error Details:");
+          console.error("- The email username or password is incorrect");
+          console.error("- If using Gmail: You need an App-Specific Password");
+          console.error("- Check your EMAIL_USERNAME and EMAIL_PASSWORD environment variables");
+        }
       }else{
-        console.log("Info from mail",info)
+        console.log("✅ OTP email sent successfully (ForgetPassword)");
+        console.log("📧 Message ID:", info.messageId);
+        console.log("📬 Response:", info.response);
       }
     });
   }
