@@ -452,9 +452,14 @@ class AgentAuthService {
         let onboardingUrl = null;
         let connectAccountId = null;
         try {
+            // Convert country code to uppercase and use 'GB' for UK/London
+            const countryCode = (data.countryCode || 'GB').toUpperCase();
+            // Map common variations to correct ISO code
+            const normalizedCountry = countryCode === 'UK' ? 'GB' : countryCode;
+            
             connectAccountId = await stripe.createStripeConnectAccount(
                 userData.email,
-                data.countryCode || 'Uk'
+                normalizedCountry
             );
 
             const returnUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;

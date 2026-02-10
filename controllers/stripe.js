@@ -254,7 +254,7 @@ async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
 /*
  *   Create Stripe Connect Account
  */
-async function createStripeConnectAccount(email, country = 'UK') {
+async function createStripeConnectAccount(email, country = 'GB') {
     try {
         const account = await stripe.accounts.create({
             type: 'express',
