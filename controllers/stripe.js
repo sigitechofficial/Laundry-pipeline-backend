@@ -276,10 +276,31 @@ async function createStripeConnectAccount(email, country = 'GB') {
  */
 async function createStripeOnboardingLink(accountId, returnUrl, refreshUrl) {
     try {
+        // Verify account exists before creating link
+        if (!accountId) {
+            throw new Error('Account ID is required to create onboarding link');
+        }
+
+        // Verify the account exists in Stripe
+        try {
+            const account = await stripe.accounts.retrieve(accountId);
+            console.log('✅ Verified Stripe account exists:', account.id);
+            console.log('   Account type:', account.type);
+            console.log('   Account country:', account.country);
+        } catch (verifyError) {
+            console.error('❌ Failed to verify Stripe account:', verifyError.message);
+            throw new Error(`Stripe account ${accountId} does not exist or cannot be accessed: ${verifyError.message}`);
+        }
+
         // Default URL if not provided
         const defaultUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
         const finalReturnUrl = returnUrl || defaultUrl;
         const finalRefreshUrl = refreshUrl || defaultUrl;
+
+        console.log('🔗 Creating account link...');
+        console.log('   Account ID:', accountId);
+        console.log('   Return URL:', finalReturnUrl);
+        console.log('   Refresh URL:', finalRefreshUrl);
 
         const accountLink = await stripe.accountLinks.create({
             account: accountId,
@@ -287,8 +308,15 @@ async function createStripeOnboardingLink(accountId, returnUrl, refreshUrl) {
             return_url: finalReturnUrl,
             type: 'account_onboarding',
         });
+
+        if (!accountLink || !accountLink.url) {
+            throw new Error('Failed to create account link - no URL returned from Stripe');
+        }
+
+        console.log('✅ Account link created successfully:', accountLink.url);
         return accountLink.url; // Returns the onboarding URL
     } catch (error) {
+        console.error('❌ Stripe Onboarding Link Error:', error.message);
         throw new customError(`Stripe Onboarding Link Error: ${error.message}`, 400);
     }
 }

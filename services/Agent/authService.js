@@ -457,13 +457,32 @@ class AgentAuthService {
             // Map common variations to correct ISO code
             const normalizedCountry = countryCode === 'UK' ? 'GB' : countryCode;
             
+            console.log('🔧 Creating Stripe Connect Account...');
+            console.log('   Email:', userData.email);
+            console.log('   Country:', normalizedCountry);
+            
             connectAccountId = await stripe.createStripeConnectAccount(
                 userData.email,
                 normalizedCountry
             );
 
+            console.log('✅ Stripe Connect Account Created:', connectAccountId);
+
+            // Verify account was created
+            if (!connectAccountId) {
+                throw new Error('Failed to create Stripe Connect account - no account ID returned');
+            }
+
+            // Small delay to ensure account is fully initialized in Stripe
+            await new Promise(resolve => setTimeout(resolve, 500));
+
             const returnUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
             const refreshUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
+            
+            console.log('🔗 Creating Stripe Onboarding Link...');
+            console.log('   Account ID:', connectAccountId);
+            console.log('   Return URL:', returnUrl);
+            console.log('   Refresh URL:', refreshUrl);
             
             onboardingUrl = await stripe.createStripeOnboardingLink(
                 connectAccountId,
@@ -471,7 +490,11 @@ class AgentAuthService {
                 refreshUrl
             );
 
-            console.log('🔗 Stripe Onboarding Link Generated:', onboardingUrl);
+            if (!onboardingUrl) {
+                throw new Error('Failed to create Stripe onboarding link - no URL returned');
+            }
+
+            console.log('✅ Stripe Onboarding Link Generated:', onboardingUrl);
             console.log('📝 Connect Account ID:', connectAccountId);
 
             await bussinessInformation.update({
@@ -481,7 +504,11 @@ class AgentAuthService {
                 where: { id: agentInfo.id }
             });
         } catch (error) {
-            console.error('Stripe Connect Account creation failed:', error);
+            console.error('❌ Stripe Connect Account creation failed:', error);
+            console.error('   Error message:', error.message);
+            console.error('   Error stack:', error.stack);
+            // Don't fail silently - throw the error so it can be handled properly
+            throw new Error(`Stripe Connect Account creation failed: ${error.message}`);
         }
 
         return {
