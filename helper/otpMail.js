@@ -1,6 +1,6 @@
-const transpoter = require('./transpoter');
+const { sendEmailViaAPI } = require('./zeptomailApi');
 
-module.exports = function ({ type, email, OTP }) {
+module.exports = async function ({ type, email, OTP }) {
   console.log("OTp------->", OTP);
 
   const otpArray = OTP.split("")
@@ -27,11 +27,20 @@ module.exports = function ({ type, email, OTP }) {
     .join("");
 
   if (type === 'RegisterOTP') {
-    transpoter.sendMail({
-      from: process.env.EMAIL_USERNAME,
-      to: ['sigidevelopers@gmail.com'],
-      subject: `OTP for Registration in Laundry Service App`,
-      html: `
+    try {
+      // Use FROM_EMAIL from env or fallback to configured default
+      // This ensures we use a verified sender address
+      const fromEmail = process.env.FROM_EMAIL || 'noreply@serviprapp.com';
+      const fromName = process.env.FROM_NAME || 'Laundry Cleaners';
+
+      await sendEmailViaAPI({
+        from: {
+          address: fromEmail,
+          name: fromName
+        },
+        to: [email, 'sigidevelopers@gmail.com'],
+        subject: `OTP for Registration in Laundry Service App`,
+        html: `
 <!DOCTYPE html>
 
 <html
@@ -1299,34 +1308,31 @@ module.exports = function ({ type, email, OTP }) {
     </table>
     <!-- End -->
   </body>
-</html>`,
-    },function(error, info){
-      if(error){
-        console.error("❌ Error in OTP mail (RegisterOTP):", error.message);
-        console.error("Error code:", error.code);
-        console.error("Response:", error.response);
-        console.error("Command:", error.command);
-        
-        // Provide specific error guidance
-        if(error.code === 'EAUTH'){
-          console.error("\n🔐 Authentication Error Details:");
-          console.error("- The email username or password is incorrect");
-          console.error("- If using Gmail: You need an App-Specific Password");
-          console.error("- Check your EMAIL_USERNAME and EMAIL_PASSWORD environment variables");
-        }
-      }else{
-        console.log("✅ OTP email sent successfully (RegisterOTP)");
-        console.log("📧 Message ID:", info.messageId);
-        console.log("📬 Response:", info.response);
-      }
-    });
+</html>`
+      });
+
+      console.log("✅ OTP email sent successfully (RegisterOTP) via ZeptoMail API");
+    } catch (error) {
+      console.error("❌ Error in OTP mail (RegisterOTP):", error.message || error.error);
+      console.error("Error details:", error.details || error);
+      console.error("Status:", error.status);
+    }
   }
   if(type === 'ForgetPassword'){
-    transpoter.sendMail({
-      from: process.env.EMAIL_USERNAME,
-      to: ['sigidevelopers@gmail.com'],
-      subject: `OTP for Registration in Laundry Service App`,
-      html: `
+    try {
+      // Use FROM_EMAIL from env or fallback to configured default
+      // This ensures we use a verified sender address
+      const fromEmail = process.env.FROM_EMAIL || 'noreply@serviprapp.com';
+      const fromName = process.env.FROM_NAME || 'Laundry Cleaners';
+
+      await sendEmailViaAPI({
+        from: {
+          address: fromEmail,
+          name: fromName
+        },
+        to: [email, 'sigidevelopers@gmail.com'],
+        subject: `OTP for Password Reset in Laundry Service App`,
+        html: `
 <!DOCTYPE html>
 
 <html
@@ -2592,26 +2598,14 @@ module.exports = function ({ type, email, OTP }) {
     </table>
     <!-- End -->
   </body>
-</html>`,
-    },function(error, info){
-      if(error){
-        console.error("❌ Error in OTP mail (ForgetPassword):", error.message);
-        console.error("Error code:", error.code);
-        console.error("Response:", error.response);
-        console.error("Command:", error.command);
-        
-        // Provide specific error guidance
-        if(error.code === 'EAUTH'){
-          console.error("\n🔐 Authentication Error Details:");
-          console.error("- The email username or password is incorrect");
-          console.error("- If using Gmail: You need an App-Specific Password");
-          console.error("- Check your EMAIL_USERNAME and EMAIL_PASSWORD environment variables");
-        }
-      }else{
-        console.log("✅ OTP email sent successfully (ForgetPassword)");
-        console.log("📧 Message ID:", info.messageId);
-        console.log("📬 Response:", info.response);
-      }
-    });
+</html>`
+      });
+
+      console.log("✅ OTP email sent successfully (ForgetPassword) via ZeptoMail API");
+    } catch (error) {
+      console.error("❌ Error in OTP mail (ForgetPassword):", error.message || error.error);
+      console.error("Error details:", error.details || error);
+      console.error("Status:", error.status);
+    }
   }
 };

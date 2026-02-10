@@ -1,36 +1,41 @@
+require('dotenv').config();
 const nodemailer=require('nodemailer')
 
-// Validate required environment variables
-if (!process.env.EMAIL_HOST || !process.env.EMAIL_PORT || !process.env.EMAIL_USERNAME || !process.env.EMAIL_PASSWORD) {
-    console.error('❌ Email configuration error: Missing required environment variables');
-    console.error('Required: EMAIL_HOST, EMAIL_PORT, EMAIL_USERNAME, EMAIL_PASSWORD');
-}
-
-// Parse port as integer
-const emailPort = parseInt(process.env.EMAIL_PORT, 10);
+// ZeptoMail SMTP Configuration
+// Get SMTP password from Mail Agent → Setup Details → SMTP at zeptomail.zoho.com
+const FROM_ADDRESS = 'noreply@serviprapp.com';
+const SMTP_HOST = 'smtp.zeptomail.com';
+// Try port 587 first (STARTTLS) - works better on cPanel servers
+const SMTP_PORT = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10);
+const SMTP_USER = 'emailapikey';
+const SMTP_PASS ='wSsVR612/0WiW6Z7yDL4cuppng5dBVOjFUV93gel63L9Fv3FpcdpwxDIUQ+gGPUbFW9oQjoXrO8qnR8H1zNY2o5/yA0DXCiF9mqRe1U4J3x17qnvhDzPW2xVlxOBLY4Mxw5smGdoFsAr+g==';
 
 // Log configuration (without exposing password)
 console.log('📧 Email Configuration:');
-console.log('   Host:', process.env.EMAIL_HOST);
-console.log('   Port:', emailPort);
-console.log('   Username:', process.env.EMAIL_USERNAME);
-console.log('   Password:', process.env.EMAIL_PASSWORD ? '***' + process.env.EMAIL_PASSWORD.slice(-4) : 'NOT SET');
-console.log('   Secure:', emailPort === 465);
+console.log('   Host:', SMTP_HOST);
+console.log('   Port:', SMTP_PORT);
+console.log('   SMTP User (auth):', SMTP_USER);
+console.log('   From Address:', FROM_ADDRESS);
+console.log('   Password:', SMTP_PASS ? '***' + SMTP_PASS.slice(-4) : 'NOT SET');
+console.log('   Secure:', SMTP_PORT === 465);
+console.log('   Connection Type:', SMTP_PORT === 465 ? 'SSL' : 'STARTTLS');
 
 const transpoter=nodemailer.createTransport({
-    host:process.env.EMAIL_HOST,
-    port: emailPort,
-    secure: emailPort === 465, // true for 465, false for other ports
-    auth:{
-        user:process.env.EMAIL_USERNAME,
-        pass:process.env.EMAIL_PASSWORD
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465, // true for 465 (SSL), false for 587 (STARTTLS)
+    auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS
     },
     tls: {
-        // Do not fail on invalid certificates (for development/testing)
-        rejectUnauthorized: false
+        // Do not fail on invalid certificates
+        rejectUnauthorized: false,
+        // For STARTTLS on port 587
+        ciphers: 'SSLv3'
     },
-    // Add connection timeout
-    connectionTimeout: 10000, // 10 seconds
+    // Connection timeout
+    connectionTimeout: 10000,
     greetingTimeout: 10000,
     socketTimeout: 10000
 })
@@ -45,40 +50,34 @@ transpoter.verify(function(error, success) {
         console.error('Command:', error.command);
         
         // Provide helpful error messages
-        if (error.code === 'EAUTH') {
-            console.error('\n🔐 Authentication Error (535) - Detailed Solutions:');
+        if (error.code === 'ESOCKET' || error.message.includes('wrong version number')) {
+            console.error('\n🔌 SSL/TLS Connection Error - cPanel Server Fix:');
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.error('The SSL connection failed. This is common on cPanel servers.');
+            console.error('');
+            console.error('✅ SOLUTION: Use port 587 with STARTTLS instead of port 465');
+            console.error('   Set in your .env file:');
+            console.error('   EMAIL_PORT=587');
+            console.error('');
+            console.error('   Or update the default in transporter.js:');
+            console.error('   const SMTP_PORT = parseInt(process.env.EMAIL_PORT || "587", 10);');
+            console.error('   secure: false  // for port 587');
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        } else if (error.code === 'EAUTH') {
+            console.error('\n🔐 Authentication Error (535) - ZeptoMail SMTP:');
             console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             console.error('The SMTP server rejected your credentials.');
             console.error('');
-            console.error('✅ SOLUTION 1: For Gmail Users (Most Common):');
-            console.error('   1. Go to: https://myaccount.google.com/apppasswords');
-            console.error('   2. Sign in with your Google account');
-            console.error('   3. Select "Mail" and "Other (Custom name)"');
-            console.error('   4. Enter name: "Laundry App"');
-            console.error('   5. Click "Generate"');
-            console.error('   6. Copy the 16-character password (no spaces)');
-            console.error('   7. Update EMAIL_PASSWORD in your .env file');
-            console.error('   8. Restart your server');
-            console.error('');
-            console.error('✅ SOLUTION 2: Check Your Credentials:');
-            console.error('   - EMAIL_USERNAME should be your full email address');
-            console.error('   - EMAIL_PASSWORD should NOT have any spaces or quotes');
-            console.error('   - Make sure there are no extra characters');
-            console.error('');
-            console.error('✅ SOLUTION 3: For Other Email Providers:');
-            console.error('   - Outlook: Use app password if 2FA is enabled');
-            console.error('   - Yahoo: Requires app-specific password');
-            console.error('   - Custom SMTP: Verify credentials with your provider');
-            console.error('');
-            console.error('✅ SOLUTION 4: Verify Environment Variables:');
-            console.error('   Run this command on your server to check:');
-            console.error('   echo $EMAIL_USERNAME');
-            console.error('   echo $EMAIL_PASSWORD | cut -c1-4');
+            console.error('✅ For ZeptoMail, check your .env file has:');
+            console.error('   EMAIL_HOST=smtp.zeptomail.com');
+            console.error('   EMAIL_PORT=587');
+            console.error('   EMAIL_USER=emailapikey');
+            console.error('   EMAIL_PASSWORD=your-full-api-token-here');
             console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         } else if (error.code === 'ECONNECTION' || error.code === 'ETIMEDOUT') {
             console.error('\n🌐 Connection Error - Possible solutions:');
             console.error('1. Check if EMAIL_HOST is correct');
-            console.error('2. Check if EMAIL_PORT is correct (587 for TLS, 465 for SSL)');
+            console.error('2. Check if EMAIL_PORT is correct (587 for STARTTLS, 465 for SSL)');
             console.error('3. Check your internet connection');
             console.error('4. Check if firewall is blocking the connection');
         }

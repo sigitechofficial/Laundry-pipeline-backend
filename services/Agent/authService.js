@@ -137,7 +137,7 @@ class AgentAuthService {
             });
 
             // Send new OTP
-            otpMail({
+            await otpMail({
                 type: 'RegisterOTP',
                 email: data.email,
                 OTP: otp
@@ -223,7 +223,7 @@ class AgentAuthService {
                 specialChars: false
             });
 
-            otpMail({
+            await otpMail({
                 type: 'RegisterOTP',
                 email: data.email,
                 OTP: otp
@@ -353,7 +353,7 @@ class AgentAuthService {
         });
 
         // Send OTP email using otpMail
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: userExist.email,
             OTP: OTP,
@@ -950,7 +950,7 @@ class AgentAuthService {
             specialChars: true,
         });
 
-        otpMail({
+        await otpMail({
             type: 'ForgetPassword',
             email: data.email,
             OTP: OTP

@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@turf/turf": "5.1.6",
     "@types/express": "^5.0.0",
     "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
@@ -42,6 +43,10 @@
     "stripe": "^17.5.0",
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0"
+  },
+  "overrides": {
+    "kdbush": "3.1.1",
+    "concaveman": "1.1.0"
   },
   "devDependencies": {
     "localtunnel": "^2.0.2",

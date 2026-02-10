@@ -76,7 +76,7 @@ async function driverregisterStep1(req, res) {
             specialChars: true,
         })
 
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: email,
             OTP: OTP
@@ -182,7 +182,7 @@ async function driverregisterStep1(req, res) {
         });
 
 
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: email,
             OTP: OTP
@@ -591,7 +591,7 @@ async function forgetPasswordRequest(req, res) {
     //return res.json(OTP)
 
 
-    otpMail({
+    await otpMail({
         type: 'ForgetPassword',
         email: email,
         OTP: OTP
@@ -726,7 +726,7 @@ async function resendOTP(req, res) {
         specialChars: true
     })
 
-    otpMail({
+    await otpMail({
         type: 'ForgetPassword',
         email: userExist.email,
         OTP: OTP

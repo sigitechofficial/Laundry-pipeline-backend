@@ -424,6 +424,104 @@ async function testNotification(req, res) {
         return res.status(500).json(responsefunc("0", "Failed to send test notification", {}, ""));
     }
 }
+
+/*
+ * Test Email - Uses otpMail function (full OTP email template)
+ */
+async function testEmail(req, res) {
+    const { email, type = 'RegisterOTP' } = req.body;
+
+    if (!email) {
+        return res.status(400).json(responsefunc("0", "Email is required", {}, ""));
+    }
+
+    try {
+        console.log("🧪 Testing email via otpMail function...");
+        console.log("   Email:", email);
+        console.log("   Type:", type);
+
+        // Generate a test OTP
+        const testOTP = otpGenerator.generate(4, {
+            lowerCaseAlphabets: false,
+            upperCaseAlphabets: false,
+            specialChars: false
+        });
+
+        console.log("   Generated OTP:", testOTP);
+
+        // Send test email using otpMail (full template)
+        await otpMail({
+            type: type, // 'RegisterOTP' or 'ForgetPassword'
+            email: email,
+            OTP: testOTP
+        });
+
+        console.log("✅ Email sent successfully via otpMail");
+
+        return res.json(responsefunc("1", "Test email sent successfully via ZeptoMail API", { 
+            email: email,
+            otp: testOTP,
+            type: type,
+            method: "otpMail (full template)"
+        }, ""));
+    } catch (error) {
+        console.error("❌ Error sending test email:", error);
+        console.error("   Error details:", error.error || error.message);
+        console.error("   Status:", error.status);
+        
+        return res.status(500).json(responsefunc("0", "Failed to send test email: " + (error.error || error.message), {
+            error: error.error || error.message,
+            status: error.status,
+            details: error.details
+        }, ""));
+    }
+}
+
+/*
+ * Test Email API - Direct ZeptoMail API call (simple test)
+ */
+async function testEmailAPI(req, res) {
+    const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
+    const { email, subject, html } = req.body;
+
+    if (!email) {
+        return res.status(400).json(responsefunc("0", "Email is required", {}, ""));
+    }
+
+    try {
+        console.log("🧪 Testing email via direct ZeptoMail API...");
+        console.log("   Email:", email);
+        console.log("   Subject:", subject || "Test Email");
+
+        // Send test email directly via API
+        const result = await sendEmailViaAPI({
+            to: email,
+            subject: subject || "Test Email from Laundry App",
+            html: html || '<div><h2>Test Email</h2><p>This is a test email sent via ZeptoMail API.</p><p>If you received this, the email system is working correctly!</p></div>',
+            text: "Test Email from Laundry App - This is a test email sent via ZeptoMail API."
+        });
+
+        console.log("✅ Email sent successfully via ZeptoMail API");
+        console.log("   Request ID:", result.messageId);
+
+        return res.json(responsefunc("1", "Test email sent successfully via ZeptoMail API", { 
+            email: email,
+            messageId: result.messageId,
+            method: "Direct API call",
+            data: result.data
+        }, ""));
+    } catch (error) {
+        console.error("❌ Error sending test email via API:", error);
+        console.error("   Error details:", error.error || error.message);
+        console.error("   Status:", error.status);
+        
+        return res.status(500).json(responsefunc("0", "Failed to send test email: " + (error.error || error.message), {
+            error: error.error || error.message,
+            status: error.status,
+            details: error.details
+        }, ""));
+    }
+}
 //!---------------------------------Recurring functions------------------------>>>>>
 async function addressAdder(
     addNew,
@@ -933,6 +1031,8 @@ module.exports = {
     updateCustomerResponseForOnHoldBooking,
     getOnHoldBookingsForCustomer,
     testNotification,
+    testEmail,
+    testEmailAPI,
     getAllServiceWithPreferenceDetails,
     getAllOrderStatus,
     cancelCustomerBooking,

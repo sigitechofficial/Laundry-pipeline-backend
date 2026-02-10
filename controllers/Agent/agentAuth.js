@@ -97,7 +97,7 @@ exports.registerAgentWithOTP = async (req, res) => {
             specialChars: false
         });
 
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: email,
             OTP: otp
@@ -237,7 +237,7 @@ exports.resendOTP = async (req, res) => {
     });
 
     // Send OTP email using otpMail
-    otpMail({
+    await otpMail({
         type: 'RegisterOTP',
         email: userExist.email,
         OTP: OTP,
@@ -698,7 +698,7 @@ exports.forgetPasswordRequest = async (req, res) => {
         specialChars: false,
     });
 
-    otpMail({
+    await otpMail({
         type: 'ForgetPassword',
         email: email,
         OTP: OTP

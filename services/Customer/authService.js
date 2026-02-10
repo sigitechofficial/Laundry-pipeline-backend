@@ -117,7 +117,7 @@ class CustomerAuthService {
             specialChars: false
         });
 
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: email,
             OTP: otp
@@ -843,7 +843,7 @@ class CustomerAuthService {
         });
 
         // Send OTP email using otpMail
-        otpMail({
+        await otpMail({
             type: 'RegisterOTP',
             email: userExist.email,
             OTP: OTP,

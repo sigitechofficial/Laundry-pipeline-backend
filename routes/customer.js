@@ -89,6 +89,10 @@ router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken,asyn
 router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware(customerOtherController.getOnHoldBookingsForCustomer));
 // Route to test sending notifications
 router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOtherController.testNotification));
+// Route to test sending emails (uses otpMail with full template)
+router.post('/testEmail', asyncMiddleware(customerOtherController.testEmail));
+// Route to test sending emails directly via ZeptoMail API (simple test)
+router.post('/testEmailAPI', asyncMiddleware(customerOtherController.testEmailAPI));
 // Route to get all service with preference details
 router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessToken, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
 //Get All Order Status
