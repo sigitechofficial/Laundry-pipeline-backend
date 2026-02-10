@@ -254,19 +254,15 @@ async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
 /*
  *   Create Stripe Connect Account
  */
-async function createStripeConnectAccount(email, businessName) {
+async function createStripeConnectAccount(email, country = 'UK') {
     try {
         const account = await stripe.accounts.create({
             type: 'express',
-            country: 'US', // Change to your country code
+            country: country,
             email: email,
             capabilities: {
                 card_payments: { requested: true },
                 transfers: { requested: true },
-            },
-            business_type: 'individual', // or 'company' based on your needs
-            business_profile: {
-                name: businessName,
             },
         });
         return account.id; // Returns the Connect account ID
@@ -280,10 +276,15 @@ async function createStripeConnectAccount(email, businessName) {
  */
 async function createStripeOnboardingLink(accountId, returnUrl, refreshUrl) {
     try {
+        // Default URL if not provided
+        const defaultUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
+        const finalReturnUrl = returnUrl || defaultUrl;
+        const finalRefreshUrl = refreshUrl || defaultUrl;
+
         const accountLink = await stripe.accountLinks.create({
             account: accountId,
-            refresh_url: refreshUrl,
-            return_url: returnUrl,
+            refresh_url: finalRefreshUrl,
+            return_url: finalReturnUrl,
             type: 'account_onboarding',
         });
         return accountLink.url; // Returns the onboarding URL

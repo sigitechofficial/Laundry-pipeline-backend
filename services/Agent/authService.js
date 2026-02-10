@@ -454,11 +454,11 @@ class AgentAuthService {
         try {
             connectAccountId = await stripe.createStripeConnectAccount(
                 userData.email,
-                data.shopName
+                data.countryCode || 'Uk'
             );
 
-            const returnUrl = `${process.env.FRONTEND_URL}/agent/stripe-return`;
-            const refreshUrl = `${process.env.FRONTEND_URL}/agent/stripe-refresh`;
+            const returnUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
+            const refreshUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
             
             onboardingUrl = await stripe.createStripeOnboardingLink(
                 connectAccountId,
@@ -507,13 +507,9 @@ class AgentAuthService {
         }
 
         try {
-            const returnUrl = `${process.env.FRONTEND_URL}/agent/stripe-return`;
-            const refreshUrl = `${process.env.FRONTEND_URL}/agent/stripe-refresh`;
-            
+            // Use default URL from function (no need to pass explicitly)
             const onboardingUrl = await stripe.createStripeOnboardingLink(
-                businessInfo.connectAccountId,
-                returnUrl,
-                refreshUrl
+                businessInfo.connectAccountId
             );
 
             console.log('🔗 Stripe Onboarding Link Regenerated:', onboardingUrl);
