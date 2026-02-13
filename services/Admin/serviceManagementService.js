@@ -130,37 +130,24 @@ class ServiceManagementService {
                 }
             });
 
-            // Get service usage counts from customerSelectedService using raw query for reliability
-            const customerSelectedServiceTableName = customerSelectedService.getTableName();
-            const serviceTableName = service.getTableName();
-            const sequelizeInstance = service.sequelize;
-            
-            const serviceCountsQuery = await sequelizeInstance.query(
-                `SELECT s.name, COUNT(css."serviceId") as count
-                 FROM "${customerSelectedServiceTableName}" css
-                 INNER JOIN "${serviceTableName}" s ON css."serviceId" = s.id
-                 WHERE s.status = true
-                 GROUP BY s.id, s.name`,
-                {
-                    type: sequelizeInstance.QueryTypes.SELECT
-                }
-            );
-
             // Create an object with service names as keys and counts as values
             const servicesCount = {};
             
-            // Initialize all services with 0 count
-            getServices.forEach(serviceItem => {
-                servicesCount[serviceItem.name] = 0;
+            // Count usage for each service in parallel for better performance
+            const countPromises = getServices.map(async (serviceItem) => {
+                const count = await customerSelectedService.count({
+                    where: {
+                        serviceId: serviceItem.id
+                    }
+                });
+                return { name: serviceItem.name, count };
             });
 
-            // Update counts for services that have been used
-            serviceCountsQuery.forEach(item => {
-                const serviceName = item.name;
-                const count = parseInt(item.count || 0);
-                if (serviceName) {
-                    servicesCount[serviceName] = count;
-                }
+            const countResults = await Promise.all(countPromises);
+            
+            // Build the servicesCount object
+            countResults.forEach(({ name, count }) => {
+                servicesCount[name] = count;
             });
 
             return { 
