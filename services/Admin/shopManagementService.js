@@ -1,4 +1,4 @@
-const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users, roles } = require('../../models');
+const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { 
@@ -178,7 +178,7 @@ class ShopManagementService {
                     },
                     {
                         model: addressDb,
-                        attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
+                        attributes: ['id', 'streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
                             [
                                 sequelize.literal(
                                     `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
@@ -210,7 +210,81 @@ class ShopManagementService {
                 ]
             });
 
-            return shopData;
+            // Fetch all orders for this shop
+            let orders = [];
+            if (shopData && shopData.addressDb) {
+                const shopAddressId = shopData.addressDb.id;
+                
+                orders = await booking.findAll({
+                    where: {
+                        laundryShopId: shopAddressId
+                    },
+                    include: [
+                        {
+                            model: users,
+                            as: 'customer',
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                        },
+                        {
+                            model: users,
+                            as: 'driver',
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            required: false
+                        },
+                        {
+                            model: users,
+                            as: 'deliveryDriver',
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            required: false
+                        },
+                        {
+                            model: addressDb,
+                            as: 'pickupAddress',
+                            attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng']
+                        },
+                        {
+                            model: addressDb,
+                            as: 'dropOffAddress',
+                            attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng']
+                        },
+                        {
+                            model: bookingStatus,
+                            attributes: ['id', 'title', 'description']
+                        },
+                        {
+                            model: customerSelectedService,
+                            attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                            include: [
+                                {
+                                    model: service,
+                                    attributes: ['id', 'name', 'status']
+                                },
+                                {
+                                    model: categories,
+                                    attributes: ['id', 'name']
+                                }
+                            ]
+                        },
+                        {
+                            model: billingDetails,
+                            attributes: ['id', 'subTotal', 'serviceCharge', 'tax', 'total', 'discount'],
+                            required: false
+                        }
+                    ],
+                    order: [['id', 'DESC']],
+                    attributes: {
+                        exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
+                    }
+                });
+            }
+
+            // Convert shopData to plain object and add orders
+            const result = shopData ? shopData.toJSON() : null;
+            if (result) {
+                result.orders = orders;
+            }
+
+            return result || shopData;
     }
 
     /**
