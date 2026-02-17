@@ -267,7 +267,7 @@ class ShopManagementService {
                         },
                         {
                             model: billingDetails,
-                            attributes: ['id', 'subTotal', 'serviceCharge', 'tax', 'total', 'discount'],
+                            attributes: ['id', 'upfrontAmount', 'discount', 'total', 'zoneAdminCommission', 'serviceCharge', 'categoryCharge', 'pickupDriverEarning', 'deliveryDriverEarning', 'paymentStatus'],
                             required: false
                         }
                     ],
