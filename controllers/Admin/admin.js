@@ -378,6 +378,15 @@ async function getOrderForEdit(req, res) {
     return ResponseHelper.success(res, "Order details fetched successfully", result);
 }
 
+/*
+  * Delete Order (Soft Delete)
+*/
+async function deleteOrder(req, res) {
+    const { orderId } = req.params;
+    const result = await orderService.deleteOrder(orderId);
+    return ResponseHelper.success(res, "Order deleted successfully", result);
+}
+
 
 //!---------------------------------Service Management--------------------------------------->>
 
@@ -2253,6 +2262,7 @@ module.exports = {
     completeOrders,
     editOrder,
     getOrderForEdit,
+    deleteOrder,
     //!----------Service Management---------//
     getAdminServicesWithCategories,
     addServiceTypes,

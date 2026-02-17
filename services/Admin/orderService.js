@@ -762,6 +762,58 @@ class OrderService {
             data: { onHoldBookings }
         };
     }
+
+    /**
+     * Soft delete order
+     * @param {number} orderId - Order ID
+     * @returns {Object} Deletion result
+     */
+    async deleteOrder(orderId) {
+        // Check if order exists
+        const orderExists = await booking.findOne({
+            where: {
+                id: orderId
+            }
+        });
+
+        if (!orderExists) {
+            throw new NotFoundError('Order not found');
+        }
+
+        // Check if order is already deleted (if deletedAt field exists)
+        if (orderExists.deletedAt) {
+            throw new ConflictError('Order is already deleted');
+        }
+
+        // Check if order can be deleted (optional: check if order is in a state that allows deletion)
+        // For example, you might want to prevent deletion of orders that are in processing
+        const restrictedStatuses = [11]; // Processing status - adjust as needed
+        if (restrictedStatuses.includes(orderExists.bookingStatusId)) {
+            throw new UnprocessableEntityError('Cannot delete order that is currently being processed');
+        }
+
+        // Soft delete the order using update with deletedAt timestamp
+        // Note: This requires a deletedAt field in the bookings table
+        // If the field doesn't exist, you need to add it via migration
+        const deletedOrder = await booking.update(
+            { deletedAt: new Date() },
+            {
+                where: {
+                    id: orderId
+                }
+            }
+        );
+
+        if (deletedOrder[0] === 0) {
+            throw new ValidationError('Failed to delete order');
+        }
+
+        return {
+            orderId,
+            message: 'Order deleted successfully',
+            deletedAt: new Date()
+        };
+    }
 }
 
 module.exports = new OrderService();

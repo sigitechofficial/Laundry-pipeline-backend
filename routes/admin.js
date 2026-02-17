@@ -279,6 +279,8 @@ router.get('/completeOrders', validateAccessToken, asyncMiddleware(adminControll
 router.get('/getOrderForEdit/:orderId', validateAccessToken, asyncMiddleware(adminController.getOrderForEdit))
 //Edit Order
 router.patch('/editOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.editOrder))
+//Delete Order (Soft Delete)
+router.delete('/deleteOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.deleteOrder))
 //For Order Items Sheet
 router.get(
     "/orderItemsSheet",
