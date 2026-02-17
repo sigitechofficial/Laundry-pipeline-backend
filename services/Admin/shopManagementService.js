@@ -126,8 +126,73 @@ class ShopManagementService {
                 attributes: ['id', 'shopName', 'matchProfileOptions', "otherText", 'shopAddressId', 'agentId']
             });
 
+            // Get top 5 most performing shops (based on revenue)
+            const topPerformingShops = await bussinessInformation.findAll({
+                include: [
+                    {
+                        model: addressDb,
+                        attributes: [
+                            'id',
+                            'streetAddress',
+                            'province',
+                            'district',
+                            [
+                                sequelize.literal(
+                                    `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                                ),
+                                'orderCount',
+                            ],
+                            [
+                                sequelize.literal(
+                                    `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                                ),
+                                'totalRevenue',
+                            ]
+                        ],
+                        include: [
+                            {
+                                model: cities,
+                                attributes: ['id', 'name']
+                            }
+                        ]
+                    }
+                ],
+                attributes: [
+                    'id', 
+                    'shopName', 
+                    'agentId'
+                ],
+                order: [
+                    [
+                        sequelize.literal(
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'DESC'
+                    ]
+                ],
+                limit: 5
+            });
+
+            // Format top performing shops with minimal details
+            const formattedTopShops = topPerformingShops.map(shop => {
+                const shopData = shop.toJSON();
+                return {
+                    id: shopData.id,
+                    shopName: shopData.shopName,
+                    address: shopData.addressDb ? {
+                        streetAddress: shopData.addressDb.streetAddress,
+                        province: shopData.addressDb.province,
+                        district: shopData.addressDb.district,
+                        city: shopData.addressDb.city ? shopData.addressDb.city.name : null
+                    } : null,
+                    orderCount: shopData.addressDb ? parseInt(shopData.addressDb.orderCount) || 0 : 0,
+                    totalRevenue: shopData.addressDb ? parseFloat(shopData.addressDb.totalRevenue) || 0 : 0
+                };
+            });
+
             return {
-                AllShopsData: getShopData
+                AllShopsData: getShopData,
+                topPerformingShops: formattedTopShops
             };
     }
 
