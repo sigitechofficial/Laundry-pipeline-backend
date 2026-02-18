@@ -3493,14 +3493,18 @@ exports.updateInvoice = async (req, res) => {
             let itemTotalPrice = parseFloat(service.categoryCharge || 0);
             //total += itemTotalPrice;
 
+            // Build where clause - always include subCategoryId (never undefined)
+            const whereClause = {
+                bookingId,
+                id: service.id,
+                serviceId: service.serviceId,
+                categoryId: service.categoryId,
+                // Always include subCategoryId - use actual value or null (never undefined)
+                subCategoryId: service.subCategoryId !== undefined ? service.subCategoryId : null
+            };
+
             const existingRecords = await customerSelectedService.findAll({
-                where: {
-                    bookingId,
-                    id: service.id,
-                    serviceId: service.serviceId,
-                    subCategoryId: service.subCategoryId,
-                    categoryId: service.categoryId,
-                }
+                where: whereClause
             });
 
             let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
@@ -3515,7 +3519,7 @@ exports.updateInvoice = async (req, res) => {
                 await matched.update({
                     categoryId: service.categoryId,
                     categoryPrice: itemTotalPrice,
-                    subCategoryId: service.subCategoryId,
+                    subCategoryId: service.subCategoryId || null,
                     items: service.items,
                     date: currentDate,
                     time: currentTime,
@@ -3530,7 +3534,7 @@ exports.updateInvoice = async (req, res) => {
                     serviceId: service.serviceId,
                     categoryId: service.categoryId,
                     categoryPrice: itemTotalPrice,
-                    subCategoryId: service.subCategoryId,
+                    subCategoryId: service.subCategoryId || null,
                     items: service.items,
                     status: service.status
                 });
