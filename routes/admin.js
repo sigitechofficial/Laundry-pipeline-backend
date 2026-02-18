@@ -332,7 +332,7 @@ router.patch('/updateAgentEmployee', validateAccessToken, asyncMiddleware(adminC
 //Update Agent Employee Status
 router.patch('/updateAgentEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeAgentEmployeeStatus))
 //Get All Agent Employees
-router.get('/getAllAgentEmployees', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
+router.get('/getAllAgentEmployees/:agentId', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
 
 //Register Agent (Admin Side)
 router.post('/registerAgent', validateAccessToken, uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
@@ -357,6 +357,8 @@ router.get('/getShopInformation', validateAccessToken, asyncMiddleware(adminCont
 router.get('/getShopsData', validateAccessToken, asyncMiddleware(adminController.shopsData))
 //Single Shop Data
 router.get('/singleShopData/:Id', validateAccessToken, asyncMiddleware(adminController.singleShopData))
+//Delete Shop (Soft Delete)
+router.delete('/deleteShop/:shopId', validateAccessToken, asyncMiddleware(adminController.deleteShop))
 //Get Shop Employees 
 router.get('/getShopEmployees/:bussinessId', validateAccessToken, asyncMiddleware(adminController.getShopEmployees))
 //Get All Employees with Shop Information

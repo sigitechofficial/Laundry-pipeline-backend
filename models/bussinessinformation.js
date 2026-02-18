@@ -56,6 +56,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'bussinessInformation',
+    paranoid: true, // Enable soft delete with deletedAt
   });
   return bussinessInformation;
 };

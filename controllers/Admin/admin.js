@@ -567,7 +567,7 @@ async function changeAgentEmployeeStatus(req, res) {
  * Get All Agent Employees
  */
 async function getAllAgentEmployees(req, res) {
-    const agentId = req.user.id;
+    const { agentId } = req.params;
     const result = await employeeManagementService.getAllAgentEmployees(agentId);
     return ResponseHelper.success(res, "All Employee Fetched", result);
 }
@@ -812,6 +812,15 @@ async function singleShopData(req, res) {
         const shopData = await shopManagementService.getSingleShopData(Id);
         return ResponseHelper.success(res, "Single Shop Data", shopData);
 
+}
+
+/*
+   * Delete Shop (Soft Delete)
+*/
+async function deleteShop(req, res) {
+    const { shopId } = req.params;
+    const result = await shopManagementService.deleteShop(shopId);
+    return ResponseHelper.success(res, "Shop deleted successfully", result);
 }
 
 
@@ -2296,6 +2305,7 @@ module.exports = {
     getShopInformation,
     shopsData,
     singleShopData,
+    deleteShop,
     getShopEmployees,
     getAllEmployeesWithShopInfo,
     //!------------Cancellation Policy Management-----------//

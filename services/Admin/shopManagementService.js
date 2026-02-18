@@ -475,6 +475,87 @@ class ShopManagementService {
             employees: employeesWithShops
         };
     }
+
+    /**
+     * Soft delete shop (shop details, user, and address)
+     * @param {number} shopId - Shop ID
+     * @returns {Object} Deletion result
+     */
+    async deleteShop(shopId) {
+        // Check if shop exists
+        const shopExists = await bussinessInformation.findOne({
+            where: {
+                id: shopId
+            },
+            include: [
+                {
+                    model: addressDb,
+                    attributes: ['id']
+                }
+            ]
+        });
+
+        if (!shopExists) {
+            throw new NotFoundError('Shop not found');
+        }
+
+        // Check if shop is already deleted
+        if (shopExists.deletedAt) {
+            throw new ConflictError('Shop is already deleted');
+        }
+
+        // Get shop details
+        const agentId = shopExists.agentId;
+        const shopAddressId = shopExists.shopAddressId;
+
+        // Check if shop has any active bookings
+        const activeBookings = await booking.count({
+            where: {
+                laundryShopId: shopAddressId,
+                bookingStatusId: {
+                    [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed bookings
+                }
+            }
+        });
+
+        if (activeBookings > 0) {
+            throw new UnprocessableEntityError(`Shop has ${activeBookings} active booking(s). Please complete or cancel all bookings first.`);
+        }
+
+        // Soft delete the shop (bussinessInformation)
+        const deletedShop = await bussinessInformation.destroy({
+            where: {
+                id: shopId
+            }
+        });
+
+        if (!deletedShop) {
+            throw new ValidationError('Failed to delete shop');
+        }
+
+        // Soft delete the associated user (agent)
+        if (agentId) {
+            await users.destroy({
+                where: {
+                    id: agentId
+                }
+            });
+        }
+
+        // Soft delete the associated address
+        if (shopAddressId) {
+            await addressDb.destroy({
+                where: {
+                    id: shopAddressId
+                }
+            });
+        }
+
+        return {
+            shopId,
+            message: 'Shop, user, and address deleted successfully'
+        };
+    }
 }
 
 module.exports = new ShopManagementService();
