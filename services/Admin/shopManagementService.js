@@ -372,6 +372,7 @@ class ShopManagementService {
             });
             return findEmployees;
     }
+    
 
     /**
      * Get all employees with their shop information
