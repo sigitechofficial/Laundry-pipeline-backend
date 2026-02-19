@@ -13,7 +13,9 @@ const {
     addressDb, 
     zone, 
     units,
-    agentSelectServices
+    agentSelectServices,
+    countries,
+    cities
 } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
@@ -50,25 +52,7 @@ class AgentRegistrationService {
             countryId, 
             cityId, 
             email, 
-            countryCode,
-            // Business Information
-            shopName,
-            matchProfileOptions,
-            otherText,
-            machineryCount,
-            serviceTimes,
-            // Address Information
-            streetAddress,
-            province,
-            postalCode,
-            district,
-            lat,
-            lng,
-            coordinates,
-            addressType,
-            zoneId,
-            // Services
-            services
+            countryCode
         } = data;
 
         // Check if user already exists
@@ -85,15 +69,10 @@ class AgentRegistrationService {
             throw new ConflictError("Agent already exists with this email");
         }
 
-        // Validate business information
-        if (matchProfileOptions !== 'Other' && otherText) {
-            throw new ValidationError('You can Add this Field Only when Select Other Option');
-        }
-
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 8);
         
-        // Create user with agent type (userTypeId: 4)
+        // Create user with agent type (userTypeId: 4) - ONLY USER, nothing else
         const userCreate = await users.create({
             email,
             firstName,
@@ -119,102 +98,12 @@ class AgentRegistrationService {
             where: { id: userCreate.id }
         });
 
-        // Create default business working hours for all days
-        const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-        const workingHoursData = daysArray.map((day) => ({
-            dayOfWeek: day,
-            status: true,
-            userId: userCreate.id
-        }));
-        
-        await bussinessWorkingHours.bulkCreate(workingHoursData);
-
-        // Create address if provided
-        let addressId = null;
-        if (streetAddress && zoneId) {
-            const address = await addressDb.create({
-                streetAddress,
-                province,
-                postalCode,
-                district,
-                lat,
-                lng,
-                coordinates,
-                addressType: addressType || 'Business',
-                userId: userCreate.id,
-                zoneId
-            });
-            addressId = address.id;
-        }
-
-        // Create business information
-        const businessInfoData = {
-            shopName,
-            matchProfileOptions,
-            agentId: userCreate.id,
-            shopAddressId: addressId
-        };
-
-        if (matchProfileOptions === 'Other' && otherText) {
-            businessInfoData.otherText = otherText;
-        }
-
-        const agentInfo = await bussinessInformation.create(businessInfoData);
-
-        // Create machine count if provided
-        if (machineryCount && machineryCount.length > 0) {
-            const machinesCountCreate = machineryCount.map(ele => ({
-                total: ele.total,
-                status: true,
-                machineId: ele.machineId,
-                bussinessInformationId: agentInfo.id
-            }));
-            
-            await machineCount.bulkCreate(machinesCountCreate);
-        }
-
-        // Create agent services if provided
-        if (services && services.length > 0) {
-            const servicesToCreate = services.map(service => ({
-                serviceId: service.serviceId,
-                status: true,
-                agentServiceId: userCreate.id
-            }));
-
-            await agentSelectServices.bulkCreate(servicesToCreate);
-
-            // Update service times if provided
-            if (serviceTimes && serviceTimes.length > 0) {
-                await Promise.all(
-                    serviceTimes.map(async (ele) => {
-                        await agentSelectServices.update({
-                            serviceTimeRequired: ele.serviceTimeRequired
-                        }, { 
-                            where: { 
-                                agentServiceId: userCreate.id, 
-                                serviceId: ele.serviceId 
-                            } 
-                        });
-                    })
-                );
-            }
-        }
-
-        // Update user with business information ID
-        await users.update({
-            bussinessInformationId: agentInfo.id
-        }, {
-            where: { id: userCreate.id }
-        });
-
         return {
             userId: userCreate.id,
             email: userCreate.email,
             firstName: userCreate.firstName,
             lastName: userCreate.lastName,
-            stripeCustomerId: stripeCustomer,
-            businessInfoId: agentInfo.id,
-            addressId: addressId
+            stripeCustomerId: stripeCustomer
         };
     }
 
@@ -230,16 +119,9 @@ class AgentRegistrationService {
             matchProfileOptions, 
             otherText, 
             machineryCount, 
+            services,
             serviceTimes,
-            streetAddress,
-            province,
-            postalCode,
-            district,
-            lat,
-            lng,
-            coordinates,
-            addressType,
-            zoneId
+            bussinessWorkingDays
         } = data;
 
         // Validate business information
@@ -253,22 +135,17 @@ class AgentRegistrationService {
             throw new NotFoundError('User not found');
         }
 
-        // Create address if provided
+        // Get agent's existing address (address should be added via separate API)
         let addressId = null;
-        if (streetAddress && zoneId) {
-            const address = await addressDb.create({
-                streetAddress,
-                province,
-                postalCode,
-                district,
-                lat,
-                lng,
-                coordinates,
-                addressType: addressType || 'Business',
+        const agentAddress = await addressDb.findOne({
+            where: {
                 userId: userId,
-                zoneId
-            });
-            addressId = address.id;
+                addressType: "LaundaryShopAddress"
+            },
+        });
+
+        if (agentAddress) {
+            addressId = agentAddress.id;
         }
 
         // Create business information
@@ -297,18 +174,71 @@ class AgentRegistrationService {
             await machineCount.bulkCreate(machinesCountCreate);
         }
 
-        // Update service times if provided
+        // Add services if provided (agent selects which services to provide)
+        if (services && services.length > 0) {
+            // Check for existing services to avoid duplicates
+            const existingServices = await agentSelectServices.findAll({
+                where: { agentServiceId: userId, status: true },
+                attributes: ['serviceId']
+            });
+
+            const existingServiceIds = new Set(existingServices.map(s => s.serviceId));
+            const newServices = services.filter(service => !existingServiceIds.has(service.serviceId));
+
+            if (newServices.length > 0) {
+                const servicesToCreate = newServices.map(service => ({
+                    serviceId: service.serviceId,
+                    status: true,
+                    agentServiceId: userId
+                }));
+
+                await agentSelectServices.bulkCreate(servicesToCreate);
+            }
+        }
+
+        // Update service times if provided (for services that exist)
         if (serviceTimes && serviceTimes.length > 0) {
             await Promise.all(
                 serviceTimes.map(async (ele) => {
-                    await agentSelectServices.update({
-                        serviceTimeRequired: ele.serviceTimeRequired
-                    }, { 
+                    // Check if service exists for this agent
+                    const existingService = await agentSelectServices.findOne({
                         where: { 
                             agentServiceId: userId, 
                             serviceId: ele.serviceId 
-                        } 
+                        }
                     });
+                    
+                    if (existingService) {
+                        await agentSelectServices.update({
+                            serviceTimeRequired: ele.serviceTimeRequired
+                        }, { 
+                            where: { 
+                                agentServiceId: userId, 
+                                serviceId: ele.serviceId 
+                            } 
+                        });
+                    }
+                })
+            );
+        }
+
+        // Update business working hours if provided (like agent app)
+        if (bussinessWorkingDays && bussinessWorkingDays.length > 0) {
+            await Promise.all(
+                bussinessWorkingDays.map(async (ele) => {
+                    await bussinessWorkingHours.update(
+                        {
+                            openTime: ele.openTime,
+                            closeTime: ele.closeTime,
+                            status: ele.status !== undefined ? ele.status : true
+                        },
+                        {
+                            where: {
+                                dayOfWeek: ele.dayOfWeek,
+                                userId: userId
+                            }
+                        }
+                    );
                 })
             );
         }
@@ -485,6 +415,342 @@ class AgentRegistrationService {
         }
 
         return agent;
+    }
+
+    /**
+     * Add Agent Address
+     * @param {Object} data - Address data
+     * @param {number} userId - User ID
+     * @returns {Object} Address creation result
+     */
+    async addAgentAddress(data, userId) {
+        const {
+            streetAddress,
+            district,
+            province,
+            lat,
+            lng,
+            coordinates,
+            addressType,
+            postalcode
+        } = data;
+
+        // Check if address already exists
+        const findAgentShopAddress = await addressDb.findAll({
+            where: {
+                userId: userId,
+            },
+        });
+
+        if (findAgentShopAddress.length > 0) {
+            throw new ConflictError("Already Added the Shop Address");
+        }
+
+        // Check if user exists
+        const user = await users.findByPk(userId);
+        if (!user) {
+            throw new NotFoundError('User not found');
+        }
+
+        const polygon = {
+            type: "Polygon",
+            coordinates: coordinates,
+        };
+
+        // Find zone based on coordinates
+        const fetchZones = await zone.findAll({
+            where: {
+                status: true,
+                coordinates: sequelize.where(
+                    sequelize.fn(
+                        "ST_Contains",
+                        sequelize.col("coordinates"),
+                        sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
+                    ),
+                    true
+                ),
+            },
+            include: [
+                {
+                    model: cities,
+                    attributes: ["id", "name", "lat", "lng", "status"],
+                    include: [
+                        {
+                            model: countries,
+                            attributes: ["id", "name", "shortName", "status"],
+                        },
+                    ],
+                },
+            ],
+            attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
+        });
+
+        if (!fetchZones || fetchZones.length === 0) {
+            throw new NotFoundError("No zone found for these coordinates");
+        }
+
+        const registerShop = await addressDb.create({
+            streetAddress,
+            district,
+            cityId: fetchZones[0].city.id,
+            province,
+            countryId: fetchZones[0].city.country.id,
+            lat,
+            lng,
+            status: true,
+            postalcode,
+            coordinates: polygon,
+            userId: userId,
+            zoneId: fetchZones[0].id,
+            addressType: addressType || "LaundaryShopAddress",
+        });
+
+        return {
+            addressId: registerShop.id,
+            address: registerShop
+        };
+    }
+
+    /**
+     * Edit Agent Address
+     * @param {Object} data - Address data
+     * @param {number} userId - User ID
+     * @returns {Object} Address update result
+     */
+    async editAgentAddress(data, userId) {
+        const {
+            streetAddress,
+            district,
+            province,
+            lat,
+            lng,
+            coordinates,
+            addressType,
+            postalcode
+        } = data;
+
+        // Check if user exists
+        const user = await users.findByPk(userId);
+        if (!user) {
+            throw new NotFoundError('User not found');
+        }
+
+        // Check if address exists for this user
+        const existingAddress = await addressDb.findOne({
+            where: {
+                addressType: "LaundaryShopAddress",
+                userId: userId,
+            },
+        });
+
+        if (!existingAddress) {
+            throw new NotFoundError("No shop address found to edit. Please add an address first.");
+        }
+
+        const polygon = {
+            type: "Polygon",
+            coordinates: coordinates,
+        };
+
+        // Find zone based on coordinates
+        const fetchZones = await zone.findAll({
+            where: {
+                status: true,
+                coordinates: sequelize.where(
+                    sequelize.fn(
+                        "ST_Contains",
+                        sequelize.col("coordinates"),
+                        sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
+                    ),
+                    true
+                ),
+            },
+            include: [
+                {
+                    model: cities,
+                    attributes: ["id", "name", "lat", "lng", "status"],
+                    include: [
+                        {
+                            model: countries,
+                            attributes: ["id", "name", "shortName", "status"],
+                        },
+                    ],
+                },
+            ],
+            attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
+        });
+
+        if (!fetchZones || fetchZones.length === 0) {
+            throw new NotFoundError("No zone found for these coordinates");
+        }
+
+        const updatedAddress = await addressDb.update({
+            streetAddress,
+            district,
+            cityId: fetchZones[0].city.id,
+            province,
+            countryId: fetchZones[0].city.country.id,
+            lat,
+            lng,
+            postalcode,
+            coordinates: polygon,
+            zoneId: fetchZones[0].id,
+            addressType: addressType || "LaundaryShopAddress",
+        }, {
+            where: {
+                id: existingAddress.id
+            }
+        });
+
+        // Fetch the updated address
+        const updatedAddressData = await addressDb.findByPk(existingAddress.id, {
+            include: [
+                {
+                    model: countries,
+                    attributes: ["id", "name", "shortName"],
+                },
+                {
+                    model: cities,
+                    attributes: ["id", "name"],
+                },
+                {
+                    model: zone,
+                    attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge"],
+                }
+            ]
+        });
+
+        return {
+            addressId: updatedAddressData.id,
+            address: updatedAddressData
+        };
+    }
+
+    /**
+     * Get Agent Address
+     * @param {number} userId - User ID
+     * @returns {Object} Agent address data
+     */
+    async getAgentAddress(userId) {
+        // Check if user exists
+        const user = await users.findByPk(userId);
+        if (!user) {
+            throw new NotFoundError('User not found');
+        }
+
+        const agentAddress = await addressDb.findOne({
+            where: {
+                userId: userId,
+                addressType: "LaundaryShopAddress",
+            },
+            attributes: [
+                "id",
+                "streetAddress",
+                "district",
+                "province",
+                "postalCode",
+                "lat",
+                "lng",
+                "coordinates",
+                "addressType",
+                "zoneId",
+                "cityId",
+                "countryId",
+                "status"
+            ],
+            include: [
+                {
+                    model: countries,
+                    attributes: ["id", "name", "shortName"],
+                },
+                {
+                    model: cities,
+                    attributes: ["id", "name"],
+                },
+                {
+                    model: zone,
+                    attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge"],
+                }
+            ]
+        });
+
+        if (!agentAddress) {
+            throw new NotFoundError("No address found for this agent");
+        }
+
+        return {
+            address: agentAddress
+        };
+    }
+
+    /**
+     * Get Shop Address with Business Info
+     * @param {number} userId - User ID
+     * @returns {Object} Shop address with business info and working hours
+     */
+    async getShopAddress(userId) {
+        // Check if user exists
+        const user = await users.findByPk(userId);
+        if (!user) {
+            throw new NotFoundError('User not found');
+        }
+
+        const findAddress = await bussinessInformation.findOne({
+            where: {
+                agentId: userId,
+            },
+            attributes: ["id", "shopName", "matchProfileOptions", "agentId"],
+            include: [
+                {
+                    model: addressDb,
+                    where: {
+                        addressType: "LaundaryShopAddress",
+                        userId: userId,
+                    },
+                    attributes: [
+                        "streetAddress",
+                        "province",
+                        "postalCode",
+                        "district",
+                        "lat",
+                        "lng",
+                        "coordinates",
+                        "addressType",
+                        "zoneId",
+                    ],
+                    include: [
+                        {
+                            model: countries,
+                            attributes: ["name"],
+                        },
+                        {
+                            model: cities,
+                            attributes: ["name"],
+                        },
+                        {
+                            model: zone,
+                            attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge"],
+                        }
+                    ],
+                },
+            ],
+        });
+
+        if (!findAddress) {
+            throw new NotFoundError("No shop address found for this agent");
+        }
+
+        const workingHours = await bussinessWorkingHours.findAll({
+            where: {
+                userId: userId,
+            },
+            attributes: ["id", "dayOfWeek", "openTime", "closeTime", "status"],
+        });
+
+        return {
+            shopInfo: findAddress,
+            workingHours: workingHours
+        };
     }
 }
 

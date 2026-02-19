@@ -587,25 +587,7 @@ async function registerAgent(req, res) {
         countryId, 
         cityId, 
         email, 
-        countryCode,
-        // Business Information
-        shopName,
-        matchProfileOptions,
-        otherText,
-        machineryCount,
-        serviceTimes,
-        // Address Information
-        streetAddress,
-        province,
-        postalCode,
-        district,
-        lat,
-        lng,
-        coordinates,
-        addressType,
-        zoneId,
-        // Services
-        services
+        countryCode
     } = req.body;
 
     // Handle profile image upload
@@ -623,22 +605,7 @@ async function registerAgent(req, res) {
         countryId,
         cityId,
         email,
-        countryCode,
-        shopName,
-        matchProfileOptions,
-        otherText,
-        machineryCount,
-        serviceTimes,
-        streetAddress,
-        province,
-        postalCode,
-        district,
-        lat,
-        lng,
-        coordinates,
-        addressType,
-        zoneId,
-        services
+        countryCode
     };
 
     const result = await agentRegistrationService.registerAgent(data, profileImg);
@@ -704,6 +671,88 @@ async function getAgentCompleteInfo(req, res) {
     
     const result = await agentRegistrationService.getAgentCompleteInfo(userId);
     return ResponseHelper.success(res, "Agent information fetched successfully", result);
+}
+
+/*
+ * Add Agent Address
+ */
+async function addAgentAddress(req, res) {
+    const { userId } = req.params;
+    const {
+        streetAddress,
+        district,
+        province,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        postalcode
+    } = req.body;
+
+    const data = {
+        streetAddress,
+        district,
+        province,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        postalcode
+    };
+
+    const result = await agentRegistrationService.addAgentAddress(data, userId);
+    return ResponseHelper.success(res, "Agent address added successfully", result);
+}
+
+/*
+ * Edit Agent Address
+ */
+async function editAgentAddress(req, res) {
+    const { userId } = req.params;
+    const {
+        streetAddress,
+        district,
+        province,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        postalcode
+    } = req.body;
+
+    const data = {
+        streetAddress,
+        district,
+        province,
+        lat,
+        lng,
+        coordinates,
+        addressType,
+        postalcode
+    };
+
+    const result = await agentRegistrationService.editAgentAddress(data, userId);
+    return ResponseHelper.success(res, "Agent address updated successfully", result);
+}
+
+/*
+ * Get Agent Address
+ */
+async function getAgentAddress(req, res) {
+    const { userId } = req.params;
+    
+    const result = await agentRegistrationService.getAgentAddress(userId);
+    return ResponseHelper.success(res, "Agent address fetched successfully", result);
+}
+
+/*
+ * Get Shop Address with Business Info
+ */
+async function getShopAddress(req, res) {
+    const { userId } = req.params;
+    
+    const result = await agentRegistrationService.getShopAddress(userId);
+    return ResponseHelper.success(res, "Shop address fetched successfully", result);
 }
 //!------------------------Admin Create Roles,Classicifations,Permissions-------------------------//
 
@@ -2293,6 +2342,10 @@ module.exports = {
     addAgentServices,
     updateAgentWorkingHours,
     getAgentCompleteInfo,
+    addAgentAddress,
+    editAgentAddress,
+    getAgentAddress,
+    getShopAddress,
     //!----------Add,Roles,Permissions && Features ---------//
     addRole,
     updateRoles,

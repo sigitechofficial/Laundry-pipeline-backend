@@ -349,6 +349,18 @@ router.patch('/updateAgentWorkingHours/:userId', validateAccessToken, asyncMiddl
 //Get Agent Complete Information
 router.get('/getAgentCompleteInfo/:userId', validateAccessToken, asyncMiddleware(adminController.getAgentCompleteInfo))
 
+//Add Agent Address
+router.post('/addAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentAddress))
+
+//Edit Agent Address
+router.patch('/editAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.editAgentAddress))
+
+//Get Agent Address
+router.get('/getAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.getAgentAddress))
+
+//Get Shop Address with Business Info
+router.get('/getShopAddress/:userId', validateAccessToken, asyncMiddleware(adminController.getShopAddress))
+
 
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts
