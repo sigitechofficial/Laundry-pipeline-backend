@@ -834,7 +834,15 @@ class AgentAuthService {
                     userTypeId: 2,
                     deletedAt: { [Op.is]: null }
                 },
-                include: { model: deviceToken, attributes: ['tokenId'] },
+                include: [
+                    { model: deviceToken, attributes: ['tokenId'] },
+                    {
+                        model: bussinessInformation,
+                        as: 'agentInfo',
+                        attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
+                        required: false
+                    }
+                ],
                 attributes: [
                     "id", "firstName", "lastName", "email", "password",
                     "status", "userTypeId", "verifiedAt", "phoneNum",
@@ -873,6 +881,8 @@ class AgentAuthService {
                 attributes: ['id', 'title', 'key', 'featureOf']
             });
 
+            const socialAgentInfo = socialUser?.agentInfo ?? [];
+
             return {
                 userId: String(socialUser.id),
                 firstName: socialUser.firstName,
@@ -885,7 +895,8 @@ class AgentAuthService {
                 isGuest: false,
                 joinedOn: socialUser.dataValues.joinedOn,
                 phoneNum: socialUser.phoneNum,
-                features: featureData
+                features: featureData,
+                isConnectAccountConnected: socialAgentInfo?.[0]?.isConnectAccountConnected || false
             };
         }
 
@@ -1286,6 +1297,14 @@ class AgentAuthService {
             where: {
                 id: data.userId
             },
+            include: [
+                {
+                    model: bussinessInformation,
+                    as: 'agentInfo',
+                    attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
+                    required: false
+                }
+            ],
             attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
         });
 
@@ -1295,6 +1314,7 @@ class AgentAuthService {
 
         return {
             userData,
+            isConnectAccountConnected: userData.agentInfo?.[0]?.isConnectAccountConnected || false
         };
     }
 

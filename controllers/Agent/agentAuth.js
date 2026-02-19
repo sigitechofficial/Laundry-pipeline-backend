@@ -861,7 +861,7 @@ exports.session = async (req, res) => {
             {
                 model: bussinessInformation,
                 as: 'agentInfo',
-                attributes: ['id', 'shopName', 'matchProfileOptions'],
+                attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
                 include: [
                     {
                         model: machineCount,
@@ -981,7 +981,8 @@ exports.session = async (req, res) => {
         maxAge: 24 * 60 * 60 * 1000
     });
 
-    let output = loginData(userData, accessToken, "", guestUser);
+    const isConnectAccountConnected = agentInfo?.[0]?.isConnectAccountConnected || false;
+    let output = loginData(userData, accessToken, "", guestUser, isConnectAccountConnected);
     return res.json(output);
 };
 
@@ -993,6 +994,14 @@ exports.getUserProfile = async (req, res) => {
         where: {
             id: userId
         },
+        include: [
+            {
+                model: bussinessInformation,
+                as: 'agentInfo',
+                attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
+                required: false
+            }
+        ],
         attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
     })
 
@@ -1000,7 +1009,13 @@ exports.getUserProfile = async (req, res) => {
         throw new customError('No User Exists with this email')
     }
 
-    return res.json(responsefunc("1", "User Profile fetched", userData, ""))
+    const isConnectAccountConnected = userData.agentInfo?.[0]?.isConnectAccountConnected || false;
+    const responseData = {
+        ...userData.toJSON(),
+        isConnectAccountConnected
+    };
+
+    return res.json(responsefunc("1", "User Profile fetched", responseData, ""))
 };
 
 // Update User profile
