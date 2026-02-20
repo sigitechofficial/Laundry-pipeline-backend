@@ -356,8 +356,8 @@ async function createStripeAccountLink(accountId) {
 
         const accountLink = await stripe.accountLinks.create({
             account: accountId,
+            return_url: returnUrl, // Required by Stripe
             refresh_url: returnUrl, // Use same URL for refresh
-            refresh_url: "https://example.com/reauth",
             type: "account_onboarding",
         });
 
@@ -413,8 +413,8 @@ async function createConnectAccount(email, country = 'GB') {
 
         const accountLink = await stripe.accountLinks.create({
             account: account.id,
+            return_url: returnUrl, // Required by Stripe
             refresh_url: returnUrl, // Use same URL for refresh
-            refresh_url: "https://example.com/reauth",
             type: "account_onboarding",
         });
 
