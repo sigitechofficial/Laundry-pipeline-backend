@@ -140,7 +140,6 @@ router.post(
 // Generate Stripe Onboarding Link
 router.post(
     "/generateStripeOnboardingLink",
-    validateAccessToken,
     asyncMiddleware(agentAuthController.generateStripeOnboardingLink)
 );
 
