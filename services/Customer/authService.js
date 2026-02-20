@@ -124,11 +124,14 @@ class CustomerAuthService {
         });
 
         let dt = new Date();
+        // Set OTP expiration to 1 minute from now
+        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
 
         // Create OTP verification record
         const otpCreation = await otpVerification.create({
             OTP: otp,
             reqAt: dt,
+            expirtAt: expirationTime,
             userId: userCreate.id
         });
 
@@ -238,6 +241,12 @@ class CustomerAuthService {
                     "Sorry, we could not fetch the data",
                     "Please resend OTP to continue"
                 );
+            }
+
+            // Check if OTP has expired
+            const now = new Date();
+            if (otpData.expirtAt && new Date(otpData.expirtAt) < now) {
+                throw new ValidationError("OTP has expired. Please request a new OTP to continue");
             }
 
             if (otpData.OTP != OTP) {
@@ -692,6 +701,8 @@ class CustomerAuthService {
         // });
 
         let dt = new Date();
+        // Set OTP expiration to 1 minute from now
+        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
 
         // Update existing OTP or create new one
         if (userData.otpVerification != null) {
@@ -700,6 +711,7 @@ class CustomerAuthService {
                     {
                         OTP: OTP,
                         reqAt: dt,
+                        expirtAt: expirationTime,
                     }, 
                     { where: { userId: userData.id } }
                 );
@@ -719,6 +731,7 @@ class CustomerAuthService {
                 const otpSend = await otpVerification.create({
                     OTP: OTP,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                     userId: userData.id
                 });
 
@@ -746,7 +759,7 @@ class CustomerAuthService {
         const { otpId, OTP } = data;
 
         const otpData = await otpVerification.findByPk(otpId, {
-            attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
+            attributes: ["id", "OTP", "verifiedAtForgetCase", "userId", "expirtAt"],
         });
 
         if (!otpData) {
@@ -763,6 +776,12 @@ class CustomerAuthService {
                 userId: otpData.userId,
                 message: "OTP verified"
             };
+        }
+
+        // Check if OTP has expired
+        const now = new Date();
+        if (otpData.expirtAt && new Date(otpData.expirtAt) < now) {
+            throw new ValidationError("OTP has expired. Please request a new OTP to continue");
         }
 
         // Normal OTP verification

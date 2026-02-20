@@ -3282,13 +3282,18 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
         // Check if the service already exists in the accumulator
         let existingService = acc.find(service => service.service.id === currentService.service.id);
 
+        // Only process if subCategory exists (it can be null)
+        const subCategoryData = currentService.subCategory ? {
+            id: currentService.subCategory.id,
+            name: currentService.subCategory.name,
+            price: currentService.subCategory.price
+        } : null;
+
         if (existingService) {
-            // If the service exists, add the subCategory to the subCategories list
-            existingService.subCategories.push({
-                id: currentService.subCategory.id,
-                name: currentService.subCategory.name,
-                price: currentService.subCategory.price
-            });
+            // If the service exists, add the subCategory to the subCategories list (if it exists)
+            if (subCategoryData) {
+                existingService.subCategories.push(subCategoryData);
+            }
         } else {
             // If the service doesn't exist, create a new entry
             acc.push({
@@ -3298,13 +3303,7 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
                 },
                 categoryPrice: currentService.categoryPrice,
                 items: currentService.items,
-                subCategories: [
-                    {
-                        id: currentService.subCategory.id,
-                        name: currentService.subCategory.name,
-                        price: currentService.subCategory.price
-                    }
-                ]
+                subCategories: subCategoryData ? [subCategoryData] : []
             });
         }
         return acc;

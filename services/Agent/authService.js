@@ -144,12 +144,15 @@ class AgentAuthService {
             });
 
             let dt = new Date();
+            // Set OTP expiration to 1 minute from now
+            let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
 
             // Update or create OTP record
             if (userfindByEmail.otpVerification && userfindByEmail.otpVerification.id) {
                 await otpVerification.update({
                     OTP: otp,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                 }, {
                     where: { userId: userfindByEmail.id }
                 });
@@ -157,6 +160,7 @@ class AgentAuthService {
                 await otpVerification.create({
                     OTP: otp,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                     userId: userfindByEmail.id
                 });
             }
@@ -230,10 +234,13 @@ class AgentAuthService {
             });
 
             let dt = new Date();
+            // Set OTP expiration to 1 minute from now
+            let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
 
             const otpCreation = await otpVerification.create({
                 OTP: otp,
                 reqAt: dt,
+                expirtAt: expirationTime,
                 userId: userCreate.id
             });
 
@@ -308,6 +315,13 @@ class AgentAuthService {
             if (!otpData) {
                 throw new NotFoundError("Sorry, we could not fetch the data or You Entered Incorrect OTP");
             }
+
+            // Check if OTP has expired
+            const now = new Date();
+            if (otpData.expirtAt && new Date(otpData.expirtAt) < now) {
+                throw new UnauthorizedError("OTP has expired. Please request a new OTP to continue");
+            }
+
             if (otpData.OTP != data.OTP) {
                 throw new UnauthorizedError("Entered Incorrect OTP. Please enter correct OTP to continue");
             }
@@ -360,11 +374,14 @@ class AgentAuthService {
         });
 
         let DT = new Date();
+        // Set OTP expiration to 1 minute from now
+        let expirationTime = new Date(DT.getTime() + 1 * 60 * 1000); // 1 minute
 
         if (!otpData) {
             const newOtpData = await otpVerification.create({
                 OTP,
                 reqAt: DT,
+                expirtAt: expirationTime,
                 verifiedInForgetCase: false,
                 userId: data.userId,
             });
@@ -376,6 +393,7 @@ class AgentAuthService {
                 {
                     OTP,
                     reqAt: DT,
+                    expirtAt: expirationTime,
                     verifiedInForgetCase: false,
                 },
                 { where: { userId: data.userId } }
@@ -1031,12 +1049,15 @@ class AgentAuthService {
         });
 
         let dt = new Date();
+        // Set OTP expiration to 1 minute from now
+        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
 
         if (userData.otpVerification != null) {
             await otpVerification.update(
                 {
                     OTP: OTP,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                 }, 
                 { where: { userId: userData.id } }
             );
@@ -1049,6 +1070,7 @@ class AgentAuthService {
             const otpSend = await otpVerification.create({
                 OTP: OTP,
                 reqAt: dt,
+                expirtAt: expirationTime,
                 userId: userData.id
             });
 
