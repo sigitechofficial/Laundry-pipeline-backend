@@ -168,11 +168,18 @@ const updateUserProfile = async (req, res) => {
     return ResponseHelper.success(res, "Profile updated successfully", result);
 };
 
-// Generate Stripe onboarding link
+// Generate Stripe onboarding link - Now accepts connectAccountId from query
 const generateStripeOnboardingLink = async (req, res) => {
     logRequestData('generateStripeOnboardingLink', req);
+    
+    const { connectAccountId } = req.query;
+    
+    if (!connectAccountId) {
+        return ResponseHelper.error(res, "connectAccountId is required in query parameters", "Missing required parameter", 400);
+    }
+
     const data = { 
-        userId: req.user.id
+        connectAccountId: connectAccountId
     };
 
     const result = await authService.generateStripeOnboardingLink(data);

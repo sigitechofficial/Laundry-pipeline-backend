@@ -137,8 +137,8 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
-// Generate Stripe Onboarding Link
-router.post(
+// Generate Stripe Onboarding Link - GET with query params, no auth required
+router.get(
     "/generateStripeOnboardingLink",
     asyncMiddleware(agentAuthController.generateStripeOnboardingLink)
 );

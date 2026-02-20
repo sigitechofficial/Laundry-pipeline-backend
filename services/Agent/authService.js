@@ -536,23 +536,25 @@ class AgentAuthService {
      * @returns {Object} Onboarding link result
      */
     async generateStripeOnboardingLink(data) {
-        // Get business information for the agent
+        const { connectAccountId } = data;
+        
+        if (!connectAccountId) {
+            throw new ValidationError('connectAccountId is required');
+        }
+
+        // Get business information by connectAccountId instead of agentId
         const businessInfo = await bussinessInformation.findOne({
-            where: { agentId: data.userId },
-            attributes: ['id', 'connectAccountId', 'shopName', 'isConnectAccountConnected']
+            where: { connectAccountId: connectAccountId },
+            attributes: ['id', 'connectAccountId', 'shopName', 'isConnectAccountConnected', 'agentId']
         });
 
         if (!businessInfo) {
-            throw new NotFoundError('Business information not found. Please complete business registration first.');
-        }
-
-        if (!businessInfo.connectAccountId) {
-            throw new NotFoundError('Stripe Connect account not found. Please contact support.');
+            throw new NotFoundError('Business information not found for this Connect account. Please contact support.');
         }
 
         try {
             // Check account status first
-            const accountStatus = await stripe.checkConnectAccountStatus(businessInfo.connectAccountId);
+            const accountStatus = await stripe.checkConnectAccountStatus(connectAccountId);
             
             console.log('📊 Account Status:', {
                 chargesEnabled: accountStatus.chargesEnabled,
@@ -574,7 +576,7 @@ class AgentAuthService {
 
                 return {
                     message: 'Account is already fully onboarded',
-                    connectAccountId: businessInfo.connectAccountId,
+                    connectAccountId: connectAccountId,
                     shopName: businessInfo.shopName,
                     isConnectAccountConnected: true,
                     accountStatus: accountStatus
@@ -584,17 +586,17 @@ class AgentAuthService {
             // Account is not fully onboarded - generate a fresh link
             // Always generate a new link since old links expire after 24 hours or first use
             const onboardingUrl = await stripe.createStripeAccountLink(
-                businessInfo.connectAccountId
+                connectAccountId
             );
 
             console.log('🔗 Fresh Stripe Onboarding Link Generated:', onboardingUrl);
-            console.log('📝 Connect Account ID:', businessInfo.connectAccountId);
-            console.log('👤 Agent ID:', data.userId);
+            console.log('📝 Connect Account ID:', connectAccountId);
+            console.log('👤 Agent ID:', businessInfo.agentId);
             console.log('⚠️  Note: This link is single-use and expires in 24 hours');
 
             return {
                 onboardingUrl: onboardingUrl,
-                connectAccountId: businessInfo.connectAccountId,
+                connectAccountId: connectAccountId,
                 shopName: businessInfo.shopName,
                 isConnectAccountConnected: false,
                 accountStatus: accountStatus,
