@@ -527,7 +527,7 @@ class AgentAuthService {
         // Get business information for the agent
         const businessInfo = await bussinessInformation.findOne({
             where: { agentId: data.userId },
-            attributes: ['id', 'connectAccountId', 'shopName']
+            attributes: ['id', 'connectAccountId', 'shopName', 'isConnectAccountConnected']
         });
 
         if (!businessInfo) {
@@ -539,19 +539,54 @@ class AgentAuthService {
         }
 
         try {
-            // Use default URL from function (no need to pass explicitly)
+            // Check account status first
+            const accountStatus = await stripe.checkConnectAccountStatus(businessInfo.connectAccountId);
+            
+            console.log('📊 Account Status:', {
+                chargesEnabled: accountStatus.chargesEnabled,
+                payoutsEnabled: accountStatus.payoutsEnabled,
+                detailsSubmitted: accountStatus.detailsSubmitted
+            });
+
+            // If account is fully onboarded, update database and return success
+            if (accountStatus.chargesEnabled && accountStatus.payoutsEnabled && accountStatus.detailsSubmitted) {
+                // Update database if not already updated
+                if (!businessInfo.isConnectAccountConnected) {
+                    await bussinessInformation.update({
+                        isConnectAccountConnected: true
+                    }, {
+                        where: { id: businessInfo.id }
+                    });
+                    console.log('✅ Account status updated: Fully onboarded');
+                }
+
+                return {
+                    message: 'Account is already fully onboarded',
+                    connectAccountId: businessInfo.connectAccountId,
+                    shopName: businessInfo.shopName,
+                    isConnectAccountConnected: true,
+                    accountStatus: accountStatus
+                };
+            }
+
+            // Account is not fully onboarded - generate a fresh link
+            // Always generate a new link since old links expire after 24 hours or first use
             const onboardingUrl = await stripe.createStripeOnboardingLink(
                 businessInfo.connectAccountId
             );
 
-            console.log('🔗 Stripe Onboarding Link Regenerated:', onboardingUrl);
+            console.log('🔗 Fresh Stripe Onboarding Link Generated:', onboardingUrl);
             console.log('📝 Connect Account ID:', businessInfo.connectAccountId);
             console.log('👤 Agent ID:', data.userId);
+            console.log('⚠️  Note: This link is single-use and expires in 24 hours');
 
             return {
                 onboardingUrl: onboardingUrl,
                 connectAccountId: businessInfo.connectAccountId,
-                shopName: businessInfo.shopName
+                shopName: businessInfo.shopName,
+                isConnectAccountConnected: false,
+                accountStatus: accountStatus,
+                message: 'New onboarding link generated. Please complete the onboarding process.'
             };
         } catch (error) {
             console.error('Stripe Onboarding Link generation failed:', error);
