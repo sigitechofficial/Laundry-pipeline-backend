@@ -295,7 +295,7 @@ async function createStripeOnboardingLink(accountId, returnUrl, refreshUrl) {
         // Default URL if not provided
         const defaultUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
         const finalReturnUrl = returnUrl || defaultUrl;
-        const finalRefreshUrl = refreshUrl || defaultUrl;
+        const finalRefreshUrl = 'https://example.com/reauth';
 
         console.log('🔗 Creating account link...');
         console.log('   Account ID:', accountId);
@@ -337,8 +337,102 @@ async function checkConnectAccountStatus(accountId) {
     }
 }
 
+/*
+ *   Create Stripe Account Link for Onboarding
+ *   @param {string} accountId - Stripe Connect account ID
+ *   @returns {string} Onboarding URL
+ */
+async function createStripeAccountLink(accountId) {
+    try {
+        if (!accountId) {
+            throw new Error('Account ID is required to create account link');
+        }
+
+        const returnUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
+        
+        console.log('🔗 Creating account link...');
+        console.log('   Account ID:', accountId);
+        console.log('   Return URL:', returnUrl);
+
+        const accountLink = await stripe.accountLinks.create({
+            account: accountId,
+            refresh_url: returnUrl, // Use same URL for refresh
+            refresh_url: "https://example.com/reauth",
+            type: "account_onboarding",
+        });
+
+        if (!accountLink || !accountLink.url) {
+            throw new Error('Failed to create account link - no URL returned from Stripe');
+        }
+
+        console.log('✅ Account link created successfully:', accountLink.url);
+        return accountLink.url;
+    } catch (error) {
+        console.error('❌ Stripe Account Link Error:', error.message);
+        throw new customError(`Stripe Account Link Error: ${error.message}`, 400);
+    }
+}
 
 
+/*
+ *   Create Stripe Connect Account with Onboarding Link
+ *   @param {string} email - Email address for the account
+ *   @param {string} country - Country code (default: 'GB')
+ *   @returns {Object} Object containing accountLink URL and accountId
+ */
+async function createConnectAccount(email, country = 'GB') {
+    try {
+        if (!email) {
+            throw new Error('Email is required to create Connect account');
+        }
+
+        console.log('🔗 Creating Stripe Connect account...');
+        console.log('   Email:', email);
+        console.log('   Country:', country);
+
+        const account = await stripe.accounts.create({
+            type: "express",
+            country: country,
+            email: email,
+            capabilities: {
+                card_payments: { requested: true },
+                transfers: { requested: true },
+            },
+        });
+
+        if (!account || !account.id) {
+            throw new Error('Failed to create Stripe Connect account - no account ID returned');
+        }
+
+        console.log('✅ Stripe Connect account created:', account.id);
+
+        const returnUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
+        
+        console.log('🔗 Creating onboarding link...');
+        console.log('   Return URL:', returnUrl);
+
+        const accountLink = await stripe.accountLinks.create({
+            account: account.id,
+            refresh_url: returnUrl, // Use same URL for refresh
+            refresh_url: "https://example.com/reauth",
+            type: "account_onboarding",
+        });
+
+        if (!accountLink || !accountLink.url) {
+            throw new Error('Failed to create account link - no URL returned from Stripe');
+        }
+
+        console.log('✅ Onboarding link created successfully:', accountLink.url);
+
+        return { 
+            accountLink: accountLink.url, 
+            accountId: account.id 
+        };
+    } catch (error) {
+        console.error('❌ Create Connect Account Error:', error.message);
+        throw new customError(`Create Connect Account Error: ${error.message}`, 400);
+    }
+}
 
 
 
@@ -357,5 +451,7 @@ module.exports = {
     chargeOffSession,
     createStripeConnectAccount,
     createStripeOnboardingLink,
-    checkConnectAccountStatus
+    checkConnectAccountStatus,
+    createStripeAccountLink,
+    createConnectAccount
 };

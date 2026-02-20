@@ -91,9 +91,9 @@ class AgentAuthService {
         // Check if user exists by email
         if (userfindByEmail && userfindByEmail.email === data.email) {
             // If user exists with different userTypeId, throw error
-            if (userfindByEmail.userTypeId === 4) {
-                throw new ConflictError('User With This Email Already Exists');
-            }
+            // if (userfindByEmail.userTypeId === 4) {
+            //     throw new ConflictError('User With This Email Already Exists');
+            // }
             
             // User exists with userTypeId 4 (Agent)
             // If user is verified, don't allow re-registration
@@ -112,6 +112,7 @@ class AgentAuthService {
                 phoneNum: data.phoneNum,
                 password: hashedPassword,
                 countryCode: data.countryCode,
+                email:data.email,
                 countryId: data.countryId,
                 cityId: data.cityId,
                 image: profileImg || userfindByEmail.image, // Keep existing image if new one not provided
@@ -493,19 +494,12 @@ class AgentAuthService {
 
             // Small delay to ensure account is fully initialized in Stripe
             await new Promise(resolve => setTimeout(resolve, 500));
-
-            const returnUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
-            const refreshUrl = `https://prodlaundry.sigisolutions.net/app/BottomBarScreen`;
             
             console.log('🔗 Creating Stripe Onboarding Link...');
             console.log('   Account ID:', connectAccountId);
-            console.log('   Return URL:', returnUrl);
-            console.log('   Refresh URL:', refreshUrl);
             
-            onboardingUrl = await stripe.createStripeOnboardingLink(
-                connectAccountId,
-                returnUrl,
-                refreshUrl
+            onboardingUrl = await stripe.createStripeAccountLink(
+                connectAccountId
             );
 
             if (!onboardingUrl) {
@@ -589,7 +583,7 @@ class AgentAuthService {
 
             // Account is not fully onboarded - generate a fresh link
             // Always generate a new link since old links expire after 24 hours or first use
-            const onboardingUrl = await stripe.createStripeOnboardingLink(
+            const onboardingUrl = await stripe.createStripeAccountLink(
                 businessInfo.connectAccountId
             );
 
