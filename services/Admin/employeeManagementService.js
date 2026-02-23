@@ -133,6 +133,11 @@ class EmployeeManagementService {
      * @returns {Object} Created employee data
      */
     async addAgentEmployee(employeeData, profileImg, agentId) {
+        // Validate agentId
+        if (!agentId) {
+            throw new Error('Agent ID is required');
+        }
+
         // Check if employee already exists
         const userFind = await users.findOne({
             where: {
@@ -157,44 +162,39 @@ class EmployeeManagementService {
         createData.classifiedAsId = 1;
         createData.image = profileImg;
         createData.verifiedAt = Date.now();
+        createData.employeeOff = agentId; // Set employeeOff during creation
 
         // Create employee
         const user = await users.create(createData);
 
-        // Handle agent employee assignment
-        if (user.classifiedAsId === 1 || user.roleId === 6) {
-            await users.update(
-                {
-                    employeeOff: agentId,
-                },
-                { where: { id: user.id } }
-            );
-
+        // Handle driver assignment and zone mapping
+        if (user.roleId === 6) {
             const agentAddress = await addressDb.findOne({
                 where: {
                     userId: agentId,
                 },
             });
 
-            const businessInfo = await bussinessInformation.findOne({
-                where: {
-                    agentId: agentId,
-                },
-            });
+            if (agentAddress) {
+                const businessInfo = await bussinessInformation.findOne({
+                    where: {
+                        agentId: agentId,
+                    },
+                });
 
-            const zoneId = agentAddress.zoneId;
-            const shopAddressId = agentAddress.id;
-            const countryId = agentAddress.countryId;
-            const cityId = agentAddress.cityId;
-            const driverId = user.id;
+                const zoneId = agentAddress.zoneId;
+                const countryId = agentAddress.countryId;
+                const cityId = agentAddress.cityId;
+                const driverId = user.id;
 
-            await driverInZones.create({
-                driverId: driverId,
-                zoneId: zoneId,
-                laundaryShopId: businessInfo ? businessInfo.id : null,
-                countryId: countryId,
-                cityId: cityId,
-            });
+                await driverInZones.create({
+                    driverId: driverId,
+                    zoneId: zoneId,
+                    laundaryShopId: businessInfo ? businessInfo.id : null,
+                    countryId: countryId,
+                    cityId: cityId,
+                });
+            }
         }
 
         return user;
@@ -208,6 +208,23 @@ class EmployeeManagementService {
      */
     async updateAgentEmployee(updateData, profileImg) {
         const { updatePassword, employeeId, ...updateFields } = updateData;
+
+        // Validate employeeId
+        if (!employeeId) {
+            throw new Error('Employee ID is required');
+        }
+
+        // Check if employee exists and is an agent employee
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 1
+            }
+        });
+
+        if (!employee) {
+            throw new Error('Agent employee not found');
+        }
 
         // Check if email already exists for another employee
         if (updateFields.email) {
@@ -248,6 +265,23 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async changeAgentEmployeeStatus(employeeId, status) {
+        // Validate employeeId
+        if (!employeeId) {
+            throw new Error('Employee ID is required');
+        }
+
+        // Check if employee exists and is an agent employee
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 1
+            }
+        });
+
+        if (!employee) {
+            throw new Error('Agent employee not found');
+        }
+
         const result = await users.update(
             { status },
             {
@@ -264,12 +298,17 @@ class EmployeeManagementService {
      * @returns {Object} List of agent employees
      */
     async getAllAgentEmployees(agentId) {
+        // Validate agentId
+        if (!agentId) {
+            throw new Error('Agent ID is required');
+        }
+
         const agentEmployee = await users.findAll({
             where: {
                 classifiedAsId: 1,
                 employeeOff: agentId
             },
-            attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image'],
+            attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image', 'roleId', 'employeeOff'],
             include: [
                 {
                     model: roles,

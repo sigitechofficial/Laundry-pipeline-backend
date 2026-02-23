@@ -513,9 +513,12 @@ async function addAgentEmployee(req, res) {
         phoneNum,
         countryCode,
         roleId,
+        agentId,
     } = req.body;
 
-    const agentId = req.user.id;
+    if (!agentId) {
+        return ResponseHelper.error(res, "Agent ID is required", 400);
+    }
 
     let profileImg = null;
     if (req.file) {
@@ -542,6 +545,10 @@ async function updateAgentEmployee(req, res) {
         employeeId
     } = req.body;
 
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+
     let profileImg = null;
     if (req.file) {
         const tempProfileImg = req.file.path;
@@ -559,6 +566,15 @@ async function updateAgentEmployee(req, res) {
  */
 async function changeAgentEmployeeStatus(req, res) {
     const { status, employeeId } = req.body;
+    
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+    
+    if (status === undefined || status === null) {
+        return ResponseHelper.error(res, "Status is required", 400);
+    }
+    
     const result = await employeeManagementService.changeAgentEmployeeStatus(employeeId, status);
     return ResponseHelper.success(res, "Employee Status Updated", result);
 }
@@ -568,6 +584,11 @@ async function changeAgentEmployeeStatus(req, res) {
  */
 async function getAllAgentEmployees(req, res) {
     const { agentId } = req.params;
+    
+    if (!agentId) {
+        return ResponseHelper.error(res, "Agent ID is required", 400);
+    }
+    
     const result = await employeeManagementService.getAllAgentEmployees(agentId);
     return ResponseHelper.success(res, "All Employee Fetched", result);
 }
