@@ -594,6 +594,20 @@ async function getAllAgentEmployees(req, res) {
     return ResponseHelper.success(res, "All Employee Fetched", result);
 }
 
+/*
+ * Delete Agent Employee (Soft Delete)
+ */
+async function deleteAgentEmployee(req, res) {
+    const { employeeId } = req.params;
+    
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+    
+    const result = await employeeManagementService.deleteAgentEmployee(employeeId);
+    return ResponseHelper.success(res, "Agent Employee Deleted Successfully", result);
+}
+
 
     //!----------Agent Registration Management---------//
 
@@ -2452,6 +2466,7 @@ module.exports = {
     updateAgentEmployee,
     changeAgentEmployeeStatus,
     getAllAgentEmployees,
+    deleteAgentEmployee,
     //!----------Agent Registration Management---------//
     registerAgent,
     addAgentBusinessInfo,

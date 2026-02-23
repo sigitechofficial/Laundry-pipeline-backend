@@ -362,6 +362,51 @@ class EmployeeManagementService {
             throw new Error(`Get all agent employees error: ${error.message}`);
         }
     }
+
+    /**
+     * Soft delete agent employee
+     * @param {number} employeeId - Employee ID
+     * @returns {Object} Deletion result
+     */
+    async deleteAgentEmployee(employeeId) {
+        try {
+            // Validate employeeId
+            if (!employeeId) {
+                throw new ValidationError('Employee ID is required');
+            }
+
+            // Check if employee exists and is an agent employee
+            const employee = await users.findOne({
+                where: {
+                    id: employeeId,
+                    classifiedAsId: 1
+                }
+            });
+
+            if (!employee) {
+                throw new NotFoundError('Agent employee not found');
+            }
+
+            // Soft delete the employee (sets deletedAt timestamp if paranoid is enabled)
+            const result = await users.destroy({
+                where: { id: employeeId }
+            });
+
+            if (result === 0) {
+                throw new NotFoundError('Agent employee not found or already deleted');
+            }
+
+            return {
+                message: 'Agent employee deleted successfully',
+                employeeId
+            };
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Delete agent employee error: ${error.message}`);
+        }
+    }
 }
 
 module.exports = new EmployeeManagementService();

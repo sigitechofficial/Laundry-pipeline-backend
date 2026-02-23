@@ -333,6 +333,8 @@ router.patch('/updateAgentEmployee', validateAccessToken, asyncMiddleware(adminC
 router.patch('/updateAgentEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeAgentEmployeeStatus))
 //Get All Agent Employees
 router.get('/getAllAgentEmployees/:agentId', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
+//Delete Agent Employee (Soft Delete)
+router.delete('/deleteAgentEmployee/:employeeId', validateAccessToken, asyncMiddleware(adminController.deleteAgentEmployee))
 
 //Register Agent (Admin Side)
 router.post('/registerAgent', validateAccessToken, uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
