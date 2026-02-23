@@ -21,6 +21,13 @@ module.exports = (sequelize, DataTypes) => {
       })
       models.cancellationPolicyConfig.belongsTo(policy)
 
+      // Relation with ReschedulePolicyConfig Model
+      policy.hasOne(models.reschedulePolicyConfig, {
+        foreignKey: 'policyId',
+        as: 'rescheduleConfig'
+      })
+      models.reschedulePolicyConfig.belongsTo(policy)
+
 
      //Realtion with the Booking Table as Cancellation Policy 
       policy.hasMany(models.booking,{foreignKey:'cancellationPolicyId',as:'cancellationPolicyBookings'})
@@ -54,7 +61,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     type: {
-      type: DataTypes.ENUM('no_show', 'cancellation', 'late_pickup', 'late_delivery'),
+      type: DataTypes.ENUM('no_show', 'cancellation', 'late_pickup', 'late_delivery', 'reschedule'),
       allowNull: false,
       defaultValue: 'no_show'
     },

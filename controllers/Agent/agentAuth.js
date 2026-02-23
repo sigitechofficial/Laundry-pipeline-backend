@@ -244,20 +244,24 @@ exports.resendOTP = async (req, res) => {
     });
 
     let DT = new Date();
+    // Set OTP expiration to 1 minute from now
+    let expirationTime = new Date(DT.getTime() + 1 * 60 * 1000); // 1 minute
 
     if (!otpData) {
-        await otpVerification.create({
+        const newOtpData = await otpVerification.create({
             OTP,
             reqAt: DT,
+            expirtAt: expirationTime,
             verifiedInForgetCase: false,
             userId,
         });
-        res.json(responsefunc("1", "OTP sent successfully", { otpId: otpData.id }, ""));
+        res.json(responsefunc("1", "OTP sent successfully", { otpId: newOtpData.id }, ""));
     } else {
         await otpVerification.update(
             {
                 OTP,
                 reqAt: DT,
+                expirtAt: expirationTime,
                 verifiedInForgetCase: false,
             },
             { where: { userId } }
@@ -705,12 +709,16 @@ exports.forgetPasswordRequest = async (req, res) => {
     })
 
     let dt = new Date();
+    // Set OTP expiration to 1 minute from now
+    let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
+    
     if (userData.otpVerification != null) {
         try {
             otpVerification.update(
                 {
                     OTP: OTP,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                 }, { where: { userid: userData.id } }
             )
 
@@ -725,6 +733,7 @@ exports.forgetPasswordRequest = async (req, res) => {
             const otpSend = otpVerification.create({
                 OTP: OTP,
                 reqAt: dt,
+                expirtAt: expirationTime,
                 userId: userData.id
             })
 

@@ -90,6 +90,7 @@ const {
     roleManagementService,
     cancellationPolicyService: cancellationPolicyServiceImport,
     noShowPolicyService,
+    reschedulePolicyService,
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
@@ -1099,6 +1100,100 @@ async function getActiveNoShowPolicyController(req, res) {
 async function getNoShowPolicyStatisticsController(req, res) {
     const result = await noShowPolicyService.getNoShowPolicyStatistics();
     return ResponseHelper.success(res, "No-show policy statistics", result);
+}
+
+
+//!---------------------------------Reschedule Policy Management--------------------------------------->>
+
+/*
+ * Create Reschedule Policy
+ */
+async function createReschedulePolicyController(req, res) {
+    const userId = req.user.id;
+    const policyData = {
+        ...req.body,
+        createdBy: userId
+    };
+    const result = await reschedulePolicyService.createReschedulePolicy(policyData);
+    return ResponseHelper.success(res, "Reschedule policy created successfully", result);
+}
+
+/*
+ * Get Reschedule Policy by ID
+ */
+async function getReschedulePolicyByIdController(req, res) {
+    const { id } = req.params;
+    const result = await reschedulePolicyService.getReschedulePolicyById(id);
+    return ResponseHelper.success(res, "Reschedule policy details", result);
+}
+
+/*
+ * Get All Reschedule Policies
+ */
+async function getAllReschedulePoliciesController(req, res) {
+    const filters = {
+        isActive: req.query.isActive,
+        isDefault: req.query.isDefault,
+        page: parseInt(req.query.page) || 1,
+        limit: parseInt(req.query.limit) || 10
+    };
+    const result = await reschedulePolicyService.getAllReschedulePolicies(filters);
+    return ResponseHelper.success(res, "All reschedule policies", result);
+}
+
+/*
+ * Update Reschedule Policy
+ */
+async function updateReschedulePolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await reschedulePolicyService.updateReschedulePolicy(id, req.body, userId);
+    return ResponseHelper.success(res, "Reschedule policy updated successfully", result);
+}
+
+/*
+ * Delete Reschedule Policy
+ */
+async function deleteReschedulePolicyController(req, res) {
+    const { id } = req.params;
+    const result = await reschedulePolicyService.deleteReschedulePolicy(id);
+    return ResponseHelper.success(res, result.message, { policyId: result.policyId });
+}
+
+/*
+ * Set Default Reschedule Policy
+ */
+async function setDefaultReschedulePolicyController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await reschedulePolicyService.setDefaultReschedulePolicy(id, userId);
+    return ResponseHelper.success(res, "Default reschedule policy set successfully", result);
+}
+
+/*
+ * Toggle Reschedule Policy Status
+ */
+async function toggleReschedulePolicyStatusController(req, res) {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const result = await reschedulePolicyService.toggleReschedulePolicyStatus(id, userId);
+    return ResponseHelper.success(res, "Reschedule policy status toggled successfully", result);
+}
+
+/*
+ * Get Active Reschedule Policy
+ */
+async function getActiveReschedulePolicyController(req, res) {
+    const result = await reschedulePolicyService.getActiveReschedulePolicy();
+    return ResponseHelper.success(res, "Active reschedule policy", result);
+}
+
+/*
+ * Get Reschedule Policy Statistics
+ */
+async function getReschedulePolicyStatisticsController(req, res) {
+    const result = await reschedulePolicyService.getReschedulePolicyStatistics();
+    return ResponseHelper.success(res, "Reschedule policy statistics", result);
 }
 
 
@@ -2402,6 +2497,16 @@ module.exports = {
     toggleNoShowPolicyStatusController,
     getActiveNoShowPolicyController,
     getNoShowPolicyStatisticsController,
+    //!-------------Reschedule Policy Management--------//
+    createReschedulePolicyController,
+    getReschedulePolicyByIdController,
+    getAllReschedulePoliciesController,
+    updateReschedulePolicyController,
+    deleteReschedulePolicyController,
+    setDefaultReschedulePolicyController,
+    toggleReschedulePolicyStatusController,
+    getActiveReschedulePolicyController,
+    getReschedulePolicyStatisticsController,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

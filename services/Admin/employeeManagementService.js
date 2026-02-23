@@ -1,6 +1,7 @@
 const { users, zone, addressDb, bussinessInformation, driverInZones, roles } = require('../../models');
 const bcrypt = require('bcryptjs');
 const { Op } = require('sequelize');
+const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 
 class EmployeeManagementService {
     /**
@@ -28,49 +29,56 @@ class EmployeeManagementService {
      * @returns {Object} Created employee data
      */
     async addEmployee(employeeData, adminId) {
-        // Check if employee already exists
-        const userFind = await users.findOne({
-            where: {
-                classifiedAsId: 2,
-                roleId: employeeData.roleId
+        try {
+            // Check if employee already exists
+            const userFind = await users.findOne({
+                where: {
+                    classifiedAsId: 2,
+                    roleId: employeeData.roleId
+                }
+            });
+
+            if (userFind) {
+                throw new ValidationError('Employee Already Exists');
             }
-        });
 
-        if (userFind) {
-            throw new Error('Employee Already Exists');
+            // Hash password if provided
+            const createData = { ...employeeData };
+            if (createData.password) {
+                createData.password = await bcrypt.hash(createData.password, 10);
+            }
+            createData.status = true;
+            createData.classifiedAsId = 2;
+            createData.verifiedAt = Date.now();
+
+            // Create employee
+            const user = await users.create(createData);
+
+            // Handle zone admin assignment
+            if (user.roleId === 7 && employeeData.zoneId) {
+                await users.update({
+                    employeeOff: adminId
+                }, { where: { id: adminId } });
+
+                await zone.update({
+                    zoneAdminId: user.id
+                }, { where: { id: employeeData.zoneId } });
+            }
+
+            // Handle driver assignment
+            if (user.roleId === 6) {
+                await users.update({
+                    employeeOff: adminId
+                }, { where: { id: adminId } });
+            }
+
+            return user;
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Add employee error: ${error.message}`);
         }
-
-        // Hash password if provided
-        const createData = { ...employeeData };
-        if (createData.password) {
-            createData.password = await bcrypt.hash(createData.password, 10);
-        }
-        createData.status = true;
-        createData.classifiedAsId = 2;
-        createData.verifiedAt = Date.now();
-
-        // Create employee
-        const user = await users.create(createData);
-
-        // Handle zone admin assignment
-        if (user.roleId === 7 && employeeData.zoneId) {
-            await users.update({
-                employeeOff: adminId
-            }, { where: { id: adminId } });
-
-            await zone.update({
-                zoneAdminId: user.id
-            }, { where: { id: employeeData.zoneId } });
-        }
-
-        // Handle driver assignment
-        if (user.roleId === 6) {
-            await users.update({
-                employeeOff: adminId
-            }, { where: { id: adminId } });
-        }
-
-        return user;
     }
 
     /**
@@ -79,33 +87,40 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async updateEmployee(updateData) {
-        const { updatePassword, employeeId, ...updateFields } = updateData;
+        try {
+            const { updatePassword, employeeId, ...updateFields } = updateData;
 
-        // Check if email already exists for another employee
-        if (updateFields.email) {
-            const userExists = await users.findOne({
-                where: {
-                    email: updateFields.email,
-                    id: { [Op.not]: employeeId },
-                    classifiedAsId: 2
+            // Check if email already exists for another employee
+            if (updateFields.email) {
+                const userExists = await users.findOne({
+                    where: {
+                        email: updateFields.email,
+                        id: { [Op.not]: employeeId },
+                        classifiedAsId: 2
+                    }
+                });
+
+                if (userExists) {
+                    throw new ValidationError('Employee with the following email exists. Please try another email');
                 }
+            }
+
+            // Update password if provided
+            if (updatePassword) {
+                updateFields.password = await bcrypt.hash(updatePassword, 10);
+            }
+
+            const result = await users.update(updateFields, {
+                where: { id: employeeId }
             });
 
-            if (userExists) {
-                throw new Error('Employee with the following email exists. Please try another email');
+            return result;
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
             }
+            throw new Error(`Update employee error: ${error.message}`);
         }
-
-        // Update password if provided
-        if (updatePassword) {
-            updateFields.password = await bcrypt.hash(updatePassword, 10);
-        }
-
-        const result = await users.update(updateFields, {
-            where: { id: employeeId }
-        });
-
-        return result;
     }
 
     /**
@@ -133,71 +148,78 @@ class EmployeeManagementService {
      * @returns {Object} Created employee data
      */
     async addAgentEmployee(employeeData, profileImg, agentId) {
-        // Validate agentId
-        if (!agentId) {
-            throw new Error('Agent ID is required');
-        }
+        try {
+            // Validate agentId
+            if (!agentId) {
+                throw new ValidationError('Agent ID is required');
+            }
 
-        // Check if employee already exists
-        const userFind = await users.findOne({
-            where: {
-                classifiedAsId: 1,
-                roleId: employeeData.roleId,
-                firstName: employeeData.firstName,
-                lastName: employeeData.lastName,
-                email: employeeData.email
-            },
-        });
-
-        if (userFind) {
-            throw new Error('Employee Already Exists');
-        }
-
-        // Hash password if provided
-        const createData = { ...employeeData };
-        if (createData.password) {
-            createData.password = await bcrypt.hash(createData.password, 10);
-        }
-        createData.status = true;
-        createData.classifiedAsId = 1;
-        createData.image = profileImg;
-        createData.verifiedAt = Date.now();
-        createData.employeeOff = agentId; // Set employeeOff during creation
-
-        // Create employee
-        const user = await users.create(createData);
-
-        // Handle driver assignment and zone mapping
-        if (user.roleId === 6) {
-            const agentAddress = await addressDb.findOne({
+            // Check if employee already exists
+            const userFind = await users.findOne({
                 where: {
-                    userId: agentId,
+                    classifiedAsId: 1,
+                    roleId: employeeData.roleId,
+                    firstName: employeeData.firstName,
+                    lastName: employeeData.lastName,
+                    email: employeeData.email
                 },
             });
 
-            if (agentAddress) {
-                const businessInfo = await bussinessInformation.findOne({
+            if (userFind) {
+                throw new ValidationError('Employee Already Exists');
+            }
+
+            // Hash password if provided
+            const createData = { ...employeeData };
+            if (createData.password) {
+                createData.password = await bcrypt.hash(createData.password, 10);
+            }
+            createData.status = true;
+            createData.classifiedAsId = 1;
+            createData.image = profileImg;
+            createData.verifiedAt = Date.now();
+            createData.employeeOff = agentId; // Set employeeOff during creation
+
+            // Create employee
+            const user = await users.create(createData);
+
+            // Handle driver assignment and zone mapping
+            if (user.roleId === 6) {
+                const agentAddress = await addressDb.findOne({
                     where: {
-                        agentId: agentId,
+                        userId: agentId,
                     },
                 });
 
-                const zoneId = agentAddress.zoneId;
-                const countryId = agentAddress.countryId;
-                const cityId = agentAddress.cityId;
-                const driverId = user.id;
+                if (agentAddress) {
+                    const businessInfo = await bussinessInformation.findOne({
+                        where: {
+                            agentId: agentId,
+                        },
+                    });
 
-                await driverInZones.create({
-                    driverId: driverId,
-                    zoneId: zoneId,
-                    laundaryShopId: businessInfo ? businessInfo.id : null,
-                    countryId: countryId,
-                    cityId: cityId,
-                });
+                    const zoneId = agentAddress.zoneId;
+                    const countryId = agentAddress.countryId;
+                    const cityId = agentAddress.cityId;
+                    const driverId = user.id;
+
+                    await driverInZones.create({
+                        driverId: driverId,
+                        zoneId: zoneId,
+                        laundaryShopId: businessInfo ? businessInfo.id : null,
+                        countryId: countryId,
+                        cityId: cityId,
+                    });
+                }
             }
-        }
 
-        return user;
+            return user;
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Add agent employee error: ${error.message}`);
+        }
     }
 
     /**
@@ -207,55 +229,62 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async updateAgentEmployee(updateData, profileImg) {
-        const { updatePassword, employeeId, ...updateFields } = updateData;
+        try {
+            const { updatePassword, employeeId, ...updateFields } = updateData;
 
-        // Validate employeeId
-        if (!employeeId) {
-            throw new Error('Employee ID is required');
-        }
-
-        // Check if employee exists and is an agent employee
-        const employee = await users.findOne({
-            where: {
-                id: employeeId,
-                classifiedAsId: 1
+            // Validate employeeId
+            if (!employeeId) {
+                throw new ValidationError('Employee ID is required');
             }
-        });
 
-        if (!employee) {
-            throw new Error('Agent employee not found');
-        }
-
-        // Check if email already exists for another employee
-        if (updateFields.email) {
-            const userExists = await users.findOne({
+            // Check if employee exists and is an agent employee
+            const employee = await users.findOne({
                 where: {
-                    email: updateFields.email,
-                    id: { [Op.not]: employeeId },
-                    classifiedAsId: 1,
-                },
+                    id: employeeId,
+                    classifiedAsId: 1
+                }
             });
 
-            if (userExists) {
-                throw new Error('Employee with the following email exists. Please try another email');
+            if (!employee) {
+                throw new NotFoundError('Agent employee not found');
             }
+
+            // Check if email already exists for another employee
+            if (updateFields.email) {
+                const userExists = await users.findOne({
+                    where: {
+                        email: updateFields.email,
+                        id: { [Op.not]: employeeId },
+                        classifiedAsId: 1,
+                    },
+                });
+
+                if (userExists) {
+                    throw new ValidationError('Employee with the following email exists. Please try another email');
+                }
+            }
+
+            // Update password if provided
+            if (updatePassword && updatePassword.trim() !== '') {
+                updateFields.password = await bcrypt.hash(updatePassword, 10);
+            }
+
+            // Update profile image if provided
+            if (profileImg) {
+                updateFields.image = profileImg;
+            }
+
+            const result = await users.update(updateFields, {
+                where: { id: employeeId },
+            });
+
+            return result;
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Update agent employee error: ${error.message}`);
         }
-
-        // Update password if provided
-        if (updatePassword && updatePassword.trim() !== '') {
-            updateFields.password = await bcrypt.hash(updatePassword, 10);
-        }
-
-        // Update profile image if provided
-        if (profileImg) {
-            updateFields.image = profileImg;
-        }
-
-        const result = await users.update(updateFields, {
-            where: { id: employeeId },
-        });
-
-        return result;
     }
 
     /**
@@ -265,31 +294,38 @@ class EmployeeManagementService {
      * @returns {Object} Update result
      */
     async changeAgentEmployeeStatus(employeeId, status) {
-        // Validate employeeId
-        if (!employeeId) {
-            throw new Error('Employee ID is required');
-        }
-
-        // Check if employee exists and is an agent employee
-        const employee = await users.findOne({
-            where: {
-                id: employeeId,
-                classifiedAsId: 1
+        try {
+            // Validate employeeId
+            if (!employeeId) {
+                throw new ValidationError('Employee ID is required');
             }
-        });
 
-        if (!employee) {
-            throw new Error('Agent employee not found');
-        }
+            // Check if employee exists and is an agent employee
+            const employee = await users.findOne({
+                where: {
+                    id: employeeId,
+                    classifiedAsId: 1
+                }
+            });
 
-        const result = await users.update(
-            { status },
-            {
-                where: { id: employeeId }
+            if (!employee) {
+                throw new NotFoundError('Agent employee not found');
             }
-        );
 
-        return result;
+            const result = await users.update(
+                { status },
+                {
+                    where: { id: employeeId }
+                }
+            );
+
+            return result;
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Change agent employee status error: ${error.message}`);
+        }
     }
 
     /**
@@ -298,26 +334,33 @@ class EmployeeManagementService {
      * @returns {Object} List of agent employees
      */
     async getAllAgentEmployees(agentId) {
-        // Validate agentId
-        if (!agentId) {
-            throw new Error('Agent ID is required');
-        }
+        try {
+            // Validate agentId
+            if (!agentId) {
+                throw new ValidationError('Agent ID is required');
+            }
 
-        const agentEmployee = await users.findAll({
-            where: {
-                classifiedAsId: 1,
-                employeeOff: agentId
-            },
-            attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image', 'roleId', 'employeeOff'],
-            include: [
-                {
-                    model: roles,
-                    attributes: ["id", "name"],
+            const agentEmployee = await users.findAll({
+                where: {
+                    classifiedAsId: 1,
+                    employeeOff: agentId
                 },
-            ],
-        });
+                attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image', 'roleId', 'employeeOff'],
+                include: [
+                    {
+                        model: roles,
+                        attributes: ["id", "name"],
+                    },
+                ],
+            });
 
-        return { agentEmployee };
+            return { agentEmployee };
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            throw new Error(`Get all agent employees error: ${error.message}`);
+        }
     }
 }
 

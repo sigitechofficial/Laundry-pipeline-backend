@@ -733,12 +733,16 @@ async function resendOTP(req, res) {
     })
 
     let dt = new Date();
+    // Set OTP expiration to 1 minute from now
+    let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
+    
     if (userExist.otpVerification != null) {
         try {
             otpVerification.update(
                 {
                     OTP: OTP,
                     reqAt: dt,
+                    expirtAt: expirationTime,
                 }, { where: { userid: userExist.id } }
             )
             return res.json(responsefunc("1", "OTP Updated Sucessfully", { otpid: userExist.otpVerification.id, userId: userExist.id }))
@@ -752,6 +756,7 @@ async function resendOTP(req, res) {
             const otpSend = otpVerification.create({
                 OTP: OTP,
                 reqAt: dt,
+                expirtAt: expirationTime,
                 userId: userExist.id
             })
             return res.json(responsefunc("1", "OTP sent Sucessfully for Password Reset", { otpId: otpSend.id, userId: userExist.id }))

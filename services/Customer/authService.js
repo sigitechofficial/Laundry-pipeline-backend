@@ -869,11 +869,14 @@ class CustomerAuthService {
         });
 
         let DT = new Date();
+        // Set OTP expiration to 1 minute from now
+        let expirationTime = new Date(DT.getTime() + 1 * 60 * 1000); // 1 minute
 
         if (!otpData) {
             const newOtpData = await otpVerification.create({
                 OTP,
                 reqAt: DT,
+                expirtAt: expirationTime,
                 verifiedInForgetCase: false,
                 userId,
             });
@@ -886,6 +889,7 @@ class CustomerAuthService {
                 {
                     OTP,
                     reqAt: DT,
+                    expirtAt: expirationTime,
                     verifiedInForgetCase: false,
                 },
                 { where: { userId } }

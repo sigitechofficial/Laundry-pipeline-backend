@@ -17,6 +17,7 @@ const locationManagementService = require('./locationManagementService');
 const agentRegistrationService = require('./agentRegistrationService');
 const cancellationPolicyService = require('./cancellationPolicyService');
 const noShowPolicyService = require('./noShowPolicyService');
+const reschedulePolicyService = require('./reschedulePolicyService');
 const reasonService = require('./reasonService');
 
 module.exports = {
@@ -39,5 +40,6 @@ module.exports = {
     agentRegistrationService,
     cancellationPolicyService,
     noShowPolicyService,
+    reschedulePolicyService,
     reasonService
 };

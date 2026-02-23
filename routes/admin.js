@@ -419,6 +419,27 @@ router.get('/getActiveNoShowPolicy', validateAccessToken, asyncMiddleware(adminC
 router.get('/getNoShowPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyStatisticsController))
 
 
+//!-----------------------------------Reschedule Policy Management------------------------------------>>>>
+// Add Reschedule Policy
+router.post('/addReschedulePolicy', validateAccessToken, asyncMiddleware(adminController.createReschedulePolicyController))
+// Get All Reschedule Policies
+router.get('/getReschedulePolicies', validateAccessToken, asyncMiddleware(adminController.getAllReschedulePoliciesController))
+// Get Reschedule Policy by ID
+router.get('/getReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.getReschedulePolicyByIdController))
+// Update Reschedule Policy
+router.put('/updateReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateReschedulePolicyController))
+// Delete Reschedule Policy
+router.delete('/deleteReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteReschedulePolicyController))
+// Set Default Reschedule Policy
+router.patch('/setDefaultReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultReschedulePolicyController))
+// Toggle Reschedule Policy Status
+router.patch('/toggleReschedulePolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleReschedulePolicyStatusController))
+// Get Active Reschedule Policy
+router.get('/getActiveReschedulePolicy', validateAccessToken, asyncMiddleware(adminController.getActiveReschedulePolicyController))
+// Get Reschedule Policy Statistics
+router.get('/getReschedulePolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getReschedulePolicyStatisticsController))
+
+
 //!-----------------------------------FAQ Management------------------------------------>>>>
 // Create FAQ
 router.post('/createFAQ', validateAccessToken, asyncMiddleware(adminController.createFAQ))
