@@ -11,8 +11,7 @@ module.exports = (sequelize, DataTypes) => {
      */
     static associate(models) {
       reschedulePolicyConfig.belongsTo(models.policy, {
-        foreignKey: 'policyId',
-        as: 'policy'
+        foreignKey: 'policyId'
       });
     }
   }

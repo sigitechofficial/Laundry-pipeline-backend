@@ -26,7 +26,6 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'policyId',
         as: 'rescheduleConfig'
       })
-      models.reschedulePolicyConfig.belongsTo(policy)
 
 
      //Realtion with the Booking Table as Cancellation Policy 
