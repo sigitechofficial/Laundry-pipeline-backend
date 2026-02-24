@@ -1155,7 +1155,6 @@ class CustomerOrderService {
                             model: noShowPolicyConfig,
                             attributes: [
                                 "id",
-                                "isActive",
                                 "enableForPickup",
                                 "enableForDelivery",
                                 "feeType",
