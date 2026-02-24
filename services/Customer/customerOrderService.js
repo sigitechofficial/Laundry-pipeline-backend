@@ -29,6 +29,7 @@ const {
     proofOfDeliveries,
     policy,
     cancellationPolicyConfig,
+    noShowPolicyConfig,
     units
 } = require('../../models');
 const { Op } = require('sequelize');
@@ -1143,6 +1144,40 @@ class CustomerOrderService {
                             required: false
                         }
                     ]
+                },
+                {
+                    model: policy,
+                    as: "noShowPolicyBookings",
+                    attributes: ["id", "name", "type", "isActive", "isDefault", "description"],
+                    required: false,
+                    include: [
+                        {
+                            model: noShowPolicyConfig,
+                            attributes: [
+                                "id",
+                                "isActive",
+                                "enableForPickup",
+                                "enableForDelivery",
+                                "feeType",
+                                "currency",
+                                "pickupNoShowFee",
+                                "deliveryNoShowFee",
+                                "storageFeePerDay",
+                                "percentageFee",
+                                "graceMinutesOnSite",
+                                "driverLateSLA",
+                                "autoForgiveFirstNoShow",
+                                "autoForgiveCount",
+                                "autoForgivePeriod",
+                                "requirePaymentAfterCap",
+                                "perCustomerCap",
+                                "capWindowDays",
+                                "absoluteWaiverAmount",
+                                "percentageWaiverAmount"
+                            ],
+                            required: false
+                        }
+                    ]
                 }
             ],
         });
@@ -1150,9 +1185,75 @@ class CustomerOrderService {
             throw new NotFoundError("No Booking Found");
         }
 
+        const bookingPlain = bookingFind.toJSON ? bookingFind.toJSON() : bookingFind;
+        const cancellationPolicyRaw = bookingPlain.cancellationPolicyBookings;
+        let cancellationPolicy = null;
+
+        if (cancellationPolicyRaw && cancellationPolicyRaw.cancellationConfig) {
+            const config = cancellationPolicyRaw.cancellationConfig;
+            cancellationPolicy = {
+                id: cancellationPolicyRaw.id,
+                name: cancellationPolicyRaw.name,
+                description: cancellationPolicyRaw.description || null,
+                freeCancellationWindowMinutes: config.prePickupFreeChargeWindowMinutes ?? null,
+                firstCancellationFree: config.prePickupFirstCancellationLeniency ?? false,
+                prePickupChargeAmount: config.prePickupAbsoluteAmount ?? null,
+                prePickupChargeCurrency: config.prePickupAbsoluteCurrency ?? null,
+                prePickupChargePercentage: config.prePickupPercentage ?? null,
+                unprocessedChargeAmount: config.unprocessedAbsoluteAmount ?? null,
+                unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency ?? null,
+                unprocessedChargePercentage: config.unprocessedPercentage ?? null,
+                unprocessedAfterPickupMinutes: config.unprocessedAfterPickupMinutes ?? null,
+                unprocessedOrderValuePercentage: config.unprocessedOrderValuePercentage ?? null,
+                allowCancelUnprocessed: config.allowCancelUnprocessed ?? true,
+                courtesyWindowDays: config.courtesyWindowDays ?? null,
+                courtesyCount: config.courtesyCount ?? null,
+                courtesyCapAmount: config.courtesyCapAmount ?? null,
+                customerLeniencyEnabled: config.customerLeniencyEnabled ?? true
+            };
+        }
+
+        const noShowPolicyRaw = bookingPlain.noShowPolicyBookings;
+        let noShowPolicy = null;
+
+        if (noShowPolicyRaw && noShowPolicyRaw.noShowPolicyConfig) {
+            const config = noShowPolicyRaw.noShowPolicyConfig;
+            noShowPolicy = {
+                id: noShowPolicyRaw.id,
+                name: noShowPolicyRaw.name,
+                description: noShowPolicyRaw.description || null,
+                enableForPickup: config.enableForPickup ?? true,
+                enableForDelivery: config.enableForDelivery ?? true,
+                feeType: config.feeType ?? null,
+                currency: config.currency ?? null,
+                pickupNoShowFee: config.pickupNoShowFee ?? null,
+                deliveryNoShowFee: config.deliveryNoShowFee ?? null,
+                storageFeePerDay: config.storageFeePerDay ?? null,
+                percentageFee: config.percentageFee ?? null,
+                graceMinutesOnSite: config.graceMinutesOnSite ?? null,
+                driverLateSLA: config.driverLateSLA ?? null,
+                autoForgiveFirstNoShow: config.autoForgiveFirstNoShow ?? true,
+                autoForgiveCount: config.autoForgiveCount ?? null,
+                autoForgivePeriod: config.autoForgivePeriod ?? null,
+                requirePaymentAfterCap: config.requirePaymentAfterCap ?? true,
+                perCustomerCap: config.perCustomerCap ?? null,
+                capWindowDays: config.capWindowDays ?? null,
+                absoluteWaiverAmount: config.absoluteWaiverAmount ?? null,
+                percentageWaiverAmount: config.percentageWaiverAmount ?? null
+            };
+        }
+
+        const data = {
+            ...bookingPlain,
+            cancellationPolicy,
+            noShowPolicy
+        };
+        delete data.cancellationPolicyBookings;
+        delete data.noShowPolicyBookings;
+
         return {
             message: "Customer Order Details Fetched",
-            data: bookingFind
+            data
         };
     }
 
