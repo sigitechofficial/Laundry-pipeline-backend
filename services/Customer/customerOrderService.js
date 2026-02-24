@@ -1243,17 +1243,17 @@ class CustomerOrderService {
             };
         }
 
-        const data = {
+        const resultData = {
             ...bookingPlain,
             cancellationPolicy,
             noShowPolicy
         };
-        delete data.cancellationPolicyBookings;
-        delete data.noShowPolicyBookings;
+        delete resultData.cancellationPolicyBookings;
+        delete resultData.noShowPolicyBookings;
 
         return {
             message: "Customer Order Details Fetched",
-            data
+            data: resultData
         };
     }
 
