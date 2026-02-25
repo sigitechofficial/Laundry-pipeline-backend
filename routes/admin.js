@@ -440,6 +440,8 @@ router.patch('/toggleReschedulePolicyStatus/:id', validateAccessToken, asyncMidd
 router.get('/getActiveReschedulePolicy', validateAccessToken, asyncMiddleware(adminController.getActiveReschedulePolicyController))
 // Get Reschedule Policy Statistics
 router.get('/getReschedulePolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getReschedulePolicyStatisticsController))
+// Get All Active Policies (cancellation, reschedule, no-show)
+router.get('/getActivePolicies', validateAccessToken, asyncMiddleware(adminController.getActivePoliciesController))
 
 
 //!-----------------------------------FAQ Management------------------------------------>>>>

@@ -91,6 +91,7 @@ const {
     cancellationPolicyService: cancellationPolicyServiceImport,
     noShowPolicyService,
     reschedulePolicyService,
+    activePoliciesService,
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
@@ -1208,6 +1209,14 @@ async function getActiveReschedulePolicyController(req, res) {
 async function getReschedulePolicyStatisticsController(req, res) {
     const result = await reschedulePolicyService.getReschedulePolicyStatistics();
     return ResponseHelper.success(res, "Reschedule policy statistics", result);
+}
+
+/*
+ * Get All Active Policies (cancellation, reschedule, no-show) in one call
+ */
+async function getActivePoliciesController(req, res) {
+    const result = await activePoliciesService.getActivePolicies();
+    return ResponseHelper.success(res, "Active policies", result);
 }
 
 
@@ -2522,6 +2531,7 @@ module.exports = {
     toggleReschedulePolicyStatusController,
     getActiveReschedulePolicyController,
     getReschedulePolicyStatisticsController,
+    getActivePoliciesController,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

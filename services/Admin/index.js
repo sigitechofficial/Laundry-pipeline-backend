@@ -19,6 +19,7 @@ const cancellationPolicyService = require('./cancellationPolicyService');
 const noShowPolicyService = require('./noShowPolicyService');
 const reschedulePolicyService = require('./reschedulePolicyService');
 const reasonService = require('./reasonService');
+const activePoliciesService = require('./activePoliciesService');
 
 module.exports = {
     dashboardService,
@@ -41,5 +42,6 @@ module.exports = {
     cancellationPolicyService,
     noShowPolicyService,
     reschedulePolicyService,
-    reasonService
+    reasonService,
+    activePoliciesService
 };
