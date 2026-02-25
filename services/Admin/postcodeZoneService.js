@@ -263,6 +263,51 @@ class PostcodeZoneService {
         console.log('=== Add Zone By Postcodes - Success ===');
         return zoneCreate;
     }
+
+    /**
+     * Edit/update zone by id; optionally regenerate polygon from new postcodes
+     * @param {number} zoneId - Zone ID to update
+     * @param {Object} zoneData - Zone data (optional postcodes array + any zone fields to update)
+     * @returns {Object} Updated zone data
+     */
+    async editZoneByPostcodes(zoneId, zoneData) {
+        const existingZone = await zone.findByPk(zoneId);
+        if (!existingZone) {
+            throw new NotFoundError('Zone not found');
+        }
+
+        const { postcodes, ...otherZoneData } = zoneData;
+
+        // If postcodes provided, regenerate polygon from them
+        if (postcodes !== undefined && postcodes !== null) {
+            let postcodesArray = postcodes;
+            if (typeof postcodes === 'string') {
+                try {
+                    postcodesArray = JSON.parse(postcodes);
+                } catch (e) {
+                    postcodesArray = postcodes.split(',').map(p => p.trim()).filter(p => p);
+                }
+            }
+            if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+                const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
+                const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
+                otherZoneData.coordinates = {
+                    type: 'Polygon',
+                    coordinates: polygonCoordinates
+                };
+            }
+        }
+
+        const updatePayload = { ...otherZoneData };
+        await this.validateZoneData(updatePayload);
+
+        const [affectedRows] = await zone.update(updatePayload, { where: { id: zoneId } });
+        if (affectedRows === 0) {
+            throw new Error('Failed to update zone');
+        }
+        const updatedZone = await zone.findByPk(zoneId);
+        return updatedZone;
+    }
 }
 
 module.exports = new PostcodeZoneService();

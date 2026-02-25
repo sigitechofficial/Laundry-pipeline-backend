@@ -1402,6 +1402,15 @@ async function addZonesByPostcodes(req, res) {
     return ResponseHelper.success(res, "Zone Added Successfully Using Postcodes", zoneCreate);
 }
 
+/*
+ * Edit Zone by Postcodes (update zone; optionally send new postcodes to regenerate polygon)
+ */
+async function editZoneByPostcodes(req, res) {
+    const { zoneId } = req.params;
+    const updatedZone = await postcodeZoneService.editZoneByPostcodes(zoneId, req.body);
+    return ResponseHelper.success(res, "Zone updated successfully", updatedZone);
+}
+
 
 /*
    * Get Zones
@@ -2383,6 +2392,7 @@ module.exports = {
     //!-------------Add Zones--------//
     addZones,
     addZonesByPostcodes,
+    editZoneByPostcodes,
     getZones,
     deleteZone,
     updateZone,

@@ -146,6 +146,8 @@ router.delete('/deleteCity/:cityId', validateAccessToken, asyncMiddleware(adminC
 router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))
 //Add Zones by Postcodes
 router.post('/addZoneByPostcodes', validateAccessToken, asyncMiddleware(adminController.addZonesByPostcodes))
+// Edit Zone by Postcodes (optionally send postcodes to regenerate polygon)
+router.put('/editZoneByPostcodes/:zoneId', validateAccessToken, asyncMiddleware(adminController.editZoneByPostcodes))
 // Get Zones
 router.get('/getZones', validateAccessToken, asyncMiddleware(adminController.getZones))
 //Delete Zone
