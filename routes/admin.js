@@ -150,6 +150,8 @@ router.post('/addZoneByPostcodes', validateAccessToken, asyncMiddleware(adminCon
 router.put('/editZoneByPostcodes/:zoneId', validateAccessToken, asyncMiddleware(adminController.editZoneByPostcodes))
 // Get Zones
 router.get('/getZones', validateAccessToken, asyncMiddleware(adminController.getZones))
+// Get Zone By ID (optional columns query: ?columns=id,name,status)
+router.get('/getZoneById/:zoneId', validateAccessToken, asyncMiddleware(adminController.getZoneById))
 //Delete Zone
 router.delete('/delete-zone', validateAccessToken, asyncMiddleware(adminController.deleteZone))
 //Update Zone

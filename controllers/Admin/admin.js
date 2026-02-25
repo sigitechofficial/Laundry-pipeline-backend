@@ -1421,6 +1421,20 @@ async function getZones(req, res) {
     return ResponseHelper.success(res, "All Zones Fetched Successfully", shapedZones);
 }
 
+/*
+ * Get Zone By ID
+*/
+async function getZoneById(req, res) {
+    const { zoneId } = req.params;
+
+    const columns = req.query.columns
+        ? req.query.columns.split(',').map(column => column.trim()).filter(Boolean)
+        : [];
+
+    const zoneData = await zoneManagementService.getZoneById(zoneId, columns);
+    return ResponseHelper.success(res, "Zone fetched successfully", zoneData);
+}
+
 
 /*
  * Update Zone
@@ -2394,6 +2408,7 @@ module.exports = {
     addZonesByPostcodes,
     editZoneByPostcodes,
     getZones,
+    getZoneById,
     deleteZone,
     updateZone,
     //!-------------Units--------//

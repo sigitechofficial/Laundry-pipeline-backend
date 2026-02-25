@@ -39,6 +39,36 @@ class ZoneManagementService {
     }
 
     /**
+     * Get a zone by id with optional selected columns
+     * @param {number} zoneId - Zone ID
+     * @param {string[]} columns - Optional list of columns to select
+     * @returns {Object} Zone data
+     */
+    async getZoneById(zoneId, columns = []) {
+            const allowedColumns = Object.keys(zone.rawAttributes);
+
+            let attributes = allowedColumns;
+            if (Array.isArray(columns) && columns.length > 0) {
+                const invalidColumns = columns.filter((column) => !allowedColumns.includes(column));
+                if (invalidColumns.length > 0) {
+                    throw new ValidationError(`Invalid column(s): ${invalidColumns.join(', ')}`);
+                }
+                attributes = columns;
+            }
+
+            const zoneData = await zone.findOne({
+                where: { id: zoneId },
+                attributes
+            });
+
+            if (!zoneData) {
+                throw new NotFoundError('Zone not found');
+            }
+
+            return zoneData;
+    }
+
+    /**
      * Update zone
      * @param {number} zoneId - Zone ID
      * @param {Object} updateData - Zone update data
