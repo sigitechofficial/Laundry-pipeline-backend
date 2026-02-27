@@ -462,6 +462,12 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.customerServices)
 );
+//Get Active Policies (cancellation, reschedule, no-show)
+router.get(
+    "/getActivePolicies",
+    validateAccessToken,
+    asyncMiddleware(agentController.getActivePolicies)
+);
 //Get Customer Services For Updating Invoice
 router.get(
     "/getCustomerServicestoUpdateInvoice",

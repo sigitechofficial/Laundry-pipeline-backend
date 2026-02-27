@@ -66,6 +66,7 @@ const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAge
 const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+const activePoliciesService = require('../../services/Admin/activePoliciesService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -3800,6 +3801,16 @@ exports.validatePostcode = async (req, res) => {
     const { postcode } = req.body;
     const result = await customerPostcodeService.validatePostcodeFormat(postcode);
     return ResponseHelper.success(res, "Postcode validation result", result);
+};
+
+/**
+ * @route GET /api/agent/getActivePolicies
+ * @access Private (Agent)
+ * @description Get active cancellation, reschedule and no-show policies.
+ */
+exports.getActivePolicies = async (req, res) => {
+    const result = await activePoliciesService.getActivePolicies();
+    return ResponseHelper.success(res, "Active policies", result);
 };
 
 
