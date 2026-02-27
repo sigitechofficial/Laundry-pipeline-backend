@@ -52,6 +52,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const {
     serviceManagementService,
+    activePoliciesService
 } = require('../../services/Admin');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
@@ -408,6 +409,14 @@ async function getCustomerCancellationHistory(req, res) {
     const history = await cancelBookingService.getCustomerCancellationHistory(customerId, days);
 
     return ResponseHelper.success(res, "Cancellation history fetched successfully", history);
+}
+
+/*
+ * Get Active Policies for Customer (cancellation, reschedule, no-show)
+ */
+async function getActivePolicies(req, res) {
+    const result = await activePoliciesService.getActivePolicies();
+    return ResponseHelper.success(res, "Active policies", result);
 }
 
 /*
@@ -1037,6 +1046,7 @@ module.exports = {
     getAllOrderStatus,
     cancelCustomerBooking,
     getCustomerCancellationHistory,
+    getActivePolicies,
     //---Customer Postcode Address Lookup----//
     getAddressesByPostcode,
     getAddressById,
