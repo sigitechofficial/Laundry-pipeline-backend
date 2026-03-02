@@ -4,10 +4,12 @@ const { deviceToken } = require('../models');
 const { Op } = require('sequelize');
 const serviceAccount = require('../firebase.json')
 
-// Initialize Firebase Admin SDK
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+// Initialize Firebase Admin SDK (guard prevents "already exists" crash on hot reload)
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
 
 /**
  * Send a notification to a user
@@ -65,7 +67,8 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
           priority: 'high',
           defaultSound: true,
           defaultVibrateTimings: true,
-          sound: 'default'
+          sound: 'default',
+          tag: `${userId}_${Date.now()}`
         }
       },
       // iOS (APNs)
