@@ -73,11 +73,7 @@ class CancellationPolicyService {
         });
 
         if (overlapping.length > 0) {
-            const names = overlapping.map(p => `"${p.name}" (${p.effectiveFrom ?? '∞'} → ${p.effectiveTo ?? '∞'})`).join(', ');
-            throw new ConflictError(
-                `Date window overlaps with existing active cancellation ${overlapping.length > 1 ? 'policies' : 'policy'}: ${names}. ` +
-                `Adjust effectiveFrom / effectiveTo or deactivate the conflicting policy first.`
-            );
+            throw new ConflictError("Policy date range overlaps with an active cancellation policy.");
         }
     }
 
