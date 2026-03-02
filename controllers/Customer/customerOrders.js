@@ -424,13 +424,35 @@ async function getActivePolicies(req, res) {
  */
 async function testNotification(req, res) {
     const { userId, title, body, data } = req.body;
+    const loggedInUserId = req.user.id;
+    const targetUserId = userId || loggedInUserId;
 
     try {
-        await sendNotification(userId, title, body, data);
-        return res.json(responsefunc("1", "Test notification sent successfully", {}, ""));
+        if (Number(targetUserId) !== Number(loggedInUserId)) {
+            return res.status(403).json(responsefunc("0", "You can only send test notifications to your own account", {}, ""));
+        }
+
+        const notificationData = data && typeof data === "object" ? data : {};
+        const result = await sendNotification(
+            targetUserId,
+            title || "Test Notification",
+            body || "This is a test notification",
+            notificationData,
+            { throwOnFailure: true }
+        );
+
+        return res.json(responsefunc("1", "Test notification sent successfully", {
+            targetUserId,
+            tokenCount: result.tokenCount,
+            successCount: result.successCount,
+            failureCount: result.failureCount,
+            failedTokens: result.failedTokens
+        }, ""));
     } catch (error) {
         console.error("Error sending test notification:", error);
-        return res.status(500).json(responsefunc("0", "Failed to send test notification", {}, ""));
+        return res.status(500).json(responsefunc("0", "Failed to send test notification", {
+            error: error.message
+        }, ""));
     }
 }
 
