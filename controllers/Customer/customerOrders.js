@@ -428,10 +428,6 @@ async function testNotification(req, res) {
     const targetUserId = userId || loggedInUserId;
 
     try {
-        if (Number(targetUserId) !== Number(loggedInUserId)) {
-            return res.status(403).json(responsefunc("0", "You can only send test notifications to your own account", {}, ""));
-        }
-
         const notificationData = data && typeof data === "object" ? data : {};
         const result = await sendNotification(
             targetUserId,

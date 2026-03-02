@@ -48,13 +48,49 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       return acc;
     }, {});
 
-    // Create the message payload
+    // Create the message payload with platform-specific config
     const message = {
       notification: {
         title,
         body
       },
       data: sanitizedData,
+      // Android: high priority bypasses battery optimization/Doze mode
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'laundry_default',
+          priority: 'high',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          sound: 'default'
+        }
+      },
+      // iOS (APNs)
+      apns: {
+        headers: {
+          'apns-priority': '10'
+        },
+        payload: {
+          aps: {
+            sound: 'default',
+            badge: 1,
+            contentAvailable: true,
+            mutableContent: true
+          }
+        }
+      },
+      // Web Push
+      webpush: {
+        headers: {
+          Urgency: 'high'
+        },
+        notification: {
+          title,
+          body,
+          icon: '/icons/icon-192x192.png'
+        }
+      },
       tokens: tokenIds
     };
 
