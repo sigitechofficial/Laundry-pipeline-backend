@@ -89,6 +89,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    effectiveFrom: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null
+    },
+    effectiveTo: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      defaultValue: null
+    },
     createdBy: {
       type: DataTypes.INTEGER,
       allowNull: true

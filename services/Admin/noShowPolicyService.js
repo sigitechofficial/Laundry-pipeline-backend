@@ -4,24 +4,119 @@ const { Op } = require('sequelize');
 
 /**
  * No-Show Policy Management Service
- * Handles no-show policies with configuration
+ * Handles no-show policies with effectiveFrom / effectiveTo scheduling.
+ *
+ * Rules:
+ *  - effectiveFrom: date policy starts being applicable (null = from the beginning)
+ *  - effectiveTo  : date policy stops being applicable (null = never expires)
+ *  - isActive     : manual on/off switch (false = force-disabled regardless of dates)
+ *  - isDefault    : tie-breaker when multiple policies are valid at the same moment
  */
 class NoShowPolicyService {
-    
+
+    // ─── helpers ────────────────────────────────────────────────────────────────
+
+    _validateDateRange(effectiveFrom, effectiveTo) {
+        if (effectiveFrom && effectiveTo) {
+            const from = new Date(effectiveFrom);
+            const to   = new Date(effectiveTo);
+            if (from >= to) {
+                throw new ValidationError("effectiveFrom must be earlier than effectiveTo");
+            }
+        }
+    }
+
+    async _checkOverlap(effectiveFrom, effectiveTo, excludeId = null) {
+        if (!effectiveFrom && !effectiveTo) return;
+
+        const overlapping = await policy.findAll({
+            where: {
+                type: 'no_show',
+                isActive: true,
+                ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
+                [Op.and]: [
+                    effectiveTo
+                        ? {
+                              [Op.or]: [
+                                  { effectiveFrom: null },
+                                  { effectiveFrom: { [Op.lt]: new Date(effectiveTo) } }
+                              ]
+                          }
+                        : {},
+                    effectiveFrom
+                        ? {
+                              [Op.or]: [
+                                  { effectiveTo: null },
+                                  { effectiveTo: { [Op.gt]: new Date(effectiveFrom) } }
+                              ]
+                          }
+                        : {}
+                ]
+            },
+            attributes: ['id', 'name', 'effectiveFrom', 'effectiveTo']
+        });
+
+        if (overlapping.length > 0) {
+            const names = overlapping
+                .map(p => `"${p.name}" (${p.effectiveFrom ?? '∞'} → ${p.effectiveTo ?? '∞'})`)
+                .join(', ');
+            throw new ConflictError(
+                `Date window overlaps with existing active no-show ${overlapping.length > 1 ? 'policies' : 'policy'}: ${names}. ` +
+                `Adjust effectiveFrom / effectiveTo or deactivate the conflicting policy first.`
+            );
+        }
+    }
+
+    _nowWhere() {
+        const now = new Date();
+        return {
+            type: 'no_show',
+            isActive: true,
+            [Op.and]: [
+                {
+                    [Op.or]: [
+                        { effectiveFrom: null },
+                        { effectiveFrom: { [Op.lte]: now } }
+                    ]
+                },
+                {
+                    [Op.or]: [
+                        { effectiveTo: null },
+                        { effectiveTo: { [Op.gte]: now } }
+                    ]
+                }
+            ]
+        };
+    }
+
+    // ─── CRUD ────────────────────────────────────────────────────────────────────
+
     /**
-     * Create No-Show Policy with Configuration
-     * @param {Object} data - Policy data
-     * @returns {Object} Created policy with configuration
+     * Create No-Show Policy with Configuration.
      */
     async createNoShowPolicy(data) {
-        const { name, description, createdBy, ...configData } = data;
+        const {
+            name,
+            description,
+            createdBy,
+            effectiveFrom,
+            effectiveTo,
+            isActive,
+            isDefault,
+            ...configData
+        } = data;
 
         if (!name) {
             throw new ValidationError("Policy name is required");
         }
 
-        // If setting as default, unset other default no-show policies
-        if (data.isDefault) {
+        this._validateDateRange(effectiveFrom, effectiveTo);
+
+        if (isActive !== false) {
+            await this._checkOverlap(effectiveFrom, effectiveTo);
+        }
+
+        if (isDefault) {
             await policy.update(
                 { isDefault: false },
                 { where: { type: 'no_show', isDefault: true } }
@@ -32,13 +127,14 @@ class NoShowPolicyService {
             name,
             type: 'no_show',
             description,
-            isActive: data.isActive ?? true,
-            isDefault: data.isDefault ?? false,
+            isActive:      isActive ?? true,
+            isDefault:     isDefault ?? false,
+            effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : null,
+            effectiveTo:   effectiveTo   ? new Date(effectiveTo)   : null,
             createdBy
         });
 
-        // Create no-show configuration
-        const config = await noShowPolicyConfig.create({
+        await noShowPolicyConfig.create({
             policyId: newPolicy.id,
             ...configData
         });
@@ -47,9 +143,7 @@ class NoShowPolicyService {
     }
 
     /**
-     * Get No-Show Policy by ID with Configuration
-     * @param {number} policyId - Policy ID
-     * @returns {Object} Policy with configuration
+     * Get No-Show Policy by ID with Configuration.
      */
     async getNoShowPolicyById(policyId) {
         const policyData = await policy.findByPk(policyId, {
@@ -73,22 +167,26 @@ class NoShowPolicyService {
     }
 
     /**
-     * Get All No-Show Policies with Filters
-     * @param {Object} filters - Filter options
-     * @returns {Object} Policies with pagination
+     * Get All No-Show Policies with Filters.
+     * Pass `status: 'active_now'` to return only currently-effective policies.
      */
     async getAllNoShowPolicies(filters = {}) {
         const {
             isActive,
             isDefault,
-            page = 1,
+            status,
+            page  = 1,
             limit = 10
         } = filters;
 
-        const whereClause = { type: 'no_show' };
-        
-        if (isActive !== undefined) whereClause.isActive = isActive;
-        if (isDefault !== undefined) whereClause.isDefault = isDefault;
+        let whereClause = { type: 'no_show' };
+
+        if (status === 'active_now') {
+            whereClause = this._nowWhere();
+        } else {
+            if (isActive  !== undefined) whereClause.isActive  = isActive;
+            if (isDefault !== undefined) whereClause.isDefault = isDefault;
+        }
 
         const offset = (page - 1) * limit;
 
@@ -100,8 +198,12 @@ class NoShowPolicyService {
                     required: false
                 }
             ],
-            order: [['createdAt', 'DESC']],
-            limit: parseInt(limit),
+            order: [
+                ['isDefault', 'DESC'],
+                ['effectiveFrom', 'DESC'],
+                ['createdAt', 'DESC']
+            ],
+            limit:  parseInt(limit),
             offset: parseInt(offset)
         });
 
@@ -109,7 +211,7 @@ class NoShowPolicyService {
             policies: rows,
             pagination: {
                 total: count,
-                page: parseInt(page),
+                page:  parseInt(page),
                 limit: parseInt(limit),
                 pages: Math.ceil(count / limit)
             }
@@ -117,15 +219,11 @@ class NoShowPolicyService {
     }
 
     /**
-     * Update No-Show Policy
-     * @param {number} policyId - Policy ID
-     * @param {Object} updateData - Update data
-     * @param {number} updatedBy - Updated by user ID
-     * @returns {Object} Updated policy
+     * Update No-Show Policy.
      */
     async updateNoShowPolicy(policyId, updateData, updatedBy) {
         const policyData = await policy.findByPk(policyId);
-        
+
         if (!policyData) {
             throw new NotFoundError("No-show policy not found");
         }
@@ -134,54 +232,62 @@ class NoShowPolicyService {
             throw new ValidationError("This policy is not a no-show policy");
         }
 
-        // If setting as default, unset other default no-show policies
-        if (updateData.isDefault) {
+        const {
+            name,
+            description,
+            isActive,
+            isDefault,
+            effectiveFrom,
+            effectiveTo,
+            ...configData
+        } = updateData;
+
+        const finalFrom = effectiveFrom !== undefined
+            ? (effectiveFrom ? new Date(effectiveFrom) : null)
+            : policyData.effectiveFrom;
+        const finalTo   = effectiveTo !== undefined
+            ? (effectiveTo   ? new Date(effectiveTo)   : null)
+            : policyData.effectiveTo;
+
+        this._validateDateRange(finalFrom, finalTo);
+
+        const willBeActive = isActive !== undefined ? isActive : policyData.isActive;
+        if (willBeActive && (effectiveFrom !== undefined || effectiveTo !== undefined)) {
+            await this._checkOverlap(finalFrom, finalTo, policyId);
+        }
+
+        if (isDefault) {
             await policy.update(
                 { isDefault: false },
-                { 
-                    where: { 
-                        type: 'no_show', 
-                        isDefault: true, 
-                        id: { [Op.ne]: policyId } 
-                    } 
+                {
+                    where: {
+                        type: 'no_show',
+                        isDefault: true,
+                        id: { [Op.ne]: policyId }
+                    }
                 }
             );
         }
 
-        // Separate policy data from config data
-        const { 
-            name, 
-            description, 
-            isActive, 
-            isDefault, 
-            ...configData 
-        } = updateData;
-        
-        // Update policy
         const policyUpdateData = {};
-        if (name !== undefined) policyUpdateData.name = name;
-        if (description !== undefined) policyUpdateData.description = description;
-        if (isActive !== undefined) policyUpdateData.isActive = isActive;
-        if (isDefault !== undefined) policyUpdateData.isDefault = isDefault;
-        
+        if (name          !== undefined) policyUpdateData.name          = name;
+        if (description   !== undefined) policyUpdateData.description   = description;
+        if (isActive      !== undefined) policyUpdateData.isActive      = isActive;
+        if (isDefault     !== undefined) policyUpdateData.isDefault     = isDefault;
+        if (effectiveFrom !== undefined) policyUpdateData.effectiveFrom = finalFrom;
+        if (effectiveTo   !== undefined) policyUpdateData.effectiveTo   = finalTo;
+
         if (Object.keys(policyUpdateData).length > 0) {
             policyUpdateData.updatedBy = updatedBy;
             await policyData.update(policyUpdateData);
         }
 
-        // Update configuration
         if (Object.keys(configData).length > 0) {
-            const existingConfig = await noShowPolicyConfig.findOne({ 
-                where: { policyId } 
-            });
-            
+            const existingConfig = await noShowPolicyConfig.findOne({ where: { policyId } });
             if (existingConfig) {
                 await existingConfig.update(configData);
             } else {
-                await noShowPolicyConfig.create({
-                    policyId,
-                    ...configData
-                });
+                await noShowPolicyConfig.create({ policyId, ...configData });
             }
         }
 
@@ -189,34 +295,23 @@ class NoShowPolicyService {
     }
 
     /**
-     * Get Active No-Show Policy (Default or First Active)
-     * @returns {Object} Active no-show policy with configuration
+     * Get the currently-effective no-show policy.
      */
     async getActiveNoShowPolicy() {
-        // First try to get default no-show policy
-        let policyData = await policy.findOne({
-            where: { type: 'no_show', isDefault: true, isActive: true },
+        const policyData = await policy.findOne({
+            where: this._nowWhere(),
             include: [
                 {
                     model: noShowPolicyConfig,
                     required: false
                 }
+            ],
+            order: [
+                ['isDefault', 'DESC'],
+                ['effectiveFrom', 'DESC'],
+                ['createdAt', 'DESC']
             ]
         });
-
-        // If no default, get any active no-show policy
-        if (!policyData) {
-            policyData = await policy.findOne({
-                where: { type: 'no_show', isActive: true },
-                include: [
-                    {
-                        model: noShowPolicyConfig,
-                        required: false
-                    }
-                ],
-                order: [['createdAt', 'DESC']]
-            });
-        }
 
         if (!policyData) {
             throw new NotFoundError("No active no-show policy found");
@@ -226,13 +321,11 @@ class NoShowPolicyService {
     }
 
     /**
-     * Delete No-Show Policy
-     * @param {number} policyId - Policy ID
-     * @returns {Object} Deletion result
+     * Delete No-Show Policy.
      */
     async deleteNoShowPolicy(policyId) {
         const policyData = await policy.findByPk(policyId);
-        
+
         if (!policyData) {
             throw new NotFoundError("No-show policy not found");
         }
@@ -247,21 +340,15 @@ class NoShowPolicyService {
 
         await policyData.destroy();
 
-        return {
-            message: "No-show policy deleted successfully",
-            policyId
-        };
+        return { message: "No-show policy deleted successfully", policyId };
     }
 
     /**
-     * Set Default No-Show Policy
-     * @param {number} policyId - Policy ID
-     * @param {number} updatedBy - Updated by user ID
-     * @returns {Object} Updated policy
+     * Set Default No-Show Policy.
      */
     async setDefaultNoShowPolicy(policyId, updatedBy) {
         const policyData = await policy.findByPk(policyId);
-        
+
         if (!policyData) {
             throw new NotFoundError("No-show policy not found");
         }
@@ -274,36 +361,28 @@ class NoShowPolicyService {
             throw new ValidationError("Cannot set inactive policy as default");
         }
 
-        // Unset other default no-show policies
         await policy.update(
             { isDefault: false },
-            { 
-                where: { 
-                    type: 'no_show', 
-                    isDefault: true, 
-                    id: { [Op.ne]: policyId } 
-                } 
+            {
+                where: {
+                    type: 'no_show',
+                    isDefault: true,
+                    id: { [Op.ne]: policyId }
+                }
             }
         );
 
-        // Set this policy as default
-        await policyData.update({
-            isDefault: true,
-            updatedBy
-        });
+        await policyData.update({ isDefault: true, updatedBy });
 
         return await this.getNoShowPolicyById(policyId);
     }
 
     /**
-     * Toggle No-Show Policy Status
-     * @param {number} policyId - Policy ID
-     * @param {number} updatedBy - Updated by user ID
-     * @returns {Object} Updated policy
+     * Toggle No-Show Policy Status.
      */
     async toggleNoShowPolicyStatus(policyId, updatedBy) {
         const policyData = await policy.findByPk(policyId);
-        
+
         if (!policyData) {
             throw new NotFoundError("No-show policy not found");
         }
@@ -312,56 +391,45 @@ class NoShowPolicyService {
             throw new ValidationError("This policy is not a no-show policy");
         }
 
-        // If deactivating default policy, set another as default
         if (policyData.isDefault && policyData.isActive) {
-            const alternativePolicy = await policy.findOne({
-                where: { 
-                    type: 'no_show', 
-                    isActive: true, 
-                    isDefault: false, 
-                    id: { [Op.ne]: policyId } 
+            const alternative = await policy.findOne({
+                where: {
+                    type: 'no_show',
+                    isActive: true,
+                    isDefault: false,
+                    id: { [Op.ne]: policyId }
                 }
             });
-
-            if (alternativePolicy) {
-                await alternativePolicy.update({ isDefault: true });
+            if (alternative) {
+                await alternative.update({ isDefault: true });
             }
         }
 
-        await policyData.update({
-            isActive: !policyData.isActive,
-            updatedBy
-        });
+        await policyData.update({ isActive: !policyData.isActive, updatedBy });
 
         return await this.getNoShowPolicyById(policyId);
     }
 
     /**
-     * Get No-Show Policy Statistics
-     * @returns {Object} Policy statistics
+     * Get No-Show Policy Statistics.
      */
     async getNoShowPolicyStatistics() {
-        const totalPolicies = await policy.count({ 
-            where: { type: 'no_show' } 
-        });
-        
-        const activePolicies = await policy.count({ 
-            where: { type: 'no_show', isActive: true } 
-        });
+        const totalPolicies  = await policy.count({ where: { type: 'no_show' } });
+        const activePolicies = await policy.count({ where: { type: 'no_show', isActive: true } });
 
         const defaultPolicy = await policy.findOne({
-            where: { type: 'no_show', isDefault: true, isActive: true },
-            attributes: ['id', 'name', 'isActive']
+            where: this._nowWhere(),
+            order: [['isDefault', 'DESC'], ['effectiveFrom', 'DESC']],
+            attributes: ['id', 'name', 'isActive', 'isDefault', 'effectiveFrom', 'effectiveTo']
         });
 
         return {
-            totalNoShowPolicies: totalPolicies,
-            activeNoShowPolicies: activePolicies,
+            totalNoShowPolicies:    totalPolicies,
+            activeNoShowPolicies:   activePolicies,
             inactiveNoShowPolicies: totalPolicies - activePolicies,
-            defaultNoShowPolicy: defaultPolicy
+            defaultNoShowPolicy:    defaultPolicy
         };
     }
 }
 
 module.exports = new NoShowPolicyService();
-
