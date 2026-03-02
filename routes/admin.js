@@ -329,6 +329,12 @@ router.post('/adinEmployeeAdd', validateAccessToken, asyncMiddleware(adminContro
 router.patch('/updateEmployee', validateAccessToken, asyncMiddleware(adminController.updateEmployee))
 //update Employee Status
 router.patch('/updateEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeEmployeeStatus))
+//Get Specific Admin Employee
+router.get('/getAdminEmployeeDetail/:employeeId', validateAccessToken, asyncMiddleware(adminController.getAdminEmployeeDetail))
+//Update Admin Employee
+router.patch('/updateAdminEmployee', validateAccessToken, asyncMiddleware(adminController.updateAdminEmployee))
+//Delete Admin Employee (Soft Delete)
+router.delete('/deleteAdminEmployee/:employeeId', validateAccessToken, asyncMiddleware(adminController.deleteAdminEmployee))
 //Add Agent Employee
 router.post('/addAgentEmployee', validateAccessToken, asyncMiddleware(adminController.addAgentEmployee))
 //Update Agent Employee

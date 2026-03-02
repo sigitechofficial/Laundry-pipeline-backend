@@ -141,6 +141,134 @@ class EmployeeManagementService {
     }
 
     /**
+     * Get specific admin employee details
+     * @param {number} employeeId - Employee ID
+     * @returns {Object} Admin employee detail
+     */
+    async getAdminEmployeeDetail(employeeId) {
+        if (!employeeId) {
+            throw new ValidationError('Employee ID is required');
+        }
+
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status'],
+            include: [
+                {
+                    model: roles,
+                    attributes: ['id', 'name']
+                }
+            ]
+        });
+
+        if (!employee) {
+            throw new NotFoundError('Admin employee not found');
+        }
+
+        return { employee };
+    }
+
+    /**
+     * Update admin employee details
+     * @param {Object} updateData - Employee update data
+     * @returns {Object} Updated admin employee
+     */
+    async updateAdminEmployee(updateData) {
+        const { updatePassword, employeeId, ...updateFields } = updateData;
+
+        if (!employeeId) {
+            throw new ValidationError('Employee ID is required');
+        }
+
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            }
+        });
+
+        if (!employee) {
+            throw new NotFoundError('Admin employee not found');
+        }
+
+        if (updateFields.email) {
+            const userExists = await users.findOne({
+                where: {
+                    email: updateFields.email,
+                    id: { [Op.not]: employeeId },
+                    classifiedAsId: 2
+                }
+            });
+
+            if (userExists) {
+                throw new ValidationError('Employee with the following email exists. Please try another email');
+            }
+        }
+
+        if (updatePassword && updatePassword.trim() !== '') {
+            updateFields.password = await bcrypt.hash(updatePassword, 10);
+        }
+
+        await users.update(updateFields, {
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            }
+        });
+
+        const updatedEmployee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
+        });
+
+        return { employee: updatedEmployee };
+    }
+
+    /**
+     * Soft delete admin employee
+     * @param {number} employeeId - Employee ID
+     * @returns {Object} Deletion result
+     */
+    async deleteAdminEmployee(employeeId) {
+        if (!employeeId) {
+            throw new ValidationError('Employee ID is required');
+        }
+
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            }
+        });
+
+        if (!employee) {
+            throw new NotFoundError('Admin employee not found');
+        }
+
+        const result = await users.destroy({
+            where: {
+                id: employeeId,
+                classifiedAsId: 2
+            }
+        });
+
+        if (result === 0) {
+            throw new NotFoundError('Admin employee not found or already deleted');
+        }
+
+        return {
+            message: 'Admin employee deleted successfully',
+            employeeId
+        };
+    }
+
+    /**
      * Add new agent employee
      * @param {Object} employeeData - Employee data
      * @param {string} profileImg - Profile image path

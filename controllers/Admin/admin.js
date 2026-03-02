@@ -504,6 +504,49 @@ async function changeEmployeeStatus(req, res) {
 }
 
 /*
+ * Get Specific Admin Employee
+ */
+async function getAdminEmployeeDetail(req, res) {
+    const { employeeId } = req.params;
+
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+
+    const result = await employeeManagementService.getAdminEmployeeDetail(employeeId);
+    return ResponseHelper.success(res, "Admin Employee Detail", result);
+}
+
+/*
+ * Update Admin Employee
+ */
+async function updateAdminEmployee(req, res) {
+    const { employeeId } = req.body;
+
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+
+    const data = { ...req.body };
+    const result = await employeeManagementService.updateAdminEmployee(data);
+    return ResponseHelper.success(res, "Admin Employee Updated Successfully", result);
+}
+
+/*
+ * Delete Admin Employee (Soft Delete)
+ */
+async function deleteAdminEmployee(req, res) {
+    const { employeeId } = req.params;
+
+    if (!employeeId) {
+        return ResponseHelper.error(res, "Employee ID is required", 400);
+    }
+
+    const result = await employeeManagementService.deleteAdminEmployee(employeeId);
+    return ResponseHelper.success(res, "Admin Employee Deleted Successfully", result);
+}
+
+/*
  * Add Agent Employee
  */
 async function addAgentEmployee(req, res) {
@@ -2496,6 +2539,9 @@ module.exports = {
     addEmployee,
     updateEmployee,
     changeEmployeeStatus,
+    getAdminEmployeeDetail,
+    updateAdminEmployee,
+    deleteAdminEmployee,
     addAgentEmployee,
     updateAgentEmployee,
     changeAgentEmployeeStatus,
