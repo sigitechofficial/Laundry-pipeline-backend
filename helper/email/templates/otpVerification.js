@@ -181,7 +181,7 @@ function generateOtpTemplate(data) {
         </tr>
       </table>
 
-      ${generateFooter(footerWithImages)}
+      ${generateFooter(footerOptions)}
     </div>
   </body>
 </html>
