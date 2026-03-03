@@ -19,15 +19,15 @@ function generateOtpTemplate(data) {
     footerOptions = {}
   } = data;
 
-  // Read and convert images to base64
+  // Read and convert images to base64 (using process.cwd() for absolute paths)
   const imageBase64 = {};
   const imagePaths = {
-    logo: path.join(__dirname, '../../images/laundry Logo.png'),
-    appStore: path.join(__dirname, '../../images/apple store logo.png'),
-    playStore: path.join(__dirname, '../../images/play store logo.png'),
-    facebook: path.join(__dirname, '../../images/facebook icon.png'),
-    instagram: path.join(__dirname, '../../images/instagram icon.png'),
-    tiktok: path.join(__dirname, '../../images/tiktok.png')
+    logo: path.join(process.cwd(), 'helper/images/laundry Logo.png'),
+    appStore: path.join(process.cwd(), 'helper/images/apple store logo.png'),
+    playStore: path.join(process.cwd(), 'helper/images/play store logo.png'),
+    facebook: path.join(process.cwd(), 'helper/images/facebook icon.png'),
+    instagram: path.join(process.cwd(), 'helper/images/instagram icon.png'),
+    tiktok: path.join(process.cwd(), 'helper/images/tiktok.png')
   };
 
   // Convert all images to base64
