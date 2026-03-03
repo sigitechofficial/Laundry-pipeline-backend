@@ -120,7 +120,8 @@ class CustomerAuthService {
         await otpMail({
             type: 'RegisterOTP',
             email: email,
-            OTP: otp
+            OTP: otp,
+            userName: firstName
         });
 
         let dt = new Date();
@@ -866,6 +867,7 @@ class CustomerAuthService {
             type: 'RegisterOTP',
             email: userExist.email,
             OTP: OTP,
+            userName: userExist.firstName
         });
 
         let DT = new Date();

@@ -79,7 +79,8 @@ async function driverregisterStep1(req, res) {
         await otpMail({
             type: 'RegisterOTP',
             email: email,
-            OTP: OTP
+            OTP: OTP,
+            userName: userExist.firstName || 'Driver'
         })
 
         const DT = new Date();
@@ -185,7 +186,8 @@ async function driverregisterStep1(req, res) {
         await otpMail({
             type: 'RegisterOTP',
             email: email,
-            OTP: OTP
+            OTP: OTP,
+            userName: firstName
         })
 
         let DT = new Date();
@@ -594,7 +596,8 @@ async function forgetPasswordRequest(req, res) {
     await otpMail({
         type: 'ForgetPassword',
         email: email,
-        OTP: OTP
+        OTP: OTP,
+        userName: userData.firstName || 'Driver'
     })
 
     let dt = new Date();
@@ -729,7 +732,8 @@ async function resendOTP(req, res) {
     await otpMail({
         type: 'ForgetPassword',
         email: userExist.email,
-        OTP: OTP
+        OTP: OTP,
+        userName: userExist.firstName || 'Driver'
     })
 
     let dt = new Date();

@@ -1,0 +1,185 @@
+const generateFooter = require('../partials/footer');
+const fs = require('fs');
+const path = require('path');
+
+/**
+ * Generate OTP verification email template with base64 embedded images
+ * @param {Object} data
+ * @param {string} data.userName - User's name
+ * @param {string} data.otp - OTP code
+ * @param {string} data.type - Template type ('RegisterOTP' or 'ForgetPassword')
+ * @param {Object} data.footerOptions - Footer customization options
+ * @returns {Object} - { subject, html }
+ */
+function generateOtpTemplate(data) {
+  const {
+    userName = 'User',
+    otp,
+    type = 'RegisterOTP',
+    footerOptions = {}
+  } = data;
+
+  // Read and convert images to base64
+  const imageBase64 = {};
+  const imagePaths = {
+    logo: path.join(__dirname, '../../images/laundry Logo.png'),
+    appStore: path.join(__dirname, '../../images/apple store logo.png'),
+    playStore: path.join(__dirname, '../../images/play store logo.png'),
+    facebook: path.join(__dirname, '../../images/facebook icon.png'),
+    instagram: path.join(__dirname, '../../images/instagram icon.png'),
+    tiktok: path.join(__dirname, '../../images/tiktok.png')
+  };
+
+  // Convert all images to base64
+  for (const [key, filePath] of Object.entries(imagePaths)) {
+    try {
+      const imageBuffer = fs.readFileSync(filePath);
+      const base64Image = imageBuffer.toString('base64');
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+      imageBase64[key] = `data:${mimeType};base64,${base64Image}`;
+    } catch (error) {
+      console.error(`Error loading image ${key}:`, error.message);
+      imageBase64[key] = ''; // Fallback to empty
+    }
+  }
+
+  // Pass base64 images to footer
+  const footerWithImages = { ...footerOptions, imageBase64 };
+
+  const otpDigits = otp.split('').map(digit => `
+    <td style="padding: 0 4px;">
+      <div style="
+        background-color: #124769;
+        padding: 16px 20px;
+        color: #fff;
+        border-radius: 8px;
+        font-size: 24px;
+        font-weight: bold;
+        font-family: monospace;
+        text-align: center;
+        min-width: 20px;
+      ">
+        ${digit}
+      </div>
+    </td>
+  `).join('');
+
+  const isRegistration = type === 'RegisterOTP';
+  const title = isRegistration ? 'OTP for Registration' : 'OTP for Password Reset';
+  const purpose = isRegistration ? 'verify your registration' : 'reset your password';
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+        font-family: Arial, sans-serif;
+      }
+      .email-container {
+        max-width: 500px;
+        margin: 20px auto;
+        background-color: #ffffff;
+        padding: 30px 20px;
+      }
+      @media (max-width: 520px) {
+        .email-container {
+          width: 100% !important;
+          padding: 20px 15px !important;
+        }
+        .otp-table td {
+          padding: 0 2px !important;
+        }
+        .otp-digit {
+          padding: 12px 16px !important;
+          font-size: 20px !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <!-- Logo -->
+      <table align="center" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 30px;">
+        <tr>
+          <td align="center">
+            <img
+              src="${imageBase64.logo}"
+              alt="Just Dry Cleaners"
+              style="height: 60px; width: auto; display: block; margin: 0 auto;"
+            />
+          </td>
+        </tr>
+      </table>
+
+      <!-- Main Content -->
+      <table align="center" cellpadding="0" cellspacing="0" width="100%">
+        <tr>
+          <td style="padding: 0 10px;">
+            <h2 style="font-size: 18px; color: #333; margin-bottom: 20px; font-family: Arial, sans-serif;">
+              Hi ${userName},
+            </h2>
+            
+            <p style="font-size: 16px; color: #333; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif;">
+              Your one-time verification code is:
+            </p>
+
+            <!-- OTP Display -->
+            <table align="center" cellpadding="0" cellspacing="0" class="otp-table" style="margin: 30px auto;">
+              <tr>
+                ${otpDigits}
+              </tr>
+            </table>
+
+            <p style="font-size: 14px; color: #333; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
+              This code is valid for the next <strong>10 minutes</strong> and can be used to ${purpose} on Just Dry Cleaners.
+            </p>
+
+            <!-- Warning Box -->
+            <div style="
+              background-color: #fff3cd;
+              border-left: 4px solid #ffc107;
+              padding: 12px 16px;
+              margin: 20px 0;
+              border-radius: 4px;
+            ">
+              <p style="margin: 0; font-size: 14px; color: #856404; font-family: Arial, sans-serif;">
+                ⚠️ Do not share this code with anyone. We will never ask you for your OTP.
+              </p>
+            </div>
+
+            <p style="font-size: 14px; color: #666; line-height: 1.6; margin-top: 20px; font-family: Arial, sans-serif;">
+              If you did not request this code, please ignore this email or contact our support team immediately.
+            </p>
+
+            <p style="font-size: 14px; color: #333; margin-top: 30px; font-family: Arial, sans-serif;">
+              Thank you,<br>
+              Just Dry Cleaners customer support
+            </p>
+          </td>
+        </tr>
+      </table>
+
+      ${generateFooter(footerWithImages)}
+    </div>
+  </body>
+</html>
+  `;
+
+  return {
+    subject: `${title} - Just Dry Cleaners`,
+    html
+  };
+}
+
+module.exports = generateOtpTemplate;

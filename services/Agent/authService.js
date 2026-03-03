@@ -141,7 +141,8 @@ class AgentAuthService {
             await otpMail({
                 type: 'RegisterOTP',
                 email: data.email,
-                OTP: otp
+                OTP: otp,
+                userName: userExist.firstName || 'Agent'
             });
 
             let dt = new Date();
@@ -231,7 +232,8 @@ class AgentAuthService {
             await otpMail({
                 type: 'RegisterOTP',
                 email: data.email,
-                OTP: otp
+                OTP: otp,
+                userName: firstName || 'Agent'
             });
 
             let dt = new Date();
@@ -372,6 +374,7 @@ class AgentAuthService {
             type: 'RegisterOTP',
             email: userExist.email,
             OTP: OTP,
+            userName: userExist.firstName || 'Agent'
         });
 
         let DT = new Date();
@@ -1041,7 +1044,8 @@ class AgentAuthService {
         await otpMail({
             type: 'ForgetPassword',
             email: data.email,
-            OTP: OTP
+            OTP: OTP,
+            userName: userData.firstName || 'Agent'
         });
 
         let dt = new Date();

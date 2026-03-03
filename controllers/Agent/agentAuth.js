@@ -100,7 +100,8 @@ exports.registerAgentWithOTP = async (req, res) => {
         await otpMail({
             type: 'RegisterOTP',
             email: email,
-            OTP: otp
+            OTP: otp,
+            userName: userExist.firstName || 'Agent'
         });
 
         let dt = new Date();
@@ -241,6 +242,7 @@ exports.resendOTP = async (req, res) => {
         type: 'RegisterOTP',
         email: userExist.email,
         OTP: OTP,
+        userName: userExist.firstName || 'Agent'
     });
 
     let DT = new Date();
@@ -705,7 +707,8 @@ exports.forgetPasswordRequest = async (req, res) => {
     await otpMail({
         type: 'ForgetPassword',
         email: email,
-        OTP: OTP
+        OTP: OTP,
+        userName: userData.firstName || 'Agent'
     })
 
     let dt = new Date();

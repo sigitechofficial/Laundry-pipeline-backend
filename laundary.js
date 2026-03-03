@@ -52,6 +52,7 @@ const corsOptions = {
       'https://main.dwc10i0wbe49w.amplifyapp.com',
       'https://main.d1bc8mk6y6halh.amplifyapp.com',
       'https://laundry-website-itlwfo883-sigitechofficials-projects.vercel.app',
+      'https://admin.justdrycleans.com',
       'https://main.d38eb8q6y4vvam.amplifyapp.com',
       'https://www.justdrycleans.com',
       'http://192.168.18.36:3001'

@@ -480,7 +480,8 @@ async function testEmail(req, res) {
         await otpMail({
             type: type, // 'RegisterOTP' or 'ForgetPassword'
             email: email,
-            OTP: testOTP
+            OTP: testOTP,
+            userName: 'Test User' // Default name for test endpoint
         });
 
         console.log("✅ Email sent successfully via otpMail");
