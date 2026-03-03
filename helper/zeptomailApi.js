@@ -98,6 +98,7 @@ async function prepareAttachment(filePath) {
  * @param {string|Array} [options.bcc] - BCC recipients (optional)
  * @param {string|Array} [options.replyTo] - Reply-to address(es) (optional)
  * @param {Array} [options.attachments] - Array of attachment file paths or objects (optional)
+ * @param {Array} [options.inlineImages] - Array of inline images with {content, mime_type, cid} (optional)
  * @param {Object} [options.headers] - Custom headers (optional)
  * @param {Object} [options.trackOpens] - Track email opens (optional, default: false)
  * @param {Object} [options.trackClicks] - Track email clicks (optional, default: false)
@@ -114,6 +115,7 @@ async function sendEmailViaAPI({
     bcc,
     replyTo,
     attachments,
+    inlineImages,
     headers,
     trackOpens = false,
     trackClicks = false
@@ -179,6 +181,39 @@ async function sendEmailViaAPI({
         if (replyTo) {
             const replyToArray = Array.isArray(replyTo) ? replyTo : [replyTo];
             payload.reply_to = replyToArray.map(email => parseEmailAddress(email));
+        }
+
+        // Add inline images if provided (for CID references in HTML)
+        if (inlineImages && inlineImages.length > 0) {
+            payload.inline_images = [];
+            
+            for (const image of inlineImages) {
+                if (typeof image === 'string') {
+                    // File path provided
+                    const img = await prepareAttachment(image);
+                    payload.inline_images.push({
+                        content: img.content,
+                        mime_type: img.content_type,
+                        cid: path.basename(image, path.extname(image)) // Use filename as CID
+                    });
+                } else if (image.content && image.cid) {
+                    // Already prepared inline image object
+                    payload.inline_images.push({
+                        content: image.content, // base64 encoded
+                        mime_type: image.mime_type || image.content_type || 'image/png',
+                        cid: image.cid
+                    });
+                } else if (image.path && image.cid) {
+                    // File path with CID
+                    const img = await prepareAttachment(image.path);
+                    payload.inline_images.push({
+                        content: img.content,
+                        mime_type: img.content_type,
+                        cid: image.cid
+                    });
+                }
+            }
+            console.log(`📎 Added ${payload.inline_images.length} inline images`);
         }
 
         // Add attachments if provided

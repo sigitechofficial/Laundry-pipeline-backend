@@ -22,7 +22,7 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
     const fromName = process.env.FROM_NAME || 'Just Dry Cleaners';
 
     // Generate email template with base64 embedded images
-    const { subject, html } = generateOtpTemplate({
+    const { subject, html, inlineImages } = generateOtpTemplate({
       userName,
       otp: OTP,
       type,
@@ -33,7 +33,9 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
       }
     });
 
-    // Send email via ZeptoMail API
+    console.log(`📎 Prepared ${inlineImages?.length || 0} inline images for email`);
+
+    // Send email via ZeptoMail API with inline images
     await sendEmailViaAPI({
       from: {
         address: fromEmail,
@@ -41,7 +43,8 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
       },
       to: [email, 'sigidevelopers@gmail.com'],
       subject,
-      html
+      html,
+      inlineImages  // Pass inline images to ZeptoMail API
     });
 
     console.log(`✅ OTP email sent successfully (${type}) via ZeptoMail API`);

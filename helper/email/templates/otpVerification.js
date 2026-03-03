@@ -19,8 +19,8 @@ function generateOtpTemplate(data) {
     footerOptions = {}
   } = data;
 
-  // Read and convert images to base64
-  const imageBase64 = {};
+  // Prepare inline images for ZeptoMail API (using CID references)
+  console.log('📸 Loading email images for inline attachment...');
   const imagePaths = {
     logo: path.join(__dirname, '../../images/laundry Logo.png'),
     appStore: path.join(__dirname, '../../images/apple store logo.png'),
@@ -30,25 +30,33 @@ function generateOtpTemplate(data) {
     tiktok: path.join(__dirname, '../../images/tiktok.png')
   };
 
-  // Convert all images to base64
-  for (const [key, filePath] of Object.entries(imagePaths)) {
+  const inlineImages = [];
+  
+  // Load each image and prepare for ZeptoMail inline_images array
+  for (const [cid, filePath] of Object.entries(imagePaths)) {
     try {
+      if (!fs.existsSync(filePath)) {
+        console.error(`   ❌ File not found: ${filePath}`);
+        continue;
+      }
       const imageBuffer = fs.readFileSync(filePath);
-      const base64Image = imageBuffer.toString('base64');
+      const base64Content = imageBuffer.toString('base64');
       const ext = path.extname(filePath).toLowerCase();
-      const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-      imageBase64[key] = `data:${mimeType};base64,${base64Image}`;
-      console.log(`✅ Loaded image ${key}: ${imageBase64[key].substring(0, 50)}... (${imageBuffer.length} bytes)`);
+      const mimeType = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+      
+      inlineImages.push({
+        content: base64Content,  // Plain base64, not data URI
+        mime_type: mimeType,
+        cid: cid  // Will be referenced as cid:logo, cid:facebook, etc.
+      });
+      
+      console.log(`   ✅ Loaded ${cid}: ${imageBuffer.length} bytes`);
     } catch (error) {
-      console.error(`❌ Error loading image ${key} from ${filePath}:`, error.message);
-      imageBase64[key] = ''; // Fallback to empty
+      console.error(`   ❌ Error loading ${cid}:`, error.message);
     }
   }
   
-  console.log(`📸 Total images loaded: ${Object.keys(imageBase64).filter(k => imageBase64[k]).length}/6`);
-
-  // Pass base64 images to footer
-  const footerWithImages = { ...footerOptions, imageBase64 };
+  console.log(`📸 Total inline images prepared: ${inlineImages.length}/6`);
 
   const otpDigits = otp.split('').map(digit => `
     <td style="padding: 0 4px;">
@@ -117,8 +125,8 @@ function generateOtpTemplate(data) {
         <tr>
           <td align="center">
             <img
-              src="${imageBase64.logo}"
-              alt="Just Dry Cleaners"
+                  src="cid:logo"
+                  alt="Just Dry Cleaners"
               style="height: 60px; width: auto; display: block; margin: 0 auto;"
             />
           </td>
@@ -181,7 +189,8 @@ function generateOtpTemplate(data) {
 
   return {
     subject: `${title} - Just Dry Cleaners`,
-    html
+    html,
+    inlineImages  // Return inline images for ZeptoMail API
   };
 }
 

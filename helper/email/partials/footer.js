@@ -1,22 +1,16 @@
 /**
  * Reusable email footer for all templates
- * Uses base64 embedded images for inline display
+ * Uses CID (Content-ID) references for inline images via ZeptoMail API
  * @param {Object} options - Footer customization options
- * @param {Object} options.imageBase64 - Object containing base64 encoded images
- * @param {string} options.imageBase64.logo - Logo base64 data URI
- * @param {string} options.imageBase64.appStore - App Store badge base64 data URI
- * @param {string} options.imageBase64.playStore - Play Store badge base64 data URI
- * @param {string} options.imageBase64.facebook - Facebook icon base64 data URI
- * @param {string} options.imageBase64.instagram - Instagram icon base64 data URI
- * @param {string} options.imageBase64.tiktok - TikTok icon base64 data URI
  * @param {string} options.helpCentreLink - Link to help center
  * @param {string} options.downloadAppLink - Link to download page
  * @param {string} options.unsubscribeLink - Unsubscribe link with token
- * @returns {string} - HTML footer with embedded images
+ * @returns {string} - HTML footer with CID image references
+ * 
+ * Image CIDs used: logo, appStore, playStore, facebook, instagram, tiktok
  */
 function generateFooter(options = {}) {
   const {
-    imageBase64 = {},
     helpCentreLink = 'https://prodlaundry.sigisolutions.net/help',
     downloadAppLink = 'https://prodlaundry.sigisolutions.net/download',
     unsubscribeLink = 'https://prodlaundry.sigisolutions.net/unsubscribe',
@@ -42,7 +36,7 @@ function generateFooter(options = {}) {
                 <td style="padding: 0 5px;">
                   <a href="https://apps.apple.com/your-app" target="_blank">
                     <img
-                      src="${imageBase64.appStore || ''}"
+                      src="cid:appStore"
                       alt="Download on App Store"
                       style="height: 40px; width: auto; display: block;"
                     />
@@ -51,7 +45,7 @@ function generateFooter(options = {}) {
                 <td style="padding: 0 5px;">
                   <a href="https://play.google.com/store/apps/your-app" target="_blank">
                     <img
-                      src="${imageBase64.playStore || ''}"
+                      src="cid:playStore"
                       alt="Get it on Google Play"
                       style="height: 40px; width: auto; display: block;"
                     />
@@ -63,7 +57,7 @@ function generateFooter(options = {}) {
             <!-- Logo -->
             <div style="margin: 20px 0;">
               <img
-                src="${imageBase64.logo || ''}"
+                src="cid:logo"
                 alt="Just Dry Cleaners"
                 style="height: 50px; width: auto; display: block; margin: 0 auto;"
               />
@@ -105,7 +99,7 @@ function generateFooter(options = {}) {
                 <td style="padding: 0 8px;">
                   <a href="https://facebook.com/your-page" target="_blank">
                     <img
-                      src="${imageBase64.facebook || ''}"
+                      src="cid:facebook"
                       alt="Facebook"
                       style="height: 24px; width: 24px; display: block;"
                     />
@@ -114,7 +108,7 @@ function generateFooter(options = {}) {
                 <td style="padding: 0 8px;">
                   <a href="https://instagram.com/your-profile" target="_blank">
                     <img
-                      src="${imageBase64.instagram || ''}"
+                      src="cid:instagram"
                       alt="Instagram"
                       style="height: 24px; width: 24px; display: block;"
                     />
@@ -123,7 +117,7 @@ function generateFooter(options = {}) {
                 <td style="padding: 0 8px;">
                   <a href="https://tiktok.com/@your-profile" target="_blank">
                     <img
-                      src="${imageBase64.tiktok || ''}"
+                      src="cid:tiktok"
                       alt="TikTok"
                       style="height: 24px; width: 24px; display: block;"
                     />
