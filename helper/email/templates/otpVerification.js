@@ -19,15 +19,15 @@ function generateOtpTemplate(data) {
     footerOptions = {}
   } = data;
 
-  // Read and convert images to base64 (using process.cwd() for absolute paths)
+  // Read and convert images to base64
   const imageBase64 = {};
   const imagePaths = {
-    logo: path.join(process.cwd(), 'helper/images/laundry Logo.png'),
-    appStore: path.join(process.cwd(), 'helper/images/apple store logo.png'),
-    playStore: path.join(process.cwd(), 'helper/images/play store logo.png'),
-    facebook: path.join(process.cwd(), 'helper/images/facebook icon.png'),
-    instagram: path.join(process.cwd(), 'helper/images/instagram icon.png'),
-    tiktok: path.join(process.cwd(), 'helper/images/tiktok.png')
+    logo: path.join(__dirname, '../../images/laundry Logo.png'),
+    appStore: path.join(__dirname, '../../images/apple store logo.png'),
+    playStore: path.join(__dirname, '../../images/play store logo.png'),
+    facebook: path.join(__dirname, '../../images/facebook icon.png'),
+    instagram: path.join(__dirname, '../../images/instagram icon.png'),
+    tiktok: path.join(__dirname, '../../images/tiktok.png')
   };
 
   // Convert all images to base64
@@ -38,11 +38,14 @@ function generateOtpTemplate(data) {
       const ext = path.extname(filePath).toLowerCase();
       const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
       imageBase64[key] = `data:${mimeType};base64,${base64Image}`;
+      console.log(`✅ Loaded image ${key}: ${imageBase64[key].substring(0, 50)}... (${imageBuffer.length} bytes)`);
     } catch (error) {
-      console.error(`Error loading image ${key}:`, error.message);
+      console.error(`❌ Error loading image ${key} from ${filePath}:`, error.message);
       imageBase64[key] = ''; // Fallback to empty
     }
   }
+  
+  console.log(`📸 Total images loaded: ${Object.keys(imageBase64).filter(k => imageBase64[k]).length}/6`);
 
   // Pass base64 images to footer
   const footerWithImages = { ...footerOptions, imageBase64 };
