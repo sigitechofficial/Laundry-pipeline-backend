@@ -137,11 +137,11 @@ function generateOtpTemplate(data) {
       <table align="center" cellpadding="0" cellspacing="0" width="100%">
         <tr>
           <td style="padding: 0 10px;">
-            <h2 style="font-size: 18px; color: #333; margin-bottom: 20px; font-family: Arial, sans-serif;">
+            <h2 style="font-size: 18px; color: #000; margin-bottom: 20px; font-family: Arial, sans-serif; font-weight: normal;">
               Hi ${userName},
             </h2>
             
-            <p style="font-size: 16px; color: #333; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif;">
+            <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif;">
               Your one-time verification code is:
             </p>
 
@@ -152,7 +152,7 @@ function generateOtpTemplate(data) {
               </tr>
             </table>
 
-            <p style="font-size: 14px; color: #333; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
+            <p style="font-size: 14px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
               This code is valid for the next <strong>10 minutes</strong> and can be used to ${purpose} on Just Dry Cleaners.
             </p>
 
@@ -169,11 +169,11 @@ function generateOtpTemplate(data) {
               </p>
             </div>
 
-            <p style="font-size: 14px; color: #666; line-height: 1.6; margin-top: 20px; font-family: Arial, sans-serif;">
+            <p style="font-size: 14px; color: #000; line-height: 1.6; margin-top: 20px; font-family: Arial, sans-serif;">
               If you did not request this code, please ignore this email or contact our support team immediately.
             </p>
 
-            <p style="font-size: 14px; color: #333; margin-top: 30px; font-family: Arial, sans-serif;">
+            <p style="font-size: 14px; color: #000; margin-top: 30px; font-family: Arial, sans-serif; line-height: 1.6;">
               Thank you,<br>
               Just Dry Cleaners customer support
             </p>

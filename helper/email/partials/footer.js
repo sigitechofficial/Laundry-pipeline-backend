@@ -31,23 +31,23 @@ function generateFooter(options = {}) {
         <tr>
           <td align="center">
             <!-- App Store Badges -->
-            <table cellpadding="0" cellspacing="0" style="margin-bottom: 20px;">
+            <table cellpadding="0" cellspacing="0" style="margin: 0 auto 20px auto; border-collapse: collapse;">
               <tr>
-                <td style="padding: 0 5px;">
-                  <a href="https://apps.apple.com/your-app" target="_blank">
+                <td style="padding: 0 4px;">
+                  <a href="https://apps.apple.com/your-app" target="_blank" style="display: inline-block; line-height: 0;">
                     <img
                       src="cid:appStore"
                       alt="Download on App Store"
-                      style="height: 40px; width: auto; display: block;"
+                      style="height: 38px; width: auto; display: block; border: 0;"
                     />
                   </a>
                 </td>
-                <td style="padding: 0 5px;">
-                  <a href="https://play.google.com/store/apps/your-app" target="_blank">
+                <td style="padding: 0 4px;">
+                  <a href="https://play.google.com/store/apps/your-app" target="_blank" style="display: inline-block; line-height: 0;">
                     <img
                       src="cid:playStore"
                       alt="Get it on Google Play"
-                      style="height: 40px; width: auto; display: block;"
+                      style="height: 38px; width: auto; display: block; border: 0;"
                     />
                   </a>
                 </td>
@@ -64,28 +64,28 @@ function generateFooter(options = {}) {
             </div>
 
             <!-- Footer Links -->
-            <table cellpadding="0" cellspacing="0" style="margin: 15px 0;">
+            <table cellpadding="0" cellspacing="0" style="margin: 15px auto; border-collapse: collapse;">
               <tr>
-                <td style="padding: 0 10px;">
+                <td style="padding: 0 5px; white-space: nowrap;">
                   <a
                     href="${helpCentreLink}"
-                    style="color: #000; text-decoration: underline; font-size: 14px; font-family: Arial, sans-serif;"
+                    style="color: #000; text-decoration: underline; font-size: 12px; font-family: Arial, sans-serif; white-space: nowrap;"
                   >
                     Help Centre
                   </a>
                 </td>
-                <td style="padding: 0 10px;">
+                <td style="padding: 0 5px; white-space: nowrap;">
                   <a
                     href="${downloadAppLink}"
-                    style="color: #000; text-decoration: underline; font-size: 14px; font-family: Arial, sans-serif;"
+                    style="color: #000; text-decoration: underline; font-size: 12px; font-family: Arial, sans-serif; white-space: nowrap;"
                   >
                     Download App
                   </a>
                 </td>
-                <td style="padding: 0 10px;">
+                <td style="padding: 0 5px; white-space: nowrap;">
                   <a
                     href="${unsubscribeLink}"
-                    style="color: #000; text-decoration: underline; font-size: 14px; font-family: Arial, sans-serif;"
+                    style="color: #000; text-decoration: underline; font-size: 12px; font-family: Arial, sans-serif; white-space: nowrap;"
                   >
                     Unsubscribe
                   </a>
@@ -94,32 +94,32 @@ function generateFooter(options = {}) {
             </table>
 
             <!-- Social Icons -->
-            <table cellpadding="0" cellspacing="0" style="margin: 15px 0;">
+            <table cellpadding="0" cellspacing="0" style="margin: 15px auto; border-collapse: collapse;">
               <tr>
-                <td style="padding: 0 8px;">
-                  <a href="https://facebook.com/your-page" target="_blank">
+                <td style="padding: 0 6px;">
+                  <a href="https://facebook.com/your-page" target="_blank" style="display: inline-block; line-height: 0;">
                     <img
                       src="cid:facebook"
                       alt="Facebook"
-                      style="height: 24px; width: 24px; display: block;"
+                      style="height: 24px; width: 24px; display: block; border: 0;"
                     />
                   </a>
                 </td>
-                <td style="padding: 0 8px;">
-                  <a href="https://instagram.com/your-profile" target="_blank">
+                <td style="padding: 0 6px;">
+                  <a href="https://instagram.com/your-profile" target="_blank" style="display: inline-block; line-height: 0;">
                     <img
                       src="cid:instagram"
                       alt="Instagram"
-                      style="height: 24px; width: 24px; display: block;"
+                      style="height: 24px; width: 24px; display: block; border: 0;"
                     />
                   </a>
                 </td>
-                <td style="padding: 0 8px;">
-                  <a href="https://tiktok.com/@your-profile" target="_blank">
+                <td style="padding: 0 6px;">
+                  <a href="https://tiktok.com/@your-profile" target="_blank" style="display: inline-block; line-height: 0;">
                     <img
                       src="cid:tiktok"
                       alt="TikTok"
-                      style="height: 24px; width: 24px; display: block;"
+                      style="height: 24px; width: 24px; display: block; border: 0;"
                     />
                   </a>
                 </td>
