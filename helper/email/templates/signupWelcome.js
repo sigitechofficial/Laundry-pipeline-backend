@@ -165,20 +165,26 @@ function generateSignupWelcomeTemplate(data) {
               </table>
 
               <!-- Main Content -->
-              <h1 style="color: #333; font-size: 18px; margin-bottom: 20px;">Hi ${userName},</h1>
-              
-              <p style="color: #333; font-size: 15px; line-height: 1.6; margin-bottom: 15px;">
-                Thanks for joining Just Dry Cleaners – where fresh, clean clothes are just a tap away.
-              </p>
+              <table cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="padding: 0 20px;">
+                    <h1 style="color: #000; font-size: 18px; margin-bottom: 20px; font-weight: normal; font-family: Arial, sans-serif;">Hi ${userName},</h1>
+                    
+                    <p style="color: #000; font-size: 15px; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
+                      Thanks for joining Just Dry Cleaners – where fresh, clean clothes are just a tap away.
+                    </p>
 
-              <p class="features-title" style="color: #333; font-size: 16px; font-weight: bold; margin: 25px 0 15px 0;">
-                Here's what you can do:
-              </p>
+                    <p class="features-title" style="color: #000; font-size: 16px; font-weight: bold; margin: 25px 0 15px 0; font-family: Arial, sans-serif;">
+                      Here's what you can do:
+                    </p>
+                  </td>
+                </tr>
+              </table>
 
               <!-- Features List -->
               <table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 20px;">
                 <tr>
-                  <td>
+                  <td style="padding: 0 20px;">
                     <table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 12px;">
                       <tr>
                         <td style="width: 20px; vertical-align: top; padding-top: 2px;">
@@ -211,7 +217,7 @@ function generateSignupWelcomeTemplate(data) {
                           <span style="color: #28a745; font-size: 16px; font-weight: bold;">✅</span>
                         </td>
                         <td style="padding-left: 10px;">
-                          <p style="margin: 0; color: #333; font-size: 15px; line-height: 1.5;">
+                          <p style="margin: 0; color: #000; font-size: 15px; line-height: 1.5; font-family: Arial, sans-serif;">
                             Track your orders in real-time
                           </p>
                         </td>
@@ -222,22 +228,28 @@ function generateSignupWelcomeTemplate(data) {
               </table>
 
               <!-- CTA Button -->
-              <p style="margin: 25px 0;">
-                <a href="${bookOrderLink}" style="color: #dc3545; text-decoration: none; font-size: 15px;">
-                  <span style="margin-right: 5px;">👉</span><strong>[Book Your First Order Now]</strong>
-                </a>
-              </p>
+              <table cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="padding: 0 20px;">
+                    <p style="margin: 25px 0;">
+                      <a href="${bookOrderLink}" style="color: #dc3545; text-decoration: none; font-size: 15px; font-family: Arial, sans-serif;">
+                        <span style="margin-right: 5px;">👉</span><strong>[Book Your First Order Now]</strong>
+                      </a>
+                    </p>
 
-              <!-- Support Message -->
-              <p style="color: #333; font-size: 15px; line-height: 1.6; margin-top: 25px;">
-                Need help? Our support team is just a message away.
-              </p>
+                    <!-- Support Message -->
+                    <p style="color: #000; font-size: 15px; line-height: 1.6; margin-top: 25px; font-family: Arial, sans-serif;">
+                      Need help? Our support team is just a message away.
+                    </p>
 
-              <!-- Signature -->
-              <p style="color: #333; font-size: 15px; line-height: 1.6; margin-top: 30px;">
-                Warm regards,<br>
-                Just Dry Cleaners customer support
-              </p>
+                    <!-- Signature -->
+                    <p style="color: #000; font-size: 15px; line-height: 1.6; margin-top: 30px; font-family: Arial, sans-serif;">
+                      Warm regards,<br>
+                      Just Dry Cleaners customer support
+                    </p>
+                  </td>
+                </tr>
+              </table>
 
               ${generateFooter(footerOptions)}
             </div>

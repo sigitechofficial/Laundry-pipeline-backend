@@ -136,7 +136,7 @@ function generateOtpTemplate(data) {
       <!-- Main Content -->
       <table align="center" cellpadding="0" cellspacing="0" width="100%">
         <tr>
-          <td style="padding: 0 10px;">
+          <td style="padding: 0 20px;">
             <h2 style="font-size: 18px; color: #000; margin-bottom: 20px; font-family: Arial, sans-serif; font-weight: normal;">
               Hi ${userName},
             </h2>
