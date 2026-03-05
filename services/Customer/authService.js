@@ -278,7 +278,6 @@ class CustomerAuthService {
 
             // Send welcome email after successful verification
             try {
-                const signupWelcomeMail = require('../../helper/signupWelcomeMail');
                 await signupWelcomeMail({
                     email: userData.email,
                     userName: userData.firstName || 'User'
@@ -431,7 +430,6 @@ class CustomerAuthService {
 
             // Send welcome email for social signup
             try {
-                const signupWelcomeMail = require('../../helper/signupWelcomeMail');
                 await signupWelcomeMail({
                     email: email,
                     userName: firstName || 'User'
