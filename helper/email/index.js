@@ -4,9 +4,11 @@
  */
 
 const generateOtpTemplate = require('./templates/otpVerification');
+const generateSignupWelcomeTemplate = require('./templates/signupWelcome');
 const generateFooter = require('./partials/footer');
 
 module.exports = {
   generateOtpTemplate,
+  generateSignupWelcomeTemplate,
   generateFooter,
 };

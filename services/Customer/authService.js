@@ -8,6 +8,7 @@ const redisCli = require('../../redis/redis');
 const otpGenerator = require('otp-generator');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
+const signupWelcomeMail = require('../../helper/signupWelcomeMail');
 const { 
     ValidationError, 
     NotFoundError, 
@@ -214,6 +215,18 @@ class CustomerAuthService {
                 }
             });
 
+            // Send welcome email after successful verification
+            try {
+                await signupWelcomeMail({
+                    email: userData.email,
+                    userName: userData.firstName || 'User'
+                });
+                console.log('✅ Welcome email sent to:', userData.email);
+            } catch (emailError) {
+                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                // Don't throw error - email failure shouldn't block signup completion
+            }
+
             // Generate access token
             const accessToken = jwt.sign({
                 id: userData.id,
@@ -262,6 +275,19 @@ class CustomerAuthService {
                     id: userId
                 }
             });
+
+            // Send welcome email after successful verification
+            try {
+                const signupWelcomeMail = require('../../helper/signupWelcomeMail');
+                await signupWelcomeMail({
+                    email: userData.email,
+                    userName: userData.firstName || 'User'
+                });
+                console.log('✅ Welcome email sent to:', userData.email);
+            } catch (emailError) {
+                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                // Don't throw error - email failure shouldn't block signup completion
+            }
 
             // Generate access token
             const accessToken = jwt.sign({
@@ -402,6 +428,19 @@ class CustomerAuthService {
                 lastName: typeof lastName === 'string' ? lastName.trim() : lastName,
                 phoneNum: typeof phoneNum === 'string' ? phoneNum.trim() : phoneNum
             });
+
+            // Send welcome email for social signup
+            try {
+                const signupWelcomeMail = require('../../helper/signupWelcomeMail');
+                await signupWelcomeMail({
+                    email: email,
+                    userName: firstName || 'User'
+                });
+                console.log('✅ Welcome email sent to:', email);
+            } catch (emailError) {
+                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                // Don't throw error - email failure shouldn't block signup completion
+            }
 
             // Handle device token - generate one if not provided
             let finalDvToken = dvToken;
