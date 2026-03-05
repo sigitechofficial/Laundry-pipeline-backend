@@ -143,42 +143,17 @@ function generateOtpTemplate(data) {
               Hi ${userName},
             </h2>
             
-            <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif; text-align: left;">
-              Your one-time verification code is:
+            <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif; text-align: left;">
+              Your one-time verification code is: <strong style="font-size: 20px; letter-spacing: 3px; font-family: monospace;">${otp}</strong>
             </p>
 
-            <!-- OTP Display -->
-            <div style="text-align: center; margin: 30px 0;">
+            <!-- OTP Display (Visual) -->
+            <div style="text-align: center; margin: 25px 0;">
               <table align="center" cellpadding="0" cellspacing="0" class="otp-table" style="margin: 0 auto; white-space: nowrap; border-collapse: collapse; display: inline-table;">
                 <tr style="white-space: nowrap;">
                   ${otpDigits}
                 </tr>
               </table>
-            </div>
-
-            <!-- Copy OTP Text -->
-            <div style="text-align: center; margin: 20px 0;">
-              <p style="font-size: 14px; color: #666; margin-bottom: 8px; font-family: Arial, sans-serif;">
-                Or tap to copy:
-              </p>
-              <div style="
-                display: inline-block;
-                background-color: #f5f5f5;
-                border: 1px dashed #124769;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-size: 20px;
-                font-weight: bold;
-                font-family: monospace;
-                color: #124769;
-                letter-spacing: 4px;
-                user-select: all;
-                -webkit-user-select: all;
-                -moz-user-select: all;
-                -ms-user-select: all;
-              ">
-                ${otp}
-              </div>
             </div>
 
             <p style="font-size: 14px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
