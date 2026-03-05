@@ -58,26 +58,6 @@ function generateOtpTemplate(data) {
   
   console.log(`📸 Total inline images prepared: ${inlineImages.length}/6`);
 
-  const otpDigits = otp.split('').map(digit => `
-    <td style="padding: 0 4px; white-space: nowrap;">
-      <div style="
-        background-color: #124769;
-        padding: 16px 20px;
-        color: #fff;
-        border-radius: 8px;
-        font-size: 24px;
-        font-weight: bold;
-        font-family: monospace;
-        text-align: center;
-        min-width: 20px;
-        display: inline-block;
-        white-space: nowrap;
-      ">
-        ${digit}
-      </div>
-    </td>
-  `).join('');
-
   const isRegistration = type === 'RegisterOTP';
   const title = isRegistration ? 'OTP for Registration' : 'OTP for Password Reset';
   const purpose = isRegistration ? 'verify your registration' : 'reset your password';
@@ -143,17 +123,29 @@ function generateOtpTemplate(data) {
               Hi ${userName},
             </h2>
             
-            <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif; text-align: left;">
-              Your one-time verification code is: <strong style="font-size: 20px; letter-spacing: 3px; font-family: monospace;">${otp}</strong>
+            <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif; text-align: left;">
+              Your one-time verification code is:
             </p>
 
-            <!-- OTP Display (Visual) -->
-            <div style="text-align: center; margin: 25px 0;">
-              <table align="center" cellpadding="0" cellspacing="0" class="otp-table" style="margin: 0 auto; white-space: nowrap; border-collapse: collapse; display: inline-table;">
-                <tr style="white-space: nowrap;">
-                  ${otpDigits}
-                </tr>
-              </table>
+            <!-- OTP Display -->
+            <div style="text-align: center; margin: 30px 0;">
+              <div style="
+                display: inline-block;
+                background-color: #124769;
+                padding: 20px 40px;
+                border-radius: 8px;
+                font-size: 32px;
+                font-weight: bold;
+                font-family: monospace;
+                color: #fff;
+                letter-spacing: 8px;
+                user-select: all;
+                -webkit-user-select: all;
+                -moz-user-select: all;
+                -ms-user-select: all;
+              ">
+                ${otp}
+              </div>
             </div>
 
             <p style="font-size: 14px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
