@@ -146,6 +146,55 @@ function generateOtpTemplate(data) {
               ">
                 ${otp}
               </div>
+
+              <!-- Copy to Clipboard Button -->
+              <div style="margin-top: 14px;">
+                <a href="mailto:?body=${otp}"
+                  onclick="
+                    try {
+                      navigator.clipboard.writeText('${otp}').then(function() {
+                        var btn = document.getElementById('copyBtn_${otp}');
+                        btn.innerText = '✅ Copied!';
+                        btn.style.backgroundColor = '#28a745';
+                        setTimeout(function() {
+                          btn.innerText = '📋 Copy OTP';
+                          btn.style.backgroundColor = '#124769';
+                        }, 2000);
+                      });
+                    } catch(e) {
+                      var el = document.createElement('textarea');
+                      el.value = '${otp}';
+                      document.body.appendChild(el);
+                      el.select();
+                      document.execCommand('copy');
+                      document.body.removeChild(el);
+                      var btn = document.getElementById('copyBtn_${otp}');
+                      btn.innerText = '✅ Copied!';
+                      btn.style.backgroundColor = '#28a745';
+                      setTimeout(function() {
+                        btn.innerText = '📋 Copy OTP';
+                        btn.style.backgroundColor = '#124769';
+                      }, 2000);
+                    }
+                    return false;
+                  "
+                  id="copyBtn_${otp}"
+                  style="
+                    display: inline-block;
+                    background-color: #124769;
+                    color: #fff;
+                    text-decoration: none;
+                    padding: 10px 24px;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-family: Arial, sans-serif;
+                    font-weight: bold;
+                    cursor: pointer;
+                  "
+                >
+                  📋 Copy OTP
+                </a>
+              </div>
             </div>
 
             <p style="font-size: 14px; color: #000; line-height: 1.6; margin-bottom: 15px; font-family: Arial, sans-serif;">
