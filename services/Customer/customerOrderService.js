@@ -254,6 +254,7 @@ async function bookingEventSentCheckTheShops(
             {
                 model: users,
                 attributes: ["id", "firstName", "email", "lastName"],
+                required: false,
                 include: [
                     {
                         model: agentSelectServices,
@@ -263,14 +264,14 @@ async function bookingEventSentCheckTheShops(
                                 [Op.in]: services.map(service => service.serviceId)
                             }
                         },
-                        attributes: ['id']
-                    }
-                ],
-                include: [
+                        attributes: ['id'],
+                        required: false
+                    },
                     {
                         model: bussinessInformation,
                         as: "businessInfo",
                         attributes: ["shopName"],
+                        required: false
                     },
                 ],
             },
@@ -441,7 +442,11 @@ async function bookingEventSentCheckTheShops(
             },
         };
         availableShops.forEach((shop) => {
-            sendEvent(shop.user.id, eventData);
+            if (shop.user && shop.user.id) {
+                sendEvent(shop.user.id, eventData);
+            } else {
+                console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
+            }
         });
     }
 }
