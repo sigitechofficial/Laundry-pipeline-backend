@@ -123,9 +123,8 @@ function generateOtpTemplate(data) {
               Hi ${userName},
             </h2>
 
-            <!-- This plain text line is what Android reads in notification preview to auto-detect OTP for clipboard -->
             <p style="font-size: 15px; color: #000; line-height: 1.6; margin-bottom: 20px; font-family: Arial, sans-serif;">
-              Your verification code is <strong>${otp}</strong>. Enter this to ${purpose}.
+              Your one-time verification code is:
             </p>
 
             <!-- OTP Display -->
