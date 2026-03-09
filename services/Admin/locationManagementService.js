@@ -10,9 +10,12 @@ class LocationManagementService {
      */
     async addCountry(countryData) {
         try {
-            // Check if country already exists
+            // Check if country already exists and is NOT deleted
             const countryExists = await countries.findOne({
-                where: { name: countryData.name }
+                where: {
+                    name: countryData.name,
+                    deletedAt: { [Op.is]: null }
+                }
             });
             
             if (countryExists) {
@@ -143,9 +146,13 @@ class LocationManagementService {
      */
     async addCity(cityData) {
         try {
-            // Check if city already exists for this country
+            // Check if city already exists for this country and is NOT deleted
             const cityExists = await cities.findOne({
-                where: { name: cityData.name, countryId: cityData.countryId }
+                where: {
+                    name: cityData.name,
+                    countryId: cityData.countryId,
+                    deletedAt: { [Op.is]: null }
+                }
             });
             
             if (cityExists) {
