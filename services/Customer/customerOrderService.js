@@ -1119,6 +1119,11 @@ class CustomerOrderService {
                     attributes: ["id", "imgUpload", "noOfItems", "note", "deliveryType", "createdAt", "updatedAt"],
                 },
                 {
+                    model: tip,
+                    attributes: ["id", "amount"],
+                    required: false,
+                },
+                {
                     model: policy,
                     as: "cancellationPolicyBookings",
                     attributes: ["id", "name", "type", "isActive", "isDefault", "description"],
