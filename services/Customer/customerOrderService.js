@@ -1121,6 +1121,7 @@ class CustomerOrderService {
                 },
                 {
                     model: tip,
+                    as: 'tips',
                     attributes: ["id", "amount"],
                     required: false,
                 },
