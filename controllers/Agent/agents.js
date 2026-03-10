@@ -1528,12 +1528,18 @@ exports.driverAddSerivces = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
     console.log("Current Date:", currentDate);
 
-    // Fetch booking with zone information
+    // Fetch booking with zone and tip information
     const bookings = await booking.findByPk(bookingId, {
         include: [
             {
                 model: zone,
                 attributes: ['id', 'name', 'zoneAdminComission']
+            },
+            {
+                model: tip,
+                as: 'tips',
+                attributes: ['id', 'amount'],
+                required: false
             }
         ]
     });
@@ -1602,6 +1608,12 @@ exports.driverAddSerivces = async (req, res) => {
     const parsedServiceCharge = parseFloat(serviceCharge) || 0;
     const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
 
+    // Get tip amount from booking
+    const tipAmount = bookings.tips && bookings.tips.length > 0
+        ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
+        : 0;
+    console.log("Tip Amount:", tipAmount);
+
     let subTotal = total;
     console.log("Sub-Total------->>>", subTotal);
 
@@ -1609,6 +1621,10 @@ exports.driverAddSerivces = async (req, res) => {
     console.log("Total Before Zone Deduction:", total);
 
     total -= parsedZoneMinimum;
+
+    // Add tip to final total
+    total += tipAmount;
+    console.log("Total After Adding Tip:", total);
 
     // Calculate zone admin commission
     const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
