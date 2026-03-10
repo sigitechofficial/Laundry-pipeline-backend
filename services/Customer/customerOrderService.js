@@ -771,10 +771,17 @@ class CustomerOrderService {
         console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey);
 
         // Create the billing details
+        const parsedUpfront = parseFloat(upfrontAmount) || 0;
+        const parsedServiceCharge = parseFloat(zoneSeviceCharge) || 0;
+        const parsedTip = parseFloat(tipAmount) || 0;
+        const subTotal = parseFloat((parsedUpfront + parsedServiceCharge + parsedTip).toFixed(2));
+
         await billingDetails.create({
             bookingId: bookingData.id,
             upfrontAmount,
+            serviceCharge: parsedServiceCharge,
             discount,
+            total: subTotal,
             paymentStatus: "Pending",
         });
 
@@ -796,6 +803,7 @@ class CustomerOrderService {
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: fixTimeKey,
                 partialPayment: true,
+                subTotal: subTotal,
                 tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }
