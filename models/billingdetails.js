@@ -10,46 +10,57 @@ module.exports = (sequelize, DataTypes) => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      // define association here
+      billingDetails.belongsTo(models.booking, {
+        foreignKey: 'bookingId',
+        as: 'booking'
+      });
     }
   }
   billingDetails.init({
+    bookingId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bookings',
+        key: 'id'
+      }
+    },
     upfrontAmount: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
+    },
     discount: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
+    },
     total: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
-  zoneAdminCommission:{
-    type:DataTypes.DECIMAL(10,2),
-    allowNull:true
-  },
+    },
+    zoneAdminCommission: {
+      type: DataTypes.DECIMAL(10,2),
+      allowNull: true,
+    },
     serviceCharge: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
+    },
     categoryCharge: {
-        type: DataTypes.DECIMAL(10,2),
-        allowNull: true,
+      type: DataTypes.DECIMAL(10,2),
+      allowNull: true,
     },
     pickupDriverEarning: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
+    },
     deliveryDriverEarning: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true,
-  },
-  paymentStatus:{
-    type:DataTypes.ENUM('Paid','Pending','Failed'),
-    defaultValue:'Pending'
-  }
+    },
+    paymentStatus: {
+      type: DataTypes.ENUM('Paid','Pending','Failed'),
+      defaultValue: 'Pending'
+    }
   }, {
     sequelize,
     modelName: 'billingDetails',

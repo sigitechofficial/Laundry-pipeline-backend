@@ -264,7 +264,8 @@ class OrderService {
                         ]
                     },
                     {
-                        model: billingDetails
+                        model: billingDetails,
+                        as: 'billingDetail'
                     },
                     {
                         model: bookingStatus,

@@ -809,6 +809,7 @@ async function bookingEventSentCheckTheShops(
                 },
                 {
                     model: billingDetails,
+                    as: 'billingDetail',
                     attributes: ["total", "serviceCharge", "categoryCharge"],
                 },
                 {

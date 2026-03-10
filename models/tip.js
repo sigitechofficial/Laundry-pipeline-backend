@@ -10,14 +10,24 @@ module.exports = (sequelize, DataTypes) => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      tip.hasOne(models.booking)
-      models.booking.belongsTo(tip)
+      tip.belongsTo(models.booking, {
+        foreignKey: 'bookingId',
+        as: 'booking'
+      });
     }
   }
   tip.init({
+    bookingId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'bookings',
+        key: 'id'
+      }
+    },
     amount: {
-      type:DataTypes.DECIMAL,
-      allowNull:true
+      type: DataTypes.DECIMAL(10,2),
+      allowNull: true
     }
   }, {
     sequelize,

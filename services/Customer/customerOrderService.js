@@ -321,6 +321,7 @@ async function bookingEventSentCheckTheShops(
                 },
                 {
                     model: billingDetails,
+                    as: 'billingDetail',
                     attributes: ["total", "serviceCharge", "categoryCharge"],
                 },
                 {
@@ -1121,6 +1122,12 @@ class CustomerOrderService {
                 {
                     model: tip,
                     attributes: ["id", "amount"],
+                    required: false,
+                },
+                {
+                    model: billingDetails,
+                    as: 'billingDetail',
+                    attributes: ["id", "upfrontAmount", "discount", "total", "zoneAdminCommission", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus"],
                     required: false,
                 },
                 {

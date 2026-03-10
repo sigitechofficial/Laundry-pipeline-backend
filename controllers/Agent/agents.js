@@ -31,7 +31,8 @@ const {
     machines,
     servicePreferences,
     serviceCategories,
-    preferencesServiceName
+    preferencesServiceName,
+    tip
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -876,6 +877,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             },
             {
                 model: billingDetails,
+                as: 'billingDetail',
                 required: false,
                 attributes: ['upfrontAmount', 'total', 'paymentStatus'],
             },
@@ -1868,8 +1870,15 @@ exports.invoiceCreation = async (req, res) => {
             },
             {
                 model: billingDetails,
+                as: 'billingDetail',
                 required: false,
-                attributes: ["upfrontAmount", "total", "paymentStatus"]
+                attributes: ["upfrontAmount", "discount", "total", "zoneAdminCommission", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus"]
+            },
+            {
+                model: tip,
+                as: 'tips',
+                required: false,
+                attributes: ["id", "amount"]
             },
             {
                 model: bookingStatus,

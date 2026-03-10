@@ -9,26 +9,51 @@ module.exports = {
         primaryKey: true,
         type: Sequelize.INTEGER
       },
+      bookingId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'bookings',
+          key: 'id'
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL'
+      },
       upfrontAmount: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       discount: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       total: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
+      },
+      zoneAdminCommission: {
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       serviceCharge: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       categoryCharge: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       pickupDriverEarning: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       deliveryDriverEarning: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
+      },
+      paymentStatus: {
+        type: Sequelize.ENUM('Paid', 'Pending', 'Failed'),
+        defaultValue: 'Pending'
       },
       createdAt: {
         allowNull: false,

@@ -15,12 +15,16 @@ module.exports = (sequelize, DataTypes) => {
       models.wallet.belongsTo(booking)
       
       //Relation with model billingDetail
-      booking.hasOne(models.billingDetails)
-      models.billingDetails.belongsTo(booking)
+      booking.hasOne(models.billingDetails, {
+        foreignKey: 'bookingId',
+        as: 'billingDetail'
+      });
 
       //Relation with model tip
-      booking.hasMany(models.tip)
-      models.tip.belongsTo(booking)
+      booking.hasMany(models.tip, {
+        foreignKey: 'bookingId',
+        as: 'tips'
+      });
 
       //Relation with model bookingHistory
       booking.hasMany(models.bookingHistory)
