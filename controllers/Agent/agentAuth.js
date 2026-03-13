@@ -101,7 +101,7 @@ exports.registerAgentWithOTP = async (req, res) => {
             type: 'RegisterOTP',
             email: email,
             OTP: otp,
-            userName: userExist.firstName || 'Agent'
+            userName: userCreate.firstName || 'Agent'
         });
 
         let dt = new Date();

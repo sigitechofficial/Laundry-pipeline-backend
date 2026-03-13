@@ -233,7 +233,7 @@ class AgentAuthService {
                 type: 'RegisterOTP',
                 email: data.email,
                 OTP: otp,
-                userName: firstName || 'Agent'
+                userName: data.firstName || 'Agent'
             });
 
             let dt = new Date();
