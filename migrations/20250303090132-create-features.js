@@ -10,17 +10,20 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       title: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: false,
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
       },
-      featureof: {
-        type: Sequelize.ENUM('Admin','Agent','both','Agent Employee')
+      featureOf: {
+        type: Sequelize.ENUM('Admin','Agent','both','Agent Employee'),
+        allowNull: false,
       },
-      key:{
-        type:Sequelize.STRING,
-        allowNull:false,
+      key: {
+        type: Sequelize.STRING(60),
+        allowNull: false,
       },
       createdAt: {
         allowNull: false,
@@ -29,6 +32,10 @@ module.exports = {
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
+      },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
       }
     });
   },

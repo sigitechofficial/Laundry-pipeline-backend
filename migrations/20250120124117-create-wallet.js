@@ -10,13 +10,29 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       amount: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true,
+        defaultValue: '0.00'
       },
       currency: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: '$'
       },
       description: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: ''
+      },
+      type: {
+        type: Sequelize.ENUM('credit', 'debit'),
+        allowNull: false,
+        defaultValue: 'credit'
+      },
+      status: {
+        type: Sequelize.ENUM('pending', 'completed', 'failed'),
+        allowNull: false,
+        defaultValue: 'completed'
       },
       createdAt: {
         allowNull: false,

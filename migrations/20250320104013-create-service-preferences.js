@@ -11,13 +11,15 @@ module.exports = {
       },
       type: {
         type: Sequelize.ENUM('Mixed','White Separate','Dark Seprate','White + Light mixed'),
+        allowNull: true
       },
       chooseTemperature: {
         type: Sequelize.ENUM('30 C','40 C','60 C','90 C'),
+        allowNull: true
       },
-      numberOfBags:{
-        type:Sequelize.NUMBER,
-        allowNull:false,
+      numberOfBags: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
       },
       createdAt: {
         allowNull: false,

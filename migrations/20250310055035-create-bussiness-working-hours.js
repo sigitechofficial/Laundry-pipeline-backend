@@ -10,18 +10,23 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       dayOfWeek: {
-        type: Sequelize.ENUM('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')
+        type: Sequelize.ENUM('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'),
+        allowNull: false,
       },
       openTime: {
-        type: Sequelize.TIME
+        type: Sequelize.TIME,
+        allowNull: true,
+        defaultValue: '07:00:00'
       },
       closeTime: {
-        type: Sequelize.TIME
+        type: Sequelize.TIME,
+        allowNull: true,
+        defaultValue: '19:00:00'
       },
-      status:{
-        type:Sequelize.BOOLEAN,
-        allowNull:false,
-        defaultValue:false
+      status: {
+        type: Sequelize.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
       },
       createdAt: {
         allowNull: false,

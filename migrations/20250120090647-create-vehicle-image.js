@@ -10,13 +10,19 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       image: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: ''
       },
       uploadTime: {
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        allowNull: true,
+        defaultValue: Sequelize.literal("CURRENT_TIMESTAMP")
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        allowNull: true,
+        defaultValue: true
       },
       createdAt: {
         allowNull: false,

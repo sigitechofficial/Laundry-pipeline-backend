@@ -10,13 +10,16 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       imgUpload: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true
       },
       noOfItems: {
-        type: Sequelize.INTEGER
+        type: Sequelize.INTEGER,
+        allowNull: true
       },
       note: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true
       },
       deliveryType: {
         type: Sequelize.ENUM('pickUp', 'dropOff'),

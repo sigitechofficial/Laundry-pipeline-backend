@@ -11,76 +11,80 @@ module.exports = {
       },
       title: {
         type: Sequelize.ENUM('Office','Home','Other','Hotel'),
-        allowNull:false,
+        allowNull: true,
       },
-      customAddressTitle:{
-        type:Sequelize.STRING(40),
-        allowNull:true,
+      customAddressTitle: {
+        type: Sequelize.STRING(40),
+        allowNull: true,
       },
-      hotelName:{
-        type:Sequelize.STRING,
-        allowNull:true
+      hotelName: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
-      apartmentNumber:{
-        type:Sequelize.INTEGER,
-        allowNull:true
+      apartmentNumber: {
+        type: Sequelize.INTEGER,
+        allowNull: true
       },
-      floor:{
-        type:Sequelize.INTEGER,
-        allowNull:true,
+      floor: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
       },
       streetAddress: {
         type: Sequelize.STRING,
-        allowNull:false,
+        allowNull: false,
       },
       district: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       province: {
         type: Sequelize.STRING,
-        allowNull:true
+        allowNull: true
       },
       postalcode: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       lat: {
-        type: Sequelize.DECIMAL,
-        allowNull:false,
+        type: Sequelize.STRING,
+        allowNull: false,
       },
       lng: {
-        type: Sequelize.DECIMAL,
-        allowNull:false
+        type: Sequelize.STRING,
+        allowNull: false
       },
       status: {
         type: Sequelize.BOOLEAN,
-        defaultValue:1
+        defaultValue: 1
       },
-      addressType:{
-        type:Sequelize.ENUM('dropOff','pickUp','LaundaryShopAddress'),
-        allowNull:true
+      radius: {
+        type: Sequelize.DECIMAL,
+        allowNull: true
       },
-      coordinates:{
-        type:Sequelize.GEOMETRY('POLYGON'),
-        allowNull:true
+      addressType: {
+        type: Sequelize.ENUM('dropOff','pickUp','LaundaryShopAddress'),
+        allowNull: true
       },
-      radius:{
-        type:Sequelize.DECIMAL,
-        allowNull:true
+      coordinates: {
+        type: Sequelize.GEOMETRY('POLYGON'),
+        allowNull: true
+      },
+      isDefault: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
       },
-      isDefault:{
-        type:Sequelize.BOOLEAN,
-        defaultValue:false
-      },
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
       },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
+      }
     });
   },
   async down(queryInterface, Sequelize) {

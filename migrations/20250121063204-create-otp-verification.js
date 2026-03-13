@@ -10,16 +10,21 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       OTP: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING(5),
+        allowNull: true,
       },
       reqAt: {
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        allowNull: true,
       },
       expirtAt: {
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        allowNull: true,
       },
       verifiedAtForgetCase: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        allowNull: true,
+        defaultValue: false,
       },
       createdAt: {
         allowNull: false,

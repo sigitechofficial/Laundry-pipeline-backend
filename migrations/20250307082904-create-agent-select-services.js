@@ -10,11 +10,12 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       },
-      serviceTimeRequired:{
-        type:Sequelize.ENUM('N/A','24 Hours','48 Hours','More Than 48 Hours'),
-        allowNull:false
+      serviceTimeRequired: {
+        type: Sequelize.ENUM('N/A','24 Hours','48 Hours','More Than 48 Hours'),
+        allowNull: false
       },
       createdAt: {
         allowNull: false,

@@ -10,75 +10,67 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       firstName: {
-        allowNull:false,
         type: Sequelize.STRING,
+        allowNull: true,
       },
       lastName: {
         type: Sequelize.STRING,
-        allowNull:false,
+        allowNull: true,
       },
       email: {
         type: Sequelize.STRING,
-        allowNull:true,
-        unique:true,
-        validate:{
-          isEmail:true
+        allowNull: true,
+        unique: true,
+        validate: {
+          isEmail: true
         }
       },
       password: {
         type: Sequelize.STRING,
-        allowNull:false,
+        allowNull: true,
       },
       phoneNum: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       stripeCustomerId: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       dvToken: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       image: {
         type: Sequelize.STRING,
-        allowNull:true,
-      },
-      deletedAt: {
-        type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       signedFrom: {
         type: Sequelize.STRING,
-        allowNull:true,
+        allowNull: true,
       },
       status: {
         type: Sequelize.BOOLEAN,
-        allowNull:false,
-        defaultValue:1
+        allowNull: false,
+        defaultValue: false
       },
       verifiedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
+      },
+      driverType: {
+        type: Sequelize.ENUM('Freelance Driver','laundary Shop Driver'),
+        allowNull: true
+      },
+      employeeOff: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        defaultValue: null
+      },
+      countryCode: {
         type: Sequelize.STRING,
-        allowNull:true
+        allowNull: true
       },
-      laundaryShopName:{
-        type:Sequelize.STRING,
-        allowNull:true
-      },
-      driverType:{
-        type:Sequelize.ENUM('Freelance Driver','laundary Shop Driver'),
-        allowNull:true
-      },
-      employeeOff:{
-        type:Sequelize.INTEGER,
-        allowNull:true,
-        defaultValue:null
-      },
-      countryCode:{
-      type:Sequelize.STRING,
-      allowNull:true
-    },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
@@ -86,6 +78,10 @@ module.exports = {
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
+      },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
       }
     });
   },

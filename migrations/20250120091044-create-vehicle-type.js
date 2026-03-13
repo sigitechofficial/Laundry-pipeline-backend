@@ -10,28 +10,38 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       title: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: ''
       },
       image: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
+        defaultValue: ''
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
       },
       baseRate: {
-        type: Sequelize.FLOAT
+        type: Sequelize.FLOAT(8,2),
+        defaultValue: '0.00',
       },
       perUnitRate: {
-        type: Sequelize.FLOAT
+        type: Sequelize.FLOAT(8,2),
+        defaultValue: '0.00',
       },
       perRideCharge: {
-        type: Sequelize.FLOAT
+        type: Sequelize.FLOAT(8,2),
+        defaultValue: '0.00',
       },
       weightCapacity: {
-        type: Sequelize.FLOAT
+        type: Sequelize.FLOAT(8,2),
+        defaultValue: '0.00',
       },
       volumeCapacity: {
-        type: Sequelize.FLOAT
+        type: Sequelize.FLOAT(8,2),
+        defaultValue: '0.00',
       },
       createdAt: {
         allowNull: false,

@@ -10,7 +10,8 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       shopName: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: false
       },
       matchProfileOptions: {
         type: Sequelize.ENUM('ALL IN HOUSE- Washing, Ironing and Dry cleaning all done by us',
@@ -19,9 +20,18 @@ module.exports = {
           'Other'),
         allowNull: true,
       },
-      otherText:{
-        type:Sequelize.STRING(500),
-        allowNull:true
+      otherText: {
+        type: Sequelize.STRING(500),
+        allowNull: true
+      },
+      isConnectAccountConnected: {
+        type: Sequelize.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
+      },
+      connectAccountId: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
       createdAt: {
         allowNull: false,
@@ -30,6 +40,10 @@ module.exports = {
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
+      },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
       }
     });
   },

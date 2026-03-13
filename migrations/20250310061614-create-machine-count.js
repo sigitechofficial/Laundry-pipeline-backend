@@ -11,9 +11,11 @@ module.exports = {
       },
       total: {
         type: Sequelize.ENUM('0','1-2','3-5','5+'),
+        allowNull: true
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       },
       createdAt: {
         allowNull: false,

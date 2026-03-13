@@ -10,7 +10,8 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       permissionType: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true,
       },
       read: {
         type: Sequelize.BOOLEAN,

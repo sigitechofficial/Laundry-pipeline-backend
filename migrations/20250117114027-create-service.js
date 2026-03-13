@@ -10,17 +10,25 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       name: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: false
       },
       description: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING(300),
+        allowNull: true
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        allowNull: true,
+        defaultValue: 1
       },
-      timeRequired:{
-        type:Sequelize.STRING(50),
-        allowNull:false,
+      image: {
+        type: Sequelize.STRING,
+        allowNull: true
+      },
+      timeRequired: {
+        type: Sequelize.STRING(50),
+        allowNull: true
       },
       createdAt: {
         allowNull: false,
@@ -29,6 +37,10 @@ module.exports = {
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
+      },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
       }
     });
   },

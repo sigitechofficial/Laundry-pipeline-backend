@@ -10,19 +10,22 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       name: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: false
       },
       status: {
-        type: Sequelize.BOOLEAN
+        type: Sequelize.BOOLEAN,
+        allowNull: true,
+        defaultValue: true
       },
-      image:{
-        type:Sequelize.STRING,
-        allowNull:true
+      image: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
-      description:{
-        type:Sequelize.STRING(300),
-        allowNull:true,
-        defaultValue:null
+      description: {
+        type: Sequelize.STRING(300),
+        allowNull: true,
+        defaultValue: null
       },
       createdAt: {
         allowNull: false,
@@ -31,6 +34,10 @@ module.exports = {
       updatedAt: {
         allowNull: false,
         type: Sequelize.DATE
+      },
+      deletedAt: {
+        type: Sequelize.DATE,
+        allowNull: true
       }
     });
   },

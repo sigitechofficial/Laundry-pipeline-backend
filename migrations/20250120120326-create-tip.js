@@ -9,8 +9,19 @@ module.exports = {
         primaryKey: true,
         type: Sequelize.INTEGER
       },
+      bookingId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'bookings',
+          key: 'id'
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL'
+      },
       amount: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10,2),
+        allowNull: true
       },
       createdAt: {
         allowNull: false,

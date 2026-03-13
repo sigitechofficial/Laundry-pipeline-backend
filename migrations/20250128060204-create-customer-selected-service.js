@@ -10,24 +10,28 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       date: {
-        type: Sequelize.DATE
+        type: Sequelize.DATE,
+        allowNull: false
       },
       time: {
-        type: Sequelize.TIME
+        type: Sequelize.TIME,
+        allowNull: false
       },
       servicePrice: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10, 2),
+        allowNull: true
       },
       categoryPrice: {
-        type: Sequelize.DECIMAL
+        type: Sequelize.DECIMAL(10, 2),
+        allowNull: true
       },
-      items:{
-        type:Sequelize.INTEGER,
-        allowNull:true
+      items: {
+        type: Sequelize.INTEGER,
+        allowNull: true
       },
-      status:{
-        type:Sequelize.BOOLEAN,
-        defaultValue:false
+      status: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       },
       createdAt: {
         allowNull: false,

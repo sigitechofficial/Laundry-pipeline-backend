@@ -10,21 +10,28 @@ module.exports = {
         type: Sequelize.INTEGER
       },
       onHoldImg: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true
       },
       noOfItems: {
-        type: Sequelize.INTEGER
+        type: Sequelize.INTEGER,
+        allowNull: true
       },
       description: {
-        type: Sequelize.STRING
+        type: Sequelize.STRING,
+        allowNull: true
       },
-      deleted:{
-        type:Sequelize.BOOLEAN,
-        defaultValue:false
+      customerResponse: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
       },
-      responseConformation:{
-        type:Sequelize.BOOLEAN,
-        defaultValue:false,
+      deleted: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false
+      },
+      responseConformation: {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
       },
       createdAt: {
         allowNull: false,
