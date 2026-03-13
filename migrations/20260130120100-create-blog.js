@@ -21,6 +21,11 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: true
       },
+      descriptionImages: {
+        type: Sequelize.JSON,
+        allowNull: true,
+        defaultValue: []
+      },
       status: {
         type: Sequelize.BOOLEAN,
         allowNull: false,
