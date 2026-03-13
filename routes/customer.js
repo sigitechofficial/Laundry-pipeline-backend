@@ -103,6 +103,10 @@ router.post('/cancelBooking', validateAccessToken, asyncMiddleware(customerOther
 router.get('/cancellationHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerCancellationHistory));
 //Get Active Policies (cancellation, reschedule, no-show)
 router.get('/getActivePolicies', validateAccessToken, asyncMiddleware(customerOtherController.getActivePolicies));
+//Reschedule Customer Booking with Policy Enforcement
+router.post('/rescheduleBooking', validateAccessToken, asyncMiddleware(customerOtherController.rescheduleCustomerBooking));
+//Get Customer Reschedule History
+router.get('/rescheduleHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerRescheduleHistory));
 
 //!----------------------------Customer Postcode Address Lookup---------------------//
 //Get addresses by UK postcode

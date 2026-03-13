@@ -56,6 +56,7 @@ const {
 } = require('../../services/Admin');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+const rescheduleBookingService = require('../../services/Customer/rescheduleBookingService');
 
 //!------------------------Boooking Management-------------------------------//
 /*
@@ -1041,6 +1042,59 @@ const validatePostcode = async (req, res) => {
     });
 };
 
+/*
+ * Reschedule Customer Booking with Policy Enforcement
+ */
+async function rescheduleCustomerBooking(req, res) {
+    const {
+        bookingId,
+        collectionDate,
+        collectionTimeFrom,
+        collectionTimeTo,
+        deliveryDate,
+        deliveryTimeFrom,
+        deliveryTimeTo,
+        reasonText,
+        services,
+        preferencesArray
+    } = req.body;
+
+    const customerId = req.user.id;
+
+    if (!bookingId) {
+        throw new customError("Booking ID is required", 400);
+    }
+    if (!collectionDate || !collectionTimeFrom || !collectionTimeTo) {
+        throw new customError("New collection date and time slot are required", 400);
+    }
+    if (!deliveryDate || !deliveryTimeFrom || !deliveryTimeTo) {
+        throw new customError("New delivery date and time slot are required", 400);
+    }
+
+    const result = await rescheduleBookingService.rescheduleCustomerBooking(
+        bookingId,
+        customerId,
+        { collectionDate, collectionTimeFrom, collectionTimeTo, deliveryDate, deliveryTimeFrom, deliveryTimeTo },
+        reasonText,
+        services,
+        preferencesArray
+    );
+
+    return ResponseHelper.success(res, "Booking rescheduled successfully", result);
+}
+
+/*
+ * Get Customer Reschedule History
+ */
+async function getCustomerRescheduleHistory(req, res) {
+    const customerId = req.user.id;
+    const days = parseInt(req.query.days) || 30;
+
+    const history = await rescheduleBookingService.getCustomerRescheduleHistory(customerId, days);
+
+    return ResponseHelper.success(res, "Reschedule history fetched successfully", history);
+}
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1070,5 +1124,8 @@ module.exports = {
     //---Customer Postcode Address Lookup----//
     getAddressesByPostcode,
     getAddressById,
-    validatePostcode
+    validatePostcode,
+    //---Reschedule Booking----//
+    rescheduleCustomerBooking,
+    getCustomerRescheduleHistory
 };

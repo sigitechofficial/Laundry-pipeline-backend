@@ -156,6 +156,20 @@ module.exports = (sequelize, DataTypes) => {
   setupIntentId:{
     type:DataTypes.STRING,
     allowNull:true
+  },
+  rescheduledCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0
+  },
+  rescheduleReason: {
+    type: DataTypes.STRING(500),
+    allowNull: true
+  },
+  rescheduleCharge: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true,
+    defaultValue: 0.00
   }
   }, {
     sequelize,
