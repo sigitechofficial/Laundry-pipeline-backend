@@ -1122,6 +1122,13 @@ class CustomerOrderService {
                 {
                     model: zone,
                     attributes: ["id","name","zoneMinimumAmount","serviceCharge"],
+                    include: [
+                        {
+                            model: units,
+                            as: 'currencyUnitZ',
+                            attributes: ["id", "name", "symbol", "type"],
+                        }
+                    ]
                 },
                 {
                     model: proofOfDeliveries,

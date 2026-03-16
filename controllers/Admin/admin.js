@@ -909,6 +909,16 @@ async function getFeatures(req, res) {
 }
 
 
+/*
+   * Delete Feature
+*/
+async function deleteFeature(req, res) {
+    const { featureId } = req.params;
+    const result = await featureManagementService.deleteFeature(featureId);
+    return ResponseHelper.success(res, "Feature Deleted Successfully", result);
+}
+
+
 //!------------------------------------------------------------Shop Management------------------------------------------------->>>>>>>
 
 /*
@@ -2565,6 +2575,7 @@ module.exports = {
     getClassifiedAs,
     addfeatures,
     getFeatures,
+    deleteFeature,
     //!------------Shop Management-----------//
     getShopInformation,
     shopsData,

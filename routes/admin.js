@@ -319,6 +319,8 @@ router.get('/getClassifiedAs', validateAccessToken, asyncMiddleware(adminControl
 router.post('/addfeatures', validateAccessToken, asyncMiddleware(adminController.addfeatures))
 //Get Features
 router.get('/getFeatures', validateAccessToken, asyncMiddleware(adminController.getFeatures))
+//Delete Feature
+router.delete('/deleteFeature/:featureId', validateAccessToken, asyncMiddleware(adminController.deleteFeature))
 
 
 
