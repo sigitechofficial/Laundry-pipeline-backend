@@ -83,7 +83,9 @@ class PostcodeZoneService {
             );
             
             // Extract coordinates from the buffered polygon
-            return buffered.geometry.coordinates;
+            const coords = buffered.geometry.coordinates;
+            console.log('✅ Single postcode polygon created:', JSON.stringify(coords[0]));
+            return this.validateAndClosePolygon(coords);
         } else if (postcodeCoordinates.length === 2) {
             // Two postcodes: create a buffer around the line connecting them
             const point1 = postcodeCoordinates[0];
@@ -103,7 +105,9 @@ class PostcodeZoneService {
             ]);
             const buffered = turf.buffer(line, 0.5, { units: 'kilometers' });
             
-            return buffered.geometry.coordinates;
+            const coords = buffered.geometry.coordinates;
+            console.log('✅ Two postcode polygon created:', JSON.stringify(coords[0]));
+            return this.validateAndClosePolygon(coords);
         } else {
             // Multiple postcodes (3+): create convex hull to connect all points
             console.log('Creating convex hull for multiple postcodes');
@@ -125,7 +129,7 @@ class PostcodeZoneService {
             });
             
             const featureCollection = turf.featureCollection(points);
-            console.log('Feature collection created:', JSON.stringify(featureCollection, null, 2));
+            console.log('Feature collection created with', points.length, 'points');
             
             const hull = turf.convex(featureCollection);
             
@@ -144,11 +148,62 @@ class PostcodeZoneService {
                     throw new ValidationError('Failed to create zone polygon from postcodes');
                 }
                 
-                return buffered.geometry.coordinates;
+                const coords = buffered.geometry.coordinates;
+                console.log('✅ Fallback polygon created:', JSON.stringify(coords[0]));
+                return this.validateAndClosePolygon(coords);
             }
             
-            return hull.geometry.coordinates;
+            const coords = hull.geometry.coordinates;
+            console.log('✅ Convex hull polygon created:', JSON.stringify(coords[0]));
+            return this.validateAndClosePolygon(coords);
         }
+    }
+
+    /**
+     * Ensure polygon is properly closed and formatted for Sequelize GEOMETRY
+     * @param {Array} coordinates - Polygon coordinates from turf
+     * @returns {Array} Validated and closed polygon coordinates
+     */
+    validateAndClosePolygon(coordinates) {
+        console.log('🔍 Validating polygon structure...');
+        console.log('Input coordinates structure:', JSON.stringify(coordinates));
+        
+        // Ensure coordinates is in the right format [[[lng, lat], [lng, lat], ...]]
+        if (!Array.isArray(coordinates) || coordinates.length === 0) {
+            throw new ValidationError('Invalid polygon coordinates structure');
+        }
+
+        // Get the outer ring (first element)
+        let outerRing = coordinates[0];
+        
+        if (!Array.isArray(outerRing) || outerRing.length < 3) {
+            throw new ValidationError('Polygon must have at least 3 points');
+        }
+
+        console.log(`Polygon has ${outerRing.length} points before closing check`);
+        
+        // Check if polygon is closed (first point === last point)
+        const firstPoint = outerRing[0];
+        const lastPoint = outerRing[outerRing.length - 1];
+        
+        const isClosed = firstPoint[0] === lastPoint[0] && firstPoint[1] === lastPoint[1];
+        
+        if (!isClosed) {
+            console.log('⚠️ Polygon not closed, closing it now');
+            console.log('First point:', firstPoint);
+            console.log('Last point:', lastPoint);
+            // Close the polygon by adding the first point at the end
+            outerRing.push([...firstPoint]);
+            console.log('✅ Polygon closed. New last point:', outerRing[outerRing.length - 1]);
+        } else {
+            console.log('✅ Polygon already closed');
+        }
+        
+        console.log(`Final polygon has ${outerRing.length} points`);
+        console.log('First 3 points:', JSON.stringify(outerRing.slice(0, 3)));
+        console.log('Last 3 points:', JSON.stringify(outerRing.slice(-3)));
+        
+        return [outerRing];
     }
 
     /**
@@ -243,6 +298,7 @@ class PostcodeZoneService {
         // Create polygon from postcode coordinates
         const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
         console.log('Polygon created successfully');
+        console.log('📍 Polygon coordinates structure:', JSON.stringify(polygonCoordinates, null, 2));
 
         // Prepare final zone data
         const data = {
@@ -255,12 +311,23 @@ class PostcodeZoneService {
             status: zoneData.status !== undefined ? zoneData.status : true
         };
 
+        console.log('📦 Final zone data to be saved:', {
+            name: data.name,
+            cityId: data.cityId,
+            coordinatesType: data.coordinates.type,
+            coordinatesLength: data.coordinates.coordinates.length,
+            firstRingLength: data.coordinates.coordinates[0]?.length,
+            firstPoint: data.coordinates.coordinates[0]?.[0],
+            lastPoint: data.coordinates.coordinates[0]?.[data.coordinates.coordinates[0].length - 1]
+        });
+
         // Validate zone data (city, units, admin)
         await this.validateZoneData(data);
 
         // Create zone
         const zoneCreate = await zone.create(data);
         console.log('=== Add Zone By Postcodes - Success ===');
+        console.log('✅ Zone created with ID:', zoneCreate.id);
         return zoneCreate;
     }
 
@@ -289,8 +356,10 @@ class PostcodeZoneService {
                 }
             }
             if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+                console.log('🔄 Regenerating polygon from postcodes for zone:', zoneId);
                 const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
                 const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
+                console.log('📍 New polygon coordinates structure:', JSON.stringify(polygonCoordinates, null, 2));
                 otherZoneData.coordinates = {
                     type: 'Polygon',
                     coordinates: polygonCoordinates
