@@ -25,7 +25,10 @@ class RoleManagementService {
             throw new ConflictError('Role with this name already exists');
         }
 
-        const createData = { ...roleData };
+        const createData = { 
+            ...roleData,
+            status: roleData.status !== undefined ? roleData.status : true
+        };
         if (createData.permissionRole) {
             createData.permissionRole = JSON.stringify(createData.permissionRole);
         }
