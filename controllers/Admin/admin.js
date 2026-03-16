@@ -852,10 +852,14 @@ async function addRole(req, res) {
    * Update Roles
 */
 async function updateRoles(req, res) {
-    const { name, permissionRole, roleId } = req.body;
-    const data = { ...req.body };
-    const { roleId: roleIdParam, ...updateData } = data;
-    const result = await roleManagementService.updateRole(roleId, updateData);
+    const { id, roleId, ...updateData } = req.body;
+    const roleIdToUse = roleId || id;
+    
+    if (!roleIdToUse) {
+        throw new ValidationError('Role ID is required');
+    }
+    
+    const result = await roleManagementService.updateRole(roleIdToUse, updateData);
     return ResponseHelper.success(res, "Role updated", result);
 }
 

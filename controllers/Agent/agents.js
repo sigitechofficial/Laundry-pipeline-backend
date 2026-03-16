@@ -3838,5 +3838,100 @@ exports.getActivePolicies = async (req, res) => {
     return ResponseHelper.success(res, "Active policies", result);
 };
 
+//!---------------------------------------------Notification APIs----------------------------------------//
+
+/**
+ * @route POST /api/agent/sendNotificationToCustomer
+ * @access Private (Agent)
+ * @description Send notification to customer using booking ID
+ * @body {string} bookingId - The booking ID
+ * @body {string} title - Notification title
+ * @body {string} body - Notification body
+ * @body {object} data - Additional data (optional)
+ */
+exports.sendNotificationToCustomer = async (req, res) => {
+    const { bookingId, title, body, data } = req.body;
+    const notificationService = require('../../services/Agent/notificationService');
+
+    if (!bookingId || !title || !body) {
+        throw new ValidationError('bookingId, title, and body are required');
+    }
+
+    const result = await notificationService.sendNotificationToCustomer(
+        bookingId,
+        title,
+        body,
+        data || {}
+    );
+
+    return ResponseHelper.success(res, "Notification sent to customer", result);
+};
+
+/**
+ * @route POST /api/agent/sendNotificationToAdmin
+ * @access Private (Agent)
+ * @description Send notification to admin(s)
+ * @body {string} title - Notification title
+ * @body {string} body - Notification body
+ * @body {object} data - Additional data (optional)
+ * @body {string} adminId - Optional specific admin ID
+ */
+exports.sendNotificationToAdmin = async (req, res) => {
+    const { title, body, data, adminId } = req.body;
+    const notificationService = require('../../services/Agent/notificationService');
+
+    if (!title || !body) {
+        throw new ValidationError('title and body are required');
+    }
+
+    const result = await notificationService.sendNotificationToAdmin(
+        title,
+        body,
+        data || {},
+        adminId
+    );
+
+    return ResponseHelper.success(res, "Notification sent to admin", result);
+};
+
+/**
+ * @route POST /api/agent/sendNotificationToMultiple
+ * @access Private (Agent)
+ * @description Send notification to customer and/or admin using booking ID
+ * @body {string} bookingId - The booking ID
+ * @body {string} title - Notification title
+ * @body {string} body - Notification body
+ * @body {boolean} toCustomer - Send to customer (default: false)
+ * @body {boolean} toAdmin - Send to admin (default: false)
+ * @body {boolean} toZoneAdmin - Send to zone admin (default: false)
+ * @body {object} data - Additional data (optional)
+ */
+exports.sendNotificationToMultiple = async (req, res) => {
+    const { bookingId, title, body, toCustomer, toAdmin, toZoneAdmin, data } = req.body;
+    const notificationService = require('../../services/Agent/notificationService');
+
+    if (!bookingId || !title || !body) {
+        throw new ValidationError('bookingId, title, and body are required');
+    }
+
+    if (!toCustomer && !toAdmin && !toZoneAdmin) {
+        throw new ValidationError('At least one recipient type must be specified (toCustomer, toAdmin, or toZoneAdmin)');
+    }
+
+    const result = await notificationService.sendNotificationToMultiple(
+        bookingId,
+        title,
+        body,
+        {
+            toCustomer: toCustomer || false,
+            toAdmin: toAdmin || false,
+            toZoneAdmin: toZoneAdmin || false
+        },
+        data || {}
+    );
+
+    return ResponseHelper.success(res, "Notifications sent", result);
+};
+
 
 //!---------------------------------------------Controllers Converted to Export Approach----------------------------------------//

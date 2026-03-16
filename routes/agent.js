@@ -555,4 +555,29 @@ router.post(
     asyncMiddleware(agentController.validatePostcode)
 );
 
+//!----------------------------------------------------------Notification APIs----------------------------------------------------------//
+// Send notification to customer using booking ID
+router.post(
+    '/sendNotificationToCustomer',
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.sendNotificationToCustomer)
+);
+
+// Send notification to admin(s)
+router.post(
+    '/sendNotificationToAdmin',
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.sendNotificationToAdmin)
+);
+
+// Send notification to multiple recipients (customer and/or admin)
+router.post(
+    '/sendNotificationToMultiple',
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.sendNotificationToMultiple)
+);
+
 module.exports = router;
