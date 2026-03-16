@@ -140,17 +140,25 @@ let syncDb = 0;
 
 async function startServer() {
   try {
+    const env = process.env.NODE_ENV || 'development';
+
     if (syncDb) {
-      await db.sequelize.sync({ alter: true });
+      if (env === 'development' || env === 'test') {
+        await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
+        await db.sequelize.sync({ force: true });
+        await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
+      } else {
+        await db.sequelize.sync({ alter: true });
+      }
+
       console.log('\x1b[32m%s\x1b[0m', '<================= Database synchronized =======================>');
     }
-    
+
     server.listen(server_port, function (err) {
       if (err) throw err;
-      
-      const env = process.env.NODE_ENV || 'development';
+
       let baseUrl;
-      
+
       switch(env) {
         case 'production':
           baseUrl = 'https://backendlaundary.fomino.ch';
@@ -161,7 +169,7 @@ async function startServer() {
         default:
           baseUrl = `http://localhost:${server_port}`;
       }
-      
+
       console.log('\x1b[94m%s\x1b[0m', `**********************************************************`);
       console.log('\x1b[94m%s\x1b[0m', `** Server running in ${env.toUpperCase()} mode`);
       console.log('\x1b[94m%s\x1b[0m', `** Server URL: ${baseUrl}`);

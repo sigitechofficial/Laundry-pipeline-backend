@@ -317,6 +317,8 @@ router.post('/addClassifiedAs', validateAccessToken, asyncMiddleware(adminContro
 router.get('/getClassifiedAs', validateAccessToken, asyncMiddleware(adminController.getClassifiedAs))
 //Add Features
 router.post('/addfeatures', validateAccessToken, asyncMiddleware(adminController.addfeatures))
+//Get Features
+router.get('/getFeatures', validateAccessToken, asyncMiddleware(adminController.getFeatures))
 
 
 
