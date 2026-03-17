@@ -12,6 +12,20 @@ const {
  * Handles booking cancellations with cancellation policy enforcement
  */
 class CancelBookingService {
+    _getStoredDatePart(dateValue, fieldName) {
+        if (typeof dateValue === 'string' && dateValue.length >= 10) {
+            return dateValue.slice(0, 10);
+        }
+
+        if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+            const year = dateValue.getFullYear();
+            const month = String(dateValue.getMonth() + 1).padStart(2, '0');
+            const day = String(dateValue.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        throw new ValidationError(`${fieldName} must be a valid date`);
+    }
     
     /**
      * Cancel a booking with policy-based charge calculation
@@ -247,13 +261,14 @@ class CancelBookingService {
      * @returns {Object} Charge details
      */
     async calculatePrePickupCharge(bookingData, config, customerId) {
-        // Combine collection date and time
-        const collectionDateTime = moment(
-            `${moment(bookingData.collectionDate).format('YYYY-MM-DD')} ${bookingData.collectionTimeFrom}`,
+        // Booking slots are persisted in UTC, so compare in UTC.
+        const collectionDatePart = this._getStoredDatePart(bookingData.collectionDate, 'collectionDate');
+        const collectionDateTime = moment.utc(
+            `${collectionDatePart} ${bookingData.collectionTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss'
         );
 
-        const now = moment();
+        const now = moment.utc();
         const minutesUntilPickup = collectionDateTime.diff(now, 'minutes');
 
         // A 0-minute free window means no free pre-pickup cancellations.

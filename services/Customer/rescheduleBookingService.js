@@ -19,13 +19,15 @@ const {
     zone
 } = require('../../models');
 const { Op } = require('sequelize');
-const moment = require('moment');
+const moment = require('moment-timezone');
 const {
     ValidationError,
     NotFoundError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { sendEvent } = require('../../socket_io');
+
+const BUSINESS_TIME_ZONE = 'Europe/London';
 
 /**
  * Helper: find shops in zone available for a given time slot
@@ -187,6 +189,55 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
  * Handles reschedule with policy enforcement and re-notification when not yet accepted
  */
 class RescheduleBookingService {
+    _getDatePart(dateValue, fieldName) {
+        if (typeof dateValue === 'string' && dateValue.length >= 10) {
+            return dateValue.slice(0, 10);
+        }
+
+        if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+            const year = dateValue.getFullYear();
+            const month = String(dateValue.getMonth() + 1).padStart(2, '0');
+            const day = String(dateValue.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        throw new ValidationError(`${fieldName} must be a valid date`);
+    }
+
+    _getTimePart(timeValue, fieldName) {
+        if (typeof timeValue !== 'string') {
+            throw new ValidationError(`${fieldName} must be a valid time`);
+        }
+
+        const trimmed = timeValue.trim();
+        const validTime = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+        if (!validTime.test(trimmed)) {
+            throw new ValidationError(`${fieldName} must be in HH:mm or HH:mm:ss format`);
+        }
+
+        return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
+    }
+
+    _convertLondonSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName) {
+        const datePart = this._getDatePart(dateValue, dateFieldName);
+        const timePart = this._getTimePart(timeValue, timeFieldName);
+
+        const londonDateTime = moment.tz(
+            `${datePart} ${timePart}`,
+            'YYYY-MM-DD HH:mm:ss',
+            BUSINESS_TIME_ZONE
+        );
+
+        if (!londonDateTime.isValid()) {
+            throw new ValidationError(`Invalid date/time combination for ${dateFieldName} and ${timeFieldName}`);
+        }
+
+        const utcDateTime = londonDateTime.clone().utc();
+        return {
+            date: utcDateTime.format('YYYY-MM-DD'),
+            time: utcDateTime.format('HH:mm:ss')
+        };
+    }
 
     /**
      * Reschedule a booking
@@ -207,6 +258,31 @@ class RescheduleBookingService {
             deliveryTimeFrom,
             deliveryTimeTo
         } = newSchedule;
+
+        const collectionFromUtc = this._convertLondonSlotToUtc(
+            collectionDate,
+            collectionTimeFrom,
+            'collectionDate',
+            'collectionTimeFrom'
+        );
+        const collectionToUtc = this._convertLondonSlotToUtc(
+            collectionDate,
+            collectionTimeTo,
+            'collectionDate',
+            'collectionTimeTo'
+        );
+        const deliveryFromUtc = this._convertLondonSlotToUtc(
+            deliveryDate,
+            deliveryTimeFrom,
+            'deliveryDate',
+            'deliveryTimeFrom'
+        );
+        const deliveryToUtc = this._convertLondonSlotToUtc(
+            deliveryDate,
+            deliveryTimeTo,
+            'deliveryDate',
+            'deliveryTimeTo'
+        );
 
         // Step 1: Fetch booking and verify ownership
         const bookingData = await booking.findOne({
@@ -246,16 +322,16 @@ class RescheduleBookingService {
         }
 
         // Step 3: Validate new dates are in the future
-        const newCollectionMoment = moment(
-            `${moment(collectionDate).format('YYYY-MM-DD')} ${collectionTimeFrom}`,
+        const newCollectionMoment = moment.utc(
+            `${collectionFromUtc.date} ${collectionFromUtc.time}`,
             'YYYY-MM-DD HH:mm:ss'
         );
-        if (newCollectionMoment.isBefore(moment())) {
+        if (newCollectionMoment.isBefore(moment.utc())) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
-        const newDeliveryMoment = moment(
-            `${moment(deliveryDate).format('YYYY-MM-DD')} ${deliveryTimeFrom}`,
+        const newDeliveryMoment = moment.utc(
+            `${deliveryFromUtc.date} ${deliveryFromUtc.time}`,
             'YYYY-MM-DD HH:mm:ss'
         );
         if (newDeliveryMoment.isBefore(newCollectionMoment)) {
@@ -368,12 +444,12 @@ class RescheduleBookingService {
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
         await booking.update(
             {
-                collectionDate,
-                collectionTimeFrom,
-                collectionTimeTo,
-                deliveryDate,
-                deliveryTimeFrom,
-                deliveryTimeTo,
+                collectionDate: collectionFromUtc.date,
+                collectionTimeFrom: collectionFromUtc.time,
+                collectionTimeTo: collectionToUtc.time,
+                deliveryDate: deliveryFromUtc.date,
+                deliveryTimeFrom: deliveryFromUtc.time,
+                deliveryTimeTo: deliveryToUtc.time,
                 orderAmount: newOrderAmount,
                 rescheduledCount: bookingData.rescheduledCount + 1,
                 rescheduleReason: reasonText || null,
@@ -396,12 +472,12 @@ class RescheduleBookingService {
             console.log('🔄 Booking status is 1 (no agent accepted yet) — re-triggering agent notification with new schedule');
             await findAvailableShopsAndNotify(bookingId, {
                 zoneId: bookingData.zoneId,
-                collectionDate,
-                collectionTimeFrom,
-                collectionTimeTo,
-                deliveryDate,
-                deliveryTimeFrom,
-                deliveryTimeTo
+                collectionDate: collectionFromUtc.date,
+                collectionTimeFrom: collectionFromUtc.time,
+                collectionTimeTo: collectionToUtc.time,
+                deliveryDate: deliveryFromUtc.date,
+                deliveryTimeFrom: deliveryFromUtc.time,
+                deliveryTimeTo: deliveryToUtc.time
             });
         }
 
@@ -412,12 +488,12 @@ class RescheduleBookingService {
             rescheduledCount: bookingData.rescheduledCount + 1,
             servicesUpdated,
             newSchedule: {
-                collectionDate,
-                collectionTimeFrom,
-                collectionTimeTo,
-                deliveryDate,
-                deliveryTimeFrom,
-                deliveryTimeTo
+                collectionDate: collectionFromUtc.date,
+                collectionTimeFrom: collectionFromUtc.time,
+                collectionTimeTo: collectionToUtc.time,
+                deliveryDate: deliveryFromUtc.date,
+                deliveryTimeFrom: deliveryFromUtc.time,
+                deliveryTimeTo: deliveryToUtc.time
             },
             newOrderAmount,
             rescheduleCharge: feeDetails.rescheduleCharge,

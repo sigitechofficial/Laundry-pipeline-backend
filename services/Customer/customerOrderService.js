@@ -43,6 +43,9 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { literal, fn, col } = require("sequelize");
+const moment = require('moment-timezone');
+
+const BUSINESS_TIME_ZONE = 'Europe/London';
 
 
 // Import stripe functions
@@ -457,6 +460,55 @@ async function bookingEventSentCheckTheShops(
  * Handles all customer order related business logic
  */
 class CustomerOrderService {
+    _getDatePart(dateValue, fieldName) {
+        if (typeof dateValue === 'string' && dateValue.length >= 10) {
+            return dateValue.slice(0, 10);
+        }
+
+        if (dateValue instanceof Date && !Number.isNaN(dateValue.getTime())) {
+            const year = dateValue.getFullYear();
+            const month = String(dateValue.getMonth() + 1).padStart(2, '0');
+            const day = String(dateValue.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        throw new ValidationError(`${fieldName} must be a valid date`);
+    }
+
+    _getTimePart(timeValue, fieldName) {
+        if (typeof timeValue !== 'string') {
+            throw new ValidationError(`${fieldName} must be a valid time`);
+        }
+
+        const trimmed = timeValue.trim();
+        const validTime = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+        if (!validTime.test(trimmed)) {
+            throw new ValidationError(`${fieldName} must be in HH:mm or HH:mm:ss format`);
+        }
+
+        return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
+    }
+
+    _convertLondonSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName) {
+        const datePart = this._getDatePart(dateValue, dateFieldName);
+        const timePart = this._getTimePart(timeValue, timeFieldName);
+
+        const londonDateTime = moment.tz(
+            `${datePart} ${timePart}`,
+            'YYYY-MM-DD HH:mm:ss',
+            BUSINESS_TIME_ZONE
+        );
+
+        if (!londonDateTime.isValid()) {
+            throw new ValidationError(`Invalid date/time combination for ${dateFieldName} and ${timeFieldName}`);
+        }
+
+        const utcDateTime = londonDateTime.clone().utc();
+        return {
+            date: utcDateTime.format('YYYY-MM-DD'),
+            time: utcDateTime.format('HH:mm:ss')
+        };
+    }
 
     /**
      * Create Booking
@@ -611,18 +663,43 @@ class CustomerOrderService {
             specialChars: false,
         });
 
+        const collectionFromUtc = this._convertLondonSlotToUtc(
+            collectionDate,
+            collectionTimeFrom,
+            'collectionDate',
+            'collectionTimeFrom'
+        );
+        const collectionToUtc = this._convertLondonSlotToUtc(
+            collectionDate,
+            collectionTimeTo,
+            'collectionDate',
+            'collectionTimeTo'
+        );
+        const deliveryFromUtc = this._convertLondonSlotToUtc(
+            deliveryDate,
+            deliveryTimeFrom,
+            'deliveryDate',
+            'deliveryTimeFrom'
+        );
+        const deliveryToUtc = this._convertLondonSlotToUtc(
+            deliveryDate,
+            deliveryTimeTo,
+            'deliveryDate',
+            'deliveryTimeTo'
+        );
+
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
         // paymentIntentId will be set at Status 4 when payment is captured.
         const bookingData = await booking.create({
-            collectionDate,
-            collectionTimeFrom,
-            collectionTimeTo,
+            collectionDate: collectionFromUtc.date,
+            collectionTimeFrom: collectionFromUtc.time,
+            collectionTimeTo: collectionToUtc.time,
             driverInstruction,
             frequency,
-            deliveryDate,
-            deliveryTimeFrom,
-            deliveryTimeTo,
+            deliveryDate: deliveryFromUtc.date,
+            deliveryTimeFrom: deliveryFromUtc.time,
+            deliveryTimeTo: deliveryToUtc.time,
             customerId: userId,
             bookingStatusId: 1,
             pickupAddresId: userPickUpAddressId,
