@@ -103,6 +103,7 @@ class ActivePoliciesService {
             include: [
                 {
                     model: noShowPolicyConfig,
+                    as: 'noShowConfig',
                     required: false
                 }
             ],

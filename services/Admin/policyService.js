@@ -1,4 +1,4 @@
-const { policy, noShowpolicyConfig } = require('../../models');
+const { policy, noShowPolicyConfig } = require('../../models');
 const { NotFoundError, ConflictError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 /**
@@ -59,7 +59,7 @@ class policyService {
             include: [
                 {
                     model: noShowPolicyConfig,
-                    as: 'config',
+                    as: 'noShowConfig',
                     required: false
                 }
             ]
@@ -99,7 +99,7 @@ class policyService {
             include: [
                 {
                     model: noShowPolicyConfig,
-                    as: 'config',
+                    as: 'noShowConfig',
                     required: false
                 }
             ],
@@ -181,7 +181,7 @@ class policyService {
             include: [
                 {
                     model: noShowPolicyConfig,
-                    as: 'config',
+                    as: 'noShowConfig',
                     required: false
                 }
             ]
@@ -194,7 +194,7 @@ class policyService {
                 include: [
                     {
                         model: noShowPolicyConfig,
-                        as: 'config',
+                        as: 'noShowConfig',
                         required: false
                     }
                 ],

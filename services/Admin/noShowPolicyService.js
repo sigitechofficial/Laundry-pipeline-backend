@@ -144,6 +144,7 @@ class NoShowPolicyService {
             include: [
                 {
                     model: noShowPolicyConfig,
+                    as: 'noShowConfig',
                     required: false
                 }
             ]
@@ -189,6 +190,7 @@ class NoShowPolicyService {
             include: [
                 {
                     model: noShowPolicyConfig,
+                    as: 'noShowConfig',
                     required: false
                 }
             ],
@@ -297,6 +299,7 @@ class NoShowPolicyService {
             include: [
                 {
                     model: noShowPolicyConfig,
+                    as: 'noShowConfig',
                     required: false
                 }
             ],

@@ -1186,6 +1186,7 @@ class CustomerOrderService {
                     include: [
                         {
                             model: noShowPolicyConfig,
+                            as: 'noShowConfig',
                             attributes: [
                                 "id",
                                 "enableForPickup",

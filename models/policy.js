@@ -11,7 +11,10 @@ module.exports = (sequelize, DataTypes) => {
      */
     static associate(models) {
       // Relation with NoShowPolicyConfig Model
-      policy.hasOne(models.noShowPolicyConfig)
+      policy.hasOne(models.noShowPolicyConfig, {
+        foreignKey: 'policyId',
+        as: 'noShowConfig'
+      })
       models.noShowPolicyConfig.belongsTo(policy)
       
       // Relation with CancellationPolicyConfig Model
