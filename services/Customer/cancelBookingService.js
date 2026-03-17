@@ -256,12 +256,13 @@ class CancelBookingService {
         const now = moment();
         const minutesUntilPickup = collectionDateTime.diff(now, 'minutes');
 
-        // Check if within free cancellation window
-        if (minutesUntilPickup > config.prePickupFreeChargeWindowMinutes) {
+        // A 0-minute free window means no free pre-pickup cancellations.
+        const freeWindowMinutes = Number(config.prePickupFreeChargeWindowMinutes) || 0;
+        if (freeWindowMinutes > 0 && minutesUntilPickup > freeWindowMinutes) {
             return {
                 charge: 0,
                 policyApplied: 'Free Cancellation Window',
-                reason: `Cancelled ${minutesUntilPickup} minutes before pickup (free window: ${config.prePickupFreeChargeWindowMinutes} minutes)`
+                reason: `Cancelled ${minutesUntilPickup} minutes before pickup (free window: ${freeWindowMinutes} minutes)`
             };
         }
 
