@@ -3,6 +3,7 @@ const router = express()
 const asyncMiddleware = require('../middlewares/asyncHandler')
 const adminController = require('../controllers/Admin/admin')
 const adminAuth = require('../controllers/Admin/adminAuth')
+const reportsController = require('../controllers/Admin/reports')
 const multer = require('multer')
 const path = require('path')
 const validateAccessToken = require('../middlewares/adminValidateToken')
@@ -492,6 +493,26 @@ router.put('/updateBlog/:blogId', validateAccessToken, uploadBlogImage.fields([
 router.delete('/deleteBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.deleteBlog))
 // Toggle Blog Status
 router.patch('/toggleBlogStatus/:blogId', validateAccessToken, asyncMiddleware(adminController.toggleBlogStatus))
+
+
+
+//!-----------------------------------Reports------------------------------------>>>>
+// 1. Top Services Report
+router.get('/reports/top-services',        validateAccessToken, asyncMiddleware(reportsController.getTopServicesReport))
+// 2. Hourly Report
+router.get('/reports/hourly',              validateAccessToken, asyncMiddleware(reportsController.getHourlyReport))
+// 3. On Hold Report
+router.get('/reports/on-hold',             validateAccessToken, asyncMiddleware(reportsController.getOnHoldReport))
+// 4. Service Demand Report
+router.get('/reports/service-demand',      validateAccessToken, asyncMiddleware(reportsController.getServiceDemandReport))
+// 5. Top Performing Shops
+router.get('/reports/top-shops',           validateAccessToken, asyncMiddleware(reportsController.getTopShopsReport))
+// 6. Daily Earning Report
+router.get('/reports/daily-earnings',      validateAccessToken, asyncMiddleware(reportsController.getDailyEarningReport))
+// 7. Daily Earning Report by Zone
+router.get('/reports/daily-earnings/zone', validateAccessToken, asyncMiddleware(reportsController.getDailyEarningByZoneReport))
+// 8. Daily Earning Report by Shop
+router.get('/reports/daily-earnings/shop', validateAccessToken, asyncMiddleware(reportsController.getDailyEarningByShopReport))
 
 
 module.exports = router
