@@ -15,6 +15,15 @@ const {
     OnHoldConfirmation
 } = require('../../models');
 
+// Resolve actual MySQL table names from Sequelize models (avoids pluralisation guessing)
+const T = {
+    bookings:              booking.getTableName(),
+    billingDetails:        billingDetails.getTableName(),
+    zones:                 zone.getTableName(),
+    addressDb:             addressDb.getTableName(),
+    bussinessInformation:  bussinessInformation.getTableName(),
+};
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -138,7 +147,7 @@ async function getHourlyReport(filters = {}) {
     const [pickup] = await sequelize.query(`
         SELECT HOUR(b.collectionTimeFrom) AS hour,
                COUNT(b.id)               AS pickupOrders
-        FROM   bookings b
+        FROM   \`${T.bookings}\` b
         WHERE  b.deletedAt IS NULL
           ${filters.zoneId ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
           ${filters.period && filters.period !== 'all' ? _rawDateCondition(filters, 'b.collectionDate') : ''}
@@ -149,7 +158,7 @@ async function getHourlyReport(filters = {}) {
     const [delivery] = await sequelize.query(`
         SELECT HOUR(b.deliveryTimeFrom) AS hour,
                COUNT(b.id)             AS deliveryOrders
-        FROM   bookings b
+        FROM   \`${T.bookings}\` b
         WHERE  b.deletedAt IS NULL
           ${filters.zoneId ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
           ${filters.period && filters.period !== 'all' ? _rawDateCondition(filters, 'b.collectionDate') : ''}
@@ -332,11 +341,11 @@ async function getTopShopsReport(filters = {}) {
                 - COALESCE(SUM(bd.zoneAdminCommission), 0)
                 - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
                 - COALESCE(SUM(b.rescheduleCharge), 0)                    AS netPayout
-        FROM   bookings b
-        JOIN   addressDb a  ON a.id = b.laundryShopId
-        JOIN   bussinessInformation bi ON bi.shopAddressId = a.id
-        LEFT   JOIN billingDetails bd ON bd.bookingId = b.id
-        LEFT   JOIN zones z ON z.id = b.zoneId
+        FROM   \`${T.bookings}\` b
+        JOIN   \`${T.addressDb}\` a  ON a.id = b.laundryShopId
+        JOIN   \`${T.bussinessInformation}\` bi ON bi.shopAddressId = a.id
+        LEFT   JOIN \`${T.billingDetails}\` bd ON bd.bookingId = b.id
+        LEFT   JOIN \`${T.zones}\` z ON z.id = b.zoneId
         WHERE  b.deletedAt  IS NULL
           AND  b.bookingStatusId IN (16, 17)
           ${filters.zoneId  ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
@@ -379,8 +388,8 @@ async function getDailyEarningReport(filters = {}) {
             COUNT(b.id)                AS ordersCompleted,
             COALESCE(SUM(bd.total), 0) AS grossRevenue,
             COALESCE(AVG(bd.total), 0) AS avgOrderValue
-        FROM   bookings b
-        LEFT   JOIN billingDetails bd ON bd.bookingId = b.id
+        FROM   \`${T.bookings}\` b
+        LEFT   JOIN \`${T.billingDetails}\` bd ON bd.bookingId = b.id
         WHERE  b.deletedAt IS NULL
           AND  b.bookingStatusId IN (16, 17)
           ${filters.zoneId ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
@@ -414,9 +423,9 @@ async function getDailyEarningByZoneReport(filters = {}) {
             DAYNAME(b.collectionDate)  AS dayOfWeek,
             z.name                     AS zoneName,
             COALESCE(SUM(bd.total), 0) AS revenue
-        FROM   bookings b
-        LEFT   JOIN billingDetails bd ON bd.bookingId = b.id
-        LEFT   JOIN zones z ON z.id = b.zoneId
+        FROM   \`${T.bookings}\` b
+        LEFT   JOIN \`${T.billingDetails}\` bd ON bd.bookingId = b.id
+        LEFT   JOIN \`${T.zones}\` z ON z.id = b.zoneId
         WHERE  b.deletedAt IS NULL
           AND  b.bookingStatusId IN (16, 17)
           ${filters.zoneId ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
@@ -449,11 +458,11 @@ async function getDailyEarningByShopReport(filters = {}) {
             bi.shopName,
             z.name                     AS zoneName,
             COALESCE(SUM(bd.total), 0) AS revenue
-        FROM   bookings b
-        JOIN   addressDb a  ON a.id = b.laundryShopId
-        JOIN   bussinessInformation bi ON bi.shopAddressId = a.id
-        LEFT   JOIN billingDetails bd ON bd.bookingId = b.id
-        LEFT   JOIN zones z ON z.id = b.zoneId
+        FROM   \`${T.bookings}\` b
+        JOIN   \`${T.addressDb}\` a  ON a.id = b.laundryShopId
+        JOIN   \`${T.bussinessInformation}\` bi ON bi.shopAddressId = a.id
+        LEFT   JOIN \`${T.billingDetails}\` bd ON bd.bookingId = b.id
+        LEFT   JOIN \`${T.zones}\` z ON z.id = b.zoneId
         WHERE  b.deletedAt IS NULL
           AND  b.bookingStatusId IN (16, 17)
           ${filters.zoneId ? `AND b.zoneId = ${parseInt(filters.zoneId)}` : ''}
