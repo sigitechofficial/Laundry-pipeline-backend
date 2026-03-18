@@ -383,8 +383,9 @@ async function getAllOrderStatus(req, res) {
  * Cancel Customer Booking with Policy Enforcement
  */
 async function cancelCustomerBooking(req, res) {
-    const { bookingId, reasonId, reasonText } = req.body;
+    const { bookingId, reasonId, reasonText, timeZone, clientTimeZone } = req.body;
     const customerId = req.user.id;
+    const resolvedTimeZone = timeZone || clientTimeZone || null;
 
     if (!bookingId) {
         throw new customError("Booking ID is required");
@@ -398,7 +399,8 @@ async function cancelCustomerBooking(req, res) {
         bookingId,
         customerId,
         reasonId,
-        reasonText
+        reasonText,
+        resolvedTimeZone
     );
 
     return ResponseHelper.success(res, "Booking cancelled successfully", result);

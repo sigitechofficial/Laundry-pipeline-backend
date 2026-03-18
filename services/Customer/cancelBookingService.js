@@ -1,6 +1,8 @@
 const { booking, cancelBooking, users, policy, cancellationPolicyConfig, bookingHistory, wallet } = require('../../models');
 const { Op } = require('sequelize');
-const moment = require('moment');
+const moment = require('moment-timezone');
+
+const BUSINESS_TIME_ZONE = 'Europe/London';
 const { 
     ValidationError, 
     NotFoundError, 
@@ -33,9 +35,10 @@ class CancelBookingService {
      * @param {number} customerId - Customer ID requesting cancellation
      * @param {number} reasonId - Optional reason ID
      * @param {string} reasonText - Cancellation reason text
+     * @param {string} timeZone - IANA timezone of the caller (e.g. "Asia/Karachi"). Falls back to business timezone.
      * @returns {Object} Cancellation result with charges
      */
-    async cancelCustomerBooking(bookingId, customerId, reasonId = null, reasonText) {
+    async cancelCustomerBooking(bookingId, customerId, reasonId = null, reasonText, timeZone = null) {
         // Step 1: Fetch booking details
         const bookingData = await booking.findOne({
             where: {
@@ -80,7 +83,8 @@ class CancelBookingService {
         const cancellationDetails = await this.calculateCancellationCharge(
             bookingData,
             activeCancellationPolicy,
-            customerId
+            customerId,
+            timeZone
         );
 
         // Step 7: Create cancellation record
@@ -185,9 +189,10 @@ class CancelBookingService {
      * @param {Object} bookingData - Booking data
      * @param {Object} cancellationPolicy - Cancellation policy
      * @param {number} customerId - Customer ID
+     * @param {string} timeZone - IANA timezone for time comparison
      * @returns {Object} Cancellation charge details
      */
-    async calculateCancellationCharge(bookingData, cancellationPolicy, customerId) {
+    async calculateCancellationCharge(bookingData, cancellationPolicy, customerId, timeZone = null) {
         const config = cancellationPolicy.cancellationConfig;
         const bookingStatusId = bookingData.bookingStatusId;
         let cancellationCharge = 0;
@@ -197,7 +202,7 @@ class CancelBookingService {
 
         // Pre-Pickup Phase (Status 1-3: Order Created, Confirmed, Awaiting Collection)
         if ([1, 2, 3].includes(bookingStatusId)) {
-            const result = await this.calculatePrePickupCharge(bookingData, config, customerId);
+            const result = await this.calculatePrePickupCharge(bookingData, config, customerId, timeZone);
             cancellationCharge = result.charge;
             policyApplied = result.policyApplied;
             reason = result.reason;
@@ -254,21 +259,36 @@ class CancelBookingService {
     }
 
     /**
+     * Resolve a valid IANA timezone string, falling back to the business timezone.
+     */
+    _resolveTimeZone(timeZone) {
+        if (timeZone && typeof timeZone === 'string' && moment.tz.zone(timeZone.trim())) {
+            return timeZone.trim();
+        }
+        return BUSINESS_TIME_ZONE;
+    }
+
+    /**
      * Calculate pre-pickup cancellation charge
      * @param {Object} bookingData - Booking data
      * @param {Object} config - Policy config
      * @param {number} customerId - Customer ID
+     * @param {string} timeZone - IANA timezone from the frontend (e.g. "Asia/Karachi")
      * @returns {Object} Charge details
      */
-    async calculatePrePickupCharge(bookingData, config, customerId) {
-        // Booking slots are persisted in UTC, so compare in UTC.
+    async calculatePrePickupCharge(bookingData, config, customerId, timeZone = null) {
+        // Use the timezone sent by the frontend; fall back to business timezone if not provided.
+        const tz = this._resolveTimeZone(timeZone);
+
+        // Both pickup time and now are interpreted in the same timezone so the diff is always accurate.
         const collectionDatePart = this._getStoredDatePart(bookingData.collectionDate, 'collectionDate');
-        const collectionDateTime = moment.utc(
+        const collectionDateTime = moment.tz(
             `${collectionDatePart} ${bookingData.collectionTimeFrom}`,
-            'YYYY-MM-DD HH:mm:ss'
+            'YYYY-MM-DD HH:mm:ss',
+            tz
         );
 
-        const now = moment.utc();
+        const now = moment.tz(tz);
         const minutesUntilPickup = collectionDateTime.diff(now, 'minutes');
 
         // A 0-minute free window means no free pre-pickup cancellations.

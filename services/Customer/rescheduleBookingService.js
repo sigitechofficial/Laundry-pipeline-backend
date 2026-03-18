@@ -274,34 +274,13 @@ class RescheduleBookingService {
             timeZone
         } = newSchedule;
 
-        const collectionFromUtc = this._convertSlotToUtc(
-            collectionDate,
-            collectionTimeFrom,
-            'collectionDate',
-            'collectionTimeFrom',
-            timeZone
-        );
-        const collectionToUtc = this._convertSlotToUtc(
-            collectionDate,
-            collectionTimeTo,
-            'collectionDate',
-            'collectionTimeTo',
-            timeZone
-        );
-        const deliveryFromUtc = this._convertSlotToUtc(
-            deliveryDate,
-            deliveryTimeFrom,
-            'deliveryDate',
-            'deliveryTimeFrom',
-            timeZone
-        );
-        const deliveryToUtc = this._convertSlotToUtc(
-            deliveryDate,
-            deliveryTimeTo,
-            'deliveryDate',
-            'deliveryTimeTo',
-            timeZone
-        );
+        // Normalize time strings to HH:mm:ss, store as-is
+        const normalizedCollectionTimeFrom = this._getTimePart(collectionTimeFrom, 'collectionTimeFrom');
+        const normalizedCollectionTimeTo   = this._getTimePart(collectionTimeTo,   'collectionTimeTo');
+        const normalizedDeliveryTimeFrom   = this._getTimePart(deliveryTimeFrom,   'deliveryTimeFrom');
+        const normalizedDeliveryTimeTo     = this._getTimePart(deliveryTimeTo,     'deliveryTimeTo');
+        const normalizedCollectionDate     = this._getDatePart(collectionDate,     'collectionDate');
+        const normalizedDeliveryDate       = this._getDatePart(deliveryDate,       'deliveryDate');
 
         // Step 1: Fetch booking and verify ownership
         const bookingData = await booking.findOne({
@@ -341,17 +320,19 @@ class RescheduleBookingService {
         }
 
         // Step 3: Validate new dates are in the future
-        const newCollectionMoment = moment.utc(
-            `${collectionFromUtc.date} ${collectionFromUtc.time}`,
-            'YYYY-MM-DD HH:mm:ss'
+        const newCollectionMoment = moment.tz(
+            `${normalizedCollectionDate} ${normalizedCollectionTimeFrom}`,
+            'YYYY-MM-DD HH:mm:ss',
+            BUSINESS_TIME_ZONE
         );
-        if (newCollectionMoment.isBefore(moment.utc())) {
+        if (newCollectionMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
-        const newDeliveryMoment = moment.utc(
-            `${deliveryFromUtc.date} ${deliveryFromUtc.time}`,
-            'YYYY-MM-DD HH:mm:ss'
+        const newDeliveryMoment = moment.tz(
+            `${normalizedDeliveryDate} ${normalizedDeliveryTimeFrom}`,
+            'YYYY-MM-DD HH:mm:ss',
+            BUSINESS_TIME_ZONE
         );
         if (newDeliveryMoment.isBefore(newCollectionMoment)) {
             throw new ValidationError("Delivery date must be after the collection date");
@@ -463,12 +444,12 @@ class RescheduleBookingService {
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
         await booking.update(
             {
-                collectionDate: collectionFromUtc.date,
-                collectionTimeFrom: collectionFromUtc.time,
-                collectionTimeTo: collectionToUtc.time,
-                deliveryDate: deliveryFromUtc.date,
-                deliveryTimeFrom: deliveryFromUtc.time,
-                deliveryTimeTo: deliveryToUtc.time,
+                collectionDate: normalizedCollectionDate,
+                collectionTimeFrom: normalizedCollectionTimeFrom,
+                collectionTimeTo: normalizedCollectionTimeTo,
+                deliveryDate: normalizedDeliveryDate,
+                deliveryTimeFrom: normalizedDeliveryTimeFrom,
+                deliveryTimeTo: normalizedDeliveryTimeTo,
                 orderAmount: newOrderAmount,
                 rescheduledCount: bookingData.rescheduledCount + 1,
                 rescheduleReason: reasonText || null,
@@ -491,12 +472,12 @@ class RescheduleBookingService {
             console.log('🔄 Booking status is 1 (no agent accepted yet) — re-triggering agent notification with new schedule');
             await findAvailableShopsAndNotify(bookingId, {
                 zoneId: bookingData.zoneId,
-                collectionDate: collectionFromUtc.date,
-                collectionTimeFrom: collectionFromUtc.time,
-                collectionTimeTo: collectionToUtc.time,
-                deliveryDate: deliveryFromUtc.date,
-                deliveryTimeFrom: deliveryFromUtc.time,
-                deliveryTimeTo: deliveryToUtc.time
+                collectionDate: normalizedCollectionDate,
+                collectionTimeFrom: normalizedCollectionTimeFrom,
+                collectionTimeTo: normalizedCollectionTimeTo,
+                deliveryDate: normalizedDeliveryDate,
+                deliveryTimeFrom: normalizedDeliveryTimeFrom,
+                deliveryTimeTo: normalizedDeliveryTimeTo
             });
         }
 
@@ -507,12 +488,12 @@ class RescheduleBookingService {
             rescheduledCount: bookingData.rescheduledCount + 1,
             servicesUpdated,
             newSchedule: {
-                collectionDate: collectionFromUtc.date,
-                collectionTimeFrom: collectionFromUtc.time,
-                collectionTimeTo: collectionToUtc.time,
-                deliveryDate: deliveryFromUtc.date,
-                deliveryTimeFrom: deliveryFromUtc.time,
-                deliveryTimeTo: deliveryToUtc.time
+                collectionDate: normalizedCollectionDate,
+                collectionTimeFrom: normalizedCollectionTimeFrom,
+                collectionTimeTo: normalizedCollectionTimeTo,
+                deliveryDate: normalizedDeliveryDate,
+                deliveryTimeFrom: normalizedDeliveryTimeFrom,
+                deliveryTimeTo: normalizedDeliveryTimeTo
             },
             newOrderAmount,
             rescheduleCharge: feeDetails.rescheduleCharge,

@@ -678,47 +678,26 @@ class CustomerOrderService {
             specialChars: false,
         });
 
-        const collectionFromUtc = this._convertSlotToUtc(
-            collectionDate,
-            collectionTimeFrom,
-            'collectionDate',
-            'collectionTimeFrom',
-            timeZone
-        );
-        const collectionToUtc = this._convertSlotToUtc(
-            collectionDate,
-            collectionTimeTo,
-            'collectionDate',
-            'collectionTimeTo',
-            timeZone
-        );
-        const deliveryFromUtc = this._convertSlotToUtc(
-            deliveryDate,
-            deliveryTimeFrom,
-            'deliveryDate',
-            'deliveryTimeFrom',
-            timeZone
-        );
-        const deliveryToUtc = this._convertSlotToUtc(
-            deliveryDate,
-            deliveryTimeTo,
-            'deliveryDate',
-            'deliveryTimeTo',
-            timeZone
-        );
+        // Normalize time strings to HH:mm:ss format before saving as-is
+        const normalizedCollectionTimeFrom = this._getTimePart(collectionTimeFrom, 'collectionTimeFrom');
+        const normalizedCollectionTimeTo   = this._getTimePart(collectionTimeTo,   'collectionTimeTo');
+        const normalizedDeliveryTimeFrom   = this._getTimePart(deliveryTimeFrom,   'deliveryTimeFrom');
+        const normalizedDeliveryTimeTo     = this._getTimePart(deliveryTimeTo,     'deliveryTimeTo');
+        const normalizedCollectionDate     = this._getDatePart(collectionDate,     'collectionDate');
+        const normalizedDeliveryDate       = this._getDatePart(deliveryDate,       'deliveryDate');
 
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
         // paymentIntentId will be set at Status 4 when payment is captured.
         const bookingData = await booking.create({
-            collectionDate: collectionFromUtc.date,
-            collectionTimeFrom: collectionFromUtc.time,
-            collectionTimeTo: collectionToUtc.time,
+            collectionDate: normalizedCollectionDate,
+            collectionTimeFrom: normalizedCollectionTimeFrom,
+            collectionTimeTo: normalizedCollectionTimeTo,
             driverInstruction,
             frequency,
-            deliveryDate: deliveryFromUtc.date,
-            deliveryTimeFrom: deliveryFromUtc.time,
-            deliveryTimeTo: deliveryToUtc.time,
+            deliveryDate: normalizedDeliveryDate,
+            deliveryTimeFrom: normalizedDeliveryTimeFrom,
+            deliveryTimeTo: normalizedDeliveryTimeTo,
             customerId: userId,
             bookingStatusId: 1,
             pickupAddresId: userPickUpAddressId,
