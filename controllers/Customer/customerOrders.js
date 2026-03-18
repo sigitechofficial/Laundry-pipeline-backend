@@ -90,10 +90,12 @@ async function createBooking(req, res) {
         paymentMethodId,
         stripeCustomerId,
         tipAmount,
-        timeZone
+        timeZone,
+        clientTimeZone
     } = req.body;
 
     const userId = req.user.id;
+    const resolvedTimeZone = timeZone || clientTimeZone;
 
     // Call service to handle business logic
     // NOTE: Both setupIntentId and paymentMethodId are saved.
@@ -124,7 +126,7 @@ async function createBooking(req, res) {
         paymentMethodId,
         stripeCustomerId,
         tipAmount,
-        timeZone
+        timeZone: resolvedTimeZone
     }, userId);
 
     // Return response using ResponseHelper success method
@@ -1059,10 +1061,12 @@ async function rescheduleCustomerBooking(req, res) {
         reasonText,
         services,
         preferencesArray,
-        timeZone
+        timeZone,
+        clientTimeZone
     } = req.body;
 
     const customerId = req.user.id;
+    const resolvedTimeZone = timeZone || clientTimeZone;
 
     if (!bookingId) {
         throw new customError("Booking ID is required", 400);
@@ -1077,7 +1081,15 @@ async function rescheduleCustomerBooking(req, res) {
     const result = await rescheduleBookingService.rescheduleCustomerBooking(
         bookingId,
         customerId,
-        { collectionDate, collectionTimeFrom, collectionTimeTo, deliveryDate, deliveryTimeFrom, deliveryTimeTo, timeZone },
+        {
+            collectionDate,
+            collectionTimeFrom,
+            collectionTimeTo,
+            deliveryDate,
+            deliveryTimeFrom,
+            deliveryTimeTo,
+            timeZone: resolvedTimeZone
+        },
         reasonText,
         services,
         preferencesArray
