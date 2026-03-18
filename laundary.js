@@ -17,6 +17,7 @@ const driverRouter = require('./routes/driver');
 const agentRouter = require('./routes/agent');
 const error = require('./middlewares/error');
 const { universalErrorHandler, universalNotFoundHandler, universalAsyncHandler } = require('./middlewares/universalErrorHandler');
+const requestBodyLogger = require('./middlewares/requestBodyLogger');
 
 const server = http.createServer(app);
 
@@ -87,11 +88,8 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 4. Debug logging (optional - remove in production)
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
-  next();
-});
+// 4. Global request logger
+app.use(requestBodyLogger);
 
 // ============================================
 // SWAGGER DOCS

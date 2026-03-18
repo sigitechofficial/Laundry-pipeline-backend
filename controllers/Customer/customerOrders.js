@@ -89,7 +89,8 @@ async function createBooking(req, res) {
         setupIntentId,
         paymentMethodId,
         stripeCustomerId,
-        tipAmount
+        tipAmount,
+        timeZone
     } = req.body;
 
     const userId = req.user.id;
@@ -122,7 +123,8 @@ async function createBooking(req, res) {
         setupIntentId,
         paymentMethodId,
         stripeCustomerId,
-        tipAmount
+        tipAmount,
+        timeZone
     }, userId);
 
     // Return response using ResponseHelper success method
@@ -1056,7 +1058,8 @@ async function rescheduleCustomerBooking(req, res) {
         deliveryTimeTo,
         reasonText,
         services,
-        preferencesArray
+        preferencesArray,
+        timeZone
     } = req.body;
 
     const customerId = req.user.id;
@@ -1074,7 +1077,7 @@ async function rescheduleCustomerBooking(req, res) {
     const result = await rescheduleBookingService.rescheduleCustomerBooking(
         bookingId,
         customerId,
-        { collectionDate, collectionTimeFrom, collectionTimeTo, deliveryDate, deliveryTimeFrom, deliveryTimeTo },
+        { collectionDate, collectionTimeFrom, collectionTimeTo, deliveryDate, deliveryTimeFrom, deliveryTimeTo, timeZone },
         reasonText,
         services,
         preferencesArray

@@ -218,21 +218,35 @@ class RescheduleBookingService {
         return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
     }
 
-    _convertLondonSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName) {
+    _resolveSourceTimeZone(timeZone) {
+        if (!timeZone || typeof timeZone !== 'string') {
+            return BUSINESS_TIME_ZONE;
+        }
+
+        const normalizedTimeZone = timeZone.trim();
+        if (!moment.tz.zone(normalizedTimeZone)) {
+            throw new ValidationError(`Unsupported timeZone: ${normalizedTimeZone}`);
+        }
+
+        return normalizedTimeZone;
+    }
+
+    _convertSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName, timeZone) {
         const datePart = this._getDatePart(dateValue, dateFieldName);
         const timePart = this._getTimePart(timeValue, timeFieldName);
+        const sourceTimeZone = this._resolveSourceTimeZone(timeZone);
 
-        const londonDateTime = moment.tz(
+        const sourceDateTime = moment.tz(
             `${datePart} ${timePart}`,
             'YYYY-MM-DD HH:mm:ss',
-            BUSINESS_TIME_ZONE
+            sourceTimeZone
         );
 
-        if (!londonDateTime.isValid()) {
+        if (!sourceDateTime.isValid()) {
             throw new ValidationError(`Invalid date/time combination for ${dateFieldName} and ${timeFieldName}`);
         }
 
-        const utcDateTime = londonDateTime.clone().utc();
+        const utcDateTime = sourceDateTime.clone().utc();
         return {
             date: utcDateTime.format('YYYY-MM-DD'),
             time: utcDateTime.format('HH:mm:ss')
@@ -256,32 +270,37 @@ class RescheduleBookingService {
             collectionTimeTo,
             deliveryDate,
             deliveryTimeFrom,
-            deliveryTimeTo
+            deliveryTimeTo,
+            timeZone
         } = newSchedule;
 
-        const collectionFromUtc = this._convertLondonSlotToUtc(
+        const collectionFromUtc = this._convertSlotToUtc(
             collectionDate,
             collectionTimeFrom,
             'collectionDate',
-            'collectionTimeFrom'
+            'collectionTimeFrom',
+            timeZone
         );
-        const collectionToUtc = this._convertLondonSlotToUtc(
+        const collectionToUtc = this._convertSlotToUtc(
             collectionDate,
             collectionTimeTo,
             'collectionDate',
-            'collectionTimeTo'
+            'collectionTimeTo',
+            timeZone
         );
-        const deliveryFromUtc = this._convertLondonSlotToUtc(
+        const deliveryFromUtc = this._convertSlotToUtc(
             deliveryDate,
             deliveryTimeFrom,
             'deliveryDate',
-            'deliveryTimeFrom'
+            'deliveryTimeFrom',
+            timeZone
         );
-        const deliveryToUtc = this._convertLondonSlotToUtc(
+        const deliveryToUtc = this._convertSlotToUtc(
             deliveryDate,
             deliveryTimeTo,
             'deliveryDate',
-            'deliveryTimeTo'
+            'deliveryTimeTo',
+            timeZone
         );
 
         // Step 1: Fetch booking and verify ownership
