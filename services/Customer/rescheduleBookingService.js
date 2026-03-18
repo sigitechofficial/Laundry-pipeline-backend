@@ -320,19 +320,24 @@ class RescheduleBookingService {
         }
 
         // Step 3: Validate new dates are in the future
+        // Use the frontend timezone if provided, otherwise fall back to business timezone
+        const resolvedTz = (timeZone && moment.tz.zone(timeZone.trim()))
+            ? timeZone.trim()
+            : BUSINESS_TIME_ZONE;
+
         const newCollectionMoment = moment.tz(
             `${normalizedCollectionDate} ${normalizedCollectionTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            BUSINESS_TIME_ZONE
+            resolvedTz
         );
-        if (newCollectionMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
+        if (newCollectionMoment.isBefore(moment.tz(resolvedTz))) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
         const newDeliveryMoment = moment.tz(
             `${normalizedDeliveryDate} ${normalizedDeliveryTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            BUSINESS_TIME_ZONE
+            resolvedTz
         );
         if (newDeliveryMoment.isBefore(newCollectionMoment)) {
             throw new ValidationError("Delivery date must be after the collection date");
