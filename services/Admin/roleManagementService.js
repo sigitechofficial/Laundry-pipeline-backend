@@ -1,4 +1,5 @@
-const { roles, permissions } = require('../../models');
+const { roles, permissions, features } = require('../../models');
+const { Op } = require('sequelize');
 const { 
     ValidationError, 
     NotFoundError, 
@@ -39,13 +40,34 @@ class RoleManagementService {
      * @returns {Object} Created role data
      */
     async addRole(roleData) {
-        // Check if role already exists
         const roleExists = await roles.findOne({
             where: { name: roleData.name }
         });
         
         if (roleExists) {
             throw new ConflictError('Role with this name already exists');
+        }
+
+        // Validate that every featureId in permissionRole actually exists
+        if (Array.isArray(roleData.permissionRole) && roleData.permissionRole.length > 0) {
+            const incomingFeatureIds = roleData.permissionRole
+                .map(item => item?.id)
+                .filter(Boolean);
+
+            const existingFeatures = await features.findAll({
+                where: { id: { [Op.in]: incomingFeatureIds } },
+                attributes: ['id'],
+            });
+
+            const existingIds = existingFeatures.map(f => f.id);
+            const missingIds  = incomingFeatureIds.filter(id => !existingIds.includes(id));
+
+            if (missingIds.length > 0) {
+                throw new ValidationError(
+                    `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
+                    `Please create the features first using /addfeatures before assigning permissions.`
+                );
+            }
         }
 
         const createData = {
@@ -98,7 +120,26 @@ class RoleManagementService {
             throw new ValidationError('Failed to update role');
         }
 
-        if (Array.isArray(updateData.permissionRole)) {
+        if (Array.isArray(updateData.permissionRole) && updateData.permissionRole.length > 0) {
+            const incomingFeatureIds = updateData.permissionRole
+                .map(item => item?.id)
+                .filter(Boolean);
+
+            const existingFeatures = await features.findAll({
+                where: { id: { [Op.in]: incomingFeatureIds } },
+                attributes: ['id'],
+            });
+
+            const existingIds = existingFeatures.map(f => f.id);
+            const missingIds  = incomingFeatureIds.filter(id => !existingIds.includes(id));
+
+            if (missingIds.length > 0) {
+                throw new ValidationError(
+                    `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
+                    `Please create the features first using /addfeatures before assigning permissions.`
+                );
+            }
+
             await permissions.destroy({ where: { roleId } });
             const permissionRows = buildPermissionRows(updateData.permissionRole, roleId);
             if (permissionRows.length) {
