@@ -251,8 +251,6 @@ class OrderService {
      * @returns {Object} Order details for editing
      */
     async getOrderForEdit(orderId) {
-            const { users } = require('../../models');
-
             const orderDetails = await booking.findOne({
                 where: { id: orderId },
                 include: [
@@ -262,6 +260,19 @@ class OrderService {
                             { model: service, attributes: ['id', 'name'] },
                             { model: categories, attributes: ['id', 'name'] }
                         ]
+                    },
+                    {
+                        model: addressDb,
+                        as: 'laundryShop',
+                        required: false,
+                        include: [
+                            {
+                                model: bussinessInformation,
+                                required: false,
+                                attributes: ['id', 'shopName', 'agentId', 'shopAddressId']
+                            }
+                        ],
+                        attributes: ['id', 'userId', 'zoneId', 'addressType']
                     },
                     {
                         model: billingDetails,
@@ -300,6 +311,12 @@ class OrderService {
                         model: proofOfDeliveries,
                         attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
                     },
+                    {
+                        model: tip,
+                        as: 'tips',
+                        required: false,
+                        attributes: ['id', 'bookingId', 'amount']
+                    }
                 ]
             });
 
@@ -389,6 +406,8 @@ class OrderService {
                     },
                     {
                         model: tip,
+                        as: 'tips',
+                        required: false,
                         attributes: ['id', 'amount']
                     }
                 ]
@@ -603,10 +622,14 @@ class OrderService {
 
             // Update tip if provided
             if (tipAmount !== undefined) {
-                if (existingOrder.tip) {
+                const existingTip = Array.isArray(existingOrder.tips) && existingOrder.tips.length > 0
+                    ? existingOrder.tips[0]
+                    : null;
+
+                if (existingTip) {
                     await tip.update(
                         { amount: tipAmount },
-                        { where: { id: existingOrder.tip.id } }
+                        { where: { id: existingTip.id } }
                     );
                 } else {
                     const newTip = await tip.create({
@@ -683,6 +706,8 @@ class OrderService {
                     },
                     {
                         model: tip,
+                        as: 'tips',
+                        required: false,
                         attributes: ['id', 'amount']
                     },
                     {
