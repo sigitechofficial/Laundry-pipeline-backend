@@ -3491,6 +3491,114 @@ exports.getPerformanceDashboard = async (req, res) => {
     return ResponseHelper.success(res, "Performance Dashboard Data", response);
 }
 
+/*
+ * Order Summary Dashboard (Today/Week/Month/Year)
+ */
+exports.getOrderSummaryDashboard = async (req, res) => {
+    const agentId = req.user.id;
+    const period = (req.query.period || "today").toLowerCase();
+
+    const supportedPeriods = ["today", "week", "month", "year"];
+    if (!supportedPeriods.includes(period)) {
+        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
+    }
+
+    const now = new Date();
+    const start = new Date(now);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    if (period === "today") {
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "week") {
+        // Monday as week start
+        const day = start.getDay(); // 0=Sunday, 1=Monday...
+        const diffToMonday = day === 0 ? 6 : day - 1;
+        start.setDate(start.getDate() - diffToMonday);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "month") {
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "year") {
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+    }
+
+    const agentShopAddress = await addressDb.findOne({
+        where: {
+            userId: agentId,
+            addressType: "LaundaryShopAddress"
+        }
+    });
+
+    if (!agentShopAddress) {
+        throw new NotFoundError("Agent shop address not found");
+    }
+
+    const orders = await booking.findAll({
+        where: {
+            laundryShopId: agentShopAddress.id,
+            createdAt: {
+                [Op.between]: [start, end]
+            }
+        },
+        attributes: ["id"],
+        include: [
+            {
+                model: bookingStatus,
+                attributes: ["id", "title"]
+            }
+        ],
+        raw: true,
+        nest: true
+    });
+
+    const totals = {
+        completed: 0,
+        inProgress: 0,
+        onHold: 0,
+        cancelled: 0
+    };
+
+    for (const item of orders) {
+        const statusTitle = (item.bookingStatus?.title || "").toLowerCase();
+
+        if (statusTitle === "completed") {
+            totals.completed += 1;
+        } else if (statusTitle === "cancelled") {
+            totals.cancelled += 1;
+        } else if (statusTitle.includes("on hold") || statusTitle.includes("onhold")) {
+            totals.onHold += 1;
+        } else {
+            totals.inProgress += 1;
+        }
+    }
+
+    const totalOrders = orders.length;
+    const toPercentage = (count) => {
+        if (!totalOrders) return 0;
+        return Number(((count / totalOrders) * 100).toFixed(1));
+    };
+
+    const response = {
+        period,
+        range: {
+            startDate: start,
+            endDate: end
+        },
+        totalOrders,
+        statusBreakdown: totals,
+        distribution: {
+            completed: toPercentage(totals.completed),
+            inProgress: toPercentage(totals.inProgress),
+            onHold: toPercentage(totals.onHold),
+            cancelled: toPercentage(totals.cancelled)
+        }
+    };
+
+    return ResponseHelper.success(res, "Order summary dashboard data", response);
+}
+
 
 /*
   * Update Invoice  
