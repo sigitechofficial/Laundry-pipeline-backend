@@ -2484,33 +2484,19 @@ exports.addRole = async (req, res) => {
     }
     const newRole = await roles.create({ name, status: true });
 
-    const bulkArray = [];
-    for (const ele of permissionRole || []) {
-        const featureId = ele?.id;
-        const selectedTypes = new Set();
-        const perms = ele?.permissions || {};
-
-        if (!featureId) continue;
-        if (perms.create === true) selectedTypes.add("create");
-        if (perms.read === true) selectedTypes.add("read");
-        if (perms.update === true) selectedTypes.add("update");
-        if (perms.delete === true) selectedTypes.add("delete");
-        if (perms.write === true) {
-            selectedTypes.add("create");
-            selectedTypes.add("update");
-            selectedTypes.add("delete");
-        }
-
-        for (const permissionType of selectedTypes) {
-            bulkArray.push({
-                featureId,
+    const bulkArray = (permissionRole || [])
+        .filter(ele => ele?.id)
+        .map(ele => {
+            const perms = ele?.permissions || {};
+            return {
+                featureId: ele.id,
                 roleId: newRole.id,
-                permissionType,
-                read: permissionType === "read",
-                write: permissionType !== "read",
-            });
-        }
-    }
+                create: perms.create === true || perms.write === true,
+                read:   perms.read   === true,
+                update: perms.update === true || perms.write === true,
+                delete: perms.delete === true || perms.write === true,
+            };
+        });
 
     if (bulkArray.length) {
         await permissions.bulkCreate(bulkArray);
@@ -2548,33 +2534,19 @@ exports.updateRoles = async (req, res) => {
     if (Array.isArray(permissionRole) && permissionRole.length > 0) {
         await permissions.destroy({ where: { roleId } });
 
-        const bulkArray = [];
-        for (const ele of permissionRole) {
-            const featureId = ele?.id;
-            const selectedTypes = new Set();
-            const perms = ele?.permissions || {};
-
-            if (!featureId) continue;
-            if (perms.create === true) selectedTypes.add("create");
-            if (perms.read === true) selectedTypes.add("read");
-            if (perms.update === true) selectedTypes.add("update");
-            if (perms.delete === true) selectedTypes.add("delete");
-            if (perms.write === true) {
-                selectedTypes.add("create");
-                selectedTypes.add("update");
-                selectedTypes.add("delete");
-            }
-
-            for (const permissionType of selectedTypes) {
-                bulkArray.push({
-                    featureId,
+        const bulkArray = permissionRole
+            .filter(ele => ele?.id)
+            .map(ele => {
+                const perms = ele?.permissions || {};
+                return {
+                    featureId: ele.id,
                     roleId,
-                    permissionType,
-                    read: permissionType === "read",
-                    write: permissionType !== "read",
-                });
-            }
-        }
+                    create: perms.create === true || perms.write === true,
+                    read:   perms.read   === true,
+                    update: perms.update === true || perms.write === true,
+                    delete: perms.delete === true || perms.write === true,
+                };
+            });
 
         if (bulkArray.length) {
             await permissions.bulkCreate(bulkArray);

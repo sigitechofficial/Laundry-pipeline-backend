@@ -17,29 +17,14 @@ function buildPermissionRows(permissionRole, roleId) {
 
         if (!featureId) continue;
 
-        const selectedTypes = new Set();
-        if (perms.create === true) selectedTypes.add('create');
-        if (perms.read === true) selectedTypes.add('read');
-        if (perms.update === true) selectedTypes.add('update');
-        if (perms.delete === true) selectedTypes.add('delete');
-
-        // Backward compatibility for older payloads.
-        if (perms.write === true) {
-            selectedTypes.add('create');
-            selectedTypes.add('update');
-            selectedTypes.add('delete');
-        }
-        if (perms.read === true) selectedTypes.add('read');
-
-        for (const permissionType of selectedTypes) {
-            rows.push({
-                featureId,
-                roleId,
-                permissionType,
-                read: permissionType === 'read',
-                write: permissionType !== 'read',
-            });
-        }
+        rows.push({
+            featureId,
+            roleId,
+            create: perms.create === true || perms.write === true,
+            read:   perms.read   === true,
+            update: perms.update === true || perms.write === true,
+            delete: perms.delete === true || perms.write === true,
+        });
     }
 
     return rows;

@@ -4,25 +4,31 @@ const {
 } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
   class permissions extends Model {
-    /**
-     * Helper method for defining associations.
-     * This method is not a part of Sequelize lifecycle.
-     * The `models/index` file will call this method automatically.
-     */
     static associate(models) {
-      // define association here
     }
   }
   permissions.init({
-    permissionType: {
-      type:DataTypes.STRING,
-      allowNull: true,
+    featureId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    roleId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    create: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
     },
     read: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
-    write: {
+    update: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    delete: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },

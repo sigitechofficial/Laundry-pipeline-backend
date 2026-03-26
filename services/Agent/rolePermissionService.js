@@ -37,11 +37,13 @@ class AgentRolePermissionService {
 
         const newRole = await roles.create({ name, status: true });
 
-        let bulkArray = permissionRole.map((ele) => ({
+        const bulkArray = permissionRole.map((ele) => ({
             featureId: ele.id,
             roleId: newRole.id,
-            read: ele.permissions.read || false,
-            write: ele.permissions.write || false
+            create: ele.permissions?.create === true || ele.permissions?.write === true,
+            read:   ele.permissions?.read   === true,
+            update: ele.permissions?.update === true || ele.permissions?.write === true,
+            delete: ele.permissions?.delete === true || ele.permissions?.write === true,
         }));
 
         await permissions.bulkCreate(bulkArray);
@@ -87,11 +89,13 @@ class AgentRolePermissionService {
         if (Array.isArray(permissionRole) && permissionRole.length > 0) {
             await permissions.destroy({ where: { roleId } });
 
-            let bulkArray = permissionRole.map((ele) => ({
+            const bulkArray = permissionRole.map((ele) => ({
                 featureId: ele.id,
                 roleId: roleId,
-                read: ele.permissions.read || false,
-                write: ele.permissions.write || false
+                create: ele.permissions?.create === true || ele.permissions?.write === true,
+                read:   ele.permissions?.read   === true,
+                update: ele.permissions?.update === true || ele.permissions?.write === true,
+                delete: ele.permissions?.delete === true || ele.permissions?.write === true,
             }));
 
             await permissions.bulkCreate(bulkArray);
@@ -141,7 +145,7 @@ class AgentRolePermissionService {
                     attributes: ['id', 'name', 'status']
                 },
             ],
-            attributes: ['id', 'read', 'write', 'featureId', 'roleId']
+            attributes: ['id', 'create', 'read', 'update', 'delete', 'featureId', 'roleId']
         });
 
         return {
