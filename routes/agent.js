@@ -537,6 +537,11 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getOrderSummaryDashboard)
 );
+router.get(
+    "/getShopPerformanceDashboard",
+    validateAccessToken,
+    asyncMiddleware(agentController.getShopPerformanceDashboard)
+);
 
 //!----------------------------Agent Postcode Lookup---------------------//
 // Route to get all addresses for a given postcode

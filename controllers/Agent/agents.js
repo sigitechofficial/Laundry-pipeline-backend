@@ -2484,14 +2484,37 @@ exports.addRole = async (req, res) => {
     }
     const newRole = await roles.create({ name, status: true });
 
-    let bulkArray = permissionRole.map((ele) => ({
-        featureId: ele.id,
-        roleId: newRole.id,
-        read: ele.permissions.read || false,
-        write: ele.permissions.write || false
-    }));
+    const bulkArray = [];
+    for (const ele of permissionRole || []) {
+        const featureId = ele?.id;
+        const selectedTypes = new Set();
+        const perms = ele?.permissions || {};
 
-    await permissions.bulkCreate(bulkArray);
+        if (!featureId) continue;
+        if (perms.create === true) selectedTypes.add("create");
+        if (perms.read === true) selectedTypes.add("read");
+        if (perms.update === true) selectedTypes.add("update");
+        if (perms.delete === true) selectedTypes.add("delete");
+        if (perms.write === true) {
+            selectedTypes.add("create");
+            selectedTypes.add("update");
+            selectedTypes.add("delete");
+        }
+
+        for (const permissionType of selectedTypes) {
+            bulkArray.push({
+                featureId,
+                roleId: newRole.id,
+                permissionType,
+                read: permissionType === "read",
+                write: permissionType !== "read",
+            });
+        }
+    }
+
+    if (bulkArray.length) {
+        await permissions.bulkCreate(bulkArray);
+    }
 
     return ResponseHelper.success(res, "Role and Permission Added Successfully", {});
 }
@@ -2525,14 +2548,37 @@ exports.updateRoles = async (req, res) => {
     if (Array.isArray(permissionRole) && permissionRole.length > 0) {
         await permissions.destroy({ where: { roleId } });
 
-        const bulkArray = permissionRole.map((ele) => ({
-            featureId: ele.id,
-            roleId,
-            read: ele.permissions?.read || false,
-            write: ele.permissions?.write || false,
-        }));
+        const bulkArray = [];
+        for (const ele of permissionRole) {
+            const featureId = ele?.id;
+            const selectedTypes = new Set();
+            const perms = ele?.permissions || {};
 
-        await permissions.bulkCreate(bulkArray);
+            if (!featureId) continue;
+            if (perms.create === true) selectedTypes.add("create");
+            if (perms.read === true) selectedTypes.add("read");
+            if (perms.update === true) selectedTypes.add("update");
+            if (perms.delete === true) selectedTypes.add("delete");
+            if (perms.write === true) {
+                selectedTypes.add("create");
+                selectedTypes.add("update");
+                selectedTypes.add("delete");
+            }
+
+            for (const permissionType of selectedTypes) {
+                bulkArray.push({
+                    featureId,
+                    roleId,
+                    permissionType,
+                    read: permissionType === "read",
+                    write: permissionType !== "read",
+                });
+            }
+        }
+
+        if (bulkArray.length) {
+            await permissions.bulkCreate(bulkArray);
+        }
     }
 
 
@@ -3597,6 +3643,181 @@ exports.getOrderSummaryDashboard = async (req, res) => {
     };
 
     return ResponseHelper.success(res, "Order summary dashboard data", response);
+}
+
+/*
+ * Shop Performance Dashboard (Today/Week/Month/Year)
+ */
+exports.getShopPerformanceDashboard = async (req, res) => {
+    const agentId = req.user.id;
+    const period = (req.query.period || "today").toLowerCase();
+
+    const supportedPeriods = ["today", "week", "month", "year"];
+    if (!supportedPeriods.includes(period)) {
+        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
+    }
+
+    const now = new Date();
+    const start = new Date(now);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    if (period === "today") {
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "week") {
+        const day = start.getDay();
+        const diffToMonday = day === 0 ? 6 : day - 1;
+        start.setDate(start.getDate() - diffToMonday);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "month") {
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "year") {
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+    }
+
+    const agentShopAddress = await addressDb.findOne({
+        where: {
+            userId: agentId,
+            addressType: "LaundaryShopAddress"
+        }
+    });
+
+    if (!agentShopAddress) {
+        throw new NotFoundError("Agent shop address not found");
+    }
+
+    const orders = await booking.findAll({
+        where: {
+            laundryShopId: agentShopAddress.id,
+            createdAt: {
+                [Op.between]: [start, end]
+            }
+        },
+        attributes: ["id", "createdAt", "updatedAt"],
+        include: [
+            {
+                model: bookingStatus,
+                attributes: ["title"]
+            }
+        ],
+        raw: true,
+        nest: true
+    });
+
+    const totalOrders = orders.length;
+    let completedOrders = 0;
+    let inProgressOrders = 0;
+    let deliveredOrders = 0;
+    let processingHoursTotal = 0;
+
+    for (const item of orders) {
+        const statusTitle = (item.bookingStatus?.title || "").toLowerCase();
+
+        if (statusTitle === "completed") {
+            completedOrders += 1;
+            const createdAt = new Date(item.createdAt);
+            const updatedAt = new Date(item.updatedAt);
+            const hours = (updatedAt - createdAt) / (1000 * 60 * 60);
+            if (!Number.isNaN(hours) && Number.isFinite(hours) && hours >= 0) {
+                processingHoursTotal += hours;
+            }
+        } else if (statusTitle === "delivered") {
+            deliveredOrders += 1;
+            inProgressOrders += 1;
+        } else if (statusTitle !== "cancelled") {
+            inProgressOrders += 1;
+        }
+    }
+
+    const safePercent = (num, den) => {
+        if (!den) return 0;
+        return Number(((num / den) * 100).toFixed(1));
+    };
+
+    // DB has no explicit punctuality timestamps; derive punctuality signal from completion flow
+    const onTimePickup = safePercent(completedOrders + inProgressOrders, totalOrders);
+    const onTimeDelivery = safePercent(completedOrders + deliveredOrders, totalOrders);
+
+    const averageProcessingHours =
+        completedOrders > 0
+            ? Number((processingHoursTotal / completedOrders).toFixed(1))
+            : 0;
+
+    const performanceScore = safePercent(completedOrders, totalOrders);
+    const rating = Number(((performanceScore / 100) * 5).toFixed(1));
+
+    const topServicesRaw = await customerSelectedService.findAll({
+        attributes: [
+            "serviceId",
+            [sequelize.fn("SUM", sequelize.col("items")), "totalItems"]
+        ],
+        include: [
+            {
+                model: booking,
+                attributes: [],
+                where: {
+                    laundryShopId: agentShopAddress.id,
+                    createdAt: {
+                        [Op.between]: [start, end]
+                    }
+                }
+            },
+            {
+                model: service,
+                attributes: ["name"]
+            }
+        ],
+        group: ["serviceId", "service.id", "service.name"],
+        order: [[sequelize.literal("totalItems"), "DESC"]],
+        limit: 3,
+        raw: true,
+        nest: true
+    });
+
+    const totalServiceItems = topServicesRaw.reduce(
+        (sum, row) => sum + Number(row.totalItems || 0),
+        0
+    );
+
+    const topServices = topServicesRaw.map((row, index) => {
+        const items = Number(row.totalItems || 0);
+        return {
+            rank: index + 1,
+            serviceId: row.serviceId,
+            name: row.service?.name || "Unknown",
+            items,
+            percentage: totalServiceItems
+                ? Number(((items / totalServiceItems) * 100).toFixed(1))
+                : 0
+        };
+    });
+
+    const response = {
+        period,
+        range: {
+            startDate: start,
+            endDate: end
+        },
+        performanceScore,
+        punctuality: {
+            onTimePickup,
+            onTimeDelivery
+        },
+        processingAndRating: {
+            averageProcessingHours,
+            rating
+        },
+        totals: {
+            totalOrders,
+            completedOrders,
+            inProgressOrders
+        },
+        topServices
+    };
+
+    return ResponseHelper.success(res, "Shop performance dashboard data", response);
 }
 
 

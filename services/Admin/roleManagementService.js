@@ -6,6 +6,44 @@ const {
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
 
+function buildPermissionRows(permissionRole, roleId) {
+    if (!Array.isArray(permissionRole)) return [];
+
+    const rows = [];
+
+    for (const item of permissionRole) {
+        const featureId = item?.id;
+        const perms = item?.permissions || {};
+
+        if (!featureId) continue;
+
+        const selectedTypes = new Set();
+        if (perms.create === true) selectedTypes.add('create');
+        if (perms.read === true) selectedTypes.add('read');
+        if (perms.update === true) selectedTypes.add('update');
+        if (perms.delete === true) selectedTypes.add('delete');
+
+        // Backward compatibility for older payloads.
+        if (perms.write === true) {
+            selectedTypes.add('create');
+            selectedTypes.add('update');
+            selectedTypes.add('delete');
+        }
+        if (perms.read === true) selectedTypes.add('read');
+
+        for (const permissionType of selectedTypes) {
+            rows.push({
+                featureId,
+                roleId,
+                permissionType,
+                read: permissionType === 'read',
+                write: permissionType !== 'read',
+            });
+        }
+    }
+
+    return rows;
+}
 
 
 
@@ -25,15 +63,17 @@ class RoleManagementService {
             throw new ConflictError('Role with this name already exists');
         }
 
-        const createData = { 
-            ...roleData,
+        const createData = {
+            name: roleData.name,
             status: roleData.status !== undefined ? roleData.status : true
         };
-        if (createData.permissionRole) {
-            createData.permissionRole = JSON.stringify(createData.permissionRole);
-        }
 
         const roleCreate = await roles.create(createData);
+
+        const permissionRows = buildPermissionRows(roleData.permissionRole, roleCreate.id);
+        if (permissionRows.length) {
+            await permissions.bulkCreate(permissionRows);
+        }
         
         return roleCreate;
     }
@@ -62,9 +102,7 @@ class RoleManagementService {
         }
 
         const updateFields = { ...updateData };
-        if (updateFields.permissionRole) {
-            updateFields.permissionRole = JSON.stringify(updateFields.permissionRole);
-        }
+        delete updateFields.permissionRole;
 
         const updatedRole = await roles.update(
             updateFields,
@@ -73,6 +111,14 @@ class RoleManagementService {
 
         if (!updatedRole[0]) {
             throw new ValidationError('Failed to update role');
+        }
+
+        if (Array.isArray(updateData.permissionRole)) {
+            await permissions.destroy({ where: { roleId } });
+            const permissionRows = buildPermissionRows(updateData.permissionRole, roleId);
+            if (permissionRows.length) {
+                await permissions.bulkCreate(permissionRows);
+            }
         }
 
         const updatedRoleData = await roles.findOne({ where: { id: roleId } });
