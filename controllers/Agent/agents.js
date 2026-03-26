@@ -3792,6 +3792,199 @@ exports.getShopPerformanceDashboard = async (req, res) => {
     return ResponseHelper.success(res, "Shop performance dashboard data", response);
 }
 
+/*
+ * Earning Report Dashboard (Today/Week/Month/Year)
+ */
+exports.getEarningReportDashboard = async (req, res) => {
+    const agentId = req.user.id;
+    const period = (req.query.period || "today").toLowerCase();
+
+    const supportedPeriods = ["today", "week", "month", "year"];
+    if (!supportedPeriods.includes(period)) {
+        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
+    }
+
+    const now = new Date();
+    const start = new Date(now);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+
+    if (period === "today") {
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "week") {
+        const day = start.getDay();
+        const diffToMonday = day === 0 ? 6 : day - 1;
+        start.setDate(start.getDate() - diffToMonday);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "month") {
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+    } else if (period === "year") {
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+    }
+
+    const currentRangeMs = end.getTime() - start.getTime();
+    const previousEnd = new Date(start.getTime() - 1);
+    const previousStart = new Date(previousEnd.getTime() - currentRangeMs);
+
+    const agentShopAddress = await addressDb.findOne({
+        where: {
+            userId: agentId,
+            addressType: "LaundaryShopAddress"
+        }
+    });
+
+    if (!agentShopAddress) {
+        throw new NotFoundError("Agent shop address not found");
+    }
+
+    const fetchOrders = async (fromDate, toDate) => {
+        return booking.findAll({
+            where: {
+                laundryShopId: agentShopAddress.id,
+                createdAt: {
+                    [Op.between]: [fromDate, toDate]
+                }
+            },
+            attributes: ["id", "orderAmount", "createdAt"],
+            include: [
+                {
+                    model: billingDetails,
+                    as: "billingDetail",
+                    attributes: ["total", "paymentStatus"],
+                    required: false
+                },
+                {
+                    model: tip,
+                    as: "tips",
+                    attributes: ["amount"],
+                    required: false
+                }
+            ]
+        });
+    };
+
+    const currentOrders = await fetchOrders(start, end);
+    const previousOrders = await fetchOrders(previousStart, previousEnd);
+
+    const getOrderEarning = (order) => {
+        const billingTotal = Number(order.billingDetail?.total || 0);
+        const fallbackAmount = Number(order.orderAmount || 0);
+        const isPaid = order.billingDetail?.paymentStatus === "Paid";
+
+        if (isPaid && billingTotal > 0) return billingTotal;
+        return fallbackAmount > 0 ? fallbackAmount : billingTotal;
+    };
+
+    const currentEarnings = currentOrders.reduce(
+        (sum, order) => sum + getOrderEarning(order),
+        0
+    );
+    const previousEarnings = previousOrders.reduce(
+        (sum, order) => sum + getOrderEarning(order),
+        0
+    );
+
+    const growthPercentage = previousEarnings
+        ? Number((((currentEarnings - previousEarnings) / previousEarnings) * 100).toFixed(1))
+        : 0;
+
+    const avgOrderValue = currentOrders.length
+        ? Number((currentEarnings / currentOrders.length).toFixed(2))
+        : 0;
+
+    const tipsCollected = currentOrders.reduce((sum, order) => {
+        const orderTips = (order.tips || []).reduce(
+            (tipSum, oneTip) => tipSum + Number(oneTip.amount || 0),
+            0
+        );
+        return sum + orderTips;
+    }, 0);
+
+    // Build chart buckets based on selected period
+    const trendPoints = [];
+    const labels = [];
+    const bucketCount = 7;
+
+    const bucketStart = new Date(end);
+    if (period === "today") {
+        bucketStart.setDate(bucketStart.getDate() - (bucketCount - 1));
+        bucketStart.setHours(0, 0, 0, 0);
+    } else if (period === "week") {
+        bucketStart.setDate(bucketStart.getDate() - (7 * (bucketCount - 1)));
+        bucketStart.setHours(0, 0, 0, 0);
+    } else if (period === "month") {
+        bucketStart.setMonth(bucketStart.getMonth() - (bucketCount - 1), 1);
+        bucketStart.setHours(0, 0, 0, 0);
+    } else {
+        bucketStart.setFullYear(bucketStart.getFullYear() - (bucketCount - 1), 0, 1);
+        bucketStart.setHours(0, 0, 0, 0);
+    }
+
+    const trendOrders = await fetchOrders(bucketStart, end);
+
+    for (let i = 0; i < bucketCount; i++) {
+        const from = new Date(bucketStart);
+        const to = new Date(bucketStart);
+
+        if (period === "today") {
+            from.setDate(bucketStart.getDate() + i);
+            to.setDate(bucketStart.getDate() + i);
+            to.setHours(23, 59, 59, 999);
+            labels.push(from.toLocaleDateString("en-GB", { day: "2-digit", month: "short" }));
+        } else if (period === "week") {
+            from.setDate(bucketStart.getDate() + (i * 7));
+            to.setDate(bucketStart.getDate() + (i * 7) + 6);
+            to.setHours(23, 59, 59, 999);
+            labels.push(`W${i + 1}`);
+        } else if (period === "month") {
+            from.setMonth(bucketStart.getMonth() + i, 1);
+            to.setMonth(bucketStart.getMonth() + i + 1, 0);
+            to.setHours(23, 59, 59, 999);
+            labels.push(from.toLocaleDateString("en-US", { month: "short" }));
+        } else {
+            from.setFullYear(bucketStart.getFullYear() + i, 0, 1);
+            to.setFullYear(bucketStart.getFullYear() + i, 11, 31);
+            to.setHours(23, 59, 59, 999);
+            labels.push(String(from.getFullYear()));
+        }
+
+        const bucketValue = trendOrders.reduce((sum, order) => {
+            const createdAt = new Date(order.createdAt);
+            if (createdAt >= from && createdAt <= to) {
+                return sum + getOrderEarning(order);
+            }
+            return sum;
+        }, 0);
+
+        trendPoints.push(Number(bucketValue.toFixed(2)));
+    }
+
+    const response = {
+        period,
+        range: {
+            startDate: start,
+            endDate: end
+        },
+        summary: {
+            currentEarnings: Number(currentEarnings.toFixed(2)),
+            previousEarnings: Number(previousEarnings.toFixed(2)),
+            growthPercentage
+        },
+        quickMetrics: {
+            avgOrderValue,
+            tipsCollected: Number(tipsCollected.toFixed(2))
+        },
+        earningsTrend: {
+            labels,
+            points: trendPoints
+        }
+    };
+
+    return ResponseHelper.success(res, "Earning report dashboard data", response);
+}
+
 
 /*
   * Update Invoice  
