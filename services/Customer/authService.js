@@ -39,63 +39,183 @@ class CustomerAuthService {
      * @returns {Object} Registration result
      */
     async registerCustomerWithOTP(data, profileImg = null) {
-        const { 
-            firstName, 
-            lastName, 
-            password, 
-            dvToken, 
-            phoneNum, 
-            confirmPassword, 
-            countryId, 
-            cityId, 
-            email, 
-            countryCode 
+        const {
+            firstName,
+            lastName,
+            password,
+            dvToken,
+            phoneNum,
+            confirmPassword,
+            countryId,
+            cityId,
+            email,
+            countryCode
         } = data;
 
         console.log("🚀 ~ registerCustomerWithOTP ~ data:", data);
 
-        // Check if user already exists
-        const userfind = await users.findOne({
+        const userfindByEmail = await users.findOne({
             where: {
-                email: email,
-                deletedAt: {
-                    [Op.is]: null
-                }
+                email,
+                deletedAt: { [Op.is]: null }
             },
             include: [{
                 model: otpVerification,
                 required: false,
-                attributes: ['OTP']
+                attributes: ['id', 'OTP']
             }, {
                 model: deviceToken,
                 required: false,
                 attributes: ['tokenId']
             }],
             attributes: [
-                "id",
-                "firstName",
-                "lastName",
-                "email",
-                "phoneNum",
-                "userTypeId",
-                "verifiedAt",
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'phoneNum',
+                'userTypeId',
+                'verifiedAt',
+                'image',
+                'stripeCustomerId',
                 [
-                    sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                    "joinedOn",
-                ],
-            ],
+                    sequelize.fn('date_format', sequelize.col('users.createdAt'), '%Y'),
+                    'joinedOn'
+                ]
+            ]
         });
 
-        console.log("🚀 ~ registerCustomerWithOTP ~ userfind:", userfind);
+        const userfindByPhone = await users.findOne({
+            where: {
+                phoneNum,
+                deletedAt: { [Op.is]: null },
+                userTypeId: 2
+            },
+            attributes: ['id', 'email', 'phoneNum', 'userTypeId', 'verifiedAt']
+        });
 
-        if (userfind) {
-            throw new ConflictError("User with this email already exists");
+        if (userfindByPhone && userfindByPhone.email !== email) {
+            if (userfindByPhone.verifiedAt) {
+                throw new ConflictError('User With This Phone Number Already Exists');
+            }
+            throw new ConflictError(
+                'User With This Phone Number Already Exists (Not Verified). Please use the same email to update your account.'
+            );
+        }
+
+        if (userfindByEmail && userfindByEmail.email === email) {
+            if (userfindByEmail.userTypeId !== 2) {
+                throw new ConflictError('User with this email already exists');
+            }
+            if (userfindByEmail.verifiedAt) {
+                throw new ConflictError('User with this email already exists');
+            }
+
+            console.log('🔄 Customer exists but not verified. Updating details and resending OTP...');
+
+            const hashedPassword = await bcrypt.hash(password, 8);
+            await users.update({
+                firstName,
+                lastName,
+                phoneNum,
+                password: hashedPassword,
+                countryCode,
+                email,
+                countryId,
+                cityId,
+                image: profileImg || userfindByEmail.image
+            }, {
+                where: { id: userfindByEmail.id }
+            });
+
+            if (firstName !== userfindByEmail.firstName) {
+                const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
+                await users.update(
+                    { stripeCustomerId: stripeCustomer },
+                    { where: { id: userfindByEmail.id } }
+                );
+            }
+
+            const otp = otpGenerator.generate(4, {
+                lowerCaseAlphabets: false,
+                upperCaseAlphabets: false,
+                specialChars: false
+            });
+
+            await otpMail({
+                type: 'RegisterOTP',
+                email,
+                OTP: otp,
+                userName: firstName
+            });
+
+            const dt = new Date();
+            const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
+
+            if (userfindByEmail.otpVerification && userfindByEmail.otpVerification.id) {
+                await otpVerification.update({
+                    OTP: otp,
+                    reqAt: dt,
+                    expirtAt: expirationTime
+                }, {
+                    where: { userId: userfindByEmail.id }
+                });
+            } else {
+                await otpVerification.create({
+                    OTP: otp,
+                    reqAt: dt,
+                    expirtAt: expirationTime,
+                    userId: userfindByEmail.id
+                });
+            }
+
+            if (dvToken) {
+                const tokenRows = userfindByEmail.deviceTokens || userfindByEmail.deviceToken || [];
+                const existingDeviceToken = tokenRows.find((t) => t.tokenId === dvToken);
+                if (!existingDeviceToken) {
+                    await deviceToken.create({
+                        tokenId: dvToken,
+                        status: true,
+                        userId: userfindByEmail.id
+                    });
+                }
+            }
+
+            const accessToken = jwt.sign({
+                id: userfindByEmail.id,
+                email: userfindByEmail.email,
+                dvToken,
+                userTypeId: userfindByEmail.userTypeId
+            }, process.env.JWT_ACCESS_SECRET);
+
+            if (dvToken) {
+                await redisCli.hSet(
+                    `id-${userfindByEmail.id}`,
+                    { [dvToken]: accessToken }
+                );
+            }
+
+            const updatedOtp = await otpVerification.findOne({
+                where: { userId: userfindByEmail.id }
+            });
+
+            const refreshedUser = await users.findByPk(userfindByEmail.id, {
+                attributes: ['stripeCustomerId']
+            });
+
+            return {
+                otpId: updatedOtp.id,
+                userId: userfindByEmail.id,
+                stripeCustomerId: refreshedUser?.stripeCustomerId || null,
+                accessToken,
+                message: 'User details updated. New OTP sent to your email.'
+            };
         }
 
         // Create new user
-        let userTypeId = 2; // Customer type
+        const userTypeId = 2;
         const hashedPassword = await bcrypt.hash(password, 8);
-        
+
         const userCreate = await users.create({
             email,
             firstName,
@@ -107,11 +227,9 @@ class CustomerAuthService {
             countryCode
         });
 
-        // Create Stripe customer
         const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        console.log("🚀 ~ registerCustomerWithOTP ~ stripeCustomer:", stripeCustomer);
+        console.log('🚀 ~ registerCustomerWithOTP ~ stripeCustomer:', stripeCustomer);
 
-        // Generate and send OTP
         const otp = otpGenerator.generate(4, {
             lowerCaseAlphabets: false,
             upperCaseAlphabets: false,
@@ -120,16 +238,14 @@ class CustomerAuthService {
 
         await otpMail({
             type: 'RegisterOTP',
-            email: email,
+            email,
             OTP: otp,
             userName: firstName
         });
 
-        let dt = new Date();
-        // Set OTP expiration to 1 minute from now
-        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
+        const dt = new Date();
+        const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
 
-        // Create OTP verification record
         const otpCreation = await otpVerification.create({
             OTP: otp,
             reqAt: dt,
@@ -137,14 +253,12 @@ class CustomerAuthService {
             userId: userCreate.id
         });
 
-        // Create device token
         await deviceToken.create({
             tokenId: dvToken,
             status: true,
             userId: userCreate.id
         });
 
-        // Update user with additional info
         await users.update({
             stripeCustomerId: stripeCustomer,
             image: profileImg,
