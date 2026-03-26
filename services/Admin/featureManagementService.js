@@ -1,4 +1,4 @@
-const { features, classifiedAs } = require('../../models');
+const { features, classifiedAs, permissions } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 class FeatureManagementService {
@@ -36,6 +36,12 @@ class FeatureManagementService {
     async getFeatures() {
         try {
             const getFeatures = await features.findAll({
+                include: [
+                    {
+                        model: permissions,
+                        attributes: ['id', 'permissionType', 'read', 'write', 'featureId']
+                    }
+                ],
                 order: [['createdAt', 'DESC']]
             });
             return getFeatures;
