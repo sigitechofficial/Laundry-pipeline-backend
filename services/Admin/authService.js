@@ -48,7 +48,6 @@ class AuthService {
             const featureData = await features.findAll({
                 where: {
                     status: true,
-                    featureOf: 'Admin'
                 },
                 attributes: ['id', 'title']
             });
