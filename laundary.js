@@ -143,7 +143,7 @@ async function startServer() {
     if (syncDb) {
       if (env === 'development' || env === 'test') {
         await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
-        await db.sequelize.sync({ force: true });
+        await db.sequelize.sync({ alter: true });
         await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
       } else {
         await db.sequelize.sync({ alter: true });

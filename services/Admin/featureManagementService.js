@@ -39,7 +39,7 @@ class FeatureManagementService {
                 include: [
                     {
                         model: permissions,
-                        attributes: ['id', 'permissionType', 'read', 'write', 'featureId']
+                        attributes: ['id', 'featureId', 'roleId', 'create', 'read', 'update', 'delete'],
                     }
                 ],
                 order: [['createdAt', 'DESC']]
