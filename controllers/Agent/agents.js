@@ -337,8 +337,33 @@ exports.getBookingHome = async (req, res) => {
                     "addressType",
                 ],
             },
+            {
+                model: bussinessInformation,
+                as: 'agentInfo',
+                attributes: ['id', 'connectAccountId', 'isConnectAccountConnected'],
+            }
         ],
     });
+
+    // Sync Stripe Connect account status if not yet marked as connected
+    let isConnectAccountConnected = userData?.agentInfo?.[0]?.isConnectAccountConnected || false;
+    const connectAccountId = userData?.agentInfo?.[0]?.connectAccountId || null;
+
+    if (!isConnectAccountConnected && connectAccountId) {
+        try {
+            const accountStatus = await stripe.checkConnectAccountStatus(connectAccountId);
+            if (accountStatus.chargesEnabled && accountStatus.payoutsEnabled && accountStatus.detailsSubmitted) {
+                await bussinessInformation.update(
+                    { isConnectAccountConnected: true },
+                    { where: { id: userData.agentInfo[0].id } }
+                );
+                isConnectAccountConnected = true;
+                console.log('✅ [getBookingHome] Connect account status synced: isConnectAccountConnected = true');
+            }
+        } catch (stripeErr) {
+            console.error('⚠️ [getBookingHome] Failed to sync Connect account status:', stripeErr.message);
+        }
+    }
 
     let agentZone = userData.addressDb.zoneId;
     console.log("ðŸš€ ~ getBookingHome ~ agentZone:", agentZone);
@@ -411,7 +436,7 @@ exports.getBookingHome = async (req, res) => {
     //return res.json(bookingData)
 
 
-    return ResponseHelper.success(res, "Agent Orders fetched", { bookingData });
+    return ResponseHelper.success(res, "Agent Orders fetched", { bookingData, isConnectAccountConnected, connectAccountId });
 }
 
 /*

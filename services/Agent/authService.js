@@ -998,6 +998,24 @@ class AgentAuthService {
         const currencyUnit = userAddress?.zone?.currencyUnitZ?.symbol || '$';
         // agentInfo is already declared above in the validation section
 
+        // If connectAccountId exists but isConnectAccountConnected is still false, check Stripe live
+        let isConnectAccountConnected = agentInfo?.[0]?.isConnectAccountConnected || false;
+        if (!isConnectAccountConnected && agentInfo?.[0]?.connectAccountId) {
+            try {
+                const accountStatus = await stripe.checkConnectAccountStatus(agentInfo[0].connectAccountId);
+                if (accountStatus.chargesEnabled && accountStatus.payoutsEnabled && accountStatus.detailsSubmitted) {
+                    await bussinessInformation.update(
+                        { isConnectAccountConnected: true },
+                        { where: { id: agentInfo[0].id } }
+                    );
+                    isConnectAccountConnected = true;
+                    console.log('✅ [login] Connect account status synced: isConnectAccountConnected = true');
+                }
+            } catch (stripeErr) {
+                console.error('⚠️ [login] Failed to sync Connect account status:', stripeErr.message);
+            }
+        }
+
         return {
             userId: String(userFind.id),
             firstName: userFind.firstName,
@@ -1011,7 +1029,7 @@ class AgentAuthService {
             joinedOn: userFind.dataValues.joinedOn,
             phoneNum: userFind.phoneNum,
             features: featureData,
-            isConnectAccountConnected: agentInfo?.[0]?.isConnectAccountConnected || false
+            isConnectAccountConnected
         };
     }
 
@@ -1333,14 +1351,31 @@ class AgentAuthService {
             attributes: ['id', 'title', 'key', 'featureOf']
         });
 
-        // agentInfo is already declared above in the validation section
+        // If connectAccountId exists but isConnectAccountConnected is still false, check Stripe live
+        let isConnectAccountConnected = agentInfo?.[0]?.isConnectAccountConnected || false;
+        if (!isConnectAccountConnected && agentInfo?.[0]?.connectAccountId) {
+            try {
+                const accountStatus = await stripe.checkConnectAccountStatus(agentInfo[0].connectAccountId);
+                if (accountStatus.chargesEnabled && accountStatus.payoutsEnabled && accountStatus.detailsSubmitted) {
+                    await bussinessInformation.update(
+                        { isConnectAccountConnected: true },
+                        { where: { id: agentInfo[0].id } }
+                    );
+                    isConnectAccountConnected = true;
+                    console.log('✅ [session] Connect account status synced: isConnectAccountConnected = true');
+                }
+            } catch (stripeErr) {
+                console.error('⚠️ [session] Failed to sync Connect account status:', stripeErr.message);
+            }
+        }
 
         return {
             userData,
             accessToken,
             isGuest: data.guestUser,
             featureData,
-            isConnectAccountConnected: agentInfo?.[0]?.isConnectAccountConnected || false
+            isConnectAccountConnected,
+            connectAccountId: agentInfo?.[0]?.connectAccountId || null
         };
     }
 
