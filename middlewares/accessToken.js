@@ -7,18 +7,12 @@ const customError=require('../middlewares/customError')
 module.exports=async function validateAccessToken(req,res,next) {
     try {
 
-        const accessToken=req.cookies.accessToken
+        let accessToken=req.cookies.accessToken
         console.log("🚀 ~ validateAccessToken ~ req.cookies:", req.cookies)
         console.log("URL---------------------------->>",req.url);
 
-        // If not found in cookies, check for Authorization header
-        if (!accessToken && req.headers.authorization) {
-            const authHeader = req.headers.authorization;
-            // The format should be 'Bearer <token>'
-            const token = authHeader.split(' ')[1]; // Get the token part of the Authorization header
-            if (token) {
-                accessToken = token;
-            }
+        if (!accessToken) {
+            accessToken = req.headers['accesstoken'] || req.headers['x-access-token'];
         }
         
 
