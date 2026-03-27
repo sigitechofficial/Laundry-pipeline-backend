@@ -1,6 +1,7 @@
 const { booking, cancelBooking, users, policy, cancellationPolicyConfig, bookingHistory, wallet } = require('../../models');
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
+const { chargeOffSession } = require('../../controllers/stripe');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
 const { 
@@ -53,6 +54,7 @@ class CancelBookingService {
                 'collectionTimeFrom',
                 'orderAmount',
                 'paymentConfirmed',
+                'paymentMethodId',
                 'createdAt'
             ]
         });
@@ -87,7 +89,44 @@ class CancelBookingService {
             timeZone
         );
 
-        // Step 7: Create cancellation record
+        // Step 7: Charge customer via Stripe if a cancellation fee applies
+        let stripeChargeResult = null;
+        let stripeChargeError = null;
+        if (cancellationDetails.cancellationCharge > 0) {
+            const savedPaymentMethodId = bookingData.paymentMethodId;
+
+            if (savedPaymentMethodId) {
+                const customerData = await users.findOne({
+                    where: { id: customerId },
+                    attributes: ['stripeCustomerId']
+                });
+
+                if (customerData?.stripeCustomerId) {
+                    try {
+                        const idempotencyKey = `cancel-booking-${bookingId}-customer-${customerId}`;
+                        stripeChargeResult = await chargeOffSession(
+                            cancellationDetails.cancellationCharge,
+                            customerData.stripeCustomerId,
+                            savedPaymentMethodId,
+                            idempotencyKey
+                        );
+                        console.log(`✅ Cancellation charge of ${cancellationDetails.cancellationCharge} ${cancellationDetails.currency} charged to customer ${customerId} for booking ${bookingId}`);
+                    } catch (chargeErr) {
+                        // Log but don't block the cancellation — admin can follow up on failed charges
+                        stripeChargeError = chargeErr.message;
+                        console.error(`❌ Failed to charge cancellation fee for booking ${bookingId}:`, chargeErr.message);
+                    }
+                } else {
+                    stripeChargeError = 'No Stripe customer ID found for this customer';
+                    console.warn(`⚠️ Cannot charge cancellation fee — no stripeCustomerId for customer ${customerId}`);
+                }
+            } else {
+                stripeChargeError = 'No saved payment method found for this booking';
+                console.warn(`⚠️ Cannot charge cancellation fee — no paymentMethodId on booking ${bookingId}`);
+            }
+        }
+
+        // Step 8: Create cancellation record
         await cancelBooking.create({
             bookingId: bookingId,
             reasonId: reasonId,
@@ -95,7 +134,7 @@ class CancelBookingService {
             userId: customerId
         });
 
-        // Step 8: Update booking status to Cancelled (19) and set cancellation policy ID
+        // Step 9: Update booking status to Cancelled (19) and set cancellation policy ID
         await booking.update(
             { 
                 bookingStatusId: 19,
@@ -104,7 +143,7 @@ class CancelBookingService {
             { where: { id: bookingId } }
         );
 
-        // Step 9: Create booking history entry
+        // Step 10: Create booking history entry
         await bookingHistory.create({
             bookingId: bookingId,
             bookingStatusId: 19,
@@ -112,7 +151,7 @@ class CancelBookingService {
             time: moment().format('HH:mm:ss')
         });
 
-        // Step 10: Process refund if applicable
+        // Step 11: Process refund if applicable
         let refundDetails = null;
         if (bookingData.paymentConfirmed && cancellationDetails.refundAmount > 0) {
             refundDetails = await this.processRefund(
@@ -134,6 +173,10 @@ class CancelBookingService {
             cancellationReason: cancellationDetails.reason,
             refundProcessed: refundDetails !== null,
             refundDetails: refundDetails,
+            cancellationFeeCharged: stripeChargeResult !== null,
+            stripeChargeId: stripeChargeResult?.id || null,
+            stripeChargeStatus: stripeChargeResult?.status || null,
+            stripeChargeError: stripeChargeError,
             message: cancellationDetails.message
         };
     }

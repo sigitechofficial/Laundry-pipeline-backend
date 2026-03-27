@@ -54,6 +54,7 @@ const {
     serviceManagementService,
     activePoliciesService
 } = require('../../services/Admin');
+const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const rescheduleBookingService = require('../../services/Customer/rescheduleBookingService');
@@ -516,7 +517,6 @@ async function testEmail(req, res) {
  * Test Email API - Direct ZeptoMail API call (simple test)
  */
 async function testEmailAPI(req, res) {
-    const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
     const { email, subject, html } = req.body;
 
     if (!email) {
