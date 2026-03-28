@@ -142,12 +142,16 @@ class CustomerAuthService {
                 specialChars: false
             });
 
-            await otpMail({
-                type: 'RegisterOTP',
-                email,
-                OTP: otp,
-                userName: firstName
-            });
+            try {
+                await otpMail({
+                    type: 'RegisterOTP',
+                    email,
+                    OTP: otp,
+                    userName: firstName
+                });
+            } catch (mailError) {
+                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+            }
 
             const dt = new Date();
             const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
@@ -236,12 +240,16 @@ class CustomerAuthService {
             specialChars: false
         });
 
-        await otpMail({
-            type: 'RegisterOTP',
-            email,
-            OTP: otp,
-            userName: firstName
-        });
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email,
+                OTP: otp,
+                userName: firstName
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         const dt = new Date();
         const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
@@ -1013,13 +1021,16 @@ class CustomerAuthService {
             specialChars: false,
         });
 
-        // Send OTP email using otpMail
-        await otpMail({
-            type: 'RegisterOTP',
-            email: userExist.email,
-            OTP: OTP,
-            userName: userExist.firstName
-        });
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email: userExist.email,
+                OTP: OTP,
+                userName: userExist.firstName
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         let DT = new Date();
         // Set OTP expiration to 1 minute from now
