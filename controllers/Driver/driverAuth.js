@@ -76,12 +76,16 @@ async function driverregisterStep1(req, res) {
             specialChars: true,
         })
 
-        await otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: OTP,
-            userName: userExist.firstName || 'Driver'
-        })
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email: email,
+                OTP: OTP,
+                userName: userExist.firstName || 'Driver'
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         const DT = new Date();
         if (!userExist.otpVerification) {
@@ -183,12 +187,16 @@ async function driverregisterStep1(req, res) {
         });
 
 
-        await otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: OTP,
-            userName: firstName
-        })
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email: email,
+                OTP: OTP,
+                userName: firstName
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         let DT = new Date();
         if (!otpData) {
@@ -593,12 +601,16 @@ async function forgetPasswordRequest(req, res) {
     //return res.json(OTP)
 
 
-    await otpMail({
-        type: 'ForgetPassword',
-        email: email,
-        OTP: OTP,
-        userName: userData.firstName || 'Driver'
-    })
+    try {
+        await otpMail({
+            type: 'ForgetPassword',
+            email: email,
+            OTP: OTP,
+            userName: userData.firstName || 'Driver'
+        });
+    } catch (mailError) {
+        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+    }
 
     let dt = new Date();
     if (userData.otpVerification != null) {
@@ -729,12 +741,16 @@ async function resendOTP(req, res) {
         specialChars: true
     })
 
-    await otpMail({
-        type: 'ForgetPassword',
-        email: userExist.email,
-        OTP: OTP,
-        userName: userExist.firstName || 'Driver'
-    })
+    try {
+        await otpMail({
+            type: 'ForgetPassword',
+            email: userExist.email,
+            OTP: OTP,
+            userName: userExist.firstName || 'Driver'
+        });
+    } catch (mailError) {
+        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+    }
 
     let dt = new Date();
     // Set OTP expiration to 1 minute from now

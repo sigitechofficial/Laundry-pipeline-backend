@@ -138,12 +138,16 @@ class AgentAuthService {
             });
 
             // Send new OTP
-            await otpMail({
-                type: 'RegisterOTP',
-                email: data.email,
-                OTP: otp,
-                userName: data.firstName || 'Agent'
-            });
+            try {
+                await otpMail({
+                    type: 'RegisterOTP',
+                    email: data.email,
+                    OTP: otp,
+                    userName: data.firstName || 'Agent'
+                });
+            } catch (mailError) {
+                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+            }
 
             let dt = new Date();
             // Set OTP expiration to 1 minute from now
@@ -229,12 +233,16 @@ class AgentAuthService {
                 specialChars: false
             });
 
-            await otpMail({
-                type: 'RegisterOTP',
-                email: data.email,
-                OTP: otp,
-                userName: data.firstName || 'Agent'
-            });
+            try {
+                await otpMail({
+                    type: 'RegisterOTP',
+                    email: data.email,
+                    OTP: otp,
+                    userName: data.firstName || 'Agent'
+                });
+            } catch (mailError) {
+                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+            }
 
             let dt = new Date();
             // Set OTP expiration to 1 minute from now
@@ -369,13 +377,16 @@ class AgentAuthService {
             specialChars: false,
         });
 
-        // Send OTP email using otpMail
-        await otpMail({
-            type: 'RegisterOTP',
-            email: userExist.email,
-            OTP: OTP,
-            userName: userExist.firstName || 'Agent'
-        });
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email: userExist.email,
+                OTP: OTP,
+                userName: userExist.firstName || 'Agent'
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         let DT = new Date();
         // Set OTP expiration to 1 minute from now
@@ -1059,12 +1070,16 @@ class AgentAuthService {
             specialChars: true,
         });
 
-        await otpMail({
-            type: 'ForgetPassword',
-            email: data.email,
-            OTP: OTP,
-            userName: userData.firstName || 'Agent'
-        });
+        try {
+            await otpMail({
+                type: 'ForgetPassword',
+                email: data.email,
+                OTP: OTP,
+                userName: userData.firstName || 'Agent'
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         let dt = new Date();
         // Set OTP expiration to 1 minute from now

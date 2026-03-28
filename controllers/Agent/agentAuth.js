@@ -97,12 +97,16 @@ exports.registerAgentWithOTP = async (req, res) => {
             specialChars: false
         });
 
-        await otpMail({
-            type: 'RegisterOTP',
-            email: email,
-            OTP: otp,
-            userName: userCreate.firstName || 'Agent'
-        });
+        try {
+            await otpMail({
+                type: 'RegisterOTP',
+                email: email,
+                OTP: otp,
+                userName: userCreate.firstName || 'Agent'
+            });
+        } catch (mailError) {
+            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+        }
 
         let dt = new Date();
 
@@ -237,13 +241,16 @@ exports.resendOTP = async (req, res) => {
         specialChars: false,
     });
 
-    // Send OTP email using otpMail
-    await otpMail({
-        type: 'RegisterOTP',
-        email: userExist.email,
-        OTP: OTP,
-        userName: userExist.firstName || 'Agent'
-    });
+    try {
+        await otpMail({
+            type: 'RegisterOTP',
+            email: userExist.email,
+            OTP: OTP,
+            userName: userExist.firstName || 'Agent'
+        });
+    } catch (mailError) {
+        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+    }
 
     let DT = new Date();
     // Set OTP expiration to 1 minute from now
@@ -704,12 +711,16 @@ exports.forgetPasswordRequest = async (req, res) => {
         specialChars: false,
     });
 
-    await otpMail({
-        type: 'ForgetPassword',
-        email: email,
-        OTP: OTP,
-        userName: userData.firstName || 'Agent'
-    })
+    try {
+        await otpMail({
+            type: 'ForgetPassword',
+            email: email,
+            OTP: OTP,
+            userName: userData.firstName || 'Agent'
+        });
+    } catch (mailError) {
+        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+    }
 
     let dt = new Date();
     // Set OTP expiration to 1 minute from now
