@@ -99,7 +99,7 @@ async function chargeOffSession(amount, customerId, paymentMethodId, idempotency
     try {
         const params = {
             amount: convertToCents(amount),
-            currency: 'usd',
+            currency: 'gbp',
             customer: customerId,
             payment_method: paymentMethodId,
             off_session: true,
@@ -225,7 +225,7 @@ async function createPaymentIntentForAgent(newAmount, customerId, savedPaymentMe
     try {
         const paymentIntent = await stripe.paymentIntents.create({
             amount: convertToCents(newAmount),
-            currency: 'usd',
+            currency: 'gbp',
             customer: customerId,
             payment_method: savedPaymentMethodId,
             off_session: true,

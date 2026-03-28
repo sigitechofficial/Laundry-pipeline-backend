@@ -7,6 +7,7 @@ const reportsController = require('../controllers/Admin/reports')
 const multer = require('multer')
 const path = require('path')
 const validateAccessToken = require('../middlewares/adminValidateToken')
+const checkPermission = require('../middlewares/checkPermission')
 const { createDestinationDirectory } = require('../utils/destination')
 const agentController = require("../controllers/Agent/agents");
 
@@ -118,401 +119,407 @@ const uploadBlogDescriptionImages = multer({
 
 //!----------------------------------------Auth Api's----------------------------------------------//
 
-//Admin SignIn
+//Admin SignIn — public, no token needed
 router.post('/adminSignIn', asyncMiddleware(adminAuth.signIn))
+
+//Zone Admin SignIn — public, no token needed
+router.post('/zoneAdminSignIn', asyncMiddleware(adminAuth.zoneAdminSignIn))
+
+// Apply validateAccessToken + checkPermission globally to ALL routes below this line.
+// - Super admin / owners bypass checkPermission automatically (classifiedAsId === null).
+// - Zone admins / employees must send featureId in header, body, or query.
+router.use(validateAccessToken, checkPermission)
 
 //Add vehicle
 router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
 
 //Add Countries
-router.post('/addCountries', validateAccessToken, uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.addCountries))
+router.post('/addCountries', uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.addCountries))
 //Get Countries
-router.get('/getCountries', validateAccessToken, asyncMiddleware(adminController.getCountries))
+router.get('/getCountries', asyncMiddleware(adminController.getCountries))
 //Update Country
-router.put('/updateCountry/:countryId', validateAccessToken, uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.updateCountry))
+router.put('/updateCountry/:countryId', uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.updateCountry))
 //Delete Country (Soft Delete)
-router.delete('/deleteCountry/:countryId', validateAccessToken, asyncMiddleware(adminController.deleteCountry))
+router.delete('/deleteCountry/:countryId', asyncMiddleware(adminController.deleteCountry))
 //Add Cities
-router.post('/addCities', validateAccessToken, asyncMiddleware(adminController.addCities))
+router.post('/addCities', asyncMiddleware(adminController.addCities))
 //Get Cities
-router.get('/getCities', validateAccessToken, asyncMiddleware(adminController.getCities))
+router.get('/getCities', asyncMiddleware(adminController.getCities))
 //Get Cities by Country Id
-router.get('/getCitiesByCountryId/:countryId', validateAccessToken, asyncMiddleware(adminController.getCitiesByCountryId))
+router.get('/getCitiesByCountryId/:countryId', asyncMiddleware(adminController.getCitiesByCountryId))
 //Update City
-router.put('/updateCity/:cityId', validateAccessToken, asyncMiddleware(adminController.updateCity))
+router.put('/updateCity/:cityId', asyncMiddleware(adminController.updateCity))
 //Delete City (Soft Delete)
-router.delete('/deleteCity/:cityId', validateAccessToken, asyncMiddleware(adminController.deleteCity))
+router.delete('/deleteCity/:cityId', asyncMiddleware(adminController.deleteCity))
 //!---------------------------------------Zones-----------------------------------------//
 //Add Zones
-router.post('/addZone', validateAccessToken, asyncMiddleware(adminController.addZones))
+router.post('/addZone', asyncMiddleware(adminController.addZones))
 //Add Zones by Postcodes
-router.post('/addZoneByPostcodes', validateAccessToken, asyncMiddleware(adminController.addZonesByPostcodes))
+router.post('/addZoneByPostcodes', asyncMiddleware(adminController.addZonesByPostcodes))
 // Edit Zone by Postcodes (optionally send postcodes to regenerate polygon)
-router.put('/editZoneByPostcodes/:zoneId', validateAccessToken, asyncMiddleware(adminController.editZoneByPostcodes))
+router.put('/editZoneByPostcodes/:zoneId', asyncMiddleware(adminController.editZoneByPostcodes))
 // Get Zones
-router.get('/getZones', validateAccessToken, asyncMiddleware(adminController.getZones))
+router.get('/getZones', asyncMiddleware(adminController.getZones))
 // Get Zone By ID (optional columns query: ?columns=id,name,status)
-router.get('/getZoneById/:zoneId', validateAccessToken, asyncMiddleware(adminController.getZoneById))
+router.get('/getZoneById/:zoneId', asyncMiddleware(adminController.getZoneById))
 //Delete Zone
-router.delete('/delete-zone', validateAccessToken, asyncMiddleware(adminController.deleteZone))
+router.delete('/delete-zone', asyncMiddleware(adminController.deleteZone))
 //Update Zone
-router.patch('/updateZone/:zoneId', validateAccessToken, asyncMiddleware(adminController.updateZone))
+router.patch('/updateZone/:zoneId', asyncMiddleware(adminController.updateZone))
 //!---------------------------------------Units-----------------------------------------//
 //Get Units
-router.get('/getUnitsDistanceAndCurrency', validateAccessToken, asyncMiddleware(adminController.getUnitsDistanceAndCurrency))
+router.get('/getUnitsDistanceAndCurrency', asyncMiddleware(adminController.getUnitsDistanceAndCurrency))
 //Get All Units
-router.get('/getAllUnits', validateAccessToken, asyncMiddleware(adminController.getAllUnits))
+router.get('/getAllUnits', asyncMiddleware(adminController.getAllUnits))
 //!---------------------------------------Services,Categories,SubCategories-----------------------------------------//
 //Create Service 
-router.post("/AddServices", validateAccessToken, uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.AddServices))
+router.post("/AddServices", uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.AddServices))
 //Edit Service
-router.patch('/editServices/:serviceId', validateAccessToken,uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.editServices))
+router.patch('/editServices/:serviceId', uploadServiceImage.single('serviceImg'), asyncMiddleware(adminController.editServices))
 //Delete Service
-router.delete('/deleteServices/:serviceId', validateAccessToken, asyncMiddleware(adminController.deleteServices))
+router.delete('/deleteServices/:serviceId', asyncMiddleware(adminController.deleteServices))
 //create categories 
-router.post('/addCategory', validateAccessToken, uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.AddCategories))
+router.post('/addCategory', uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.AddCategories))
 //create SubCategories
-router.post('/addSubCategories', validateAccessToken, asyncMiddleware(adminController.addSubCategories))
+router.post('/addSubCategories', asyncMiddleware(adminController.addSubCategories))
 //get categories
-router.get('/getcategories', validateAccessToken, asyncMiddleware(adminController.getCategories))
+router.get('/getcategories', asyncMiddleware(adminController.getCategories))
 //Delete Categories
-router.delete('/deleteCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.deleteCategories))
+router.delete('/deleteCategories/:categoryId', asyncMiddleware(adminController.deleteCategories))
 //Edit Categories
-router.patch('/editCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.editCategories))
+router.patch('/editCategories/:categoryId', asyncMiddleware(adminController.editCategories))
 //get Services
-router.get('/getServices', validateAccessToken, asyncMiddleware(adminController.getAllServices))
+router.get('/getServices', asyncMiddleware(adminController.getAllServices))
 //get SubCategories
-router.get('/getSubcategories', validateAccessToken, asyncMiddleware(adminController.getSubcategories))
+router.get('/getSubcategories', asyncMiddleware(adminController.getSubcategories))
 //Edit SubCategories
-router.patch('/editSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.editSubCategories))
+router.patch('/editSubCategories/:subCategoryId', asyncMiddleware(adminController.editSubCategories))
 //Assign Service to Categories
-router.post('/serviceCategoriesAssign', validateAccessToken, asyncMiddleware(adminController.serviceCategoriesAssign))
+router.post('/serviceCategoriesAssign', asyncMiddleware(adminController.serviceCategoriesAssign))
 //Unassign Service From Categories
-router.delete('/unassignServiceFromCategories/:serviceId', validateAccessToken, asyncMiddleware(adminController.unassignServiceFromCategories))
+router.delete('/unassignServiceFromCategories/:serviceId', asyncMiddleware(adminController.unassignServiceFromCategories))
 //Delete SubCategories
-router.delete('/deleteSubCategories/:subCategoryId', validateAccessToken, asyncMiddleware(adminController.deleteSubCategories))
+router.delete('/deleteSubCategories/:subCategoryId', asyncMiddleware(adminController.deleteSubCategories))
 
 //!---------------------------------------Admin Dashboard-----------------------------------------//
-router.get('/adminDashboard', validateAccessToken, asyncMiddleware(adminController.adminDashboard))
+router.get('/adminDashboard', asyncMiddleware(adminController.adminDashboard))
 
 //!-------------------------Machinery-----------------------------------------------------------------------------//
-router.post('/addMachines', validateAccessToken, asyncMiddleware(adminController.addMachines))
+router.post('/addMachines', asyncMiddleware(adminController.addMachines))
 
 //!-------------------------Reason Management------------------------------------------------------------------//
 //Create Reason
-router.post('/createReason', validateAccessToken, asyncMiddleware(adminController.createReason))
+router.post('/createReason', asyncMiddleware(adminController.createReason))
 //Get All Reasons
-router.get('/getAllReasons', validateAccessToken, asyncMiddleware(adminController.getAllReasons))
+router.get('/getAllReasons', asyncMiddleware(adminController.getAllReasons))
 //Get Reason By ID
-router.get('/getReasonById/:reasonId', validateAccessToken, asyncMiddleware(adminController.getReasonById))
+router.get('/getReasonById/:reasonId', asyncMiddleware(adminController.getReasonById))
 //Update Reason
-router.patch('/updateReason/:reasonId', validateAccessToken, asyncMiddleware(adminController.updateReason))
+router.patch('/updateReason/:reasonId', asyncMiddleware(adminController.updateReason))
 //Delete Reason
-router.delete('/deleteReason/:reasonId', validateAccessToken, asyncMiddleware(adminController.deleteReason))
+router.delete('/deleteReason/:reasonId', asyncMiddleware(adminController.deleteReason))
 
 //!-------------------------Account Preferences------------------------------------------------------------------//
 //Add Preference Types
-router.post('/createPreferenceType', validateAccessToken, asyncMiddleware(adminController.createPreferenceType))
+router.post('/createPreferenceType', asyncMiddleware(adminController.createPreferenceType))
 //Get Preference Types
-router.get('/getPreferenceTypes', validateAccessToken, asyncMiddleware(adminController.getPreferenceTypes))
+router.get('/getPreferenceTypes', asyncMiddleware(adminController.getPreferenceTypes))
 //Edit Preference Type
-router.patch('/editPreferenceType/:preferenceTypeId', validateAccessToken, asyncMiddleware(adminController.editPreferenceType))
+router.patch('/editPreferenceType/:preferenceTypeId', asyncMiddleware(adminController.editPreferenceType))
 //Delete Preference Type
-router.delete('/deletePreferenceType/:preferenceTypeId', validateAccessToken, asyncMiddleware(adminController.deletePreferenceTypeController))
+router.delete('/deletePreferenceType/:preferenceTypeId', asyncMiddleware(adminController.deletePreferenceTypeController))
 //Add Preference Values
-router.post('/addPreferenceValues', validateAccessToken, asyncMiddleware(adminController.addPreferenceValues))
+router.post('/addPreferenceValues', asyncMiddleware(adminController.addPreferenceValues))
 //Edit Preference Values
-router.patch('/editPreferenceValues/:preferenceValueId', validateAccessToken, asyncMiddleware(adminController.editPreferenceValuesController))
+router.patch('/editPreferenceValues/:preferenceValueId', asyncMiddleware(adminController.editPreferenceValuesController))
 //Delete Preference Values
-router.delete('/deletePreferenceValues/:preferenceValueId', validateAccessToken, asyncMiddleware(adminController.deletePreferenceValuesController))
+router.delete('/deletePreferenceValues/:preferenceValueId', asyncMiddleware(adminController.deletePreferenceValuesController))
 //Add Service With Preferences
-router.post('/addServiceWithPreferences', validateAccessToken, asyncMiddleware(adminController.addServiceWithPreferences))
+router.post('/addServiceWithPreferences', asyncMiddleware(adminController.addServiceWithPreferences))
 //Get Preferences && Services Data 
-router.get("/servicesAndPreferencesData/:serviceId",validateAccessToken,asyncMiddleware(adminController.servicesAndPreferencesData))
+router.get("/servicesAndPreferencesData/:serviceId", asyncMiddleware(adminController.servicesAndPreferencesData))
 //unAttach Service From Preferences
-router.delete('/unAssignServiceFromPreferences/:serviceId', validateAccessToken, asyncMiddleware(adminController.unAssignServiceFromPreferences))
+router.delete('/unAssignServiceFromPreferences/:serviceId', asyncMiddleware(adminController.unAssignServiceFromPreferences))
 //!----------------------------On Hold Options------------------------------------------------------------------//
 //On Hold Options Add
-router.post('/onHoldOptions', validateAccessToken, asyncMiddleware(adminController.onHoldOptions))
+router.post('/onHoldOptions', asyncMiddleware(adminController.onHoldOptions))
 //On Hold Customer Option
-router.post('/customerOnHoldOptions', validateAccessToken, asyncMiddleware(adminController.customerOnHoldOptions))
+router.post('/customerOnHoldOptions', asyncMiddleware(adminController.customerOnHoldOptions))
 //Get Customer On Hold Options
-router.get('/getOnHoldCustomerOptions', validateAccessToken, asyncMiddleware(adminController.getOnHoldCustomerOptions))
+router.get('/getOnHoldCustomerOptions', asyncMiddleware(adminController.getOnHoldCustomerOptions))
 //Get on  Hold Options
-router.get('/getOnHoldOptions', validateAccessToken, asyncMiddleware(adminController.getOnHoldOptions))
+router.get('/getOnHoldOptions', asyncMiddleware(adminController.getOnHoldOptions))
 //Get All On Hold Bookings
-router.get('/getOnHoldBookings', validateAccessToken, asyncMiddleware(adminController.getOnHoldBookings))
+router.get('/getOnHoldBookings', asyncMiddleware(adminController.getOnHoldBookings))
 //!-------------------------------Customer Management---------------------------------//
 //Get All Customers
-router.get('/getAllCustomers', validateAccessToken, asyncMiddleware(adminController.getAllCustomers))
+router.get('/getAllCustomers', asyncMiddleware(adminController.getAllCustomers))
 //Get Customers Count
-router.get('/customerCount', validateAccessToken, asyncMiddleware(adminController.customerCount))
+router.get('/customerCount', asyncMiddleware(adminController.customerCount))
 //Get Sepecific customer Details 
-router.get('/specificCustomerDetails/:customerId', validateAccessToken, asyncMiddleware(adminController.specificCustomerDetails))
+router.get('/specificCustomerDetails/:customerId', asyncMiddleware(adminController.specificCustomerDetails))
 //Update Customer
-router.patch('/updateCustomer/:customerId', validateAccessToken, asyncMiddleware(adminController.updateCustomer))
+router.patch('/updateCustomer/:customerId', asyncMiddleware(adminController.updateCustomer))
 //Delete Customer
-router.delete('/deleteCustomer/:customerId', validateAccessToken, asyncMiddleware(adminController.deleteCustomer))
+router.delete('/deleteCustomer/:customerId', asyncMiddleware(adminController.deleteCustomer))
 //!-----------------------------Driver Management------------------------------//
 //Drivers Count Api
-router.get('/countTotalDrivers', validateAccessToken, asyncMiddleware(adminController.countTotalDrivers))
+router.get('/countTotalDrivers', asyncMiddleware(adminController.countTotalDrivers))
 //All Driver Detail api
-router.get('/allDriverMiniDetails', validateAccessToken, asyncMiddleware(adminController.allDriverMiniDetails))
+router.get('/allDriverMiniDetails', asyncMiddleware(adminController.allDriverMiniDetails))
 //Driver Status Change
-router.patch('/driverStatusChange/:driverId', validateAccessToken, asyncMiddleware(adminController.driverStatusChange))
+router.patch('/driverStatusChange/:driverId', asyncMiddleware(adminController.driverStatusChange))
 //Specific Drive Details
-router.get('/specificdriverDetail/:driverId', validateAccessToken, asyncMiddleware(adminController.specificdriverDetail))
+router.get('/specificdriverDetail/:driverId', asyncMiddleware(adminController.specificdriverDetail))
 //Update Driver
-router.patch('/updateDriver/:driverId', validateAccessToken, uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.updateDriver))
+router.patch('/updateDriver/:driverId', uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.updateDriver))
 //Delete Driver
-router.delete('/deleteDriver/:driverId', validateAccessToken, asyncMiddleware(adminController.deleteDriver))
+router.delete('/deleteDriver/:driverId', asyncMiddleware(adminController.deleteDriver))
 //Add Driver by Laundry Shop ID
-router.post('/addDriverByLaundryShop', validateAccessToken, uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.addDriverByLaundryShop))
+router.post('/addDriverByLaundryShop', uploadDriverProfile.single('profileImg'), asyncMiddleware(adminController.addDriverByLaundryShop))
 
 //!-----------------------------Order Management------------------------------//
 //Get Order Count
-router.get('/ordersCount', validateAccessToken, asyncMiddleware(adminController.ordersCount))
+router.get('/ordersCount', asyncMiddleware(adminController.ordersCount))
 //Get All Order Details
-router.get('/allOrderDetails', validateAccessToken, asyncMiddleware(adminController.allOrderDetails))
+router.get('/allOrderDetails', asyncMiddleware(adminController.allOrderDetails))
 //Get All Pending Orders
-router.get('/pendingOrders', validateAccessToken, asyncMiddleware(adminController.pendingOrders))
+router.get('/pendingOrders', asyncMiddleware(adminController.pendingOrders))
 //Get All Cancel Orders
-router.get('/allCancelOrders', validateAccessToken, asyncMiddleware(adminController.allCancelOrders))
+router.get('/allCancelOrders', asyncMiddleware(adminController.allCancelOrders))
 //Get All Completed Orders
-router.get('/completeOrders', validateAccessToken, asyncMiddleware(adminController.completeOrders))
+router.get('/completeOrders', asyncMiddleware(adminController.completeOrders))
 //Get Single Order for Editing
-router.get('/getOrderForEdit/:orderId', validateAccessToken, asyncMiddleware(adminController.getOrderForEdit))
+router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrderForEdit))
 //Edit Order
-router.patch('/editOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.editOrder))
+router.patch('/editOrder/:orderId', asyncMiddleware(adminController.editOrder))
 //Delete Order (Soft Delete)
-router.delete('/deleteOrder/:orderId', validateAccessToken, asyncMiddleware(adminController.deleteOrder))
+router.delete('/deleteOrder/:orderId', asyncMiddleware(adminController.deleteOrder))
 //For Order Items Sheet
 router.get(
-    "/orderItemsSheet",
-    validateAccessToken,
-    asyncMiddleware(agentController.customerServices)
+    "/orderItemsSheet", asyncMiddleware(agentController.customerServices)
 );
 
 //!-----------------------------Service Management------------------------------//
 //Get Services with CategOries && SubCategoriesCounts
-router.get('/getAdminServicesWithCategories', validateAccessToken, asyncMiddleware(adminController.getAdminServicesWithCategories))
+router.get('/getAdminServicesWithCategories', asyncMiddleware(adminController.getAdminServicesWithCategories))
 //Add Service Types
-router.post('/addServiceTypes', validateAccessToken, uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.addServiceTypes))
+router.post('/addServiceTypes', uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.addServiceTypes))
 //Get SubCategories&&Items
-router.get('/getSubCategories/:categoryId', validateAccessToken, asyncMiddleware(adminController.getSubCategories))
+router.get('/getSubCategories/:categoryId', asyncMiddleware(adminController.getSubCategories))
 //Add Service Items
-router.post('/addServiceItems', validateAccessToken, asyncMiddleware(adminController.addServiceItems))
+router.post('/addServiceItems', asyncMiddleware(adminController.addServiceItems))
 //Get Services and Categories for Order Edit
-router.get('/getServicesAndCategoriesForOrderEdit', validateAccessToken, asyncMiddleware(adminController.getServicesAndCategoriesForOrderEdit))
+router.get('/getServicesAndCategoriesForOrderEdit', asyncMiddleware(adminController.getServicesAndCategoriesForOrderEdit))
 
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
 //Add Roles
-router.post('/AddLaundryRoles', validateAccessToken, asyncMiddleware(adminController.addRole))
+router.post('/AddLaundryRoles', asyncMiddleware(adminController.addRole))
 //Update Roles
-router.put('/updateRoles', validateAccessToken, asyncMiddleware(adminController.updateRoles))
+router.put('/updateRoles', asyncMiddleware(adminController.updateRoles))
 //Get Roles
-router.get('/getAllRoles', validateAccessToken, asyncMiddleware(adminController.getAllRoles))
+router.get('/getAllRoles', asyncMiddleware(adminController.getAllRoles))
 //Add ClassifiedAs 
-router.post('/addClassifiedAs', validateAccessToken, asyncMiddleware(adminController.addClassifiedAs))
+router.post('/addClassifiedAs', asyncMiddleware(adminController.addClassifiedAs))
 //Get ClassifiedAs
-router.get('/getClassifiedAs', validateAccessToken, asyncMiddleware(adminController.getClassifiedAs))
+router.get('/getClassifiedAs', asyncMiddleware(adminController.getClassifiedAs))
 //Add Features
-router.post('/addfeatures', validateAccessToken, asyncMiddleware(adminController.addfeatures))
+router.post('/addfeatures', asyncMiddleware(adminController.addfeatures))
 //Get Features
-router.get('/getFeatures', validateAccessToken, asyncMiddleware(adminController.getFeatures))
+router.get('/getFeatures', asyncMiddleware(adminController.getFeatures))
 //Delete Feature
-router.delete('/deleteFeature/:featureId', validateAccessToken, asyncMiddleware(adminController.deleteFeature))
+router.delete('/deleteFeature/:featureId', asyncMiddleware(adminController.deleteFeature))
 
 
 
 //!-----------------------------Employee Management------------------------------//
 //Get All Employess Of Admin
-router.get('/getAdminEmployess', validateAccessToken, asyncMiddleware(adminController.getAdminEmployess))
+router.get('/getAdminEmployess', asyncMiddleware(adminController.getAdminEmployess))
 //Add Employee
-router.post('/adinEmployeeAdd', validateAccessToken, asyncMiddleware(adminController.addEmployee))
+router.post('/adinEmployeeAdd', asyncMiddleware(adminController.addEmployee))
 //Update Employee
-router.patch('/updateEmployee', validateAccessToken, asyncMiddleware(adminController.updateEmployee))
+router.patch('/updateEmployee', asyncMiddleware(adminController.updateEmployee))
 //update Employee Status
-router.patch('/updateEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeEmployeeStatus))
+router.patch('/updateEmployeeStatus', asyncMiddleware(adminController.changeEmployeeStatus))
 //Get Specific Admin Employee
-router.get('/getAdminEmployeeDetail/:employeeId', validateAccessToken, asyncMiddleware(adminController.getAdminEmployeeDetail))
+router.get('/getAdminEmployeeDetail/:employeeId', asyncMiddleware(adminController.getAdminEmployeeDetail))
 //Update Admin Employee
-router.patch('/updateAdminEmployee', validateAccessToken, asyncMiddleware(adminController.updateAdminEmployee))
+router.patch('/updateAdminEmployee', asyncMiddleware(adminController.updateAdminEmployee))
 //Delete Admin Employee (Soft Delete)
-router.delete('/deleteAdminEmployee/:employeeId', validateAccessToken, asyncMiddleware(adminController.deleteAdminEmployee))
+router.delete('/deleteAdminEmployee/:employeeId', asyncMiddleware(adminController.deleteAdminEmployee))
 //Add Agent Employee
-router.post('/addAgentEmployee', validateAccessToken, asyncMiddleware(adminController.addAgentEmployee))
+router.post('/addAgentEmployee', asyncMiddleware(adminController.addAgentEmployee))
 //Update Agent Employee
-router.patch('/updateAgentEmployee', validateAccessToken, asyncMiddleware(adminController.updateAgentEmployee))
+router.patch('/updateAgentEmployee', asyncMiddleware(adminController.updateAgentEmployee))
 //Update Agent Employee Status
-router.patch('/updateAgentEmployeeStatus', validateAccessToken, asyncMiddleware(adminController.changeAgentEmployeeStatus))
+router.patch('/updateAgentEmployeeStatus', asyncMiddleware(adminController.changeAgentEmployeeStatus))
 //Get All Agent Employees
-router.get('/getAllAgentEmployees/:agentId', validateAccessToken, asyncMiddleware(adminController.getAllAgentEmployees))
+router.get('/getAllAgentEmployees/:agentId', asyncMiddleware(adminController.getAllAgentEmployees))
 //Delete Agent Employee (Soft Delete)
-router.delete('/deleteAgentEmployee/:employeeId', validateAccessToken, asyncMiddleware(adminController.deleteAgentEmployee))
+router.delete('/deleteAgentEmployee/:employeeId', asyncMiddleware(adminController.deleteAgentEmployee))
 
 //Register Agent (Admin Side)
-router.post('/registerAgent', validateAccessToken, uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
+router.post('/registerAgent', uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
 
 //Add Business Information to Agent
-router.post('/addAgentBusinessInfo/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentBusinessInfo))
+router.post('/addAgentBusinessInfo/:userId', asyncMiddleware(adminController.addAgentBusinessInfo))
 
 //Add Services to Agent
-router.post('/addAgentServices/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentServices))
+router.post('/addAgentServices/:userId', asyncMiddleware(adminController.addAgentServices))
 
 //Update Agent Working Hours
-router.patch('/updateAgentWorkingHours/:userId', validateAccessToken, asyncMiddleware(adminController.updateAgentWorkingHours))
+router.patch('/updateAgentWorkingHours/:userId', asyncMiddleware(adminController.updateAgentWorkingHours))
 
 //Get Agent Complete Information
-router.get('/getAgentCompleteInfo/:userId', validateAccessToken, asyncMiddleware(adminController.getAgentCompleteInfo))
+router.get('/getAgentCompleteInfo/:userId', asyncMiddleware(adminController.getAgentCompleteInfo))
 
 //Add Agent Address
-router.post('/addAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.addAgentAddress))
+router.post('/addAgentAddress/:userId', asyncMiddleware(adminController.addAgentAddress))
 
 //Edit Agent Address
-router.patch('/editAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.editAgentAddress))
+router.patch('/editAgentAddress/:userId', asyncMiddleware(adminController.editAgentAddress))
 
 //Get Agent Address
-router.get('/getAgentAddress/:userId', validateAccessToken, asyncMiddleware(adminController.getAgentAddress))
+router.get('/getAgentAddress/:userId', asyncMiddleware(adminController.getAgentAddress))
 
 //Get Shop Address with Business Info
-router.get('/getShopAddress/:userId', validateAccessToken, asyncMiddleware(adminController.getShopAddress))
+router.get('/getShopAddress/:userId', asyncMiddleware(adminController.getShopAddress))
 
 
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts
-router.get('/getShopInformation', validateAccessToken, asyncMiddleware(adminController.getShopInformation))
+router.get('/getShopInformation', asyncMiddleware(adminController.getShopInformation))
 //Get Shops Data
-router.get('/getShopsData', validateAccessToken, asyncMiddleware(adminController.shopsData))
+router.get('/getShopsData', asyncMiddleware(adminController.shopsData))
 //Single Shop Data
-router.get('/singleShopData/:Id', validateAccessToken, asyncMiddleware(adminController.singleShopData))
+router.get('/singleShopData/:Id', asyncMiddleware(adminController.singleShopData))
 //Delete Shop (Soft Delete)
-router.delete('/deleteShop/:shopId', validateAccessToken, asyncMiddleware(adminController.deleteShop))
+router.delete('/deleteShop/:shopId', asyncMiddleware(adminController.deleteShop))
 //Get Shop Employees 
-router.get('/getShopEmployees/:bussinessId', validateAccessToken, asyncMiddleware(adminController.getShopEmployees))
+router.get('/getShopEmployees/:bussinessId', asyncMiddleware(adminController.getShopEmployees))
 //Get All Employees with Shop Information
-router.get('/getAllEmployeesWithShopInfo', validateAccessToken, asyncMiddleware(adminController.getAllEmployeesWithShopInfo))
+router.get('/getAllEmployeesWithShopInfo', asyncMiddleware(adminController.getAllEmployeesWithShopInfo))
 
 
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>
 // Add Cancellation Policy
-router.post('/addCancellationPolicy', validateAccessToken, asyncMiddleware(adminController.createCancellationPolicyController))
+router.post('/addCancellationPolicy', asyncMiddleware(adminController.createCancellationPolicyController))
 // Get All Cancellation Policies
-router.get('/getCancellationPolicies', validateAccessToken, asyncMiddleware(adminController.getAllCancellationPoliciesController))
+router.get('/getCancellationPolicies', asyncMiddleware(adminController.getAllCancellationPoliciesController))
 // Get Cancellation Policy by ID
-router.get('/getCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyByIdController))
+router.get('/getCancellationPolicy/:id', asyncMiddleware(adminController.getCancellationPolicyByIdController))
 // Update Cancellation Policy
-router.put('/updateCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateCancellationPolicyController))
+router.put('/updateCancellationPolicy/:id', asyncMiddleware(adminController.updateCancellationPolicyController))
 // Delete Cancellation Policy
-router.delete('/deleteCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteCancellationPolicyController))
+router.delete('/deleteCancellationPolicy/:id', asyncMiddleware(adminController.deleteCancellationPolicyController))
 // Set Default Cancellation Policy
-router.patch('/setDefaultCancellationPolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultCancellationPolicyController))
+router.patch('/setDefaultCancellationPolicy/:id', asyncMiddleware(adminController.setDefaultCancellationPolicyController))
 // Toggle Cancellation Policy Status
-router.patch('/toggleCancellationPolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
+router.patch('/toggleCancellationPolicyStatus/:id', asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
 // Get Active Cancellation Policy
-router.get('/getActiveCancellationPolicy', validateAccessToken, asyncMiddleware(adminController.getActiveCancellationPolicyController))
+router.get('/getActiveCancellationPolicy', asyncMiddleware(adminController.getActiveCancellationPolicyController))
 // Get Cancellation Policy Statistics
-router.get('/getCancellationPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
+router.get('/getCancellationPolicyStatistics', asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
 
 
 //!-----------------------------------No-Show Policy Management------------------------------------>>>>
 // Add No-Show Policy
-router.post('/addNoShowPolicy', validateAccessToken, asyncMiddleware(adminController.createNoShowPolicyController))
+router.post('/addNoShowPolicy', asyncMiddleware(adminController.createNoShowPolicyController))
 // Get All No-Show Policies
-router.get('/getNoShowPolicies', validateAccessToken, asyncMiddleware(adminController.getAllNoShowPoliciesController))
+router.get('/getNoShowPolicies', asyncMiddleware(adminController.getAllNoShowPoliciesController))
 // Get No-Show Policy by ID
-router.get('/getNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyByIdController))
+router.get('/getNoShowPolicy/:id', asyncMiddleware(adminController.getNoShowPolicyByIdController))
 // Update No-Show Policy
-router.put('/updateNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateNoShowPolicyController))
+router.put('/updateNoShowPolicy/:id', asyncMiddleware(adminController.updateNoShowPolicyController))
 // Delete No-Show Policy
-router.delete('/deleteNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteNoShowPolicyController))
+router.delete('/deleteNoShowPolicy/:id', asyncMiddleware(adminController.deleteNoShowPolicyController))
 // Set Default No-Show Policy
-router.patch('/setDefaultNoShowPolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultNoShowPolicyController))
+router.patch('/setDefaultNoShowPolicy/:id', asyncMiddleware(adminController.setDefaultNoShowPolicyController))
 // Toggle No-Show Policy Status
-router.patch('/toggleNoShowPolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleNoShowPolicyStatusController))
+router.patch('/toggleNoShowPolicyStatus/:id', asyncMiddleware(adminController.toggleNoShowPolicyStatusController))
 // Get Active No-Show Policy
-router.get('/getActiveNoShowPolicy', validateAccessToken, asyncMiddleware(adminController.getActiveNoShowPolicyController))
+router.get('/getActiveNoShowPolicy', asyncMiddleware(adminController.getActiveNoShowPolicyController))
 // Get No-Show Policy Statistics
-router.get('/getNoShowPolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getNoShowPolicyStatisticsController))
+router.get('/getNoShowPolicyStatistics', asyncMiddleware(adminController.getNoShowPolicyStatisticsController))
 
 
 //!-----------------------------------Reschedule Policy Management------------------------------------>>>>
 // Add Reschedule Policy
-router.post('/addReschedulePolicy', validateAccessToken, asyncMiddleware(adminController.createReschedulePolicyController))
+router.post('/addReschedulePolicy', asyncMiddleware(adminController.createReschedulePolicyController))
 // Get All Reschedule Policies
-router.get('/getReschedulePolicies', validateAccessToken, asyncMiddleware(adminController.getAllReschedulePoliciesController))
+router.get('/getReschedulePolicies', asyncMiddleware(adminController.getAllReschedulePoliciesController))
 // Get Reschedule Policy by ID
-router.get('/getReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.getReschedulePolicyByIdController))
+router.get('/getReschedulePolicy/:id', asyncMiddleware(adminController.getReschedulePolicyByIdController))
 // Update Reschedule Policy
-router.put('/updateReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.updateReschedulePolicyController))
+router.put('/updateReschedulePolicy/:id', asyncMiddleware(adminController.updateReschedulePolicyController))
 // Delete Reschedule Policy
-router.delete('/deleteReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.deleteReschedulePolicyController))
+router.delete('/deleteReschedulePolicy/:id', asyncMiddleware(adminController.deleteReschedulePolicyController))
 // Set Default Reschedule Policy
-router.patch('/setDefaultReschedulePolicy/:id', validateAccessToken, asyncMiddleware(adminController.setDefaultReschedulePolicyController))
+router.patch('/setDefaultReschedulePolicy/:id', asyncMiddleware(adminController.setDefaultReschedulePolicyController))
 // Toggle Reschedule Policy Status
-router.patch('/toggleReschedulePolicyStatus/:id', validateAccessToken, asyncMiddleware(adminController.toggleReschedulePolicyStatusController))
+router.patch('/toggleReschedulePolicyStatus/:id', asyncMiddleware(adminController.toggleReschedulePolicyStatusController))
 // Get Active Reschedule Policy
-router.get('/getActiveReschedulePolicy', validateAccessToken, asyncMiddleware(adminController.getActiveReschedulePolicyController))
+router.get('/getActiveReschedulePolicy', asyncMiddleware(adminController.getActiveReschedulePolicyController))
 // Get Reschedule Policy Statistics
-router.get('/getReschedulePolicyStatistics', validateAccessToken, asyncMiddleware(adminController.getReschedulePolicyStatisticsController))
+router.get('/getReschedulePolicyStatistics', asyncMiddleware(adminController.getReschedulePolicyStatisticsController))
 // Get All Active Policies (cancellation, reschedule, no-show)
-router.get('/getActivePolicies', validateAccessToken, asyncMiddleware(adminController.getActivePoliciesController))
+router.get('/getActivePolicies', asyncMiddleware(adminController.getActivePoliciesController))
 
 
 //!-----------------------------------FAQ Management------------------------------------>>>>
 // Create FAQ
-router.post('/createFAQ', validateAccessToken, asyncMiddleware(adminController.createFAQ))
+router.post('/createFAQ', asyncMiddleware(adminController.createFAQ))
 // Get All FAQs
 router.get('/getAllFAQs', asyncMiddleware(adminController.getAllFAQs))
 // Get FAQ by ID
-router.get('/getFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.getFAQById))
+router.get('/getFAQ/:faqId', asyncMiddleware(adminController.getFAQById))
 // Update FAQ
-router.put('/updateFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.updateFAQ))
+router.put('/updateFAQ/:faqId', asyncMiddleware(adminController.updateFAQ))
 // Delete FAQ
-router.delete('/deleteFAQ/:faqId', validateAccessToken, asyncMiddleware(adminController.deleteFAQ))
+router.delete('/deleteFAQ/:faqId', asyncMiddleware(adminController.deleteFAQ))
 // Toggle FAQ Status
-router.patch('/toggleFAQStatus/:faqId', validateAccessToken, asyncMiddleware(adminController.toggleFAQStatus))
+router.patch('/toggleFAQStatus/:faqId', asyncMiddleware(adminController.toggleFAQStatus))
 
 
 //!-----------------------------------Blog Management------------------------------------>>>>
 // Create Blog
-router.post('/createBlog', validateAccessToken, uploadBlogImage.fields([
+router.post('/createBlog', uploadBlogImage.fields([
     { name: 'image', maxCount: 1 },
     { name: 'descriptionImages', maxCount: 10 }
 ]), asyncMiddleware(adminController.createBlog))
 // Get All Blogs
-router.get('/getAllBlogs', validateAccessToken, asyncMiddleware(adminController.getAllBlogs))
+router.get('/getAllBlogs', asyncMiddleware(adminController.getAllBlogs))
 // Get Blog by ID
-router.get('/getBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.getBlogById))
+router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
 // Update Blog
-router.put('/updateBlog/:blogId', validateAccessToken, uploadBlogImage.fields([
+router.put('/updateBlog/:blogId', uploadBlogImage.fields([
     { name: 'image', maxCount: 1 },
     { name: 'descriptionImages', maxCount: 10 }
 ]), asyncMiddleware(adminController.updateBlog))
 // Delete Blog
-router.delete('/deleteBlog/:blogId', validateAccessToken, asyncMiddleware(adminController.deleteBlog))
+router.delete('/deleteBlog/:blogId', asyncMiddleware(adminController.deleteBlog))
 // Toggle Blog Status
-router.patch('/toggleBlogStatus/:blogId', validateAccessToken, asyncMiddleware(adminController.toggleBlogStatus))
+router.patch('/toggleBlogStatus/:blogId', asyncMiddleware(adminController.toggleBlogStatus))
 
 
 
 //!-----------------------------------Reports------------------------------------>>>>
 // 1. Top Services Report
-router.get('/reports/top-services',        validateAccessToken, asyncMiddleware(reportsController.getTopServicesReport))
+router.get('/reports/top-services', asyncMiddleware(reportsController.getTopServicesReport))
 // 2. Hourly Report
-router.get('/reports/hourly',              validateAccessToken, asyncMiddleware(reportsController.getHourlyReport))
+router.get('/reports/hourly', asyncMiddleware(reportsController.getHourlyReport))
 // 3. On Hold Report
-router.get('/reports/on-hold',             validateAccessToken, asyncMiddleware(reportsController.getOnHoldReport))
+router.get('/reports/on-hold', asyncMiddleware(reportsController.getOnHoldReport))
 // 4. Service Demand Report
-router.get('/reports/service-demand',      validateAccessToken, asyncMiddleware(reportsController.getServiceDemandReport))
+router.get('/reports/service-demand', asyncMiddleware(reportsController.getServiceDemandReport))
 // 5. Top Performing Shops
-router.get('/reports/top-shops',           validateAccessToken, asyncMiddleware(reportsController.getTopShopsReport))
+router.get('/reports/top-shops', asyncMiddleware(reportsController.getTopShopsReport))
 // 6. Daily Earning Report
-router.get('/reports/daily-earnings',      validateAccessToken, asyncMiddleware(reportsController.getDailyEarningReport))
+router.get('/reports/daily-earnings', asyncMiddleware(reportsController.getDailyEarningReport))
 // 7. Daily Earning Report by Zone
-router.get('/reports/daily-earnings/zone', validateAccessToken, asyncMiddleware(reportsController.getDailyEarningByZoneReport))
+router.get('/reports/daily-earnings/zone', asyncMiddleware(reportsController.getDailyEarningByZoneReport))
 // 8. Daily Earning Report by Shop
-router.get('/reports/daily-earnings/shop', validateAccessToken, asyncMiddleware(reportsController.getDailyEarningByShopReport))
+router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.getDailyEarningByShopReport))
 
 
 module.exports = router

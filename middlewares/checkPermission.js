@@ -1,6 +1,5 @@
 require('dotenv').config();
 const { users, permissions } = require('../models');
-const error = require('./error');
 
 const METHOD_TO_COLUMN = {
     get:    'read',
@@ -10,57 +9,93 @@ const METHOD_TO_COLUMN = {
     delete: 'delete',
 };
 
-module.exports = async function validatePermission(req, res, next) {
+/**
+ * Permission Middleware
+ *
+ * Attach ONCE after validateAccessToken on any router.
+ * req.user is already set by validateAccessToken.
+ *
+ * Flow:
+ *  1. Get user's classifiedAsId and roleId from DB using req.user.id
+ *  2. If classifiedAsId is null  → owner / super admin → full access, skip check
+ *  3. If classifiedAsId is set   → zone admin / employee → check permissions
+ *     a. Get featureId from request (header OR body OR query)
+ *     b. Look up permissions row: roleId + featureId
+ *     c. Map HTTP method to column: GET→read, POST→create, PUT/PATCH→update, DELETE→delete
+ *     d. If that column is true → allow, else → 403
+ */
+module.exports = async function checkPermission(req, res, next) {
     try {
+        // Get user role info from DB using the id in the token
         const userData = await users.findByPk(req.user.id, {
-            attributes: ['classifiedAsId', 'roleId', 'userTypeId']
+            attributes: ['id', 'classifiedAsId', 'roleId']
         });
 
-        // Owners / admins bypass permission check
-        if (userData.userTypeId === 4 || userData.userTypeId === 1) {
-            return next();
-        }
-
-        const featureId = req.query.featureId || req.body.featureId;
-
-        const feature = req.user.featureData?.find(f => f.id === parseInt(featureId));
-        if (!feature) {
-            return res.json({
-                status: '0',
-                message: 'Access Denied',
-                data: { error },
-                error: 'Feature not found or no access',
-            });
-        }
-
-        const method = req.method.toLowerCase();
-        const permColumn = METHOD_TO_COLUMN[method];
-
-        if (!permColumn) {
-            return res.json({
+        if (!userData) {
+            return res.status(403).json({
                 status: '0',
                 message: 'Access Denied',
                 data: {},
-                error: `Unsupported HTTP method: ${req.method}`,
+                error: 'User not found'
             });
         }
 
+        // classifiedAsId === null → owner or super admin → bypass, full access
+        if (userData.classifiedAsId === null) {
+            return next();
+        }
+
+        // ── Zone Admin / Employee from here ──────────────────────────────────
+
+        if (!userData.roleId) {
+            return res.status(403).json({
+                status: '0',
+                message: 'Access Denied',
+                data: {},
+                error: 'No role assigned. Please contact your admin.'
+            });
+        }
+
+        // featureId sent by frontend: header, body, or query
+        const featureId = req.headers['featureid'] || req.body?.featureId || req.query?.featureId;
+
+        if (!featureId) {
+            return res.status(403).json({
+                status: '0',
+                message: 'Access Denied',
+                data: {},
+                error: 'featureId is required'
+            });
+        }
+
+        // Which action is being performed based on HTTP method
+        const permColumn = METHOD_TO_COLUMN[req.method.toLowerCase()];
+
+        // Find permission row for this role + feature
         const permissionRow = await permissions.findOne({
             where: { featureId, roleId: userData.roleId },
-            attributes: ['create', 'read', 'update', 'delete'],
+            attributes: ['create', 'read', 'update', 'delete']
         });
 
+        // No row found or the specific permission (read/create/update/delete) is false
         if (!permissionRow || !permissionRow[permColumn]) {
-            throw new Error('Access Denied');
+            return res.status(403).json({
+                status: '0',
+                message: 'Access Denied',
+                data: {},
+                error: `You do not have ${permColumn} access for this feature`
+            });
         }
 
         return next();
+
     } catch (err) {
-        return res.json({
+        console.error('checkPermission error:', err.message);
+        return res.status(403).json({
             status: '0',
             message: 'Access Denied',
             data: {},
-            error: 'You are not authorized to access it',
+            error: 'Authorization check failed'
         });
     }
 };

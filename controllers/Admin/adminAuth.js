@@ -53,6 +53,32 @@ async function signIn(req, res) {
 
 
 /*
+ *        Zone Admin SignIn
+ */
+async function zoneAdminSignIn(req, res) {
+    const { email, password, dvToken } = req.body;
+
+    if (!email || !password) {
+        return ResponseHelper.validationError(res, "Email and password are required");
+    }
+
+    const signInData = { email, password, dvToken };
+    const output = await authService.zoneAdminSignIn(signInData);
+
+    // Set HTTP-only cookie
+    res.cookie("accessToken", output.accessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        path: "/admin",
+        maxAge: 24 * 60 * 60 * 1000
+    });
+
+    return ResponseHelper.success(res, "Zone Admin Login Successful", output);
+}
+
+
+/*
  *        Admin SignOut
  */
 async function signOut(req, res) {
@@ -75,5 +101,6 @@ async function signOut(req, res) {
 
 module.exports = {
     signIn,
+    zoneAdminSignIn,
     signOut
 }

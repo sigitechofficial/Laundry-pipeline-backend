@@ -1,84 +1,51 @@
-// require('dotenv').config()
-// const{verify}=require('jsonwebtoken')
-// const redisCli=require('../redis/redis')
-// const customError=require('../middlewares/customError')
-
-
-// module.exports=async function validateAccessToken(req,res,next) {
-//     try {
-
-//         const accessToken=req.cookies.accessToken
-//         console.log("🚀 ~ validateAccessToken ~ req.cookies:", req.cookies)
-//         console.log("URL---------------------------->>",req.url);
-        
-//         if(!accessToken){
-//             throw new Error();
-//         }
-//         console.log("AccessToken Step-1")
-    
-//         const validateToken=verify(accessToken,process.env.JWT_ACCESS_SECRET)
-//         //console.log("🚀 ~ validateAccessToken ~ validateToken:", validateToken)
-
-//         console.log("AccessToken Step-2",validateAccessToken)
-
-    
-//         req.user=validateToken;
-//         next()
-        
-//     } catch (error) {
-//         return res.status(403).json({
-//             status:'403',
-//             message:"Access Denied",
-//             data:{error},
-//             error:'You are not Admin to access it'
-//         })
-        
-//     }
-  
-    
-// }
-
 require('dotenv').config();
 const { verify } = require('jsonwebtoken');
 const redisCli = require('../redis/redis');
-const customError = require('../middlewares/customError');
 
 module.exports = async function validateAccessToken(req, res, next) {
     try {
-        // Check for token in cookies
+        // 1. Try cookie first
         let accessToken = req.cookies.accessToken;
 
-        // If not found in cookies, check for Authorization header
-        if (!accessToken && req.headers.authorization) {
-            const authHeader = req.headers.authorization;
-            // The format should be 'Bearer <token>'
-            const token = authHeader.split(' ')[1]; // Get the token part of the Authorization header
-            if (token) {
-                accessToken = token;
-            }
-        }
-
-        // If no token found in both, deny access
+        // 2. Fall back to accesstoken / x-access-token header (for mobile / non-browser clients)
         if (!accessToken) {
-            throw new Error('Access token not found');
+            accessToken = req.headers['accesstoken'] || req.headers['x-access-token'];
         }
 
-        // Verify the token
+        if (!accessToken) {
+            return res.status(403).json({
+                status: '0',
+                message: 'Access Denied',
+                data: {},
+                error: 'Access token not found'
+            });
+        }
+
+        // Verify JWT signature
         const validateToken = verify(accessToken, process.env.JWT_ACCESS_SECRET);
-        console.log("AccessToken valid: ", validateToken);
 
-        // Attach the user info to the request object for further use
-        req.user = validateToken;
+        // Validate token still exists in Redis (covers logout / revocation)
+        const redisToken = await redisCli.hGetAll(`tsh${validateToken.id}`);
+        if (!redisToken || !redisToken[validateToken.dvToken]) {
+            return res.status(403).json({
+                status: '0',
+                message: 'Access Denied',
+                data: {},
+                error: 'Session expired or logged out. Please sign in again.'
+            });
+        }
 
-        // Proceed to the next middleware or route handler
+        // Re-verify the stored token from Redis for extra safety
+        const storedToken = verify(redisToken[validateToken.dvToken], process.env.JWT_ACCESS_SECRET);
+
+        req.user = storedToken;
         next();
 
     } catch (error) {
-        // If verification fails or token is missing, send an error response
         return res.status(403).json({
-            status: '403',
-            message: "Access Denied",
-            data: { error: error.message },
+            status: '0',
+            message: 'Access Denied',
+            data: {},
             error: 'You are not authorized to access this resource'
         });
     }
