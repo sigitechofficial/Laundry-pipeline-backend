@@ -135,17 +135,13 @@ class AuthService {
             throw new UnauthorizedError('Invalid credentials. Please enter the correct password.');
         }
 
-        // Find the zone assigned to this admin
+        // Find the zone assigned to this employee (optional — only zone admins have one)
         const zoneData = await zone.findOne({
             where: { zoneAdminId: adminData.id },
             attributes: ['id', 'name']
         });
 
-        if (!zoneData) {
-            throw new NotFoundError('No zone is assigned to this admin account. Please contact the super admin.');
-        }
-
-        // Get features this zone admin's role has access to
+        // Get permissions for this employee's role
         const permissionData = await permissions.findAll({
             where: { roleId: adminData.roleId },
             attributes: ['featureId', 'create', 'read', 'update', 'delete'],
@@ -161,7 +157,7 @@ class AuthService {
             id: adminData.id,
             email: adminData.email,
             dvToken,
-            zoneId: zoneData.id,
+            zoneId: zoneData ? zoneData.id : null,
             classifiedAsId: adminData.classifiedAsId,
             roleId: adminData.roleId
         };
@@ -177,8 +173,8 @@ class AuthService {
             lastName: adminData.lastName,
             email: adminData.email,
             accessToken,
-            zoneId: zoneData.id,
-            zoneName: zoneData.name,
+            zoneId: zoneData ? zoneData.id : null,
+            zoneName: zoneData ? zoneData.name : null,
             roleId: adminData.roleId,
             classifiedAsId: adminData.classifiedAsId,
             permissions: permissionData

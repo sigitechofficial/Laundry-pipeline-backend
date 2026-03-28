@@ -1,7 +1,7 @@
 const { users, zone, addressDb, bussinessInformation, driverInZones, roles } = require('../../models');
 const bcrypt = require('bcryptjs');
 const { Op } = require('sequelize');
-const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
+const { ValidationError, NotFoundError, ConflictError } = require('../../middlewares/universalErrorHandler');
 
 class EmployeeManagementService {
     /**
@@ -23,62 +23,72 @@ class EmployeeManagementService {
     }
 
     /**
-     * Add new employee
+     * Add new admin employee (zone admin or other staff)
+     * Created employee can log in via the zoneAdminLogin API.
      * @param {Object} employeeData - Employee data
      * @param {number} adminId - Admin ID who is creating the employee
      * @returns {Object} Created employee data
      */
     async addEmployee(employeeData, adminId) {
-        try {
-            // Check if employee already exists
-            const userFind = await users.findOne({
-                where: {
-                    classifiedAsId: 2,
-                    roleId: employeeData.roleId
-                }
-            });
+        const { firstName, lastName, email, password, phoneNum, roleId, zoneId } = employeeData;
 
-            if (userFind) {
-                throw new ValidationError('Employee Already Exists');
-            }
-
-            // Hash password if provided
-            const createData = { ...employeeData };
-            if (createData.password) {
-                createData.password = await bcrypt.hash(createData.password, 10);
-            }
-            createData.status = true;
-            createData.classifiedAsId = 2;
-            createData.verifiedAt = Date.now();
-
-            // Create employee
-            const user = await users.create(createData);
-
-            // Handle zone admin assignment
-            if (user.roleId === 7 && employeeData.zoneId) {
-                await users.update({
-                    employeeOff: adminId
-                }, { where: { id: adminId } });
-
-                await zone.update({
-                    zoneAdminId: user.id
-                }, { where: { id: employeeData.zoneId } });
-            }
-
-            // Handle driver assignment
-            if (user.roleId === 6) {
-                await users.update({
-                    employeeOff: adminId
-                }, { where: { id: adminId } });
-            }
-
-            return user;
-        } catch (error) {
-            if (error instanceof ValidationError || error instanceof NotFoundError) {
-                throw error;
-            }
-            throw new Error(`Add employee error: ${error.message}`);
+        // Validate required fields
+        if (!firstName || !lastName || !email || !password || !roleId) {
+            throw new ValidationError('firstName, lastName, email, password and roleId are all required');
         }
+
+        // Check email is not already taken anywhere in the system
+        const existingUser = await users.findOne({ where: { email } });
+        if (existingUser) {
+            throw new ConflictError('An account with this email already exists. Please use a different email.');
+        }
+
+        // If a zone is being assigned, validate it exists and is not already claimed
+        if (zoneId) {
+            const zoneRecord = await zone.findOne({ where: { id: zoneId } });
+            if (!zoneRecord) {
+                throw new NotFoundError('Zone not found. Please select a valid zone.');
+            }
+            if (zoneRecord.zoneAdminId) {
+                throw new ConflictError('This zone already has an admin assigned. Please choose a different zone.');
+            }
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Create the employee — only pass valid users-table fields
+        const user = await users.create({
+            firstName,
+            lastName,
+            email,
+            password: hashedPassword,
+            phoneNum: phoneNum || null,
+            roleId,
+            classifiedAsId: 2,   // marks this user as an admin-side employee
+            status: true,
+            verifiedAt: new Date(),
+            employeeOff: adminId  // links employee back to the admin who created them
+        });
+
+        // Assign employee as zone admin if a zoneId was provided
+        if (zoneId) {
+            await zone.update(
+                { zoneAdminId: user.id },
+                { where: { id: zoneId } }
+            );
+        }
+
+        return {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phoneNum: user.phoneNum,
+            roleId: user.roleId,
+            classifiedAsId: user.classifiedAsId,
+            zoneId: zoneId || null
+        };
     }
 
     /**
