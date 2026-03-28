@@ -115,7 +115,7 @@ class AuthService {
             where: {
                 email,
                 status: true,
-                userTypeId: 1
+                classifiedAsId: 2
             },
             attributes: ['id', 'firstName', 'lastName', 'email', 'password', 'classifiedAsId', 'roleId', 'userTypeId']
         });
