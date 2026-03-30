@@ -901,6 +901,48 @@ class CustomerOrderService {
             services
         );
 
+        // Send booking confirmation email (non-blocking)
+        try {
+            const bookingConfirmationMail = require('../../helper/bookingConfirmationMail');
+
+            // Fetch customer info
+            const customerData = await users.findOne({
+                where: { id: userId },
+                attributes: ['firstName', 'email']
+            });
+
+            // Fetch pickup address
+            const pickupAddressData = await addressDb.findOne({
+                where: { id: userPickUpAddressId },
+                attributes: ['streetAddress', 'district', 'postalcode']
+            });
+
+            const addressLine = [
+                pickupAddressData?.streetAddress,
+                pickupAddressData?.district
+            ].filter(Boolean).join(', ');
+
+            await bookingConfirmationMail({
+                email: customerData?.email || '',
+                userName: customerData?.firstName || 'Customer',
+                orderNumber: ordertrackingNumber,
+                address: addressLine,
+                postcode: pickupAddressData?.postalcode || '',
+                pickupDate: normalizedCollectionDate,
+                pickupTimeFrom: normalizedCollectionTimeFrom,
+                pickupTimeTo: normalizedCollectionTimeTo,
+                dropoffDate: normalizedDeliveryDate,
+                dropoffTimeFrom: normalizedDeliveryTimeFrom,
+                dropoffTimeTo: normalizedDeliveryTimeTo,
+                upfrontAmount: parsedUpfront,
+                currency: '£'
+            });
+
+            console.log('✅ Booking confirmation email sent for order:', ordertrackingNumber);
+        } catch (emailError) {
+            console.error('⚠️ Failed to send booking confirmation email (non-blocking):', emailError.message);
+        }
+
         return {
             message: "Booking Created"
         };
