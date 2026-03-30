@@ -828,7 +828,7 @@ class CustomerAuthService {
                 userTypeId: { [Op.or]: [2] },
             },
             include: { model: otpVerification, attributes: ["id"] },
-            attributes: ["id", "signedFrom"],
+            attributes: ["id", "signedFrom", "firstName"],
         });
 
         // User not found
@@ -853,12 +853,18 @@ class CustomerAuthService {
             specialChars: true,
         });
 
-        // Send OTP email
-        // otpMail({
-        //     type: 'ForgetPassword',
-        //     email: email,
-        //     OTP: OTP
-        // });
+        // Send forgot password email with OTP
+        try {
+            const forgotPasswordMail = require('../../helper/forgotPasswordMail');
+            await forgotPasswordMail({
+                email,
+                userName: userData.firstName || 'User',
+                otp: OTP
+            });
+            console.log('✅ Forgot password email sent to:', email);
+        } catch (emailError) {
+            console.error('⚠️ Failed to send forgot password email (non-blocking):', emailError.message);
+        }
 
         let dt = new Date();
         // Set OTP expiration to 1 minute from now
