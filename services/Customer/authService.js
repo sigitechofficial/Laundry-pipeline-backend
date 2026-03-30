@@ -850,7 +850,7 @@ class CustomerAuthService {
         let OTP = otpGenerator.generate(4, {
             lowerCaseAlphabets: false,
             upperCaseAlphabets: false,
-            specialChars: true,
+            specialChars: false,
         });
 
         // Send forgot password email with OTP
