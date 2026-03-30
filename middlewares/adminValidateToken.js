@@ -7,9 +7,17 @@ module.exports = async function validateAccessToken(req, res, next) {
         // 1. Try cookie first
         let accessToken = req.cookies.accessToken;
 
-        // 2. Fall back to accesstoken / x-access-token header (for mobile / non-browser clients)
+        // 2. Fall back to accesstoken / x-access-token header
         if (!accessToken) {
             accessToken = req.headers['accesstoken'] || req.headers['x-access-token'];
+        }
+
+        // 3. Fall back to Authorization: Bearer <token> header
+        if (!accessToken && req.headers['authorization']) {
+            const authHeader = req.headers['authorization'];
+            if (authHeader.startsWith('Bearer ')) {
+                accessToken = authHeader.slice(7);
+            }
         }
 
         if (!accessToken) {

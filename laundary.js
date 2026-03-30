@@ -69,7 +69,17 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'ngrok-skip-browser-warning'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Cookie',
+    'accesstoken',
+    'x-access-token',
+    'Featureid',
+    'featureid',
+    'ngrok-skip-browser-warning',
+    'Ngrok-Skip-Browser-Warning'
+  ],
   exposedHeaders: ['Set-Cookie'],
   optionsSuccessStatus: 200
 };
