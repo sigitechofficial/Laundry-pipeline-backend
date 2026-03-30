@@ -1,6 +1,6 @@
 const { users, zone, addressDb, bussinessInformation, driverInZones, roles } = require('../../models');
+const { UniqueConstraintError, ValidationError: SequelizeValidationError, Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const { Op } = require('sequelize');
 const { ValidationError, NotFoundError, ConflictError } = require('../../middlewares/universalErrorHandler');
 
 class EmployeeManagementService {
@@ -58,18 +58,31 @@ class EmployeeManagementService {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Create the employee — only pass valid users-table fields
-        const user = await users.create({
-            firstName,
-            lastName,
-            email,
-            password: hashedPassword,
-            phoneNum: phoneNum || null,
-            roleId,
-            classifiedAsId: 2,   // marks this user as an admin-side employee
-            status: true,
-            verifiedAt: new Date(),
-            employeeOff: adminId  // links employee back to the admin who created them
-        });
+        let user;
+        try {
+            user = await users.create({
+                firstName,
+                lastName,
+                email,
+                password: hashedPassword,
+                phoneNum: phoneNum || null,
+                roleId,
+                userTypeId: 1,      // admin-side user
+                classifiedAsId: 2,  // marks as employee (not super admin)
+                status: true,
+                verifiedAt: new Date(),
+                employeeOff: adminId
+            });
+        } catch (dbError) {
+            if (dbError instanceof UniqueConstraintError) {
+                throw new ConflictError('An account with this email already exists. Please use a different email.');
+            }
+            if (dbError instanceof SequelizeValidationError) {
+                const messages = dbError.errors.map(e => e.message).join(', ');
+                throw new ValidationError(`Invalid data: ${messages}`);
+            }
+            throw dbError;
+        }
 
         // Assign employee as zone admin if a zoneId was provided
         if (zoneId) {

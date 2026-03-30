@@ -59,13 +59,10 @@ module.exports = async function checkPermission(req, res, next) {
         // featureId sent by frontend: header, body, or query
         const featureId = req.headers['featureid'] || req.body?.featureId || req.query?.featureId;
 
+        // No featureId → general/system endpoint, allow through.
+        // Feature-specific permission is only enforced when featureId is explicitly sent.
         if (!featureId) {
-            return res.status(403).json({
-                status: '0',
-                message: 'Access Denied',
-                data: {},
-                error: 'featureId is required'
-            });
+            return next();
         }
 
         // Which action is being performed based on HTTP method

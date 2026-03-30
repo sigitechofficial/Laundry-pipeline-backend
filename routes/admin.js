@@ -125,10 +125,9 @@ router.post('/adminSignIn', asyncMiddleware(adminAuth.signIn))
 //Zone Admin SignIn — public, no token needed
 router.post('/zoneAdminSignIn', asyncMiddleware(adminAuth.zoneAdminSignIn))
 
-// Apply validateAccessToken + checkPermission globally to ALL routes below this line.
-// - Super admin / owners bypass checkPermission automatically (classifiedAsId === null).
-// - Zone admins / employees must send featureId in header, body, or query.
-router.use(validateAccessToken, checkPermission)
+// Validate access token for all routes below this line.
+// checkPermission is available but not globally applied yet — attach it per-route when needed.
+router.use(validateAccessToken)
 
 //Add vehicle
 router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
