@@ -102,6 +102,10 @@ router.post(
 router.post("/resendotp", asyncMiddleware(agentAuthController.resendOTP));
 //User login
 router.post("/loginUser", asyncMiddleware(agentAuthController.loginUser));
+//Agent Employee login
+router.post("/employeeLogin", asyncMiddleware(agentAuthController.employeeLogin));
+//Agent Employee logout
+router.get("/employeeLogout", validateAccessToken, asyncMiddleware(agentAuthController.employeeLogout));
 //forgot password request through otp send to mail
 router.post(
     "/forgetPasswordRequest",

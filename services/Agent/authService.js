@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units } = require('../../models');
+const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units, permissions, roles } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
@@ -1460,6 +1460,115 @@ class AgentAuthService {
 
         return {
         };
+    }
+
+    /**
+     * Agent Employee Login
+     * Allows an agent employee (classifiedAsId = 1) to sign in with email, password and device token.
+     * Returns a JWT, the employee's role permissions, and the agent shop info they belong to.
+     * @param {Object} data - { email, password, dvToken }
+     * @returns {Object} Login result with accessToken, permissions, and agent info
+     */
+    async employeeLogin(data) {
+        const { email, password, dvToken } = data;
+
+        if (!email || !password || !dvToken) {
+            throw new ValidationError('Email, password and device token are required');
+        }
+
+        const employeeData = await users.findOne({
+            where: {
+                email,
+                status: true,
+                classifiedAsId: 1,
+                deletedAt: { [Op.is]: null }
+            },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'password', 'classifiedAsId', 'roleId', 'employeeOff', 'image', 'phoneNum', 'countryCode']
+        });
+
+        if (!employeeData) {
+            throw new NotFoundError('Employee not found. Please enter valid credentials.');
+        }
+
+        const passwordMatch = await bcrypt.compare(password, employeeData.password);
+        if (!passwordMatch) {
+            throw new UnauthorizedError('Invalid credentials. Please enter the correct password.');
+        }
+
+        // Get the agent this employee belongs to
+        const agentData = await users.findOne({
+            where: { id: employeeData.employeeOff },
+            attributes: ['id', 'firstName', 'lastName', 'email'],
+            include: [
+                {
+                    model: bussinessInformation,
+                    as: 'agentInfo',
+                    attributes: ['id', 'shopName', 'matchProfileOptions', 'connectAccountId'],
+                    required: false
+                }
+            ]
+        });
+
+        // Get permissions for the employee's role
+        const permissionData = await permissions.findAll({
+            where: { roleId: employeeData.roleId },
+            attributes: ['featureId', 'create', 'read', 'update', 'delete'],
+            include: [
+                {
+                    model: features,
+                    where: { status: true },
+                    attributes: ['id', 'title', 'key', 'featureOf'],
+                    required: false
+                }
+            ]
+        });
+
+        // Get role details
+        const roleData = await roles.findOne({
+            where: { id: employeeData.roleId },
+            attributes: ['id', 'name']
+        });
+
+        const payload = {
+            id: employeeData.id,
+            email: employeeData.email,
+            dvToken,
+            employeeOff: employeeData.employeeOff,
+            roleId: employeeData.roleId,
+            classifiedAsId: employeeData.classifiedAsId
+        };
+
+        const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
+
+        await redisCli.hSet(`id-${employeeData.id}`, { [dvToken]: accessToken });
+
+        return {
+            id: employeeData.id,
+            firstName: employeeData.firstName,
+            lastName: employeeData.lastName,
+            email: employeeData.email,
+            image: employeeData.image,
+            phoneNum: employeeData.phoneNum,
+            countryCode: employeeData.countryCode,
+            roleId: employeeData.roleId,
+            role: roleData,
+            classifiedAsId: employeeData.classifiedAsId,
+            employeeOff: employeeData.employeeOff,
+            agentInfo: agentData,
+            permissions: permissionData,
+            accessToken
+        };
+    }
+
+    /**
+     * Agent Employee Logout
+     * Removes the employee's session token from Redis.
+     * @param {Object} data - { userId, dvToken }
+     * @returns {Object} Empty result
+     */
+    async employeeLogout(data) {
+        await redisCli.hDel(`id-${data.userId}`, data.dvToken);
+        return {};
     }
 }
 

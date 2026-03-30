@@ -186,6 +186,37 @@ const generateStripeOnboardingLink = async (req, res) => {
     return ResponseHelper.success(res, "Stripe onboarding link generated successfully", result);
 };
 
+// Employee login
+const employeeLogin = async (req, res) => {
+    const data = { ...req.body };
+    const result = await authService.employeeLogin(data);
+
+    if (result.accessToken) {
+        res.cookie("accessToken", result.accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+            maxAge: 24 * 60 * 60 * 1000
+        });
+    }
+
+    return ResponseHelper.success(res, "Employee login successful", result);
+};
+
+// Employee logout
+const employeeLogout = async (req, res) => {
+    const data = {
+        userId: req.user.id,
+        dvToken: req.user.dvToken
+    };
+    await authService.employeeLogout(data);
+
+    res.clearCookie("accessToken", { path: "/agent" });
+
+    return ResponseHelper.success(res, "Employee logged out successfully", {});
+};
+
 module.exports = {
     registerAgentWithOTP,
     verifyOTpSignUp,
@@ -201,5 +232,7 @@ module.exports = {
     session,
     getUserProfile,
     updateUserProfile,
-    generateStripeOnboardingLink
+    generateStripeOnboardingLink,
+    employeeLogin,
+    employeeLogout
 };
