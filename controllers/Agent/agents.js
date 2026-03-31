@@ -1723,6 +1723,27 @@ exports.driverAddSerivces = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
+    // Send invoice ready email (non-blocking)
+    try {
+        const invoiceReadyMail = require('../../helper/invoiceReadyMail');
+        const customerData = await users.findOne({
+            where: { id: customerId },
+            attributes: ['firstName', 'email']
+        });
+        if (customerData?.email) {
+            await invoiceReadyMail({
+                email: customerData.email,
+                userName: customerData.firstName || 'Customer',
+                orderNumber: bookings.orderTrackId || bookingId,
+                finalAmount: total.toFixed(2),
+                currency: '£'
+            });
+            console.log('✅ Invoice ready email sent to:', customerData.email);
+        }
+    } catch (emailError) {
+        console.error('⚠️ Failed to send invoice ready email (non-blocking):', emailError.message);
+    }
+
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {});
 }
 
