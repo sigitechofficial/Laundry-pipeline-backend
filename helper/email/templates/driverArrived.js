@@ -18,12 +18,12 @@ function generateDriverArrivedTemplate(data) {
   console.log('📸 Loading email images for driver arrived inline attachment...');
   const imagePaths = {
     logo: path.join(__dirname, '../../images/laundry Logo.png'),
-    laundryBasket: path.join(__dirname, '../../images/laundry basket.png'),
     appStore: path.join(__dirname, '../../images/apple store logo.png'),
     playStore: path.join(__dirname, '../../images/play store logo.png'),
     facebook: path.join(__dirname, '../../images/facebook icon.png'),
     instagram: path.join(__dirname, '../../images/instagram icon.png'),
-    tiktok: path.join(__dirname, '../../images/tiktok.png')
+    tiktok: path.join(__dirname, '../../images/tiktok.png'),
+    laundryBasket: path.join(__dirname, '../../images/Image_Laundry_Clothes.png'),
   };
 
   const inlineImages = [];

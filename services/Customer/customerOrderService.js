@@ -49,7 +49,7 @@ const BUSINESS_TIME_ZONE = 'Europe/London';
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet } = require('../../controllers/stripe');
 
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
@@ -1172,22 +1172,40 @@ class CustomerOrderService {
                     model: addressDb,
                     as: "pickupAddress",
                     attributes: [
+                        "id",
                         "title",
+                        "customAddressTitle",
+                        "hotelName",
+                        "apartmentNumber",
+                        "floor",
                         "streetAddress",
-                        "province",
                         "district",
+                        "province",
+                        "postalcode",
+                        "lat",
+                        "lng",
                         "addressType",
+                        "isDefault",
                     ],
                 },
                 {
                     model: addressDb,
                     as: "dropOffAddress",
                     attributes: [
+                        "id",
                         "title",
+                        "customAddressTitle",
+                        "hotelName",
+                        "apartmentNumber",
+                        "floor",
                         "streetAddress",
-                        "province",
                         "district",
+                        "province",
+                        "postalcode",
+                        "lat",
+                        "lng",
                         "addressType",
+                        "isDefault",
                     ],
                 },
                 {
@@ -1393,8 +1411,29 @@ class CustomerOrderService {
             };
         }
 
+        // Fetch saved card details from Stripe using the stored paymentMethodId
+        let cardDetails = null;
+        if (bookingPlain.paymentMethodId) {
+            try {
+                const paymentMethod = await paymentIntentGet(bookingPlain.paymentMethodId);
+                if (paymentMethod && paymentMethod.card) {
+                    cardDetails = {
+                        brand: paymentMethod.card.brand,
+                        last4: paymentMethod.card.last4,
+                        expMonth: paymentMethod.card.exp_month,
+                        expYear: paymentMethod.card.exp_year,
+                        funding: paymentMethod.card.funding,
+                        cardholderName: paymentMethod.billing_details?.name || null,
+                    };
+                }
+            } catch (_) {
+                // Non-blocking — card details are optional
+            }
+        }
+
         const resultData = {
             ...bookingPlain,
+            cardDetails,
             cancellationPolicy,
             noShowPolicy
         };
