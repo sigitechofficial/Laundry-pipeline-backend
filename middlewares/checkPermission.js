@@ -75,7 +75,11 @@ module.exports = async function checkPermission(req, res, next) {
         });
 
         // No row found or the specific permission (read/create/update/delete) is false
-        if (!permissionRow || !permissionRow[permColumn]) {
+        // NOTE: permissionRow.dataValues is used intentionally because the column name
+        // "update" shadows Sequelize's built-in instance.update() method, causing
+        // permissionRow['update'] to return a function (truthy) instead of the DB value.
+        const permValue = permissionRow ? permissionRow.dataValues[permColumn] : undefined;
+        if (!permissionRow || !permValue) {
             return res.status(403).json({
                 status: '0',
                 message: 'Access Denied',

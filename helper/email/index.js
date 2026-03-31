@@ -7,6 +7,7 @@ const generateOtpTemplate = require('./templates/otpVerification');
 const generateSignupWelcomeTemplate = require('./templates/signupWelcome');
 const generateForgotPasswordTemplate = require('./templates/forgotPassword');
 const generateBookingConfirmationTemplate = require('./templates/bookingConfirmation');
+const generateDriverArrivedTemplate = require('./templates/driverArrived');
 const generateFooter = require('./partials/footer');
 
 module.exports = {
@@ -14,5 +15,6 @@ module.exports = {
   generateSignupWelcomeTemplate,
   generateForgotPasswordTemplate,
   generateBookingConfirmationTemplate,
+  generateDriverArrivedTemplate,
   generateFooter,
 };

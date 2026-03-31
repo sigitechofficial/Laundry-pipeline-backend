@@ -1089,6 +1089,25 @@ exports.driverStatusArrived = async (req, res) => {
         driverId:bookingfind.driverId,
     }
     sendNotification(customerId,title,body,data);
+
+    // Send driver arrived email (non-blocking)
+    try {
+        const driverArrivedMail = require('../../helper/driverArrivedMail');
+        const customerData = await users.findOne({
+            where: { id: customerId },
+            attributes: ['firstName', 'email']
+        });
+        if (customerData?.email) {
+            await driverArrivedMail({
+                email: customerData.email,
+                userName: customerData.firstName || 'Customer'
+            });
+            console.log('✅ Driver arrived email sent to:', customerData.email);
+        }
+    } catch (emailError) {
+        console.error('⚠️ Failed to send driver arrived email (non-blocking):', emailError.message);
+    }
+
     return ResponseHelper.success(res, "Booking Status Updated to Driver Arrived", {});
 }
 
