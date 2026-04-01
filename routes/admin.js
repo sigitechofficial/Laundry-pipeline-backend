@@ -127,7 +127,18 @@ router.post('/zoneAdminSignIn', asyncMiddleware(adminAuth.zoneAdminSignIn))
 
 //Get All Reasons
 router.get('/getAllReasons', asyncMiddleware(adminController.getAllReasons))
-
+// Get All FAQs
+router.get('/getAllFAQs', asyncMiddleware(adminController.getAllFAQs))
+// Get All Cancellation Policies
+router.get('/getCancellationPolicies', asyncMiddleware(adminController.getAllCancellationPoliciesController))
+// Get All Blogs
+router.get('/getAllBlogs', asyncMiddleware(adminController.getAllBlogs))
+//Get Countries
+router.get('/getCountries', asyncMiddleware(adminController.getCountries))
+//Get Cities
+router.get('/getCities', asyncMiddleware(adminController.getCities))
+// Get Blog by ID
+router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
 // Auth + permission check on all routes below this line.
 // Super admin (classifiedAsId = null) → always bypasses checkPermission, full access.
 // Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
@@ -138,16 +149,14 @@ router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddlewa
 
 //Add Countries
 router.post('/addCountries', uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.addCountries))
-//Get Countries
-router.get('/getCountries', asyncMiddleware(adminController.getCountries))
+
 //Update Country
 router.put('/updateCountry/:countryId', uploadFlagImg.single('flagImg'), asyncMiddleware(adminController.updateCountry))
 //Delete Country (Soft Delete)
 router.delete('/deleteCountry/:countryId', asyncMiddleware(adminController.deleteCountry))
 //Add Cities
 router.post('/addCities', asyncMiddleware(adminController.addCities))
-//Get Cities
-router.get('/getCities', asyncMiddleware(adminController.getCities))
+
 //Get Cities by Country Id
 router.get('/getCitiesByCountryId/:countryId', asyncMiddleware(adminController.getCitiesByCountryId))
 //Update City
@@ -405,8 +414,6 @@ router.get('/getAllEmployeesWithShopInfo', asyncMiddleware(adminController.getAl
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>
 // Add Cancellation Policy
 router.post('/addCancellationPolicy', asyncMiddleware(adminController.createCancellationPolicyController))
-// Get All Cancellation Policies
-router.get('/getCancellationPolicies', asyncMiddleware(adminController.getAllCancellationPoliciesController))
 // Get Cancellation Policy by ID
 router.get('/getCancellationPolicy/:id', asyncMiddleware(adminController.getCancellationPolicyByIdController))
 // Update Cancellation Policy
@@ -470,8 +477,7 @@ router.get('/getActivePolicies', asyncMiddleware(adminController.getActivePolici
 //!-----------------------------------FAQ Management------------------------------------>>>>
 // Create FAQ
 router.post('/createFAQ', asyncMiddleware(adminController.createFAQ))
-// Get All FAQs
-router.get('/getAllFAQs', asyncMiddleware(adminController.getAllFAQs))
+
 // Get FAQ by ID
 router.get('/getFAQ/:faqId', asyncMiddleware(adminController.getFAQById))
 // Update FAQ
@@ -488,10 +494,8 @@ router.post('/createBlog', uploadBlogImage.fields([
     { name: 'image', maxCount: 1 },
     { name: 'descriptionImages', maxCount: 10 }
 ]), asyncMiddleware(adminController.createBlog))
-// Get All Blogs
-router.get('/getAllBlogs', asyncMiddleware(adminController.getAllBlogs))
-// Get Blog by ID
-router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
+
+
 // Update Blog
 router.put('/updateBlog/:blogId', uploadBlogImage.fields([
     { name: 'image', maxCount: 1 },
