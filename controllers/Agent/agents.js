@@ -1115,7 +1115,7 @@ exports.driverStatusArrived = async (req, res) => {
  *   Driver/Agent Add pictures of pickup and delivery
  */
 exports.AddPickupDeliveryProof = async (req, res) => {
-    const { noOfItems, note, bookingId, deliveryType } = req.body;
+    const { noOfItems, note, bookingId, deliveryType, noOfBags } = req.body;
     console.log("ðŸš€ ~ AddPickupDeliveryProof ~ req.body:", req.body);
     const userId = req.user.id;
 
@@ -1149,6 +1149,7 @@ exports.AddPickupDeliveryProof = async (req, res) => {
     await booking.update(
         {
             totalitems: noOfItems,
+            noOfBags: noOfBags,
         },
         {
             where: { id: bookingId },

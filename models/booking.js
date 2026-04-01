@@ -145,6 +145,10 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.STRING(500),
     allowNull:true
   },
+  noOfBags:{
+    type:DataTypes.INTEGER,
+    allowNull:true
+  },
   paymentMethodId:{
     type:DataTypes.STRING,
     allowNull:true
