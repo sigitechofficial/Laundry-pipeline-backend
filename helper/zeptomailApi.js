@@ -5,7 +5,7 @@ const path = require('path');
 
 // ZeptoMail API Configuration
 const ZEPTOMAIL_API_URL = 'https://api.zeptomail.com/v1.1/email';
-const ZEPTOMAIL_API_TOKEN = process.env.ZEPTOMAIL_API_TOKEN || 'Zoho-enczapikey wSsVR612/0WiW6Z7yDL4cuppng5dBVOjFUV93gel63L9Fv3FpcdpwxDIUQ+gGPUbFW9oQjoXrO8qnR8H1zNY2o5/yA0DXCiF9mqRe1U4J3x17qnvhDzPW2xVlxOBLY4Mxw5smGdoFsAr+g==';
+const ZEPTOMAIL_API_TOKEN = process.env.ZEPTOMAIL_API_TOKEN
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@serviprapp.com';
 const FROM_NAME = process.env.FROM_NAME || 'Laundry Cleaners';
 

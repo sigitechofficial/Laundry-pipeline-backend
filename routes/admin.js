@@ -125,6 +125,9 @@ router.post('/adminSignIn', asyncMiddleware(adminAuth.signIn))
 //Zone Admin SignIn — public, no token needed
 router.post('/zoneAdminSignIn', asyncMiddleware(adminAuth.zoneAdminSignIn))
 
+//Get All Reasons
+router.get('/getAllReasons', asyncMiddleware(adminController.getAllReasons))
+
 // Auth + permission check on all routes below this line.
 // Super admin (classifiedAsId = null) → always bypasses checkPermission, full access.
 // Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
@@ -210,8 +213,6 @@ router.post('/addMachines', asyncMiddleware(adminController.addMachines))
 //!-------------------------Reason Management------------------------------------------------------------------//
 //Create Reason
 router.post('/createReason', asyncMiddleware(adminController.createReason))
-//Get All Reasons
-router.get('/getAllReasons', asyncMiddleware(adminController.getAllReasons))
 //Get Reason By ID
 router.get('/getReasonById/:reasonId', asyncMiddleware(adminController.getReasonById))
 //Update Reason

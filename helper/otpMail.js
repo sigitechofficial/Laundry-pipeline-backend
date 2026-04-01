@@ -28,6 +28,7 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
       type,
       footerOptions: {
         helpCentreLink: 'https://prodlaundry.sigisolutions.net/help',
+        
         downloadAppLink: 'https://prodlaundry.sigisolutions.net/download',
         unsubscribeLink: 'https://prodlaundry.sigisolutions.net/unsubscribe'
       }
