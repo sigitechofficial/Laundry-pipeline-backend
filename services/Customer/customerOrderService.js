@@ -1267,7 +1267,7 @@ class CustomerOrderService {
                 },
                 {
                     model: proofOfDeliveries,
-                    attributes: ["id", "imgUpload", "noOfItems","noOfBags", "note", "deliveryType", "createdAt", "updatedAt"],
+                    attributes: ["id", "imgUpload", "noOfItems", "note", "deliveryType", "createdAt", "updatedAt"],
                 },
                 {
                     model: tip,
