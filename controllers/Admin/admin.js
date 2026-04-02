@@ -101,6 +101,7 @@ const {
 // Import FAQ and Blog services
 const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
+const supportContactService = require('../../services/Admin/supportContactService');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
@@ -2241,6 +2242,18 @@ function calculateZoneRadius(polygon) {
     return (maxDistance / 1000).toFixed(2); // return km
 }
 
+//!----------------------------------Support Contact Config-----------------------------------------//
+
+async function getSupportContact(req, res) {
+    const data = await supportContactService.getSupportContact();
+    return ResponseHelper.success(res, 'Support contact retrieved successfully', data);
+}
+
+async function updateSupportContact(req, res) {
+    const data = await supportContactService.updateSupportContact(req.body);
+    return ResponseHelper.success(res, 'Support contact updated successfully', data);
+}
+
 //!----------------------------------FAQ Management-----------------------------------------//
 
 /**
@@ -2618,6 +2631,9 @@ module.exports = {
     getActiveReschedulePolicyController,
     getReschedulePolicyStatisticsController,
     getActivePoliciesController,
+    //!-------------Support contact config--------//
+    getSupportContact,
+    updateSupportContact,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

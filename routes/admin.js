@@ -144,6 +144,10 @@ router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
 // Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
 router.use(validateAccessToken, checkPermission)
 
+// Support contact config
+router.get('/getSupportContact', asyncMiddleware(adminController.getSupportContact))
+router.patch('/updateSupportContact', asyncMiddleware(adminController.updateSupportContact))
+
 //Add vehicle
 router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
 

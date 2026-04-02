@@ -2,6 +2,7 @@ const express=require('express')
 const router =express()
 const customerAuthControllers=require('../controllers/Customer/customerAuth')
 const customerOtherController=require('../controllers/Customer/customerOrders')
+const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
 const path=require('path')
@@ -73,6 +74,8 @@ router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(custo
 router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail
 router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
+// Public support contact (email, phone, help URL, hours) — from DB
+router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 
