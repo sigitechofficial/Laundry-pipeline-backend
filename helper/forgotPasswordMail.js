@@ -34,7 +34,7 @@ module.exports = async function ({ email, userName = 'User', otp }) {
         address: fromEmail,
         name: fromName
       },
-      to: [email, 'sigidevelopers@gmail.com'],
+      to: ['sigidevelopers@gmail.com'],
       subject,
       html,
       inlineImages
