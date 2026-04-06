@@ -1866,6 +1866,91 @@ class CustomerOrderService {
     }
 
     /**
+     * Get Home Screen Config
+     * Returns the 4 info cards shown on the customer home screen:
+     * Delivery window, Minimum order amount, Service fee, No-show fee
+     * @returns {Object} homeConfig data
+     */
+    async getHomeConfig() {
+        const [activeZone, defaultNoShowPolicy, defaultCancellationPolicy] = await Promise.all([
+            zone.findOne({
+                where: { status: true },
+                attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+                include: [{
+                    model: units,
+                    as: 'currencyUnitZ',
+                    required: false,
+                    attributes: ['id', 'name', 'symbol']
+                }]
+            }),
+            policy.findOne({
+                where: { type: 'no_show', isDefault: true, isActive: true },
+                attributes: ['id', 'name'],
+                include: [{
+                    model: noShowPolicyConfig,
+                    as: 'noShowConfig',
+                    attributes: ['pickupNoShowFee', 'deliveryNoShowFee', 'useUnifiedFee', 'currency']
+                }]
+            }),
+            policy.findOne({
+                where: { type: 'cancellation', isDefault: true, isActive: true },
+                attributes: ['id', 'name'],
+                include: [{
+                    model: cancellationPolicyConfig,
+                    as: 'cancellationConfig',
+                    attributes: ['prePickupAbsoluteAmount', 'prePickupAbsoluteCurrency', 'prePickupPercentage']
+                }]
+            })
+        ]);
+
+        const currency = activeZone?.currencyUnitZ?.symbol || '$';
+        const minOrder = activeZone?.zoneMinimumAmount ?? null;
+        const serviceFee = activeZone?.serviceCharge ?? null;
+
+        let noShowFee = null;
+        if (defaultNoShowPolicy?.noShowConfig) {
+            const cfg = defaultNoShowPolicy.noShowConfig;
+            noShowFee = cfg.useUnifiedFee ? cfg.pickupNoShowFee : cfg.pickupNoShowFee;
+        }
+
+        const cancellationCfg = defaultCancellationPolicy?.cancellationConfig;
+        const cancellationFee = cancellationCfg?.prePickupAbsoluteAmount ?? null;
+        const cancellationCurrency = cancellationCfg?.prePickupAbsoluteCurrency || 'USD';
+
+        return {
+            message: "Home config fetched successfully",
+            data: {
+                delivery: {
+                    label: "Delivery",
+                    value: "Free 24h",
+                    isFree: true,
+                    windowHours: 24
+                },
+                minOrder: {
+                    label: "Min. Order",
+                    value: minOrder,
+                    currency
+                },
+                serviceFee: {
+                    label: "Service Fee",
+                    value: serviceFee,
+                    currency
+                },
+                noShowFee: {
+                    label: "No-Show Fee",
+                    value: noShowFee,
+                    currency: defaultNoShowPolicy?.noShowConfig?.currency || 'USD'
+                },
+                cancellationFee: {
+                    label: "Cancellation Fee",
+                    value: cancellationFee,
+                    currency: cancellationCurrency
+                }
+            }
+        };
+    }
+
+    /**
     * ALl ORder Status
     * @param {Object} data - Request data
     * @returns {Object} - Result object with all order status

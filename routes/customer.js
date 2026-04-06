@@ -111,6 +111,10 @@ router.post('/rescheduleBooking', validateAccessToken, asyncMiddleware(customerO
 //Get Customer Reschedule History
 router.get('/rescheduleHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerRescheduleHistory));
 
+//!----------------------------Home Screen Config---------------------//
+//Get home screen config (delivery, min order, service fee, no-show fee)
+router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherController.getHomeConfig))
+
 //!----------------------------Customer Postcode Address Lookup---------------------//
 //Get addresses by UK postcode
 router.get('/postcode/:postcode', validateAccessToken, asyncMiddleware(customerOtherController.getAddressesByPostcode));

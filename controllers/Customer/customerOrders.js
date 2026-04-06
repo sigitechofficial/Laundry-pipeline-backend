@@ -1112,6 +1112,15 @@ async function getCustomerRescheduleHistory(req, res) {
     return ResponseHelper.success(res, "Reschedule history fetched successfully", history);
 }
 
+/*
+ * Get Home Screen Config
+ * Returns delivery window, min order, service fee, and no-show fee for the home screen info cards
+ */
+async function getHomeConfig(req, res) {
+    const result = await customerOrderService.getHomeConfig();
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1144,5 +1153,7 @@ module.exports = {
     validatePostcode,
     //---Reschedule Booking----//
     rescheduleCustomerBooking,
-    getCustomerRescheduleHistory
+    getCustomerRescheduleHistory,
+    //---Home Config----//
+    getHomeConfig
 };
