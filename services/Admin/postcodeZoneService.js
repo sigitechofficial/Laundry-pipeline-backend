@@ -10,33 +10,71 @@ class PostcodeZoneService {
      * @param {Array<string>} postcodes - Array of postcode strings
      * @returns {Array<{postcode: string, longitude: number, latitude: number}>}
      */
+    /**
+     * Detect whether a normalised postcode string is an outcode (district only, e.g. SW1A, EC1, W1)
+     * or a full postcode (e.g. SW1A 2AA).
+     * UK outcode pattern: 1-2 letters + 1-2 digits/letters, no incode suffix.
+     */
+    isOutcode(normalizedPostcode) {
+        // Full postcode: ends with a digit followed by two letters (the incode part)
+        return !/[0-9][A-Z]{2}$/.test(normalizedPostcode);
+    }
+
     async fetchPostcodeCoordinates(postcodes) {
         const coordinates = [];
         
         for (const postcode of postcodes) {
-            try {
-                // Normalize postcode (remove spaces, uppercase)
-                const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
-                
-                const response = await axios.get(
-                    `https://api.postcodes.io/postcodes/${encodeURIComponent(normalizedPostcode)}`,
-                    { timeout: 5000 }
-                );
+            // Normalize postcode (remove spaces, uppercase)
+            const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
 
-                if (response.data.status === 200 && response.data.result) {
-                    coordinates.push({
-                        postcode: normalizedPostcode,
-                        longitude: response.data.result.longitude,
-                        latitude: response.data.result.latitude
-                    });
-                } else {
-                    throw new ValidationError(`Invalid postcode: ${postcode}`);
+            if (this.isOutcode(normalizedPostcode)) {
+                // ── Outcode path (e.g. SW1A, WC1A, EC1, W1) ─────────────────────
+                console.log(`📮 Detected outcode: ${normalizedPostcode} — using /outcodes/ endpoint`);
+                try {
+                    const response = await axios.get(
+                        `https://api.postcodes.io/outcodes/${encodeURIComponent(normalizedPostcode)}`,
+                        { timeout: 5000 }
+                    );
+                    if (response.data.status === 200 && response.data.result) {
+                        coordinates.push({
+                            postcode: normalizedPostcode,
+                            longitude: response.data.result.longitude,
+                            latitude: response.data.result.latitude
+                        });
+                    } else {
+                        throw new ValidationError(`Invalid outcode: ${postcode}`);
+                    }
+                } catch (error) {
+                    if (error.response && error.response.status === 404) {
+                        throw new ValidationError(`Outcode not found: ${postcode}. Please check the district code (e.g. SW1A, EC1, W1).`);
+                    }
+                    if (error.isOperational) throw error;
+                    throw new ValidationError(`Failed to fetch coordinates for outcode: ${postcode}. ${error.message}`);
                 }
-            } catch (error) {
-                if (error.response && error.response.status === 404) {
-                    throw new ValidationError(`Postcode not found: ${postcode}`);
+            } else {
+                // ── Full postcode path (e.g. SW1A 2AA, EC1A 1BB) ─────────────────
+                console.log(`📮 Detected full postcode: ${normalizedPostcode} — using /postcodes/ endpoint`);
+                try {
+                    const response = await axios.get(
+                        `https://api.postcodes.io/postcodes/${encodeURIComponent(normalizedPostcode)}`,
+                        { timeout: 5000 }
+                    );
+                    if (response.data.status === 200 && response.data.result) {
+                        coordinates.push({
+                            postcode: normalizedPostcode,
+                            longitude: response.data.result.longitude,
+                            latitude: response.data.result.latitude
+                        });
+                    } else {
+                        throw new ValidationError(`Invalid postcode: ${postcode}`);
+                    }
+                } catch (error) {
+                    if (error.response && error.response.status === 404) {
+                        throw new ValidationError(`Postcode not found: ${postcode}. Please use a valid full postcode (e.g. SW1A 2AA) or just the district code (e.g. SW1A).`);
+                    }
+                    if (error.isOperational) throw error;
+                    throw new ValidationError(`Failed to fetch coordinates for postcode: ${postcode}. ${error.message}`);
                 }
-                throw new ValidationError(`Failed to fetch coordinates for postcode: ${postcode}. ${error.message}`);
             }
         }
 
