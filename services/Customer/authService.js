@@ -1127,19 +1127,29 @@ class CustomerAuthService {
     async getUserProfile(data) {
         const { userId } = data;
 
-        const userData = await users.findOne({
-            where: {
-                id: userId
-            },
-            attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
-        });
+        const [userData, totalOrders] = await Promise.all([
+            users.findOne({
+                where: { id: userId },
+                attributes: [
+                    'id', 'firstName', 'lastName', 'image', 'email',
+                    'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode',
+                    'status', 'createdAt'
+                ]
+            }),
+            booking.count({ where: { customerId: userId } })
+        ]);
 
         if (!userData) {
             throw new NotFoundError('No User Exists with this email');
         }
 
         return {
-            userData,
+            userData: {
+                ...userData.toJSON(),
+                totalOrders,
+                registeredAt: userData.createdAt,
+                isActive: userData.status
+            },
             message: "User Profile fetched"
         };
     }
