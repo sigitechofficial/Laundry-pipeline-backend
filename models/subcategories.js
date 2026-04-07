@@ -47,6 +47,11 @@ module.exports = (sequelize, DataTypes) => {
     barCode:{
       type:DataTypes.STRING,
       allowNull:true
+    },
+    weightKg: {
+      type: DataTypes.FLOAT,
+      allowNull: true,
+      comment: 'Weight in kg for weight-based services (e.g. 6 for 6kg). Null for item-based services.'
     }
   }, {
     sequelize,
