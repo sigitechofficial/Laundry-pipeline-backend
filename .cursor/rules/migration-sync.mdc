@@ -1,0 +1,53 @@
+---
+description: Always add new model columns to the original create-table migration file
+globs: migrations/**/*.js,models/**/*.js
+alwaysApply: false
+---
+
+# Migration Sync Rule
+
+Whenever a new column is added to a Sequelize **model**, it MUST also be added to **two places**:
+
+1. The **original `create-<table>` migration** (e.g. `migrations/20250117114027-create-service.js`) inside `createTable()`
+2. A **new `add-<column>-to-<table>` migration** (e.g. `migrations/20260407100000-add-pricingBasis-to-services.js`) using `addColumn()` — for existing databases
+
+## Example
+
+Adding `pricingBasis` to the `service` model:
+
+**Step 1 — model:**
+```js
+// models/service.js
+pricingBasis: {
+  type: DataTypes.ENUM('weight', 'item'),
+  allowNull: true,
+  defaultValue: 'item'
+}
+```
+
+**Step 2 — original create migration:**
+```js
+// migrations/20250117114027-create-service.js → inside createTable()
+pricingBasis: {
+  type: Sequelize.ENUM('weight', 'item'),
+  allowNull: true,
+  defaultValue: 'item'
+},
+```
+
+**Step 3 — new addColumn migration:**
+```js
+// migrations/20260407100000-add-pricingBasis-to-services.js
+async up(queryInterface, Sequelize) {
+  await queryInterface.addColumn('services', 'pricingBasis', {
+    type: Sequelize.ENUM('weight', 'item'),
+    allowNull: true,
+    defaultValue: 'item'
+  });
+},
+async down(queryInterface, Sequelize) {
+  await queryInterface.removeColumn('services', 'pricingBasis');
+}
+```
+
+> Never skip Step 2 — the original migration must always reflect the full table schema.

@@ -68,6 +68,11 @@ module.exports = (sequelize, DataTypes) => {
     timeRequired: {
       type: DataTypes.STRING(50),
       allowNull: true
+    },
+    pricingBasis: {
+      type: DataTypes.ENUM('weight', 'item'),
+      allowNull: true,
+      defaultValue: 'item'
     }
   }, {
     sequelize,

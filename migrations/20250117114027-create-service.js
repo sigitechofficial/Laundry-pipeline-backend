@@ -30,6 +30,11 @@ module.exports = {
         type: Sequelize.STRING(50),
         allowNull: true
       },
+      pricingBasis: {
+        type: Sequelize.ENUM('weight', 'item'),
+        allowNull: true,
+        defaultValue: 'item'
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

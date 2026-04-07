@@ -11,6 +11,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '24-48 hours',
+        pricingBasis: 'weight',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -21,6 +22,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '24-48 hours',
+        pricingBasis: 'item',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -31,6 +33,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '48-72 hours',
+        pricingBasis: 'item',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -41,6 +44,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '12-24 hours',
+        pricingBasis: 'item',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -51,6 +55,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '24-48 hours',
+        pricingBasis: 'weight',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -61,6 +66,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '12-24 hours',
+        pricingBasis: 'weight',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -71,6 +77,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '48-72 hours',
+        pricingBasis: 'item',
         createdAt: new Date(),
         updatedAt: new Date()
       },
@@ -81,6 +88,7 @@ module.exports = {
         status: true,
         image: null,
         timeRequired: '48-72 hours',
+        pricingBasis: 'item',
         createdAt: new Date(),
         updatedAt: new Date()
       }
