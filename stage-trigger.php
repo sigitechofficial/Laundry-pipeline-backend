@@ -1,4 +1,5 @@
 <?php
+// Stage trigger - v1.0
 // Enable error reporting for debugging
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
