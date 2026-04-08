@@ -3,7 +3,9 @@ name: CI/CD Workflow
 on:
   push:
     branches:
+      - main
       - stage
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,8 +16,57 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+  deploy_main:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v2
+
+      - name: Create .env file dynamically
+        run: |
+          echo "Creating .env file..."
+          echo "${{ secrets.ENV_FILE_CONTENT_PROD }}" > .env
+
+      - name: Create config folder and files
+        run: |
+          echo "Creating config folder..."
+          mkdir -p config
+          cat << 'EOF' > config/config.json
+          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
+          EOF
+
+      - name: Create .htaccess file
+        run: |
+          echo "Creating .htaccess file..."
+          echo "${{ secrets.HTACCESS_CONTENT_PROD }}" > .htaccess
+
+      - name: Creating firebase.json file
+        run: |
+          echo "Creating firebase.json..."
+          echo "${{ secrets.FIREBASE_CONTENT_PROD }}" > firebase.json
+
+      - name: 🚀 Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.PROD_FTP_USERNAME }}
+          password: ${{ secrets.PROD_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+
+      - name: Trigger npm install on server
+        run: |
+          echo "Triggering npm install via PHP script..."
+          curl -X GET "https://prodlaundry.sigisolutions.net/trigger.php"
+        env:
+          HOME: /home/sigisolutions
+
   deploy_stage:
     needs: build
+    if: github.ref == 'refs/heads/stage'
     runs-on: ubuntu-latest
 
     steps:
@@ -53,7 +104,6 @@ jobs:
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          
 
       - name: Trigger npm install on stage server
         run: |
