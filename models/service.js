@@ -73,6 +73,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.ENUM('weight', 'item'),
       allowNull: true,
       defaultValue: 'item'
+    },
+    sortOrder: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0,
+      comment: 'Controls display order — lower number appears first (1 = top)'
     }
   }, {
     sequelize,

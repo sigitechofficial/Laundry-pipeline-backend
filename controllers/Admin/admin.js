@@ -1626,6 +1626,16 @@ async function editServices(req, res) {
 
 
 /*
+  * Update Services Sort Order
+*/
+async function updateServicesSortOrder(req, res) {
+    const { services } = req.body;
+    const result = await serviceManagementService.updateServicesSortOrder(services);
+    return ResponseHelper.success(res, "Services Sort Order Updated Successfully", result);
+}
+
+
+/*
   * Add Categories
 */
 async function AddCategories(req, res) {
@@ -2499,6 +2509,7 @@ module.exports = {
     AddServices,
     deleteServices,
     editServices,
+    updateServicesSortOrder,
     //!-------------Units--------//
     getUnitsDistanceAndCurrency,
     getAllUnits,

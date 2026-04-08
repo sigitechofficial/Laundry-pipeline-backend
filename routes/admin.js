@@ -206,6 +206,8 @@ router.delete('/deleteCategories/:categoryId', asyncMiddleware(adminController.d
 router.patch('/editCategories/:categoryId', asyncMiddleware(adminController.editCategories))
 //get Services
 router.get('/getServices', asyncMiddleware(adminController.getAllServices))
+//Update Services Sort Order
+router.patch('/updateServicesSortOrder', asyncMiddleware(adminController.updateServicesSortOrder))
 //get SubCategories
 router.get('/getSubcategories', asyncMiddleware(adminController.getSubcategories))
 //Edit SubCategories

@@ -35,6 +35,11 @@ module.exports = {
         allowNull: true,
         defaultValue: 'item'
       },
+      sortOrder: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        defaultValue: 0
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

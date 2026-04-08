@@ -127,7 +127,8 @@ class ServiceManagementService {
             const getServices = await service.findAll({
                 where: {
                     status: true,
-                }
+                },
+                order: [['sortOrder', 'ASC']]
             });
 
             // Create an object with service names as keys and counts as values
@@ -332,6 +333,25 @@ class ServiceManagementService {
             throw new NotFoundError('Service Not Found')
         }
         return editService;
+    }
+
+    /**
+     * Update sort order for multiple services at once
+     * @param {Array} services - Array of { serviceId, sortOrder }
+     * @returns {Object} Update result
+     */
+    async updateServicesSortOrder(services) {
+        if (!Array.isArray(services) || services.length === 0) {
+            throw new ValidationError('Provide an array of { serviceId, sortOrder }');
+        }
+
+        await Promise.all(
+            services.map(({ serviceId, sortOrder }) =>
+                service.update({ sortOrder }, { where: { id: serviceId } })
+            )
+        );
+
+        return { updated: services.length };
     }
 
     /**

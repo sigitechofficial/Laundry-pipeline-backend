@@ -1451,7 +1451,9 @@ class CustomerOrderService {
      * @returns {Object} - Result object with services data
      */
     async allServices() {
-        const serviceData = await service.findAll();
+        const serviceData = await service.findAll({
+            order: [['sortOrder', 'ASC']]
+        });
 
         if (!serviceData || serviceData.length === 0) {
             throw new NotFoundError("No Services Found");
