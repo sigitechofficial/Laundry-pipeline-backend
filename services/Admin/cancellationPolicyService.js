@@ -1,4 +1,4 @@
-const { policy, cancellationPolicyConfig } = require('../../models');
+const { policy, cancellationPolicyConfig, zone } = require('../../models');
 const { NotFoundError, ConflictError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { Op } = require('sequelize');
 
@@ -171,6 +171,12 @@ class CancellationPolicyService {
                     model: cancellationPolicyConfig,
                     as: 'cancellationConfig',
                     required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
+                    required: false
                 }
             ]
         });
@@ -219,6 +225,12 @@ class CancellationPolicyService {
                 {
                     model: cancellationPolicyConfig,
                     as: 'cancellationConfig',
+                    required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
                     required: false
                 }
             ],
@@ -335,6 +347,12 @@ class CancellationPolicyService {
                 {
                     model: cancellationPolicyConfig,
                     as: 'cancellationConfig',
+                    required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
                     required: false
                 }
             ],

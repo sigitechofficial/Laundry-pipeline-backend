@@ -1,4 +1,4 @@
-const { policy, reschedulePolicyConfig } = require('../../models');
+const { policy, reschedulePolicyConfig, zone } = require('../../models');
 const { NotFoundError, ConflictError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { Op } = require('sequelize');
 
@@ -153,6 +153,12 @@ class ReschedulePolicyService {
                     model: reschedulePolicyConfig,
                     as: 'rescheduleConfig',
                     required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
+                    required: false
                 }
             ]
         });
@@ -201,6 +207,12 @@ class ReschedulePolicyService {
                 {
                     model: reschedulePolicyConfig,
                     as: 'rescheduleConfig',
+                    required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
                     required: false
                 }
             ],
@@ -312,6 +324,12 @@ class ReschedulePolicyService {
                 {
                     model: reschedulePolicyConfig,
                     as: 'rescheduleConfig',
+                    required: false
+                },
+                {
+                    model: zone,
+                    as: 'zone',
+                    attributes: ['id', 'name'],
                     required: false
                 }
             ],
