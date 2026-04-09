@@ -527,7 +527,7 @@ class CustomerAuthService {
             console.log("Going into this condition ----------------->>>");
 
             const missingFields = collectMissingFields({ firstName, lastName, phoneNum });
-            if (missingFields.length) {
+            if (missingFields.length && signedFrom !== 'apple') {
                 throw new ValidationError('Information Missing', {
                     missingFields,
                     requiredFields: missingFields,
@@ -667,7 +667,7 @@ class CustomerAuthService {
             }
 
             const profileMissingFields = collectMissingFields(userFind);
-            if (profileMissingFields.length) {
+            if (profileMissingFields.length && signedFrom !== 'apple') {
                 throw new ValidationError('Information Missing', {
                     missingFields: profileMissingFields,
                     requiredFields: profileMissingFields,
