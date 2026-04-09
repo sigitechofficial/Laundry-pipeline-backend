@@ -1874,34 +1874,61 @@ class CustomerOrderService {
      * @returns {Object} homeConfig data
      */
     async getHomeConfig() {
-        const [activeZone, defaultNoShowPolicy, defaultCancellationPolicy] = await Promise.all([
-            zone.findOne({
-                where: { status: true },
-                attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
-                include: [{
-                    model: units,
-                    as: 'currencyUnitZ',
-                    required: false,
-                    attributes: ['id', 'name', 'symbol']
-                }]
-            }),
+        // First fetch the active zone, then use its id to scope the policy lookups
+        const activeZone = await zone.findOne({
+            where: { status: true },
+            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+            include: [{
+                model: units,
+                as: 'currencyUnitZ',
+                required: false,
+                attributes: ['id', 'name', 'symbol']
+            }]
+        });
+
+        const activeZoneId = activeZone?.id ?? null;
+        const now = new Date();
+
+        const zonePolicyWhere = (type) => ({
+            type,
+            isActive: true,
+            ...(activeZoneId !== null ? { zoneId: activeZoneId } : {}),
+            [Op.and]: [
+                {
+                    [Op.or]: [
+                        { effectiveFrom: null },
+                        { effectiveFrom: { [Op.lte]: now } }
+                    ]
+                },
+                {
+                    [Op.or]: [
+                        { effectiveTo: null },
+                        { effectiveTo: { [Op.gte]: now } }
+                    ]
+                }
+            ]
+        });
+
+        const [defaultNoShowPolicy, defaultCancellationPolicy] = await Promise.all([
             policy.findOne({
-                where: { type: 'no_show', isDefault: true, isActive: true },
+                where: zonePolicyWhere('no_show'),
                 attributes: ['id', 'name'],
                 include: [{
                     model: noShowPolicyConfig,
                     as: 'noShowConfig',
                     attributes: ['pickupNoShowFee', 'deliveryNoShowFee', 'useUnifiedFee', 'currency']
-                }]
+                }],
+                order: [['isDefault', 'DESC'], ['effectiveFrom', 'DESC'], ['createdAt', 'DESC']]
             }),
             policy.findOne({
-                where: { type: 'cancellation', isDefault: true, isActive: true },
+                where: zonePolicyWhere('cancellation'),
                 attributes: ['id', 'name'],
                 include: [{
                     model: cancellationPolicyConfig,
                     as: 'cancellationConfig',
                     attributes: ['prePickupAbsoluteAmount', 'prePickupAbsoluteCurrency', 'prePickupPercentage']
-                }]
+                }],
+                order: [['isDefault', 'DESC'], ['effectiveFrom', 'DESC'], ['createdAt', 'DESC']]
             })
         ]);
 

@@ -4394,7 +4394,8 @@ exports.validatePostcode = async (req, res) => {
  * @description Get active cancellation, reschedule and no-show policies.
  */
 exports.getActivePolicies = async (req, res) => {
-    const result = await activePoliciesService.getActivePolicies();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await activePoliciesService.getActivePolicies(zoneId);
     return ResponseHelper.success(res, "Active policies", result);
 };
 

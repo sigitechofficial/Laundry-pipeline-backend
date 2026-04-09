@@ -32,6 +32,16 @@ module.exports = {
         type: Sequelize.TEXT,
         allowNull: true
       },
+      zoneId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: {
+          model: 'zones',
+          key: 'id'
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL'
+      },
       createdBy: {
         type: Sequelize.INTEGER,
         allowNull: true

@@ -423,7 +423,8 @@ async function getCustomerCancellationHistory(req, res) {
  * Get Active Policies for Customer (cancellation, reschedule, no-show)
  */
 async function getActivePolicies(req, res) {
-    const result = await activePoliciesService.getActivePolicies();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await activePoliciesService.getActivePolicies(zoneId);
     return ResponseHelper.success(res, "Active policies", result);
 }
 

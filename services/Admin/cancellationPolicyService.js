@@ -36,10 +36,8 @@ class CancellationPolicyService {
      * Two ranges [A,B] and [C,D] overlap when A < D && C < B.
      * NULL on either side is treated as ±Infinity.
      */
-    async _checkOverlap(effectiveFrom, effectiveTo, excludeId = null) {
+    async _checkOverlap(effectiveFrom, effectiveTo, zoneId, excludeId = null) {
         if (!effectiveFrom && !effectiveTo) {
-            // open-ended on both sides – always overlaps with everything; skip
-            // heavy check but still store (admin responsibility)
             return;
         }
 
@@ -47,9 +45,9 @@ class CancellationPolicyService {
             where: {
                 type: 'cancellation',
                 isActive: true,
+                zoneId: zoneId,
                 ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
                 [Op.and]: [
-                    // existing.effectiveFrom < our effectiveTo  (or our effectiveTo is null → always)
                     effectiveTo
                         ? {
                               [Op.or]: [
@@ -58,7 +56,6 @@ class CancellationPolicyService {
                               ]
                           }
                         : {},
-                    // existing.effectiveTo > our effectiveFrom  (or existing.effectiveTo is null → always)
                     effectiveFrom
                         ? {
                               [Op.or]: [
@@ -73,18 +70,20 @@ class CancellationPolicyService {
         });
 
         if (overlapping.length > 0) {
-            throw new ConflictError("Policy date range overlaps with an active cancellation policy.");
+            throw new ConflictError("Policy date range overlaps with an active cancellation policy for this zone.");
         }
     }
 
     /**
-     * Where-clause for "currently effective" policies.
+     * Where-clause for "currently effective" policies, scoped to a zone.
+     * @param {number|null} zoneId
      */
-    _nowWhere() {
+    _nowWhere(zoneId = null) {
         const now = new Date();
         return {
             type: 'cancellation',
             isActive: true,
+            ...(zoneId !== null ? { zoneId } : {}),
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -117,6 +116,7 @@ class CancellationPolicyService {
             effectiveTo,
             isActive,
             isDefault,
+            zoneId,
             ...configData
         } = data;
 
@@ -124,18 +124,20 @@ class CancellationPolicyService {
             throw new ValidationError("Policy name is required");
         }
 
-        this._validateDateRange(effectiveFrom, effectiveTo);
-
-        // Overlap check only for active policies with a real date window
-        if (isActive !== false) {
-            await this._checkOverlap(effectiveFrom, effectiveTo);
+        if (!zoneId) {
+            throw new ValidationError("zoneId is required — every policy must belong to a zone");
         }
 
-        // If setting as default, clear others
+        this._validateDateRange(effectiveFrom, effectiveTo);
+
+        if (isActive !== false) {
+            await this._checkOverlap(effectiveFrom, effectiveTo, zoneId);
+        }
+
         if (isDefault) {
             await policy.update(
                 { isDefault: false },
-                { where: { type: 'cancellation', isDefault: true } }
+                { where: { type: 'cancellation', isDefault: true, zoneId } }
             );
         }
 
@@ -145,6 +147,7 @@ class CancellationPolicyService {
             description,
             isActive: isActive ?? true,
             isDefault: isDefault ?? false,
+            zoneId,
             effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : null,
             effectiveTo:   effectiveTo   ? new Date(effectiveTo)   : null,
             createdBy
@@ -186,20 +189,23 @@ class CancellationPolicyService {
     /**
      * Get All Cancellation Policies with Filters.
      * Adds `status` filter: 'active_now' returns only currently-effective policies.
+     * Pass `zoneId` to scope results to a specific zone.
      */
     async getAllCancellationPolicies(filters = {}) {
         const {
             isActive,
             isDefault,
-            status,       // 'active_now' → only currently effective
+            status,
+            zoneId,
             page  = 1,
             limit = 10
         } = filters;
 
         let whereClause = { type: 'cancellation' };
+        if (zoneId !== undefined) whereClause.zoneId = zoneId;
 
         if (status === 'active_now') {
-            whereClause = this._nowWhere();
+            whereClause = this._nowWhere(zoneId ?? null);
         } else {
             if (isActive  !== undefined) whereClause.isActive  = isActive;
             if (isDefault !== undefined) whereClause.isDefault = isDefault;
@@ -274,10 +280,9 @@ class CancellationPolicyService {
         // Overlap check (only when policy is/stays active)
         const willBeActive = isActive !== undefined ? isActive : policyData.isActive;
         if (willBeActive && (effectiveFrom !== undefined || effectiveTo !== undefined)) {
-            await this._checkOverlap(finalFrom, finalTo, policyId);
+            await this._checkOverlap(finalFrom, finalTo, policyData.zoneId, policyId);
         }
 
-        // If setting as default, clear others
         if (isDefault) {
             await policy.update(
                 { isDefault: false },
@@ -285,6 +290,7 @@ class CancellationPolicyService {
                     where: {
                         type: 'cancellation',
                         isDefault: true,
+                        zoneId: policyData.zoneId,
                         id: { [Op.ne]: policyId }
                     }
                 }
@@ -318,12 +324,13 @@ class CancellationPolicyService {
     }
 
     /**
-     * Get the currently-effective cancellation policy.
+     * Get the currently-effective cancellation policy for a specific zone.
      * Prefers isDefault = true; falls back to latest effectiveFrom then createdAt.
+     * @param {number} zoneId
      */
-    async getActiveCancellationPolicy() {
+    async getActiveCancellationPolicy(zoneId) {
         const policyData = await policy.findOne({
-            where: this._nowWhere(),
+            where: this._nowWhere(zoneId),
             include: [
                 {
                     model: cancellationPolicyConfig,
@@ -339,7 +346,7 @@ class CancellationPolicyService {
         });
 
         if (!policyData) {
-            throw new NotFoundError("No active cancellation policy found");
+            throw new NotFoundError("No active cancellation policy found for this zone");
         }
 
         return policyData;
@@ -387,13 +394,14 @@ class CancellationPolicyService {
             throw new ValidationError("Cannot set inactive policy as default");
         }
 
-        // Unset other defaults
+        // Unset other defaults within the same zone
         await policy.update(
             { isDefault: false },
             {
                 where: {
                     type: 'cancellation',
                     isDefault: true,
+                    zoneId: policyData.zoneId,
                     id: { [Op.ne]: policyId }
                 }
             }
@@ -418,13 +426,14 @@ class CancellationPolicyService {
             throw new ValidationError("This policy is not a cancellation policy");
         }
 
-        // If deactivating the default, try to promote another active policy
+        // If deactivating the default, try to promote another active policy in the same zone
         if (policyData.isDefault && policyData.isActive) {
             const alternative = await policy.findOne({
                 where: {
                     type: 'cancellation',
                     isActive: true,
                     isDefault: false,
+                    zoneId: policyData.zoneId,
                     id: { [Op.ne]: policyId }
                 }
             });
@@ -440,6 +449,7 @@ class CancellationPolicyService {
 
     /**
      * Duplicate Cancellation Policy (dates are NOT copied – admin sets new window).
+     * The duplicate stays in the same zone as the original.
      */
     async duplicateCancellationPolicy(policyId, newName, createdBy) {
         const originalPolicy = await this.getCancellationPolicyById(policyId);
@@ -451,6 +461,7 @@ class CancellationPolicyService {
             description: originalPolicy.description,
             isActive: true,
             isDefault: false,
+            zoneId: originalPolicy.zoneId,
             effectiveFrom: null,
             effectiveTo: null,
             createdBy,
@@ -468,17 +479,18 @@ class CancellationPolicyService {
 
     /**
      * Get Cancellation Policy Statistics.
+     * @param {number|null} zoneId - optional; pass to scope stats to one zone
      */
-    async getCancellationPolicyStatistics() {
-        const now = new Date();
+    async getCancellationPolicyStatistics(zoneId = null) {
+        const zoneFilter = zoneId !== null ? { zoneId } : {};
 
-        const totalPolicies  = await policy.count({ where: { type: 'cancellation' } });
-        const activePolicies = await policy.count({ where: { type: 'cancellation', isActive: true } });
+        const totalPolicies  = await policy.count({ where: { type: 'cancellation', ...zoneFilter } });
+        const activePolicies = await policy.count({ where: { type: 'cancellation', isActive: true, ...zoneFilter } });
 
         const defaultPolicy = await policy.findOne({
-            where: this._nowWhere(),
+            where: this._nowWhere(zoneId),
             order: [['isDefault', 'DESC'], ['effectiveFrom', 'DESC']],
-            attributes: ['id', 'name', 'isActive', 'isDefault', 'effectiveFrom', 'effectiveTo']
+            attributes: ['id', 'name', 'isActive', 'isDefault', 'effectiveFrom', 'effectiveTo', 'zoneId']
         });
 
         return {

@@ -5,12 +5,7 @@ const { Op } = require('sequelize');
 /**
  * Reschedule Policy Management Service
  * Handles reschedule policies with effectiveFrom / effectiveTo scheduling.
- *
- * Rules:
- *  - effectiveFrom: date policy starts being applicable (null = from the beginning)
- *  - effectiveTo  : date policy stops being applicable (null = never expires)
- *  - isActive     : manual on/off switch (false = force-disabled regardless of dates)
- *  - isDefault    : tie-breaker when multiple policies are valid at the same moment
+ * Every policy is scoped to a zone (zoneId).
  */
 class ReschedulePolicyService {
 
@@ -26,13 +21,14 @@ class ReschedulePolicyService {
         }
     }
 
-    async _checkOverlap(effectiveFrom, effectiveTo, excludeId = null) {
+    async _checkOverlap(effectiveFrom, effectiveTo, zoneId, excludeId = null) {
         if (!effectiveFrom && !effectiveTo) return;
 
         const overlapping = await policy.findAll({
             where: {
                 type: 'reschedule',
                 isActive: true,
+                zoneId: zoneId,
                 ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
                 [Op.and]: [
                     effectiveTo
@@ -57,15 +53,20 @@ class ReschedulePolicyService {
         });
 
         if (overlapping.length > 0) {
-            throw new ConflictError("Policy date range overlaps with an active reschedule policy.");
+            throw new ConflictError("Policy date range overlaps with an active reschedule policy for this zone.");
         }
     }
 
-    _nowWhere() {
+    /**
+     * Where-clause for "currently effective" policies, scoped to a zone.
+     * @param {number|null} zoneId
+     */
+    _nowWhere(zoneId = null) {
         const now = new Date();
         return {
             type: 'reschedule',
             isActive: true,
+            ...(zoneId !== null ? { zoneId } : {}),
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -97,6 +98,7 @@ class ReschedulePolicyService {
             effectiveTo,
             isActive,
             isDefault,
+            zoneId,
             ...configData
         } = data;
 
@@ -104,16 +106,20 @@ class ReschedulePolicyService {
             throw new ValidationError("Policy name is required");
         }
 
+        if (!zoneId) {
+            throw new ValidationError("zoneId is required — every policy must belong to a zone");
+        }
+
         this._validateDateRange(effectiveFrom, effectiveTo);
 
         if (isActive !== false) {
-            await this._checkOverlap(effectiveFrom, effectiveTo);
+            await this._checkOverlap(effectiveFrom, effectiveTo, zoneId);
         }
 
         if (isDefault) {
             await policy.update(
                 { isDefault: false },
-                { where: { type: 'reschedule', isDefault: true } }
+                { where: { type: 'reschedule', isDefault: true, zoneId } }
             );
         }
 
@@ -123,6 +129,7 @@ class ReschedulePolicyService {
             description,
             isActive:      isActive ?? true,
             isDefault:     isDefault ?? false,
+            zoneId,
             effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : null,
             effectiveTo:   effectiveTo   ? new Date(effectiveTo)   : null,
             createdBy
@@ -164,20 +171,23 @@ class ReschedulePolicyService {
     /**
      * Get All Reschedule Policies with Filters.
      * Pass `status: 'active_now'` to return only currently-effective policies.
+     * Pass `zoneId` to scope results to a specific zone.
      */
     async getAllReschedulePolicies(filters = {}) {
         const {
             isActive,
             isDefault,
             status,
+            zoneId,
             page  = 1,
             limit = 10
         } = filters;
 
         let whereClause = { type: 'reschedule' };
+        if (zoneId !== undefined) whereClause.zoneId = zoneId;
 
         if (status === 'active_now') {
-            whereClause = this._nowWhere();
+            whereClause = this._nowWhere(zoneId ?? null);
         } else {
             if (isActive  !== undefined) whereClause.isActive  = isActive;
             if (isDefault !== undefined) whereClause.isDefault = isDefault;
@@ -249,7 +259,7 @@ class ReschedulePolicyService {
 
         const willBeActive = isActive !== undefined ? isActive : policyData.isActive;
         if (willBeActive && (effectiveFrom !== undefined || effectiveTo !== undefined)) {
-            await this._checkOverlap(finalFrom, finalTo, policyId);
+            await this._checkOverlap(finalFrom, finalTo, policyData.zoneId, policyId);
         }
 
         if (isDefault) {
@@ -259,6 +269,7 @@ class ReschedulePolicyService {
                     where: {
                         type: 'reschedule',
                         isDefault: true,
+                        zoneId: policyData.zoneId,
                         id: { [Op.ne]: policyId }
                     }
                 }
@@ -291,11 +302,12 @@ class ReschedulePolicyService {
     }
 
     /**
-     * Get the currently-effective reschedule policy.
+     * Get the currently-effective reschedule policy for a specific zone.
+     * @param {number} zoneId
      */
-    async getActiveReschedulePolicy() {
+    async getActiveReschedulePolicy(zoneId) {
         const policyData = await policy.findOne({
-            where: this._nowWhere(),
+            where: this._nowWhere(zoneId),
             include: [
                 {
                     model: reschedulePolicyConfig,
@@ -311,7 +323,7 @@ class ReschedulePolicyService {
         });
 
         if (!policyData) {
-            throw new NotFoundError("No active reschedule policy found");
+            throw new NotFoundError("No active reschedule policy found for this zone");
         }
 
         return policyData;
@@ -341,7 +353,7 @@ class ReschedulePolicyService {
     }
 
     /**
-     * Set Default Reschedule Policy.
+     * Set Default Reschedule Policy (scoped to the same zone).
      */
     async setDefaultReschedulePolicy(policyId, updatedBy) {
         const policyData = await policy.findByPk(policyId);
@@ -364,6 +376,7 @@ class ReschedulePolicyService {
                 where: {
                     type: 'reschedule',
                     isDefault: true,
+                    zoneId: policyData.zoneId,
                     id: { [Op.ne]: policyId }
                 }
             }
@@ -394,6 +407,7 @@ class ReschedulePolicyService {
                     type: 'reschedule',
                     isActive: true,
                     isDefault: false,
+                    zoneId: policyData.zoneId,
                     id: { [Op.ne]: policyId }
                 }
             });
@@ -409,15 +423,18 @@ class ReschedulePolicyService {
 
     /**
      * Get Reschedule Policy Statistics.
+     * @param {number|null} zoneId - optional; pass to scope stats to one zone
      */
-    async getReschedulePolicyStatistics() {
-        const totalPolicies  = await policy.count({ where: { type: 'reschedule' } });
-        const activePolicies = await policy.count({ where: { type: 'reschedule', isActive: true } });
+    async getReschedulePolicyStatistics(zoneId = null) {
+        const zoneFilter = zoneId !== null ? { zoneId } : {};
+
+        const totalPolicies  = await policy.count({ where: { type: 'reschedule', ...zoneFilter } });
+        const activePolicies = await policy.count({ where: { type: 'reschedule', isActive: true, ...zoneFilter } });
 
         const defaultPolicy = await policy.findOne({
-            where: this._nowWhere(),
+            where: this._nowWhere(zoneId),
             order: [['isDefault', 'DESC'], ['effectiveFrom', 'DESC']],
-            attributes: ['id', 'name', 'isActive', 'isDefault', 'effectiveFrom', 'effectiveTo']
+            attributes: ['id', 'name', 'isActive', 'isDefault', 'effectiveFrom', 'effectiveTo', 'zoneId']
         });
 
         return {

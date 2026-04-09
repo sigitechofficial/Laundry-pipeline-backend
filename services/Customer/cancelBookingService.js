@@ -50,6 +50,7 @@ class CancelBookingService {
                 'id', 
                 'customerId', 
                 'bookingStatusId', 
+                'zoneId',
                 'collectionDate', 
                 'collectionTimeFrom',
                 'orderAmount',
@@ -78,8 +79,8 @@ class CancelBookingService {
             throw new ValidationError("Cannot cancel completed bookings");
         }
 
-        // Step 5: Get active cancellation policy
-        const activeCancellationPolicy = await this.getActiveCancellationPolicy();
+        // Step 5: Get active cancellation policy for the booking's zone
+        const activeCancellationPolicy = await this.getActiveCancellationPolicy(bookingData.zoneId);
 
         // Step 6: Calculate cancellation charges based on policy
         const cancellationDetails = await this.calculateCancellationCharge(
@@ -182,42 +183,64 @@ class CancelBookingService {
     }
 
     /**
-     * Get active cancellation policy
+     * Get active cancellation policy for a specific zone.
+     * Falls back to a free-policy object if no zone-specific policy is configured.
+     * @param {number} zoneId
      * @returns {Object} Active cancellation policy with config
      */
-    async getActiveCancellationPolicy() {
+    async getActiveCancellationPolicy(zoneId) {
+        const now = new Date();
         const activePolicy = await policy.findOne({
             where: {
                 type: 'cancellation',
                 isActive: true,
-                isDefault: true
+                zoneId: zoneId,
+                [Op.and]: [
+                    {
+                        [Op.or]: [
+                            { effectiveFrom: null },
+                            { effectiveFrom: { [Op.lte]: now } }
+                        ]
+                    },
+                    {
+                        [Op.or]: [
+                            { effectiveTo: null },
+                            { effectiveTo: { [Op.gte]: now } }
+                        ]
+                    }
+                ]
             },
             include: [
                 {
                     model: cancellationPolicyConfig,
                     as: 'cancellationConfig',
-                    required: true
+                    required: false
                 }
+            ],
+            order: [
+                ['isDefault', 'DESC'],
+                ['effectiveFrom', 'DESC'],
+                ['createdAt', 'DESC']
             ]
         });
 
         if (!activePolicy) {
-            // Return default policy if none is configured
+            // No zone-specific policy configured — free cancellation fallback
             return {
                 cancellationConfig: {
                     prePickupFreeChargeWindowMinutes: 120,
                     prePickupFirstCancellationLeniency: true,
                     prePickupAbsoluteAmount: 0,
                     prePickupPercentage: 0,
-                    unprocessedAbsoluteAmount: 30,
+                    unprocessedAbsoluteAmount: 0,
                     unprocessedPercentage: 0,
                     unprocessedAfterPickupMinutes: 30,
-                    unprocessedOrderValuePercentage: 15,
+                    unprocessedOrderValuePercentage: 0,
                     allowCancelUnprocessed: true,
                     courtesyWindowDays: 30,
-                    courtesyCapAmount: 15,
+                    courtesyCapAmount: 0,
                     courtesyCount: 1,
-                    customerLeniencyEnabled: true,
+                    customerLeniencyEnabled: false,
                     prePickupAbsoluteCurrency: 'USD',
                     unprocessedAbsoluteCurrency: 'USD'
                 }

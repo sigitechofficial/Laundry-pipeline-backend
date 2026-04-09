@@ -343,8 +343,8 @@ class RescheduleBookingService {
             throw new ValidationError("Delivery date must be after the collection date");
         }
 
-        // Step 4: Get active reschedule policy
-        const activePolicy = await this.getActiveReschedulePolicy();
+        // Step 4: Get active reschedule policy for the booking's zone
+        const activePolicy = await this.getActiveReschedulePolicy(bookingData.zoneId);
 
         // Step 5: Calculate reschedule fee based on booking phase
         const feeDetails = await this.calculateRescheduleFee(bookingData, activePolicy, customerId);
@@ -509,15 +509,17 @@ class RescheduleBookingService {
     }
 
     /**
-     * Get active reschedule policy
-     * Falls back to no-charge defaults if none configured
+     * Get active reschedule policy for a specific zone.
+     * Falls back to null (free reschedule) if no zone-specific policy is configured.
+     * @param {number} zoneId
      */
-    async getActiveReschedulePolicy() {
+    async getActiveReschedulePolicy(zoneId) {
         const now = new Date();
         const activePolicy = await policy.findOne({
             where: {
                 type: 'reschedule',
                 isActive: true,
+                zoneId: zoneId,
                 [Op.and]: [
                     {
                         [Op.or]: [
