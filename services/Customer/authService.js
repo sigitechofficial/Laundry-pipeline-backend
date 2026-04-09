@@ -1,7 +1,53 @@
 require("dotenv").config();
-const { users, userType, booking, otpVerification, deviceToken, countries, cities } = require('../../models');
+const { users, userType, booking, otpVerification, deviceToken, countries, cities, zone, units } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
+
+// Find which zone a lat/lng falls into
+async function findZoneByCoords(lat, lng) {
+    try {
+        const zones = await zone.findAll({
+            where: {
+                status: true,
+                coordinates: sequelize.where(
+                    sequelize.fn(
+                        'ST_Contains',
+                        sequelize.col('coordinates'),
+                        sequelize.fn('ST_GeomFromText', `POINT(${lng} ${lat})`)
+                    ),
+                    true
+                )
+            },
+            include: [
+                {
+                    model: cities,
+                    required: true,
+                    attributes: ['id', 'name'],
+                    where: { deletedAt: { [Op.is]: null } },
+                    include: [
+                        {
+                            model: countries,
+                            required: true,
+                            attributes: ['id', 'name', 'shortName'],
+                            where: { deletedAt: { [Op.is]: null } }
+                        }
+                    ]
+                },
+                {
+                    model: units,
+                    as: 'currencyUnitZ',
+                    required: false,
+                    attributes: ['id', 'name', 'symbol']
+                }
+            ],
+            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'status', 'currencyUnitId']
+        });
+        return zones.length > 0 ? zones[0] : null;
+    } catch (err) {
+        console.error('⚠️ Zone lookup failed (non-blocking):', err.message);
+        return null;
+    }
+}
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
@@ -442,7 +488,7 @@ class CustomerAuthService {
      * @returns {Object} Login result with user data and access token or special response
      */
     async loginUser(data) {
-        const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum } = data;
+        const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum, lat, lng } = data;
         const socialProviders = ['google', 'facebook', 'apple'];
         const requiredProfileFields = ['firstName', 'lastName', 'phoneNum'];
 
@@ -615,12 +661,17 @@ class CustomerAuthService {
                 { [finalDvToken]: accessToken }
             );
 
+            // Zone lookup (optional — skipped if lat/lng not provided)
+            const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;
+
             // Return success data with full user details
             return {
                 type: 'success',
                 userData: userData,
                 accessToken: accessToken,
-                isGuest: false
+                isGuest: false,
+                zoneId: zoneData ? zoneData.id : null,
+                zoneName: zoneData ? zoneData.name : null
             };
         }
 
@@ -708,11 +759,16 @@ class CustomerAuthService {
                 { [finalDvToken]: accessToken }
             );
 
+            // Zone lookup (optional — skipped if lat/lng not provided)
+            const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;
+
             return {
                 type: 'success',
                 userData: userFind,
                 accessToken,
-                isGuest: false
+                isGuest: false,
+                zoneId: zoneData ? zoneData.id : null,
+                zoneName: zoneData ? zoneData.name : null
             };
         }
 
@@ -803,11 +859,16 @@ class CustomerAuthService {
             { [finalDvToken]: accessToken }
         );
 
+        // Zone lookup (optional — skipped if lat/lng not provided)
+        const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;
+
         return {
             type: 'success',
             userData: userFind,
             accessToken,
-            isGuest: false
+            isGuest: false,
+            zoneId: zoneData ? zoneData.id : null,
+            zoneName: zoneData ? zoneData.name : null
         };
     }
 

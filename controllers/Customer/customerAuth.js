@@ -213,7 +213,7 @@ async function registerCustomer(req, res) {
     *  Login User
 */
 async function loginUser(req, res) {
-    const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum } = req.body;
+    const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum, lat, lng } = req.body;
 
     // Call service to handle business logic
     const result = await customerAuthService.loginUser({
@@ -223,7 +223,9 @@ async function loginUser(req, res) {
         dvToken,
         firstName,
         lastName,
-        phoneNum
+        phoneNum,
+        lat,
+        lng
     });
 
     // Handle success case
@@ -244,7 +246,7 @@ async function loginUser(req, res) {
             });
 
             // Generate response data using existing helper function
-            let output = loginData(result.userData, result.accessToken, result.isGuest);
+            let output = loginData(result.userData, result.accessToken, result.isGuest, result.zoneId, result.zoneName);
             return res.json(output);
         }
     }
@@ -462,7 +464,7 @@ let registerData = (userData, accessToken, isGuest) => {
 };
 
 
-let loginData = (userData, accessToken, isGuest) => {
+let loginData = (userData, accessToken, isGuest, zoneId = null, zoneName = null) => {
     return {
         status: "1",
         message: "Login successful",
@@ -480,6 +482,8 @@ let loginData = (userData, accessToken, isGuest) => {
                 : "2023",
             phoneNum: `${userData.phoneNum}`,
             stripeCustomerId: `${userData.stripeCustomerId}`,
+            zoneId: zoneId ?? null,
+            zoneName: zoneName ?? null,
         },
         error: "",
     };
