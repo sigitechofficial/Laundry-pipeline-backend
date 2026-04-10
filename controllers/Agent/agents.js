@@ -2658,7 +2658,7 @@ exports.getPermissions = async (req, res) => {
                 attributes: ['id', 'name', 'status']
             },
         ],
-        attributes: ['id', 'read', 'write', 'featureId', 'roleId']
+        attributes: ['id', 'create', 'read', 'update', 'delete', 'featureId', 'roleId']
     });
     return ResponseHelper.success(res, "Get All Permissions", { getPermissions });
 }
