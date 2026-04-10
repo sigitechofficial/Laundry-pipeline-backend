@@ -45,8 +45,8 @@ router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.veri
 router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
 //logout user and destroy the Token in redis
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
-//Session Api
-router.get("/session",validateAccessToken, asyncMiddleware(customerAuthControllers.session))
+//Session Api (registered customer or guest JWT)
+router.get("/session", validateAccessTokenOrGuest, asyncMiddleware(customerAuthControllers.session))
 // Guest (no DB row): JWT + Redis — does not use validateAccessToken / users table
 router.post('/guest/start', asyncMiddleware(customerAuthControllers.startGuestSession))
 router.get('/guest/session', validateGuestAccessToken, asyncMiddleware(customerAuthControllers.guestSession))

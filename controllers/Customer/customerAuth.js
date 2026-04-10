@@ -383,6 +383,13 @@ async function logout(req, res) {
    * Session    
 */
 async function session(req, res) {
+    if (req.user && req.user.guest === true) {
+        const stub = guestAuthService.guestUserStub();
+        const output = loginData(stub, "", true, null, null);
+        output.message = "Login successful";
+        return res.json(output);
+    }
+
     const userId = req.user.id;
     const { guestUser } = req.body;
 
