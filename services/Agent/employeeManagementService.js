@@ -1,14 +1,76 @@
 require("dotenv").config();
-const { users, addressDb, bussinessInformation, driverInZones, roles } = require('../../models');
+const {
+    users,
+    addressDb,
+    bussinessInformation,
+    driverInZones,
+    roles,
+    permissions,
+    sequelize,
+} = require('../../models');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const { 
-    UnauthorizedError, 
-    NotFoundError, 
-    ConflictError, 
-    ValidationError 
+const {
+    UnauthorizedError,
+    NotFoundError,
+    ConflictError,
+    ValidationError,
 } = require('../../middlewares/universalErrorHandler');
 const path = require('path');
+
+/** Seeded id for "Laundry Shop Driver" — also matched by role name (case-insensitive). */
+const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
+
+function parsePermissionRole(raw) {
+    if (raw == null || raw === '') {
+        return [];
+    }
+    if (Array.isArray(raw)) {
+        return raw;
+    }
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
+
+function buildPermissionRows(permissionRole, roleId) {
+    return (permissionRole || [])
+        .filter((ele) => ele?.id)
+        .map((ele) => {
+            const perms = ele?.permissions || {};
+            return {
+                featureId: ele.id,
+                roleId,
+                create: perms.create === true || perms.write === true,
+                read: perms.read === true,
+                update: perms.update === true || perms.write === true,
+                delete: perms.delete === true || perms.write === true,
+            };
+        });
+}
+
+function isLaundryShopDriverRole(roleRecord) {
+    if (!roleRecord) {
+        return false;
+    }
+    const name = (roleRecord.name || '').trim().toLowerCase();
+    return (
+        name === 'laundry shop driver' ||
+        roleRecord.id === LAUNDRY_SHOP_DRIVER_ROLE_ID
+    );
+}
+
+function toPublicEmployee(user) {
+    const plain = user.get ? user.get({ plain: true }) : { ...user };
+    delete plain.password;
+    return plain;
+}
 
 /**
  * Agent Employee Management Service
@@ -26,9 +88,10 @@ class AgentEmployeeManagementService {
      * @param {string} data.phoneNum - Phone number
      * @param {string} data.countryCode - Country code
      * @param {number} data.roleId - Role ID
+     * @param {Array|string} [data.permissionRole] - Optional: sync role permissions (feature id + permissions); JSON string ok for multipart
      * @param {string} profileImg - Profile image path
      * @param {number} agentId - Agent ID
-     * @returns {Object} Employee creation result
+     * @returns {Object} Employee creation result (no password in payload)
      */
     async addEmployee(data, profileImg, agentId) {
         const {
@@ -39,77 +102,156 @@ class AgentEmployeeManagementService {
             phoneNum,
             countryCode,
             roleId,
+            permissionRole: permissionRoleRaw,
         } = data;
 
-        const userFind = await users.findOne({
-            where: {
-                classifiedAsId: 1,
-                roleId: roleId,
-                firstName: firstName,
-                lastName: lastName,
-                email
-            },
-        });
-
-        if (userFind) {
-            throw new ConflictError("Employee Already Exists");
+        if (
+            !firstName?.trim() ||
+            !lastName?.trim() ||
+            !email?.trim() ||
+            !password ||
+            roleId === undefined ||
+            roleId === null ||
+            roleId === ''
+        ) {
+            throw new ValidationError(
+                'firstName, lastName, email, password, and roleId are required'
+            );
         }
 
-        const hashpassword = await bcrypt.hash(password, 10);
+        const numericRoleId = parseInt(roleId, 10);
+        if (Number.isNaN(numericRoleId)) {
+            throw new ValidationError('roleId must be a valid number');
+        }
 
-        const user = await users.create({
-            firstName,
-            lastName,
-            email,
-            password: hashpassword,
-            phoneNum,
-            roleId,
-            status: true,
-            classifiedAsId: 1,
-            image: profileImg,
-            countryCode,
-            verifiedAt: Date.now(),
-        });
+        const permissionRole = parsePermissionRole(permissionRoleRaw);
+        const permissionRows = buildPermissionRows(permissionRole, numericRoleId);
 
-        if (user.classifiedAsId === 1 || user.roleId === 6) {
-            await users.update(
-                {
+        const t = await sequelize.transaction();
+
+        try {
+            const roleRecord = await roles.findByPk(numericRoleId, {
+                transaction: t,
+                attributes: ['id', 'name', 'status'],
+            });
+
+            if (!roleRecord || !roleRecord.status) {
+                throw new ValidationError('Invalid or inactive role');
+            }
+
+            const existingSameShop = await users.findOne({
+                where: {
+                    email: email.trim(),
+                    classifiedAsId: 1,
                     employeeOff: agentId,
                 },
-                { where: { id: user.id } }
+                transaction: t,
+            });
+
+            if (existingSameShop) {
+                throw new ConflictError(
+                    'An employee with this email already exists for your shop'
+                );
+            }
+
+            const existingEmail = await users.findOne({
+                where: { email: email.trim() },
+                transaction: t,
+            });
+
+            if (existingEmail) {
+                throw new ConflictError(
+                    'This email is already registered. Use a different email.'
+                );
+            }
+
+            const hashpassword = await bcrypt.hash(password, 10);
+            const isDriver = isLaundryShopDriverRole(roleRecord);
+
+            const user = await users.create(
+                {
+                    firstName: firstName.trim(),
+                    lastName: lastName.trim(),
+                    email: email.trim(),
+                    password: hashpassword,
+                    phoneNum,
+                    roleId: numericRoleId,
+                    status: true,
+                    classifiedAsId: 1,
+                    image: profileImg,
+                    countryCode,
+                    verifiedAt: Date.now(),
+                    employeeOff: agentId,
+                    ...(isDriver ? { driverType: 'laundary Shop Driver' } : {}),
+                },
+                { transaction: t }
             );
 
-            const agentAddress = await addressDb.findOne({
-                where: {
-                    userId: agentId,
+            if (isDriver) {
+                const agentAddress = await addressDb.findOne({
+                    where: { userId: agentId },
+                    transaction: t,
+                });
+
+                if (!agentAddress || agentAddress.zoneId == null) {
+                    throw new ValidationError(
+                        'Shop address or zone is missing. Add your shop address before adding a laundry driver.'
+                    );
+                }
+
+                const businessInfo = await bussinessInformation.findOne({
+                    where: { agentId },
+                    transaction: t,
+                });
+
+                await driverInZones.create(
+                    {
+                        driverId: user.id,
+                        zoneId: agentAddress.zoneId,
+                        laundaryShopId: businessInfo ? businessInfo.id : null,
+                        countryId: agentAddress.countryId,
+                        cityId: agentAddress.cityId,
+                    },
+                    { transaction: t }
+                );
+            }
+
+            let permissionsUpdated = false;
+            if (permissionRows.length > 0) {
+                await permissions.destroy({
+                    where: { roleId: numericRoleId },
+                    transaction: t,
+                });
+                await permissions.bulkCreate(permissionRows, { transaction: t });
+                permissionsUpdated = true;
+            }
+
+            await t.commit();
+
+            const fresh = await users.findByPk(user.id, {
+                attributes: {
+                    exclude: ['password'],
                 },
+                include: [
+                    {
+                        model: roles,
+                        attributes: ['id', 'name'],
+                    },
+                ],
             });
 
-            const businessInfo = await bussinessInformation.findOne({
-                where: {
-                    agentId: agentId,
+            return {
+                message: 'Employee added successfully',
+                data: {
+                    employee: fresh ? toPublicEmployee(fresh) : toPublicEmployee(user),
+                    permissionsUpdated,
+                    roleId: numericRoleId,
                 },
-            });
-
-            const zoneId = agentAddress.zoneId;
-            const shopAddressId = agentAddress.id;
-            const countryId = agentAddress.countryId;
-            const cityId = agentAddress.cityId;
-            const driverId = user.id;
-
-            await driverInZones.create({
-                driverId: driverId,
-                zoneId: zoneId,
-                laundaryShopId: businessInfo ? businessInfo.id : null,
-                countryId: countryId,
-                cityId: cityId,
-            });
+            };
+        } catch (err) {
+            await t.rollback();
+            throw err;
         }
-
-        return {
-            user,
-            message: "Employee Added Successfully"
-        };
     }
 
     /**

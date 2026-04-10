@@ -69,6 +69,7 @@ const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
+const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -2727,90 +2728,21 @@ exports.getFeatures = async (req, res) => {
  */
 
 exports.addEmployee = async (req, res) => {
-    const {
-        firstName,
-        lastName,
-        email,
-        password,
-        phoneNum,
-        countryCode,
-        roleId,
-    } = req.body;
-
     const agentId = req.user.id;
 
     let profileImg = null;
     if (req.file) {
-        let tempProfileImg = req.file.path;
-        profileImg = tempProfileImg.replace(/\\/g, "/");
+        const tempProfileImg = req.file.path;
+        profileImg = tempProfileImg.replace(/\\/g, '/');
     }
 
-    const userFind = await users.findOne({
-        where: {
-            classifiedAsId: 1,
-            roleId: roleId,
-            firstName: firstName,
-            lastName: lastName,
-            email
-        },
-    });
+    const result = await agentEmployeeManagementService.addEmployee(
+        req.body,
+        profileImg,
+        agentId
+    );
 
-    if (userFind) {
-        throw new ConflictError("Employee Already Exists");
-    }
-
-    let hashpassword = await bcrypt.hash(password, 10);
-
-    const user = await users.create({
-        firstName,
-        lastName,
-        email,
-        password: hashpassword,
-        phoneNum,
-        roleId,
-        status: true,
-        classifiedAsId: 1,
-        image: profileImg,
-        countryCode,
-        verifiedAt: Date.now(),
-    });
-
-    if (user.classifiedAsId === 1 || user.roleId === 6) {
-        await users.update(
-            {
-                employeeOff: agentId,
-            },
-            { where: { id: user.id } }
-        );
-
-        const agentAddress = await addressDb.findOne({
-            where: {
-                userId: agentId,
-            },
-        });
-
-        const businessInfo = await bussinessInformation.findOne({
-            where: {
-                agentId: agentId,
-            },
-        });
-
-        const zoneId = agentAddress.zoneId;
-        const shopAddressId = agentAddress.id;
-        const countryId = agentAddress.countryId
-        const cityId = agentAddress.cityId
-        const driverId = user.id;
-
-        await driverInZones.create({
-            driverId: driverId,
-            zoneId: zoneId,
-            laundaryShopId: businessInfo ? businessInfo.id : null,
-            countryId: countryId,                                                                                                                                                                                                                                                                                                                                                                                                                                    
-            cityId: cityId,
-        });
-    }
-
-    return ResponseHelper.success(res, "Employee Added Sucessfully", user);
+    return ResponseHelper.success(res, result.message, result.data);
 }
 
 /*
