@@ -17,6 +17,17 @@ const {
 const AGENT_APP_FEATURE_OF = ['Agent', 'Agent Employee', 'both'];
 
 /**
+ * Role names that must never appear in the agent app role list (admin / zone portal).
+ * They may still have permissions on `both` features — exclude explicitly.
+ */
+const ADMIN_PORTAL_ROLE_NAMES = new Set(['zone admin']);
+
+function isAdminPortalRoleName(name) {
+    if (!name || typeof name !== 'string') return false;
+    return ADMIN_PORTAL_ROLE_NAMES.has(name.trim().toLowerCase());
+}
+
+/**
  * Agent Role & Permission Service
  * Handles all agent role and permission related business logic
  */
@@ -158,7 +169,7 @@ class AgentRolePermissionService {
             return { getRoles: [] };
         }
 
-        const getRoles = await roles.findAll({
+        const roleRows = await roles.findAll({
             where: {
                 status: true,
                 id: { [Op.in]: agentOnlyRoleIds },
@@ -166,6 +177,8 @@ class AgentRolePermissionService {
             attributes: ['id', 'name', 'status'],
             order: [['name', 'ASC']],
         });
+
+        const getRoles = roleRows.filter((r) => !isAdminPortalRoleName(r.name));
 
         return {
             getRoles,
