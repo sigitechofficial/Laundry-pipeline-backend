@@ -109,13 +109,14 @@ class AgentRolePermissionService {
     }
 
     /**
-     * Roles for the agent app: tied to Agent / Agent Employee / both features only.
-     * Excludes any role that has a permission on an Admin-only feature, or only admin-side permissions.
-     * Roles with no permission rows yet are still listed (e.g. newly created).
+     * Roles for the agent app only:
+     * - Must have at least one permission on a feature with featureOf in Agent / Agent Employee / both.
+     * - Must not have any permission on an Admin-only feature.
+     * Roles with zero permissions, or only Admin features, are omitted.
      * @returns {Object} All roles data
      */
     async getAllRoles() {
-        const [adminFeatureRows, agentFeatureRows, anyPermRows] = await Promise.all([
+        const [adminFeatureRows, agentFeatureRows] = await Promise.all([
             permissions.findAll({
                 attributes: ['roleId'],
                 include: [
@@ -140,7 +141,6 @@ class AgentRolePermissionService {
                 ],
                 raw: true,
             }),
-            permissions.findAll({ attributes: ['roleId'], raw: true }),
         ]);
 
         const roleIdsWithAdminFeature = new Set(
@@ -149,23 +149,22 @@ class AgentRolePermissionService {
         const roleIdsWithAgentAppFeature = new Set(
             agentFeatureRows.map((r) => r.roleId).filter(Boolean)
         );
-        const roleIdsWithAnyPermission = new Set(
-            anyPermRows.map((r) => r.roleId).filter(Boolean)
+
+        const agentOnlyRoleIds = [...roleIdsWithAgentAppFeature].filter(
+            (id) => id && !roleIdsWithAdminFeature.has(id)
         );
 
-        const allActive = await roles.findAll({
-            where: { status: true },
-            attributes: ['id', 'name', 'status'],
-        });
+        if (agentOnlyRoleIds.length === 0) {
+            return { getRoles: [] };
+        }
 
-        const getRoles = allActive.filter((role) => {
-            if (roleIdsWithAdminFeature.has(role.id)) {
-                return false;
-            }
-            if (!roleIdsWithAnyPermission.has(role.id)) {
-                return true;
-            }
-            return roleIdsWithAgentAppFeature.has(role.id);
+        const getRoles = await roles.findAll({
+            where: {
+                status: true,
+                id: { [Op.in]: agentOnlyRoleIds },
+            },
+            attributes: ['id', 'name', 'status'],
+            order: [['name', 'ASC']],
         });
 
         return {
