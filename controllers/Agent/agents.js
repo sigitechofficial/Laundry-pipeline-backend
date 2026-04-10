@@ -68,6 +68,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
+const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -2625,16 +2626,10 @@ exports.updateRoles = async (req, res) => {
 }
 
 /*
- * Get All Roles
+ * Get All Roles (agent app: Agent / Agent Employee / both features only; no Admin-only roles)
  */
 exports.getAllRoles = async (req, res) => {
-    const getRoles = await roles.findAll({
-        where: {
-            status: true,
-        },
-        attributes: ["id", "name", "status"],
-    });
-
+    const { getRoles } = await agentRolePermissionService.getAllRoles();
     return ResponseHelper.success(res, "Get All Roles", { getRoles });
 }
 

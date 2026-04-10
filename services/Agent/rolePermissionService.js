@@ -13,6 +13,9 @@ const {
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
 
+/** `featureOf` values used by the agent app (shop / employees). Not Admin-only. */
+const AGENT_APP_FEATURE_OF = ['Agent', 'Agent Employee', 'both'];
+
 /**
  * Agent Role & Permission Service
  * Handles all agent role and permission related business logic
@@ -106,15 +109,63 @@ class AgentRolePermissionService {
     }
 
     /**
-     * Get All Roles
+     * Roles for the agent app: tied to Agent / Agent Employee / both features only.
+     * Excludes any role that has a permission on an Admin-only feature, or only admin-side permissions.
+     * Roles with no permission rows yet are still listed (e.g. newly created).
      * @returns {Object} All roles data
      */
     async getAllRoles() {
-        const getRoles = await roles.findAll({
-            where: {
-                status: true,
-            },
-            attributes: ["id", "name", "status"],
+        const [adminFeatureRows, agentFeatureRows, anyPermRows] = await Promise.all([
+            permissions.findAll({
+                attributes: ['roleId'],
+                include: [
+                    {
+                        model: features,
+                        required: true,
+                        where: { featureOf: 'Admin' },
+                        attributes: [],
+                    },
+                ],
+                raw: true,
+            }),
+            permissions.findAll({
+                attributes: ['roleId'],
+                include: [
+                    {
+                        model: features,
+                        required: true,
+                        where: { featureOf: { [Op.in]: AGENT_APP_FEATURE_OF } },
+                        attributes: [],
+                    },
+                ],
+                raw: true,
+            }),
+            permissions.findAll({ attributes: ['roleId'], raw: true }),
+        ]);
+
+        const roleIdsWithAdminFeature = new Set(
+            adminFeatureRows.map((r) => r.roleId).filter(Boolean)
+        );
+        const roleIdsWithAgentAppFeature = new Set(
+            agentFeatureRows.map((r) => r.roleId).filter(Boolean)
+        );
+        const roleIdsWithAnyPermission = new Set(
+            anyPermRows.map((r) => r.roleId).filter(Boolean)
+        );
+
+        const allActive = await roles.findAll({
+            where: { status: true },
+            attributes: ['id', 'name', 'status'],
+        });
+
+        const getRoles = allActive.filter((role) => {
+            if (roleIdsWithAdminFeature.has(role.id)) {
+                return false;
+            }
+            if (!roleIdsWithAnyPermission.has(role.id)) {
+                return true;
+            }
+            return roleIdsWithAgentAppFeature.has(role.id);
         });
 
         return {
