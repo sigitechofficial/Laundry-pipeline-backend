@@ -7,6 +7,8 @@ const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
 const path=require('path')
 const validateAccessToken=require('../middlewares/accessToken')
+const validateGuestAccessToken=require('../middlewares/guestAccessToken')
+const validateAccessTokenOrGuest=require('../middlewares/accessTokenOrGuest')
 const { route } = require('./driver')
 
 //!Multer Middlewares
@@ -45,6 +47,10 @@ router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changeP
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
 //Session Api
 router.get("/session",validateAccessToken, asyncMiddleware(customerAuthControllers.session))
+// Guest (no DB row): JWT + Redis — does not use validateAccessToken / users table
+router.post('/guest/start', asyncMiddleware(customerAuthControllers.startGuestSession))
+router.get('/guest/session', validateGuestAccessToken, asyncMiddleware(customerAuthControllers.guestSession))
+router.get('/guest/logout', validateGuestAccessToken, asyncMiddleware(customerAuthControllers.guestLogout))
 //Resend OTP
 router.post('/resendOTP',asyncMiddleware(customerAuthControllers.resendOTP))
 //!------------------------------------Drawer-------------------------------//
@@ -72,16 +78,16 @@ router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(custo
 //!----------------------------Customer Services---------------------//
 //get All Services
 router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
-//Get Specific Service Detail
-router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
+//Get Specific Service Detail (registered or guest)
+router.get('/serviceDetail',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.serviceDetail))
 // Public support contact (email, phone, help URL, hours) — from DB
 router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 
 router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
-//fetch Zone and Charges
-router.get('/fetchZoneAndCharges',validateAccessToken,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
+//fetch Zone and Charges (registered or guest)
+router.get('/fetchZoneAndCharges',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
 //Create Intent Using Stripe
 router.post('/createIntentUsingStripe',validateAccessToken,asyncMiddleware(customerOtherController.createIntentUsingStripe))
 // Route to get all on-hold bookings for a given booking ID
@@ -96,8 +102,8 @@ router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOt
 router.post('/testEmail', asyncMiddleware(customerOtherController.testEmail));
 // Route to test sending emails directly via ZeptoMail API (simple test)
 router.post('/testEmailAPI', asyncMiddleware(customerOtherController.testEmailAPI));
-// Route to get all service with preference details
-router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessToken, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
+// Route to get all service with preference details (registered or guest)
+router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessTokenOrGuest, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
 //Get All Order Status
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
 //Cancel Customer Booking with Policy Enforcement

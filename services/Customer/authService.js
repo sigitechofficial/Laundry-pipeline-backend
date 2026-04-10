@@ -3,6 +3,8 @@ const { users, userType, booking, otpVerification, deviceToken, countries, citie
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 
+const guestAuthService = require("./guestAuthService");
+
 // Find which zone a lat/lng falls into
 async function findZoneByCoords(lat, lng) {
     try {
@@ -488,7 +490,38 @@ class CustomerAuthService {
      * @returns {Object} Login result with user data and access token or special response
      */
     async loginUser(data) {
-        const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum, lat, lng } = data;
+        const wantGuest =
+            data.guestUser === true ||
+            data.guestUser === "true" ||
+            data.isGuest === true ||
+            data.isGuest === "true";
+        if (wantGuest) {
+            const guest = await guestAuthService.startGuestSession();
+            const { lat, lng } = data;
+            const zoneData =
+                lat && lng ? await findZoneByCoords(lat, lng) : null;
+            return {
+                type: "success",
+                userData: guest.userData,
+                accessToken: guest.accessToken,
+                isGuest: true,
+                zoneId: zoneData ? zoneData.id : null,
+                zoneName: zoneData ? zoneData.name : null,
+                expiresInSeconds: guest.expiresInSeconds,
+            };
+        }
+
+        const {
+            email,
+            password,
+            signedFrom,
+            dvToken,
+            firstName,
+            lastName,
+            phoneNum,
+            lat,
+            lng,
+        } = data;
         const socialProviders = ['google', 'facebook', 'apple'];
         const requiredProfileFields = ['firstName', 'lastName', 'phoneNum'];
 

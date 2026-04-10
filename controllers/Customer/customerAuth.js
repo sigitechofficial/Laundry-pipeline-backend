@@ -15,6 +15,7 @@ const { stat } = require('fs')
 const stripe = require('../stripe')
 const { create } = require('domain')
 const customerAuthService = require('../../services/Customer/authService')
+const guestAuthService = require('../../services/Customer/guestAuthService')
 const ResponseHelper = require('../../utils/responseHelper')
 const { ValidationError } = require('../../middlewares/universalErrorHandler')
 
@@ -213,7 +214,19 @@ async function registerCustomer(req, res) {
     *  Login User
 */
 async function loginUser(req, res) {
-    const { email, password, signedFrom, dvToken, firstName, lastName, phoneNum, lat, lng } = req.body;
+    const {
+        email,
+        password,
+        signedFrom,
+        dvToken,
+        firstName,
+        lastName,
+        phoneNum,
+        lat,
+        lng,
+        guestUser,
+        isGuest,
+    } = req.body;
 
     // Call service to handle business logic
     const result = await customerAuthService.loginUser({
@@ -225,7 +238,9 @@ async function loginUser(req, res) {
         lastName,
         phoneNum,
         lat,
-        lng
+        lng,
+        guestUser,
+        isGuest,
     });
 
     // Handle success case
@@ -237,16 +252,22 @@ async function loginUser(req, res) {
 
         // Set cookie for regular login
         if (result.accessToken) {
+            const maxAgeMs = result.expiresInSeconds
+                ? result.expiresInSeconds * 1000
+                : 24 * 60 * 60 * 1000;
             res.cookie("accessToken", result.accessToken, {
                 httpOnly: true,
                 secure: true,
                 sameSite: "None",
                 path: "/customer",
-                maxAge: 24 * 60 * 60 * 1000
+                maxAge: maxAgeMs,
             });
 
             // Generate response data using existing helper function
             let output = loginData(result.userData, result.accessToken, result.isGuest, result.zoneId, result.zoneName);
+            if (result.isGuest) {
+                output.message = "Guest session started";
+            }
             return res.json(output);
         }
     }
@@ -374,6 +395,55 @@ async function session(req, res) {
     // Generate response data using existing helper function
     let output = loginData(result.userData, result.accessToken, result.isGuest);
     return res.json(output);
+}
+
+/*
+ * Guest (no DB user): JWT + Redis session — separate from registered customer auth.
+ */
+async function startGuestSession(req, res) {
+    const result = await guestAuthService.startGuestSession();
+    res.cookie("accessToken", result.accessToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+        path: "/customer",
+        maxAge: result.expiresInSeconds * 1000,
+    });
+    const output = loginData(
+        result.userData,
+        result.accessToken,
+        true,
+        null,
+        null
+    );
+    output.message = "Guest session started";
+    return res.json(output);
+}
+
+async function guestSession(req, res) {
+    const stub = guestAuthService.guestUserStub();
+    const output = loginData(stub, "", true, null, null);
+    output.message = "Login successful";
+    return res.json(output);
+}
+
+async function guestLogout(req, res) {
+    try {
+        await guestAuthService.destroyGuestSession(req.user.jti);
+        return res.json({
+            status: "1",
+            message: "Log-out successfully",
+            data: {},
+            error: "",
+        });
+    } catch (err) {
+        return res.json({
+            status: "0",
+            message: "Internal server error",
+            data: {},
+            error: "There is some error logging out. Please try again",
+        });
+    }
 }
 
 
@@ -531,5 +601,8 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     session,
-    resendOTP
+    resendOTP,
+    startGuestSession,
+    guestSession,
+    guestLogout,
 }

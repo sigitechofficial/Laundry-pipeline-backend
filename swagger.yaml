@@ -210,7 +210,9 @@ paths:
   /customer/loginUser:
     post:
       summary: Customer login (Email or Social)
-      description: Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
+      description: |
+        Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
+        For a guest (no DB user), send `guestUser: true` or `isGuest: true` with optional `lat` / `lng` for zone; omit credentials.
       tags:
         - Customer > Auth
       parameters:
@@ -226,15 +228,20 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - email
-                - dvToken
               properties:
+                guestUser:
+                  type: boolean
+                  example: true
+                  description: If true, issues guest JWT + Redis session (no email/password). Same as `isGuest`.
+                isGuest:
+                  type: boolean
+                  example: true
+                  description: Alias for `guestUser`.
                 email:
                   type: string
                   format: email
                   example: johndoe@example.com
-                  description: User's email address
+                  description: User's email address (not required for guest)
                 password:
                   type: string
                   example: MySecret123!
@@ -247,7 +254,13 @@ paths:
                 dvToken:
                   type: string
                   example: device-token-xyz
-                  description: Device token for authentication and push notifications
+                  description: Device token for registered login (optional for guest)
+                lat:
+                  type: number
+                  description: Optional; with `lng`, zone is included in login response
+                lng:
+                  type: number
+                  description: Optional; with `lat`, zone is included in login response
       responses:
         '200':
           description: Login successful or user verification pending
@@ -633,6 +646,59 @@ paths:
                 status: "0"
                 message: "Internal server error"
                 data: {}
+  /customer/guest/start:
+    post:
+      summary: Start guest session (no DB user)
+      description: Issues a guest JWT and stores a Redis session. Same cookie path as customer login (/customer). Guest tokens are not accepted by registered-user routes (validateAccessToken).
+      tags:
+        - Customer > Auth
+      responses:
+        '200':
+          description: Guest token issued
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Guest session started"
+                statusCode: 200
+                data:
+                  userId: ""
+                  isGuest: true
+                  accessToken: "<jwt>"
+                error: ""
+  /customer/guest/session:
+    get:
+      summary: Guest session details
+      description: Returns stub user fields for an active guest session (requires guest JWT + Redis).
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: header
+          name: accesstoken
+          required: false
+          schema:
+            type: string
+          description: Guest JWT (or cookie accessToken)
+      responses:
+        '200':
+          description: Guest session active
+        '403':
+          description: Invalid or expired guest session
+  /customer/guest/logout:
+    get:
+      summary: Guest logout
+      description: Removes the guest session from Redis (JWT may still decode until expiry but is rejected without Redis).
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: header
+          name: accesstoken
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Logout success
   /customer/getUserProfile:
      get:
       summary: Fetch logged-in user profile
