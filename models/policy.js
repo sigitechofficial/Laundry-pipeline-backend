@@ -45,17 +45,9 @@ module.exports = (sequelize, DataTypes) => {
       as: 'noShowPolicyBookings'
     })
 
-    //Cancellation Policy Realtion with zone table
-    policy.hasMany(models.zone,{foreignKey:'cancellationPolicyId',as:'cancellationPolicyZones'})
-    models.zone.belongsTo(policy,{foreignKey:'cancellationPolicyId',as:'cancellationPolicyZones'})
-
-    //No Show Policy Realtion with zone table
-    policy.hasMany(models.zone,{foreignKey:'noShowPolicyId',as:'noShowPolicyZones'})
-    models.zone.belongsTo(policy,{foreignKey:'noShowPolicyId',as:'noShowPolicyZones'})
-
-    //Reschedule Policy Realtion with zone table
-    policy.hasMany(models.zone,{foreignKey:'reschedulePolicyId',as:'reschedulePolicyZones'})
-    models.zone.belongsTo(policy,{foreignKey:'reschedulePolicyId',as:'reschedulePolicyZones'})
+    // Policy belongs to a Zone (zone-based policy)
+    policy.belongsTo(models.zone, { foreignKey: 'zoneId', as: 'zone' })
+    models.zone.hasMany(policy, { foreignKey: 'zoneId', as: 'policies' })
 
 
 
@@ -91,6 +83,14 @@ module.exports = (sequelize, DataTypes) => {
     description: {
       type: DataTypes.TEXT,
       allowNull: true
+    },
+    zoneId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'zones',
+        key: 'id'
+      }
     },
     effectiveFrom: {
       type: DataTypes.DATE,

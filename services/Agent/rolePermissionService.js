@@ -13,6 +13,20 @@ const {
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
 
+/** `featureOf` values used by the agent app (shop / employees). Not Admin-only. */
+const AGENT_APP_FEATURE_OF = ['Agent', 'Agent Employee', 'both'];
+
+/**
+ * Role names that must never appear in the agent app role list (admin / zone portal).
+ * They may still have permissions on `both` features — exclude explicitly.
+ */
+const ADMIN_PORTAL_ROLE_NAMES = new Set(['zone admin']);
+
+function isAdminPortalRoleName(name) {
+    if (!name || typeof name !== 'string') return false;
+    return ADMIN_PORTAL_ROLE_NAMES.has(name.trim().toLowerCase());
+}
+
 /**
  * Agent Role & Permission Service
  * Handles all agent role and permission related business logic
@@ -106,16 +120,65 @@ class AgentRolePermissionService {
     }
 
     /**
-     * Get All Roles
+     * Roles for the agent app only:
+     * - Must have at least one permission on a feature with featureOf in Agent / Agent Employee / both.
+     * - Must not have any permission on an Admin-only feature.
+     * Roles with zero permissions, or only Admin features, are omitted.
      * @returns {Object} All roles data
      */
     async getAllRoles() {
-        const getRoles = await roles.findAll({
+        const [adminFeatureRows, agentFeatureRows] = await Promise.all([
+            permissions.findAll({
+                attributes: ['roleId'],
+                include: [
+                    {
+                        model: features,
+                        required: true,
+                        where: { featureOf: 'Admin' },
+                        attributes: [],
+                    },
+                ],
+                raw: true,
+            }),
+            permissions.findAll({
+                attributes: ['roleId'],
+                include: [
+                    {
+                        model: features,
+                        required: true,
+                        where: { featureOf: { [Op.in]: AGENT_APP_FEATURE_OF } },
+                        attributes: [],
+                    },
+                ],
+                raw: true,
+            }),
+        ]);
+
+        const roleIdsWithAdminFeature = new Set(
+            adminFeatureRows.map((r) => r.roleId).filter(Boolean)
+        );
+        const roleIdsWithAgentAppFeature = new Set(
+            agentFeatureRows.map((r) => r.roleId).filter(Boolean)
+        );
+
+        const agentOnlyRoleIds = [...roleIdsWithAgentAppFeature].filter(
+            (id) => id && !roleIdsWithAdminFeature.has(id)
+        );
+
+        if (agentOnlyRoleIds.length === 0) {
+            return { getRoles: [] };
+        }
+
+        const roleRows = await roles.findAll({
             where: {
                 status: true,
+                id: { [Op.in]: agentOnlyRoleIds },
             },
-            attributes: ["id", "name", "status"],
+            attributes: ['id', 'name', 'status'],
+            order: [['name', 'ASC']],
         });
+
+        const getRoles = roleRows.filter((r) => !isAdminPortalRoleName(r.name));
 
         return {
             getRoles,

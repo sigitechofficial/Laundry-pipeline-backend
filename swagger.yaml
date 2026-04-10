@@ -210,7 +210,9 @@ paths:
   /customer/loginUser:
     post:
       summary: Customer login (Email or Social)
-      description: Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
+      description: |
+        Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
+        For a guest (no DB user), send `guestUser: true` or `isGuest: true` with optional `lat` / `lng` for zone; omit credentials.
       tags:
         - Customer > Auth
       parameters:
@@ -226,15 +228,20 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - email
-                - dvToken
               properties:
+                guestUser:
+                  type: boolean
+                  example: true
+                  description: If true, issues guest JWT + Redis session (no email/password). Same as `isGuest`.
+                isGuest:
+                  type: boolean
+                  example: true
+                  description: Alias for `guestUser`.
                 email:
                   type: string
                   format: email
                   example: johndoe@example.com
-                  description: User's email address
+                  description: User's email address (not required for guest)
                 password:
                   type: string
                   example: MySecret123!
@@ -247,7 +254,13 @@ paths:
                 dvToken:
                   type: string
                   example: device-token-xyz
-                  description: Device token for authentication and push notifications
+                  description: Device token for registered login (optional for guest)
+                lat:
+                  type: number
+                  description: Optional; with `lng`, zone is included in login response
+                lng:
+                  type: number
+                  description: Optional; with `lat`, zone is included in login response
       responses:
         '200':
           description: Login successful or user verification pending
@@ -633,6 +646,59 @@ paths:
                 status: "0"
                 message: "Internal server error"
                 data: {}
+  /customer/guest/start:
+    post:
+      summary: Start guest session (no DB user)
+      description: Issues a guest JWT and stores a Redis session. Same cookie path as customer login (/customer). Guest tokens are not accepted by registered-user routes (validateAccessToken).
+      tags:
+        - Customer > Auth
+      responses:
+        '200':
+          description: Guest token issued
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Guest session started"
+                statusCode: 200
+                data:
+                  userId: ""
+                  isGuest: true
+                  accessToken: "<jwt>"
+                error: ""
+  /customer/guest/session:
+    get:
+      summary: Guest session details
+      description: Returns stub user fields for an active guest session (requires guest JWT + Redis).
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: header
+          name: accesstoken
+          required: false
+          schema:
+            type: string
+          description: Guest JWT (or cookie accessToken)
+      responses:
+        '200':
+          description: Guest session active
+        '403':
+          description: Invalid or expired guest session
+  /customer/guest/logout:
+    get:
+      summary: Guest logout
+      description: Removes the guest session from Redis (JWT may still decode until expiry but is rejected without Redis).
+      tags:
+        - Customer > Auth
+      parameters:
+        - in: header
+          name: accesstoken
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Logout success
   /customer/getUserProfile:
      get:
       summary: Fetch logged-in user profile
@@ -5953,6 +6019,7 @@ paths:
       tags:
         - Agent > Add Employee
       summary: Add Employee
+      description: Use multipart/form-data (profileImage). Optional permissionRole as JSON string. See duplicate path definition for full schema.
       parameters:
         - name: accessToken
           in: cookie
@@ -5971,7 +6038,15 @@ paths:
                 email: azhar1@gmail.com
                 password: '123456'
                 phoneNum: '34567123'
+                countryCode: '+44'
                 roleId: 6
+                permissionRole:
+                  - id: 12
+                    permissions:
+                      read: true
+                      create: false
+                      update: false
+                      delete: false
       responses:
         '200':
           description: Successful response
@@ -7866,7 +7941,10 @@ paths:
   /agent/addEmployee:
     post:
       summary: Add employee
-      description: Adds a new employee to the agent's business
+      description: |
+        Adds an employee under the authenticated agent. Sets employeeOff to the agent.
+        Laundry shop driver: role name "Laundry Shop Driver" or roleId 6 — creates driverInZones when shop address/zone exists.
+        Optional permissionRole replaces all permissions for the given roleId (affects every user with that role).
       tags:
         - Agent > Add Employee
       parameters:
@@ -7886,7 +7964,7 @@ paths:
                 - firstName
                 - lastName
                 - email
-                - phone
+                - password
                 - roleId
               properties:
                 firstName:
@@ -7902,14 +7980,27 @@ paths:
                   format: email
                   example: "john.doe@example.com"
                   description: Employee's email address
-                phone:
+                password:
+                  type: string
+                  example: "SecurePass1"
+                  description: Login password for the employee
+                phoneNum:
                   type: string
                   example: "+1234567890"
                   description: Employee's phone number
+                countryCode:
+                  type: string
+                  example: "+44"
+                  description: Optional country calling code
                 roleId:
                   type: integer
-                  example: 1
-                  description: Role ID for the employee
+                  example: 6
+                  description: Role ID (e.g. laundry shop driver)
+                permissionRole:
+                  type: string
+                  description: |
+                    Optional JSON array (stringify when using multipart). Each item uses feature id as "id".
+                    Example: [{"id":12,"permissions":{"read":true,"create":false,"update":false,"delete":false}}]
                 profileImage:
                   type: string
                   format: binary
@@ -7922,10 +8013,24 @@ paths:
               example:
                 status: "1"
                 message: "Employee added successfully"
+                statusCode: 200
                 data:
-                  id: 1
-                  firstName: "John"
-                  lastName: "Doe"
+                  employee:
+                    id: 101
+                    firstName: "John"
+                    lastName: "Doe"
+                    email: "john.doe@example.com"
+                    phoneNum: "+1234567890"
+                    roleId: 6
+                    classifiedAsId: 1
+                    employeeOff: 55
+                    status: true
+                    role:
+                      id: 6
+                      name: "Laundry Shop Driver"
+                  permissionsUpdated: false
+                  roleId: 6
+                error: ""
 
         '400':
           description: Bad request

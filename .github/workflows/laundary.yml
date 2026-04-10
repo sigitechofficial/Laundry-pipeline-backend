@@ -38,10 +38,12 @@ jobs:
           ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
           EOF
 
+      # bash: echo "…$1…" strips $1 — use env + printf so RewriteRule $1 survives
       - name: Create .htaccess file
+        env:
+          HTACCESS_CONTENT: ${{ secrets.HTACCESS_CONTENT_PROD }}
         run: |
-          echo "Creating .htaccess file..."
-          echo "${{ secrets.HTACCESS_CONTENT_PROD }}" > .htaccess
+          printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
 
       - name: Creating firebase.json file
         run: |
@@ -87,9 +89,10 @@ jobs:
           EOF
 
       - name: Create .htaccess file
+        env:
+          HTACCESS_CONTENT: ${{ secrets.HTACCESS_CONTENT_STAGE }}
         run: |
-          echo "Creating .htaccess file..."
-          echo "${{ secrets.HTACCESS_CONTENT_STAGE }}" > .htaccess
+          printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
 
       - name: Creating firebase.json file
         run: |

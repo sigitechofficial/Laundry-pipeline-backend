@@ -8,34 +8,35 @@ const { Op } = require('sequelize');
 
 /**
  * Active Policies Service
- * Returns the single currently-effective policy per type.
+ * Returns the single currently-effective policy per type, scoped to a zone.
  *
  * Selection rules (applied in order):
  *  1. isActive = true
- *  2. effectiveFrom <= NOW  (or effectiveFrom IS NULL  → always started)
- *  3. effectiveTo   >= NOW  (or effectiveTo   IS NULL  → never expires)
- *  4. Prefer isDefault = true; break ties by latest effectiveFrom, then latest createdAt
+ *  2. zoneId matches the booking's zone
+ *  3. effectiveFrom <= NOW  (or effectiveFrom IS NULL  → always started)
+ *  4. effectiveTo   >= NOW  (or effectiveTo   IS NULL  → never expires)
+ *  5. Prefer isDefault = true; break ties by latest effectiveFrom, then latest createdAt
  */
 class ActivePoliciesService {
 
     /**
-     * Build a Sequelize where-clause that picks policies effective RIGHT NOW.
-     * @param {string} type  - 'cancellation' | 'reschedule' | 'no_show'
+     * Build a Sequelize where-clause that picks policies effective RIGHT NOW for a zone.
+     * @param {string} type   - 'cancellation' | 'reschedule' | 'no_show'
+     * @param {number} zoneId - the zone to scope the lookup to
      */
-    _nowWhere(type) {
+    _nowWhere(type, zoneId) {
         const now = new Date();
         return {
             type,
             isActive: true,
+            zoneId,
             [Op.and]: [
-                // effectiveFrom is null OR effectiveFrom <= now
                 {
                     [Op.or]: [
                         { effectiveFrom: null },
                         { effectiveFrom: { [Op.lte]: now } }
                     ]
                 },
-                // effectiveTo is null OR effectiveTo >= now
                 {
                     [Op.or]: [
                         { effectiveTo: null },
@@ -47,13 +48,13 @@ class ActivePoliciesService {
     }
 
     /**
-     * Get the currently effective cancellation policy.
-     * Prefers default; falls back to latest effectiveFrom / createdAt.
+     * Get the currently effective cancellation policy for a zone.
+     * @param {number} zoneId
      * @returns {Object|null}
      */
-    async getActiveCancellationPolicy() {
+    async getActiveCancellationPolicy(zoneId) {
         return policy.findOne({
-            where: this._nowWhere('cancellation'),
+            where: this._nowWhere('cancellation', zoneId),
             include: [
                 {
                     model: cancellationPolicyConfig,
@@ -70,13 +71,13 @@ class ActivePoliciesService {
     }
 
     /**
-     * Get the currently effective reschedule policy.
-     * Prefers default; falls back to latest effectiveFrom / createdAt.
+     * Get the currently effective reschedule policy for a zone.
+     * @param {number} zoneId
      * @returns {Object|null}
      */
-    async getActiveReschedulePolicy() {
+    async getActiveReschedulePolicy(zoneId) {
         return policy.findOne({
-            where: this._nowWhere('reschedule'),
+            where: this._nowWhere('reschedule', zoneId),
             include: [
                 {
                     model: reschedulePolicyConfig,
@@ -93,13 +94,13 @@ class ActivePoliciesService {
     }
 
     /**
-     * Get the currently effective no-show policy.
-     * Prefers default; falls back to latest effectiveFrom / createdAt.
+     * Get the currently effective no-show policy for a zone.
+     * @param {number} zoneId
      * @returns {Object|null}
      */
-    async getActiveNoShowPolicy() {
+    async getActiveNoShowPolicy(zoneId) {
         return policy.findOne({
-            where: this._nowWhere('no_show'),
+            where: this._nowWhere('no_show', zoneId),
             include: [
                 {
                     model: noShowPolicyConfig,
@@ -116,20 +117,21 @@ class ActivePoliciesService {
     }
 
     /**
-     * Get all currently-effective policies in one call.
+     * Get all currently-effective policies for a zone in one call.
+     * @param {number} zoneId
      * @returns {{ activeCancellationPolicy, activeReschedulePolicy, activeNoShowPolicy }}
      */
-    async getActivePolicies() {
+    async getActivePolicies(zoneId) {
         const [activeCancellationPolicy, activeReschedulePolicy, activeNoShowPolicy] = await Promise.all([
-            this.getActiveCancellationPolicy(),
-            this.getActiveReschedulePolicy(),
-            this.getActiveNoShowPolicy()
+            this.getActiveCancellationPolicy(zoneId),
+            this.getActiveReschedulePolicy(zoneId),
+            this.getActiveNoShowPolicy(zoneId)
         ]);
 
         return {
             activeCancellationPolicy: activeCancellationPolicy || null,
-            activeReschedulePolicy: activeReschedulePolicy || null,
-            activeNoShowPolicy: activeNoShowPolicy || null
+            activeReschedulePolicy:   activeReschedulePolicy   || null,
+            activeNoShowPolicy:       activeNoShowPolicy        || null
         };
     }
 }

@@ -1019,6 +1019,7 @@ async function getAllCancellationPoliciesController(req, res) {
     const filters = {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
+        zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
         page: parseInt(req.query.page) || 1,
         limit: parseInt(req.query.limit) || 10
     };
@@ -1069,7 +1070,8 @@ async function toggleCancellationPolicyStatusController(req, res) {
  * Get Active Cancellation Policy
  */
 async function getActiveCancellationPolicyController(req, res) {
-    const result = await cancellationPolicyServiceImport.getActiveCancellationPolicy();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await cancellationPolicyServiceImport.getActiveCancellationPolicy(zoneId);
     return ResponseHelper.success(res, "Active cancellation policy", result);
 }
 
@@ -1077,7 +1079,8 @@ async function getActiveCancellationPolicyController(req, res) {
  * Get Cancellation Policy Statistics
  */
 async function getCancellationPolicyStatisticsController(req, res) {
-    const result = await cancellationPolicyServiceImport.getCancellationPolicyStatistics();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await cancellationPolicyServiceImport.getCancellationPolicyStatistics(zoneId);
     return ResponseHelper.success(res, "Cancellation policy statistics", result);
 }
 
@@ -1113,6 +1116,7 @@ async function getAllNoShowPoliciesController(req, res) {
     const filters = {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
+        zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
         page: parseInt(req.query.page) || 1,
         limit: parseInt(req.query.limit) || 10
     };
@@ -1163,7 +1167,8 @@ async function toggleNoShowPolicyStatusController(req, res) {
  * Get Active No-Show Policy
  */
 async function getActiveNoShowPolicyController(req, res) {
-    const result = await noShowPolicyService.getActiveNoShowPolicy();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await noShowPolicyService.getActiveNoShowPolicy(zoneId);
     return ResponseHelper.success(res, "Active no-show policy", result);
 }
 
@@ -1171,7 +1176,8 @@ async function getActiveNoShowPolicyController(req, res) {
  * Get No-Show Policy Statistics
  */
 async function getNoShowPolicyStatisticsController(req, res) {
-    const result = await noShowPolicyService.getNoShowPolicyStatistics();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await noShowPolicyService.getNoShowPolicyStatistics(zoneId);
     return ResponseHelper.success(res, "No-show policy statistics", result);
 }
 
@@ -1207,6 +1213,7 @@ async function getAllReschedulePoliciesController(req, res) {
     const filters = {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
+        zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
         page: parseInt(req.query.page) || 1,
         limit: parseInt(req.query.limit) || 10
     };
@@ -1257,7 +1264,8 @@ async function toggleReschedulePolicyStatusController(req, res) {
  * Get Active Reschedule Policy
  */
 async function getActiveReschedulePolicyController(req, res) {
-    const result = await reschedulePolicyService.getActiveReschedulePolicy();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await reschedulePolicyService.getActiveReschedulePolicy(zoneId);
     return ResponseHelper.success(res, "Active reschedule policy", result);
 }
 
@@ -1265,7 +1273,8 @@ async function getActiveReschedulePolicyController(req, res) {
  * Get Reschedule Policy Statistics
  */
 async function getReschedulePolicyStatisticsController(req, res) {
-    const result = await reschedulePolicyService.getReschedulePolicyStatistics();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await reschedulePolicyService.getReschedulePolicyStatistics(zoneId);
     return ResponseHelper.success(res, "Reschedule policy statistics", result);
 }
 
@@ -1273,7 +1282,8 @@ async function getReschedulePolicyStatisticsController(req, res) {
  * Get All Active Policies (cancellation, reschedule, no-show) in one call
  */
 async function getActivePoliciesController(req, res) {
-    const result = await activePoliciesService.getActivePolicies();
+    const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
+    const result = await activePoliciesService.getActivePolicies(zoneId);
     return ResponseHelper.success(res, "Active policies", result);
 }
 
