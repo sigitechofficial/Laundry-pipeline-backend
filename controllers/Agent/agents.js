@@ -61,6 +61,28 @@ const getdistance = require("../../utils/distanceCalculator");
 const { type } = require("os");
 const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
+const momentTz = require("moment-timezone");
+
+/** Same default as customer booking / reschedule services (IANA). */
+const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
+
+/**
+ * Wall-clock date/time for agent actions (invoice lines, history).
+ * Pass timeZone or clientTimeZone from the app (e.g. Asia/Karachi) so stored times match the user.
+ */
+function agentWallClockDateTime(timeZone, clientTimeZone) {
+    const candidate = timeZone || clientTimeZone;
+    const tz =
+        candidate && typeof candidate === "string" && momentTz.tz.zone(candidate.trim())
+            ? candidate.trim()
+            : AGENT_BUSINESS_TIME_ZONE;
+    const m = momentTz.tz(tz);
+    return {
+        date: m.format("YYYY-MM-DD"),
+        time: m.format("HH:mm:ss"),
+    };
+}
+
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
@@ -1560,20 +1582,24 @@ exports.bookingDeliverToCustomer = async (req, res) => {
  */
 
 exports.driverAddSerivces = async (req, res) => {
-    const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
+    const {
+        services,
+        bookingId,
+        zoneMinimumAmount,
+        serviceCharge,
+        timeZone,
+        clientTimeZone,
+    } = req.body;
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new ValidationError("Invalid request. Please provide an array of services.");
     }
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log("Current Date:", currentDate);
+    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
+        timeZone,
+        clientTimeZone
+    );
+    console.log("Invoice line timestamp (tz-aware):", currentDate, currentTime);
 
     // Fetch booking with zone and tip information
     const bookings = await booking.findByPk(bookingId, {
@@ -1755,19 +1781,16 @@ exports.driverAddSerivces = async (req, res) => {
  *  Agent Update Invoice
  */
 exports.agentUpdateInvoice = async (req, res) => {
-    const { bookingId, total, services } = req.body
+    const { bookingId, total, services, timeZone, clientTimeZone } = req.body
 
     console.log("Req.body--------------------->", req.body)
 
     const bookings = await booking.findByPk(bookingId);
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log("Current Date:", currentDate);
+    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
+        timeZone,
+        clientTimeZone
+    );
+    console.log("Update invoice history timestamp (tz-aware):", currentDate, currentTime);
 
     if (!bookings) {
         return res.status(404).json({

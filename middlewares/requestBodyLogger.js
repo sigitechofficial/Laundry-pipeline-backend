@@ -36,13 +36,15 @@ function maskSensitiveValues(value) {
     return masked;
 }
 
+const logger = require('../utils/logger');
+
 function requestBodyLogger(req, res, next) {
     const origin = req.headers.origin || 'none';
     const body = req.body && typeof req.body === 'object' ? maskSensitiveValues(req.body) : req.body;
     const hasBody = body && (typeof body !== 'object' || Object.keys(body).length > 0);
 
-    console.log(`${req.method} ${req.path} - Origin: ${origin}`);
-    console.log('req.body:', hasBody ? body : {});
+    // Log to both console and file
+    logger.request(req.method, req.path, origin, hasBody ? body : {});
 
     next();
 }

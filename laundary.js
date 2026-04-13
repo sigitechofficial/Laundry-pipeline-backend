@@ -9,6 +9,7 @@ const http = require("http");
 const redis = require('./redis/redis');
 const cookieParser = require('cookie-parser');
 const { intilizeSocketFunc } = require('./socket_io');
+const logger = require('./utils/logger');
 
 // Routers
 const customerRouter = require('./routes/customer');
@@ -28,7 +29,7 @@ const NGROK_REGEX = /^https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.(?:app|dev)$/i;
 
 const corsOptions = {
   origin: function (origin, callback) {
-    console.log('🔍 Origin check:', origin);
+    logger.debug('Origin check', { origin });
     
     // Allow no origin
     if (!origin) {
@@ -50,6 +51,8 @@ const corsOptions = {
       'http://localhost:5174',
       'https://backendlaundary.fomino.ch',
       'https://testlaundaryb.fomino.ch',
+      'https://stagelaundry.sigisolutions.net',
+      'https://prodlaundry.sigisolutions.net',
       'https://main.dwc10i0wbe49w.amplifyapp.com',
       'https://main.d1bc8mk6y6halh.amplifyapp.com',
       'https://laundry-website-itlwfo883-sigitechofficials-projects.vercel.app',
@@ -60,11 +63,11 @@ const corsOptions = {
     ];
     
     if (allowedOrigins.includes(origin) || NGROK_REGEX.test(origin)) {
-      console.log('✅ Allowed:', origin);
+      logger.debug('CORS Allowed', { origin });
       return callback(null, true);
     }
 
-    console.log('❌ Blocked:', origin);
+    logger.warn('CORS Blocked', { origin });
     return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true,
@@ -108,9 +111,9 @@ let swaggerUrl;
 if (process.env.NODE_ENV === 'development') {
   swaggerUrl = `http://localhost:${process.env.PORT}`;
 } else if (process.env.NODE_ENV === 'test') {
-  swaggerUrl = "https://testlaundaryb.fomino.ch";
+  swaggerUrl = "https://stagelaundry.sigisolutions.net";
 } else if (process.env.NODE_ENV === 'production') {
-  swaggerUrl = "https://backendlaundary.fomino.ch";
+  swaggerUrl = "https://prodlaundry.sigisolutions.net";
 }
 
 const swaggerDocument = YAML.load('./swagger.yaml');
@@ -169,21 +172,31 @@ async function startServer() {
 
       switch(env) {
         case 'production':
-          baseUrl = 'https://backendlaundary.fomino.ch';
+          baseUrl = 'https://prodlaundry.sigisolutions.net';
           break;
         case 'test':
-          baseUrl = 'https://testlaundaryb.fomino.ch';
+          baseUrl = 'https://stagelaundry.sigisolutions.net';
           break;
         default:
           baseUrl = `http://localhost:${server_port}`;
       }
 
-      console.log('\x1b[94m%s\x1b[0m', `**********************************************************`);
-      console.log('\x1b[94m%s\x1b[0m', `** Server running in ${env.toUpperCase()} mode`);
-      console.log('\x1b[94m%s\x1b[0m', `** Server URL: ${baseUrl}`);
-      console.log('\x1b[94m%s\x1b[0m', `** Swagger: ${baseUrl}/api-docs`);
-      console.log('\x1b[94m%s\x1b[0m', `** CORS: Enabled with credentials`);
-      console.log('\x1b[94m%s\x1b[0m', `**********************************************************`);
+      const startupMsg = `
+**********************************************************
+** Server running in ${env.toUpperCase()} mode
+** Server URL: ${baseUrl}
+** Swagger: ${baseUrl}/api-docs
+** CORS: Enabled with credentials
+** Logs: ./logs/app.log
+**********************************************************`;
+      
+      console.log('\x1b[94m%s\x1b[0m', startupMsg);
+      logger.info('Server Started', {
+        environment: env,
+        url: baseUrl,
+        port: server_port,
+        swagger: `${baseUrl}/api-docs`
+      });
     });
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', '================= Error during initialization ======================>', error);

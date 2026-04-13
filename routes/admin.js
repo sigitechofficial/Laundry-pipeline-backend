@@ -139,6 +139,8 @@ router.get('/getCountries', asyncMiddleware(adminController.getCountries))
 router.get('/getCities', asyncMiddleware(adminController.getCities))
 // Get Blog by ID
 router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
+// Get Active Cancellation Policy
+router.get('/getActiveCancellationPolicy', asyncMiddleware(adminController.getActiveCancellationPolicyController))
 // Auth + permission check on all routes below this line.
 // Super admin (classifiedAsId = null) → always bypasses checkPermission, full access.
 // Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
@@ -430,8 +432,6 @@ router.delete('/deleteCancellationPolicy/:id', asyncMiddleware(adminController.d
 router.patch('/setDefaultCancellationPolicy/:id', asyncMiddleware(adminController.setDefaultCancellationPolicyController))
 // Toggle Cancellation Policy Status
 router.patch('/toggleCancellationPolicyStatus/:id', asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
-// Get Active Cancellation Policy
-router.get('/getActiveCancellationPolicy', asyncMiddleware(adminController.getActiveCancellationPolicyController))
 // Get Cancellation Policy Statistics
 router.get('/getCancellationPolicyStatistics', asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
 
