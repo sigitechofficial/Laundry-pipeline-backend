@@ -141,11 +141,13 @@ class CancellationPolicyService {
             );
         }
 
+        const policyIsActive = isActive ?? true;
+
         const newPolicy = await policy.create({
             name,
             type: 'cancellation',
             description,
-            isActive: isActive ?? true,
+            isActive: policyIsActive,
             isDefault: isDefault ?? false,
             zoneId,
             effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : null,
@@ -153,8 +155,10 @@ class CancellationPolicyService {
             createdBy
         });
 
+        // Create config with matching isActive status
         await cancellationPolicyConfig.create({
             policyId: newPolicy.id,
+            isActive: policyIsActive,
             ...configData
         });
 
@@ -256,7 +260,8 @@ class CancellationPolicyService {
 
     /**
      * Update Cancellation Policy.
-     * Accepts effectiveFrom / effectiveTo in updateData.
+     * ONLY allows updating isActive status. All other fields are read-only.
+     * When isActive is changed, it cascades to the policy config.
      */
     async updateCancellationPolicy(policyId, updateData, updatedBy) {
         const policyData = await policy.findByPk(policyId);
@@ -269,67 +274,51 @@ class CancellationPolicyService {
             throw new ValidationError("This policy is not a cancellation policy");
         }
 
-        const {
-            name,
-            description,
-            isActive,
-            isDefault,
-            effectiveFrom,
-            effectiveTo,
-            ...configData
-        } = updateData;
+        const { isActive } = updateData;
 
-        // Determine final date values (may keep existing)
-        const finalFrom = effectiveFrom !== undefined
-            ? (effectiveFrom ? new Date(effectiveFrom) : null)
-            : policyData.effectiveFrom;
-        const finalTo   = effectiveTo   !== undefined
-            ? (effectiveTo   ? new Date(effectiveTo)   : null)
-            : policyData.effectiveTo;
-
-        this._validateDateRange(finalFrom, finalTo);
-
-        // Overlap check (only when policy is/stays active)
-        const willBeActive = isActive !== undefined ? isActive : policyData.isActive;
-        if (willBeActive && (effectiveFrom !== undefined || effectiveTo !== undefined)) {
-            await this._checkOverlap(finalFrom, finalTo, policyData.zoneId, policyId);
+        // Only allow updating isActive status
+        if (isActive === undefined) {
+            throw new ValidationError("Only isActive status can be updated. To create a new policy configuration, please create a new policy.");
         }
 
-        if (isDefault) {
-            await policy.update(
-                { isDefault: false },
-                {
-                    where: {
-                        type: 'cancellation',
-                        isDefault: true,
-                        zoneId: policyData.zoneId,
-                        id: { [Op.ne]: policyId }
-                    }
+        // Prevent editing other fields
+        const restrictedFields = ['name', 'description', 'effectiveFrom', 'effectiveTo', 'isDefault', 'zoneId'];
+        const attemptedRestrictedFields = restrictedFields.filter(field => updateData[field] !== undefined);
+        if (attemptedRestrictedFields.length > 0) {
+            throw new ValidationError(`Cannot update fields: ${attemptedRestrictedFields.join(', ')}. Only isActive status can be changed.`);
+        }
+
+        // If activating the policy, check for overlapping active policies in the same zone
+        if (isActive && !policyData.isActive) {
+            await this._checkOverlap(policyData.effectiveFrom, policyData.effectiveTo, policyData.zoneId, policyId);
+        }
+
+        // If deactivating the default policy, try to promote another active policy
+        if (!isActive && policyData.isDefault && policyData.isActive) {
+            const alternative = await policy.findOne({
+                where: {
+                    type: 'cancellation',
+                    isActive: true,
+                    isDefault: false,
+                    zoneId: policyData.zoneId,
+                    id: { [Op.ne]: policyId }
                 }
-            );
-        }
-
-        const policyUpdateData = {};
-        if (name          !== undefined) policyUpdateData.name          = name;
-        if (description   !== undefined) policyUpdateData.description   = description;
-        if (isActive      !== undefined) policyUpdateData.isActive      = isActive;
-        if (isDefault     !== undefined) policyUpdateData.isDefault     = isDefault;
-        if (effectiveFrom !== undefined) policyUpdateData.effectiveFrom = finalFrom;
-        if (effectiveTo   !== undefined) policyUpdateData.effectiveTo   = finalTo;
-
-        if (Object.keys(policyUpdateData).length > 0) {
-            policyUpdateData.updatedBy = updatedBy;
-            await policyData.update(policyUpdateData);
-        }
-
-        // Update config
-        if (Object.keys(configData).length > 0) {
-            const existingConfig = await cancellationPolicyConfig.findOne({ where: { policyId } });
-            if (existingConfig) {
-                await existingConfig.update(configData);
-            } else {
-                await cancellationPolicyConfig.create({ policyId, ...configData });
+            });
+            if (alternative) {
+                await alternative.update({ isDefault: true });
             }
+        }
+
+        // Update policy status
+        await policyData.update({ 
+            isActive: isActive,
+            updatedBy 
+        });
+
+        // Cascade isActive status to the policy config
+        const existingConfig = await cancellationPolicyConfig.findOne({ where: { policyId } });
+        if (existingConfig) {
+            await existingConfig.update({ isActive: isActive });
         }
 
         return await this.getCancellationPolicyById(policyId);
@@ -395,7 +384,8 @@ class CancellationPolicyService {
 
     /**
      * Set Default Cancellation Policy.
-     * The policy must be active and currently effective (within its date window) to be default.
+     * The policy must be active to be set as default.
+     * Also ensures the config is active when setting as default.
      */
     async setDefaultCancellationPolicy(policyId, updatedBy) {
         const policyData = await policy.findByPk(policyId);
@@ -427,11 +417,18 @@ class CancellationPolicyService {
 
         await policyData.update({ isDefault: true, updatedBy });
 
+        // Ensure config is also active
+        const existingConfig = await cancellationPolicyConfig.findOne({ where: { policyId } });
+        if (existingConfig && !existingConfig.isActive) {
+            await existingConfig.update({ isActive: true });
+        }
+
         return await this.getCancellationPolicyById(policyId);
     }
 
     /**
      * Toggle Cancellation Policy Active Status.
+     * Also cascades the status change to the policy config.
      */
     async toggleCancellationPolicyStatus(policyId, updatedBy) {
         const policyData = await policy.findByPk(policyId);
@@ -442,6 +439,13 @@ class CancellationPolicyService {
 
         if (policyData.type !== 'cancellation') {
             throw new ValidationError("This policy is not a cancellation policy");
+        }
+
+        const newStatus = !policyData.isActive;
+
+        // If activating, check for overlapping active policies
+        if (newStatus) {
+            await this._checkOverlap(policyData.effectiveFrom, policyData.effectiveTo, policyData.zoneId, policyId);
         }
 
         // If deactivating the default, try to promote another active policy in the same zone
@@ -460,7 +464,14 @@ class CancellationPolicyService {
             }
         }
 
-        await policyData.update({ isActive: !policyData.isActive, updatedBy });
+        // Update policy status
+        await policyData.update({ isActive: newStatus, updatedBy });
+
+        // Cascade isActive status to the policy config
+        const existingConfig = await cancellationPolicyConfig.findOne({ where: { policyId } });
+        if (existingConfig) {
+            await existingConfig.update({ isActive: newStatus });
+        }
 
         return await this.getCancellationPolicyById(policyId);
     }
