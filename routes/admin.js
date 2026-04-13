@@ -139,8 +139,9 @@ router.get('/getCountries', asyncMiddleware(adminController.getCountries))
 router.get('/getCities', asyncMiddleware(adminController.getCities))
 // Get Blog by ID
 router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
-// Get Active Cancellation Policy
-router.get('/getActiveCancellationPolicy', asyncMiddleware(adminController.getActiveCancellationPolicyController))
+// Get All Active Policies (cancellation, reschedule, no-show)
+router.get('/getActivePolicies', asyncMiddleware(adminController.getActivePoliciesController))
+
 // Auth + permission check on all routes below this line.
 // Super admin (classifiedAsId = null) → always bypasses checkPermission, full access.
 // Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
@@ -434,7 +435,8 @@ router.patch('/setDefaultCancellationPolicy/:id', asyncMiddleware(adminControlle
 router.patch('/toggleCancellationPolicyStatus/:id', asyncMiddleware(adminController.toggleCancellationPolicyStatusController))
 // Get Cancellation Policy Statistics
 router.get('/getCancellationPolicyStatistics', asyncMiddleware(adminController.getCancellationPolicyStatisticsController))
-
+// Get Active Cancellation Policy
+router.get('/getActiveCancellationPolicy', asyncMiddleware(adminController.getActiveCancellationPolicyController))
 
 //!-----------------------------------No-Show Policy Management------------------------------------>>>>
 // Add No-Show Policy
@@ -476,8 +478,7 @@ router.patch('/toggleReschedulePolicyStatus/:id', asyncMiddleware(adminControlle
 router.get('/getActiveReschedulePolicy', asyncMiddleware(adminController.getActiveReschedulePolicyController))
 // Get Reschedule Policy Statistics
 router.get('/getReschedulePolicyStatistics', asyncMiddleware(adminController.getReschedulePolicyStatisticsController))
-// Get All Active Policies (cancellation, reschedule, no-show)
-router.get('/getActivePolicies', asyncMiddleware(adminController.getActivePoliciesController))
+
 
 
 //!-----------------------------------FAQ Management------------------------------------>>>>
