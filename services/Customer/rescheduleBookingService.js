@@ -26,6 +26,7 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { sendEvent } = require('../../socket_io');
+const { chargeOffSession } = require('../../controllers/stripe');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
 
@@ -295,7 +296,8 @@ class RescheduleBookingService {
                 'orderAmount', 'paymentConfirmed', 'rescheduledCount',
                 'laundryShopId', 'orderTrackId', 'frequency',
                 'driverInstructionOptions', 'driverInstructionOptions1',
-                'driverInstruction', 'totalItems', 'pickupAddresId', 'dropOffAddressId'
+                'driverInstruction', 'totalItems', 'pickupAddresId', 'dropOffAddressId',
+                'paymentMethodId'
             ]
         });
 
@@ -446,6 +448,52 @@ class RescheduleBookingService {
             await bookingPreference.destroy({ where: { bookingId } });
         }
 
+        // Step 7.5: Stripe off-session charge when policy fee > 0 (same pattern as cancellation)
+        let stripeChargeResult = null;
+        let stripeChargeError = null;
+        const chargeAmount = parseFloat(feeDetails.rescheduleCharge);
+        if (chargeAmount > 0) {
+            const savedPaymentMethodId = bookingData.paymentMethodId;
+
+            if (savedPaymentMethodId) {
+                const customerData = await users.findOne({
+                    where: { id: customerId },
+                    attributes: ['stripeCustomerId']
+                });
+
+                if (customerData?.stripeCustomerId) {
+                    try {
+                        const idempotencyKey = `reschedule-booking-${bookingId}-customer-${customerId}-n${bookingData.rescheduledCount + 1}`;
+                        stripeChargeResult = await chargeOffSession(
+                            chargeAmount,
+                            customerData.stripeCustomerId,
+                            savedPaymentMethodId,
+                            idempotencyKey
+                        );
+                        console.log(
+                            `✅ Reschedule charge of ${chargeAmount} ${feeDetails.currency} charged for booking ${bookingId}`
+                        );
+                    } catch (chargeErr) {
+                        stripeChargeError = chargeErr.message || String(chargeErr);
+                        console.error(
+                            `❌ Failed to charge reschedule fee for booking ${bookingId}:`,
+                            stripeChargeError
+                        );
+                    }
+                } else {
+                    stripeChargeError = 'No Stripe customer ID found for this customer';
+                    console.warn(
+                        `⚠️ Cannot charge reschedule fee — no stripeCustomerId for customer ${customerId}`
+                    );
+                }
+            } else {
+                stripeChargeError = 'No saved payment method found for this booking';
+                console.warn(
+                    `⚠️ Cannot charge reschedule fee — no paymentMethodId on booking ${bookingId}`
+                );
+            }
+        }
+
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
         await booking.update(
             {
@@ -504,7 +552,11 @@ class RescheduleBookingService {
             rescheduleCharge: feeDetails.rescheduleCharge,
             currency: feeDetails.currency,
             policyApplied: feeDetails.policyApplied,
-            message: feeDetails.message
+            message: feeDetails.message,
+            rescheduleFeeCharged: stripeChargeResult !== null,
+            stripeChargeId: stripeChargeResult?.id || null,
+            stripeChargeStatus: stripeChargeResult?.status || null,
+            stripeChargeError
         };
     }
 
@@ -568,6 +620,16 @@ class RescheduleBookingService {
                 currency: 'GBP',
                 policyApplied: 'Free Reschedule',
                 message: 'No reschedule charges applied (no active policy)'
+            };
+        }
+
+        // ReschedulePolicyConfig.isActive — when false, no monetary charges
+        if (config.isActive === false) {
+            return {
+                rescheduleCharge: 0,
+                currency: config.atPickupAbsoluteCurrency || config.atDeliveryAbsoluteCurrency || 'GBP',
+                policyApplied: 'Free Reschedule',
+                message: 'No reschedule charges applied (reschedule policy config is inactive)'
             };
         }
 

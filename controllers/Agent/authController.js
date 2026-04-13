@@ -1,13 +1,15 @@
 const authService = require('../../services/Agent/authService');
 const ResponseHelper = require('../../utils/responseHelper');
+const logger = require('../../utils/logger');
 
-// Helper to log request data (remove in production)
+// Helper to log request data
 const logRequestData = (endpoint, req) => {
-    console.log(`\n=== ${endpoint} ===`);
-    console.log("Body:", JSON.stringify(req.body, null, 2));
-    console.log("User:", req.user ? { id: req.user.id, email: req.user.email, dvToken: req.user.dvToken } : 'Not authenticated');
-    console.log("Params:", req.params);
-    console.log("File:", req.file ? req.file.path : 'No file');
+    logger.info(`=== ${endpoint} ===`, {
+        body: req.body,
+        user: req.user ? { id: req.user.id, email: req.user.email, dvToken: req.user.dvToken } : 'Not authenticated',
+        params: req.params,
+        file: req.file ? req.file.path : 'No file'
+    });
 };
 
 // Register agent with OTP
