@@ -77,9 +77,9 @@ router.get('/onHoldCustomerShow',validateAccessToken,asyncMiddleware(customerOth
 router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(customerOtherController.customerUpdateResponse))
 //!----------------------------Customer Services---------------------//
 //get All Services
-router.get('/allServices',validateAccessToken,asyncMiddleware(customerOtherController.allServices))
+router.get('/allServices',asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail (registered or guest)
-router.get('/serviceDetail',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.serviceDetail))
+router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
 // Public support contact (email, phone, help URL, hours) — from DB
 router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
 //Get Preferences
