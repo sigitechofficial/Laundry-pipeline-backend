@@ -2034,9 +2034,23 @@ exports.invoiceCreation = async (req, res) => {
         return item;
     });
 
+    // Determine customer response status from OnHoldConfirmations
+    let customerHasResponded = null;
+
+    if (bookingData.OnHoldConfirmations && bookingData.OnHoldConfirmations.length > 0) {
+        // Check if any OnHoldConfirmation has customerResponse === true
+        const hasConfirmed = bookingData.OnHoldConfirmations.some(
+            item => item.customerResponse === true
+        );
+        
+        customerHasResponded = hasConfirmed ? true : false;
+    }
+    // If no OnHoldConfirmation records exist, customerHasResponded remains null
+
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
-        remainingTime
+        remainingTime,
+        customerHasResponded
     });
 }
 
