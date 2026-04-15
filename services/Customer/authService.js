@@ -1298,3 +1298,6 @@ class CustomerAuthService {
 }
 
 module.exports = new CustomerAuthService();
+
+
+//check if customer has responded to on hold confirmation
