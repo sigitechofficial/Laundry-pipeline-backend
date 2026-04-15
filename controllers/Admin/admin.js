@@ -2137,7 +2137,7 @@ async function getOnHoldCustomerOptions(req, res) {
   * Get All On Hold Bookings
 */
 async function getOnHoldBookings(req, res) {
-    const optionsFound = orderService.getOnHoldBookings();
+    const optionsFound = await orderService.getOnHoldBookings();
     return ResponseHelper.success(res, "All Options Fetched", optionsFound);
 }
 
