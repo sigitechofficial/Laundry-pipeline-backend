@@ -1509,16 +1509,19 @@ class AgentAuthService {
             ]
         });
 
-        // Get permissions for the employee's role
+        // Get permissions for the employee's role — only Agent/Agent Employee/both features
         const permissionData = await permissions.findAll({
             where: { roleId: employeeData.roleId },
             attributes: ['featureId', 'create', 'read', 'update', 'delete'],
             include: [
                 {
                     model: features,
-                    where: { status: true },
+                    where: {
+                        status: true,
+                        featureOf: { [Op.in]: ['Agent', 'Agent Employee', 'both'] }
+                    },
                     attributes: ['id', 'title', 'key', 'featureOf'],
-                    required: false
+                    required: true
                 }
             ]
         });
