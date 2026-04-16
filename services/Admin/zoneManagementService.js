@@ -1,4 +1,4 @@
-const { zone, cities, bussinessInformation } = require('../../models');
+const { zone, cities, bussinessInformation, units } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 class ZoneManagementService {
@@ -19,7 +19,15 @@ class ZoneManagementService {
     async getZones() {
             const getZones = await zone.findAll({
                 where: { status: true },
-                order: [['createdAt', 'DESC']]
+                order: [['createdAt', 'DESC']],
+                include: [
+                    {
+                        model: units,
+                        as: 'currencyUnitZ',
+                        attributes: ['id', 'name', 'symbol', 'type'],
+                        required: false
+                    }
+                ]
             });
 
             const totalZones = await zone.count({
@@ -58,7 +66,15 @@ class ZoneManagementService {
 
             const zoneData = await zone.findOne({
                 where: { id: zoneId },
-                attributes
+                attributes,
+                include: [
+                    {
+                        model: units,
+                        as: 'currencyUnitZ',
+                        attributes: ['id', 'name', 'symbol', 'type'],
+                        required: false
+                    }
+                ]
             });
 
             if (!zoneData) {
