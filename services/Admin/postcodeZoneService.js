@@ -291,10 +291,36 @@ class PostcodeZoneService {
     }
 
     /**
+     * Check if two postcodes conflict hierarchically.
+     * Conflicts:  exact match, outcode covers full postcode, or full postcode falls inside outcode.
+     * e.g. "SW1A" conflicts with "SW1A2AA" and vice-versa, but "SW1A1AA" does NOT conflict with "SW1A2BB".
+     */
+    postcodesConflict(newPc, existingPc) {
+        if (newPc === existingPc) return true;
+
+        const newIsOutcode = this.isOutcode(newPc);
+        const existingIsOutcode = this.isOutcode(existingPc);
+
+        if (newIsOutcode && !existingIsOutcode) {
+            // New is outcode (SW1A), existing is full (SW1A2AA) → conflict if full starts with outcode
+            return existingPc.startsWith(newPc);
+        }
+
+        if (!newIsOutcode && existingIsOutcode) {
+            // New is full (SW1A2AA), existing is outcode (SW1A) → conflict if full starts with outcode
+            return newPc.startsWith(existingPc);
+        }
+
+        return false;
+    }
+
+    /**
      * Check if any of the given postcodes already belong to an existing zone.
-     * @param {Array<string>} postcodes - Normalized postcode strings to check
+     * Uses hierarchical matching: an outcode (SW1A) conflicts with any full postcode
+     * inside it (SW1A 2AA) and vice-versa.
+     * @param {Array<string>} postcodes - Postcode strings to check
      * @param {number|null} excludeZoneId - Zone ID to exclude (used during edit so a zone doesn't conflict with itself)
-     * @throws {ValidationError} if duplicate postcodes are found
+     * @throws {ValidationError} if conflicting postcodes are found
      */
     async checkDuplicatePostcodes(postcodes, excludeZoneId = null) {
         const normalizedInput = postcodes.map(pc => this.normalizePostcode(pc));
@@ -313,12 +339,25 @@ class PostcodeZoneService {
             if (!existingZone.postcodes || !Array.isArray(existingZone.postcodes)) continue;
 
             const existingNormalized = existingZone.postcodes.map(pc => this.normalizePostcode(pc));
-            const duplicates = normalizedInput.filter(pc => existingNormalized.includes(pc));
 
-            if (duplicates.length > 0) {
-                throw new ValidationError(
-                    `Postcode(s) ${duplicates.join(', ')} already exist in zone "${existingZone.name}"`
-                );
+            for (const newPc of normalizedInput) {
+                for (const existPc of existingNormalized) {
+                    if (this.postcodesConflict(newPc, existPc)) {
+                        const newIsOutcode = this.isOutcode(newPc);
+                        const existIsOutcode = this.isOutcode(existPc);
+
+                        let message;
+                        if (newPc === existPc) {
+                            message = `Postcode ${newPc} already exists in zone "${existingZone.name}"`;
+                        } else if (newIsOutcode) {
+                            message = `Postcode ${newPc} covers area that includes ${existPc}, which already belongs to zone "${existingZone.name}"`;
+                        } else {
+                            message = `Postcode ${newPc} falls within area ${existPc}, which already belongs to zone "${existingZone.name}"`;
+                        }
+
+                        throw new ValidationError(message);
+                    }
+                }
             }
         }
     }
