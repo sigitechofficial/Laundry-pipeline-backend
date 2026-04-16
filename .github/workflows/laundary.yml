@@ -58,6 +58,11 @@ jobs:
           password: ${{ secrets.PROD_FTP_PASSWORD }}
           protocol: ftp
           port: 21
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
 
       - name: Trigger npm install on server
         run: |
@@ -107,6 +112,11 @@ jobs:
           password: ${{ secrets.STAGE_FTP_PASSWORD }}
           protocol: ftp
           port: 21
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
 
       - name: Trigger npm install on stage server
         run: |

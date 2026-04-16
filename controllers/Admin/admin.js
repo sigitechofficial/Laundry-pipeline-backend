@@ -1616,7 +1616,7 @@ async function deleteServices(req, res) {
 */
 async function editServices(req, res) {
     const { serviceId } = req.params;
-    const { name, description } = req.body;
+    const { name, description, deleteImage } = req.body;
 
     let serviceImg = null;
 
@@ -1626,7 +1626,11 @@ async function editServices(req, res) {
     }
 
     const data = { ...req.body };
-    if (serviceImg) {
+    
+    // If deleteImage flag is true, explicitly set image to null
+    if (deleteImage === 'true' || deleteImage === true) {
+        data.image = null;
+    } else if (serviceImg) {
         data.image = serviceImg;
     }
 
