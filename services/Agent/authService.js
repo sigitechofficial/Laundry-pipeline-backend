@@ -1596,22 +1596,6 @@ class AgentAuthService {
                 throw new NotFoundError('Agent account not found');
             }
 
-            // Check for active bookings before allowing deletion
-            const activeBookings = await booking.count({
-                where: {
-                    [Op.or]: [
-                        { customerId: userId },
-                        { driverId: userId }
-                    ],
-                    status: { [Op.notIn]: ['completed', 'cancelled'] }
-                },
-                transaction
-            });
-
-            if (activeBookings > 0) {
-                throw new ValidationError('Cannot delete account with active bookings. Please complete or cancel all pending bookings first.');
-            }
-
             const businessInfo = agentUser.businessInfo;
 
             // Delete business-related data
