@@ -324,6 +324,7 @@ class PostcodeZoneService {
      */
     async checkDuplicatePostcodes(postcodes, excludeZoneId = null) {
         const normalizedInput = postcodes.map(pc => this.normalizePostcode(pc));
+        console.log('🔍 [DuplicateCheck] Normalized input postcodes:', normalizedInput);
 
         const where = { status: true };
         if (excludeZoneId) {
@@ -335,10 +336,22 @@ class PostcodeZoneService {
             attributes: ['id', 'name', 'postcodes']
         });
 
-        for (const existingZone of existingZones) {
-            if (!existingZone.postcodes || !Array.isArray(existingZone.postcodes)) continue;
+        console.log('🔍 [DuplicateCheck] Found', existingZones.length, 'existing active zones');
 
-            const existingNormalized = existingZone.postcodes.map(pc => this.normalizePostcode(pc));
+        for (const existingZone of existingZones) {
+            console.log('🔍 [DuplicateCheck] Zone:', existingZone.id, existingZone.name,
+                '| postcodes raw:', existingZone.postcodes,
+                '| type:', typeof existingZone.postcodes,
+                '| isArray:', Array.isArray(existingZone.postcodes));
+
+            let zonePostcodes = existingZone.postcodes;
+            if (typeof zonePostcodes === 'string') {
+                try { zonePostcodes = JSON.parse(zonePostcodes); } catch (e) { /* ignore */ }
+            }
+            if (!zonePostcodes || !Array.isArray(zonePostcodes)) continue;
+
+            const existingNormalized = zonePostcodes.map(pc => this.normalizePostcode(pc));
+            console.log('🔍 [DuplicateCheck] Existing normalized postcodes:', existingNormalized);
 
             for (const newPc of normalizedInput) {
                 for (const existPc of existingNormalized) {

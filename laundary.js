@@ -9,8 +9,6 @@ const http = require("http");
 const redis = require('./redis/redis');
 const cookieParser = require('cookie-parser');
 const { intilizeSocketFunc } = require('./socket_io');
-const logger = require('./utils/logger');
-
 // Routers
 const customerRouter = require('./routes/customer');
 const adminRouter = require('./routes/admin');
@@ -18,8 +16,6 @@ const driverRouter = require('./routes/driver');
 const agentRouter = require('./routes/agent');
 const error = require('./middlewares/error');
 const { universalErrorHandler, universalNotFoundHandler, universalAsyncHandler } = require('./middlewares/universalErrorHandler');
-const requestBodyLogger = require('./middlewares/requestBodyLogger');
-
 const server = http.createServer(app);
 
 // ============================================
@@ -29,8 +25,6 @@ const NGROK_REGEX = /^https:\/\/[a-z0-9-]+\.ngrok(?:-free)?\.(?:app|dev)$/i;
 
 const corsOptions = {
   origin: function (origin, callback) {
-    logger.debug('Origin check', { origin });
-    
     // Allow no origin
     if (!origin) {
       return callback(null, true);
@@ -63,11 +57,9 @@ const corsOptions = {
     ];
     
     if (allowedOrigins.includes(origin) || NGROK_REGEX.test(origin)) {
-      logger.debug('CORS Allowed', { origin });
       return callback(null, true);
     }
 
-    logger.warn('CORS Blocked', { origin });
     return callback(new Error('Not allowed by CORS'), false);
   },
   credentials: true,
@@ -101,8 +93,6 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 4. Global request logger
-app.use(requestBodyLogger);
 
 // ============================================
 // SWAGGER DOCS
@@ -187,16 +177,9 @@ async function startServer() {
 ** Server URL: ${baseUrl}
 ** Swagger: ${baseUrl}/api-docs
 ** CORS: Enabled with credentials
-** Logs: ./logs/app.log
 **********************************************************`;
       
       console.log('\x1b[94m%s\x1b[0m', startupMsg);
-      logger.info('Server Started', {
-        environment: env,
-        url: baseUrl,
-        port: server_port,
-        swagger: `${baseUrl}/api-docs`
-      });
     });
   } catch (error) {
     console.error('\x1b[31m%s\x1b[0m', '================= Error during initialization ======================>', error);
