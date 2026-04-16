@@ -37,6 +37,11 @@ module.exports = {
         allowNull: true,
         defaultValue: 'Cash'
       },
+      postcodes: {
+        type: Sequelize.JSON,
+        allowNull: true,
+        defaultValue: null
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

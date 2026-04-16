@@ -1,6 +1,7 @@
 require("dotenv").config();
 const axios = require('axios');
 const turf = require('@turf/turf');
+const { Op } = require('sequelize');
 const { zone, cities, units, users } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
@@ -283,6 +284,46 @@ class PostcodeZoneService {
     }
 
     /**
+     * Normalize a postcode string for consistent comparison.
+     */
+    normalizePostcode(postcode) {
+        return postcode.trim().replace(/\s+/g, '').toUpperCase();
+    }
+
+    /**
+     * Check if any of the given postcodes already belong to an existing zone.
+     * @param {Array<string>} postcodes - Normalized postcode strings to check
+     * @param {number|null} excludeZoneId - Zone ID to exclude (used during edit so a zone doesn't conflict with itself)
+     * @throws {ValidationError} if duplicate postcodes are found
+     */
+    async checkDuplicatePostcodes(postcodes, excludeZoneId = null) {
+        const normalizedInput = postcodes.map(pc => this.normalizePostcode(pc));
+
+        const where = { status: true };
+        if (excludeZoneId) {
+            where.id = { [Op.ne]: excludeZoneId };
+        }
+
+        const existingZones = await zone.findAll({
+            where,
+            attributes: ['id', 'name', 'postcodes']
+        });
+
+        for (const existingZone of existingZones) {
+            if (!existingZone.postcodes || !Array.isArray(existingZone.postcodes)) continue;
+
+            const existingNormalized = existingZone.postcodes.map(pc => this.normalizePostcode(pc));
+            const duplicates = normalizedInput.filter(pc => existingNormalized.includes(pc));
+
+            if (duplicates.length > 0) {
+                throw new ValidationError(
+                    `Postcode(s) ${duplicates.join(', ')} already exist in zone "${existingZone.name}"`
+                );
+            }
+        }
+    }
+
+    /**
      * Add zone using postcodes
      * @param {Object} zoneData - Zone data containing postcodes array and other zone fields
      * @returns {Object} Created zone data
@@ -329,6 +370,9 @@ class PostcodeZoneService {
 
         console.log(`Processing ${postcodesArray.length} postcodes...`);
 
+        // Check for duplicate postcodes across existing zones
+        await this.checkDuplicatePostcodes(postcodesArray);
+
         // Fetch coordinates for all postcodes
         const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
         console.log('Fetched coordinates:', postcodeCoordinates.length);
@@ -338,6 +382,9 @@ class PostcodeZoneService {
         console.log('Polygon created successfully');
         console.log('📍 Polygon coordinates structure:', JSON.stringify(polygonCoordinates, null, 2));
 
+        // Normalize postcodes for storage
+        const normalizedPostcodes = postcodesArray.map(pc => this.normalizePostcode(pc));
+
         // Prepare final zone data
         const data = {
             ...otherZoneData,
@@ -345,6 +392,7 @@ class PostcodeZoneService {
                 type: 'Polygon',
                 coordinates: polygonCoordinates
             },
+            postcodes: normalizedPostcodes,
             zoneAdminComission: zoneData.zoneAdminComission || 20,
             status: zoneData.status !== undefined ? zoneData.status : true
         };
@@ -394,6 +442,9 @@ class PostcodeZoneService {
                 }
             }
             if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+                // Check for duplicate postcodes (exclude current zone)
+                await this.checkDuplicatePostcodes(postcodesArray, zoneId);
+
                 console.log('🔄 Regenerating polygon from postcodes for zone:', zoneId);
                 const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
                 const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
@@ -402,6 +453,7 @@ class PostcodeZoneService {
                     type: 'Polygon',
                     coordinates: polygonCoordinates
                 };
+                otherZoneData.postcodes = postcodesArray.map(pc => this.normalizePostcode(pc));
             }
         }
 

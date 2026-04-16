@@ -53,6 +53,11 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.ENUM('Cash','Stripe','Paypal'),
     allowNull:true,
     defaultValue: 'Cash'
+  },
+  postcodes:{
+    type:DataTypes.JSON,
+    allowNull:true,
+    defaultValue:null
   }
   }, {
     sequelize,
