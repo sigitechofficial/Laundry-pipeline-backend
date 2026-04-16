@@ -24,6 +24,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'agentSelectServices',
+    paranoid: true,
   });
   return agentSelectServices;
 };

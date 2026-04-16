@@ -42,6 +42,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'wallet',
+    paranoid: true,
   });
   return wallet;
 };

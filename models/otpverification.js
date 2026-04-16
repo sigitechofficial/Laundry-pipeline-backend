@@ -34,6 +34,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'otpVerification',
+    paranoid: true,
   });
   return otpVerification;
 };

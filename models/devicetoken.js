@@ -23,6 +23,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'deviceToken',
+    paranoid: true,
   });
   return deviceToken;
 };

@@ -25,6 +25,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'machineCount',
+    paranoid: true,
   });
   return machineCount;
 };

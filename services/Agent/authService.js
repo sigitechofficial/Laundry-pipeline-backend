@@ -1,5 +1,6 @@
 require("dotenv").config();
-const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units, permissions, roles } = require('../../models');
+const db = require('../../models');
+const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units, permissions, roles, wallet, driverInZones } = db;
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
@@ -1572,6 +1573,123 @@ class AgentAuthService {
     async employeeLogout(data) {
         await redisCli.hDel(`id-${data.userId}`, data.dvToken);
         return {};
+    }
+
+    /**
+     * Delete agent account and all related data (soft delete)
+     * @param {number} userId - Agent user ID
+     * @returns {Object} Deletion result
+     */
+    async deleteAgentAccount(userId) {
+        const transaction = await db.sequelize.transaction();
+
+        try {
+            const agentUser = await users.findOne({
+                where: { id: userId, userTypeId: 4 },
+                include: [
+                    { model: bussinessInformation, as: 'businessInfo' }
+                ],
+                transaction
+            });
+
+            if (!agentUser) {
+                throw new NotFoundError('Agent account not found');
+            }
+
+            // Check for active bookings before allowing deletion
+            const activeBookings = await booking.count({
+                where: {
+                    [Op.or]: [
+                        { customerId: userId },
+                        { driverId: userId }
+                    ],
+                    status: { [Op.notIn]: ['completed', 'cancelled'] }
+                },
+                transaction
+            });
+
+            if (activeBookings > 0) {
+                throw new ValidationError('Cannot delete account with active bookings. Please complete or cancel all pending bookings first.');
+            }
+
+            const businessInfo = agentUser.businessInfo;
+
+            // Delete business-related data
+            if (businessInfo) {
+                await bussinessWorkingHours.destroy({
+                    where: { bussinessInformationId: businessInfo.id },
+                    transaction
+                });
+
+                await machineCount.destroy({
+                    where: { bussinessInformationId: businessInfo.id },
+                    transaction
+                });
+
+                await driverInZones.destroy({
+                    where: { laundaryShopId: businessInfo.id },
+                    transaction
+                });
+
+                if (businessInfo.shopAddressId) {
+                    await addressDb.destroy({
+                        where: { id: businessInfo.shopAddressId },
+                        transaction
+                    });
+                }
+
+                await bussinessInformation.destroy({
+                    where: { id: businessInfo.id },
+                    transaction
+                });
+            }
+
+            // Delete user-level related data
+            await bussinessWorkingHours.destroy({
+                where: { userId },
+                transaction
+            });
+
+            await agentSelectServices.destroy({
+                where: { agentServiceId: userId },
+                transaction
+            });
+
+            await deviceToken.destroy({
+                where: { userId },
+                transaction
+            });
+
+            await otpVerification.destroy({
+                where: { userId },
+                transaction
+            });
+
+            await wallet.destroy({
+                where: { userId },
+                transaction
+            });
+
+            await addressDb.destroy({
+                where: { userId },
+                transaction
+            });
+
+            // Clear all Redis sessions for this user
+            await redisCli.del(`id-${userId}`);
+
+            // Soft-delete the user
+            await users.destroy({
+                where: { id: userId },
+                transaction
+            });
+
+            await transaction.commit();
+            return { message: 'Account deleted successfully' };
+        } catch (error) {
+            await transaction.rollback();
+            throw error;
+        }
     }
 }
 
