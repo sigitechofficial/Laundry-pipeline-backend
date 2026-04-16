@@ -1,20 +1,8 @@
 const authService = require('../../services/Agent/authService');
 const ResponseHelper = require('../../utils/responseHelper');
-const logger = require('../../utils/logger');
-
-// Helper to log request data
-const logRequestData = (endpoint, req) => {
-    logger.info(`=== ${endpoint} ===`, {
-        body: req.body,
-        user: req.user ? { id: req.user.id, email: req.user.email, dvToken: req.user.dvToken } : 'Not authenticated',
-        params: req.params,
-        file: req.file ? req.file.path : 'No file'
-    });
-};
 
 // Register agent with OTP
 const registerAgentWithOTP = async (req, res) => {
-    logRequestData('registerAgentWithOTP', req);
     const profileImg = req.file?.path;
     const data = { ...req.body };
 
@@ -80,7 +68,6 @@ const workingHoursUpdate = async (req, res) => {
 
 // Login user
 const loginUser = async (req, res) => {
-    logRequestData('loginUser', req);
     const data = { ...req.body };
     const result = await authService.loginUser(data);
     
@@ -121,7 +108,6 @@ const changePasswordOTP = async (req, res) => {
 
 // Logout
 const logout = async (req, res) => {
-    logRequestData('logout', req);
     const data = { 
         userId: req.user.id,
         dvToken: req.user.dvToken
@@ -138,7 +124,6 @@ const logout = async (req, res) => {
 
 // Session
 const session = async (req, res) => {
-    logRequestData('session', req);
     const data = {
         userId: req.user.id,
         dvToken: req.user.dvToken,
@@ -151,7 +136,6 @@ const session = async (req, res) => {
 
 // Get user profile
 const getUserProfile = async (req, res) => {
-    logRequestData('getUserProfile', req);
     const data = { userId: req.user.id };
     const result = await authService.getUserProfile(data);
     return ResponseHelper.success(res, "User profile fetched successfully", result);
@@ -159,7 +143,6 @@ const getUserProfile = async (req, res) => {
 
 // Update user profile
 const updateUserProfile = async (req, res) => {
-    logRequestData('updateUserProfile', req);
     const profileImg = req.file?.path;
 
     const data = { 
@@ -172,8 +155,6 @@ const updateUserProfile = async (req, res) => {
 
 // Generate Stripe onboarding link - Now accepts connectAccountId from query
 const generateStripeOnboardingLink = async (req, res) => {
-    logRequestData('generateStripeOnboardingLink', req);
-    
     const { connectAccountId } = req.query;
     
     if (!connectAccountId) {
