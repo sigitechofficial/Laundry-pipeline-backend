@@ -128,6 +128,13 @@ router.get(
     asyncMiddleware(agentAuthController.logout)
 );
 
+//Delete agent account and all related data
+router.delete(
+    "/deleteAccount",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.deleteAccount)
+);
+
 //Agent Sesion Api
 router.post(
     "/session",

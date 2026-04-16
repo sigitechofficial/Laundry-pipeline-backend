@@ -21,6 +21,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'driverInZones',
+    paranoid: true,
   });
   return driverInZones;
 };

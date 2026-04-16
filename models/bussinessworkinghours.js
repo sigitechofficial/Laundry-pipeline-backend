@@ -36,6 +36,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     sequelize,
     modelName: 'bussinessWorkingHours',
+    paranoid: true,
   });
   return bussinessWorkingHours;
 };

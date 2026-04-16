@@ -200,6 +200,12 @@ const employeeLogout = async (req, res) => {
     return ResponseHelper.success(res, "Employee logged out successfully", {});
 };
 
+const deleteAccount = async (req, res) => {
+    const result = await authService.deleteAgentAccount(req.user.id);
+    res.clearCookie("accessToken", { path: "/agent" });
+    return ResponseHelper.success(res, "Account deleted successfully", result);
+};
+
 module.exports = {
     registerAgentWithOTP,
     verifyOTpSignUp,
@@ -217,5 +223,6 @@ module.exports = {
     updateUserProfile,
     generateStripeOnboardingLink,
     employeeLogin,
-    employeeLogout
+    employeeLogout,
+    deleteAccount
 };
