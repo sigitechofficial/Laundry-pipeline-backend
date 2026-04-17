@@ -56,10 +56,109 @@ const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSet
  */
 
 
+// Shared include config for zone queries
+const zoneInclude = [
+    {
+        model: cities,
+        required: true,
+        attributes: ["id", "name", "lat", "lng", "status"],
+        where: { deletedAt: { [Op.is]: null } },
+        include: [
+            {
+                model: countries,
+                required: true,
+                attributes: ["id", "name", "shortName", "status"],
+                where: { deletedAt: { [Op.is]: null } },
+            },
+        ],
+    },
+    {
+        model: units,
+        as: 'currencyUnitZ',
+        required: false,
+        attributes: ["id", "name", "symbol"]
+    }
+];
+
+const zoneAttributes = ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates", "currencyUnitId", "postcodes"];
+
+/**
+ * Extract UK outcode from a full postcode.
+ * e.g. "SW1A 1AA" → "SW1A", "NW11AA" → "NW1"
+ */
+function extractOutcode(postcode) {
+    const normalized = postcode.trim().replace(/\s+/g, '').toUpperCase();
+    // Remove last 3 chars (incode: digit + 2 letters) to get outcode
+    return normalized.slice(0, normalized.length - 3);
+}
+
+/**
+ * Find zone by postcode using JSON_CONTAINS.
+ * Checks for exact full postcode match AND outcode match so that a zone
+ * stored as "SW1A" will be found when the address postcode is "SW1A 1AA".
+ */
+async function findZoneByPostcode(postcode) {
+    const normalized = postcode.trim().replace(/\s+/g, '').toUpperCase();
+    const outcode = extractOutcode(normalized);
+
+    console.log(`🔍 Postcode lookup — full: "${normalized}", outcode: "${outcode}"`);
+
+    const zones = await zone.findAll({
+        where: {
+            status: true,
+            [Op.or]: [
+                // Exact match (e.g. stored "SW1A1AA" matches "SW1A1AA")
+                sequelize.where(
+                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(normalized)),
+                    true
+                ),
+                // Outcode match (e.g. stored "SW1A" matches address "SW1A1AA")
+                sequelize.where(
+                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(outcode)),
+                    true
+                ),
+            ]
+        },
+        include: zoneInclude,
+        attributes: zoneAttributes,
+    });
+
+    console.log(`📮 Postcode zone lookup found ${zones.length} zone(s)`);
+    return zones;
+}
+
 // Find zones function
 async function findZones(lat, lng) {
     console.log("Finding zones for coordinates:", { lat, lng });
-    
+
+    // ── Step 1: Reverse-geocode lat/lng → postcode via postcodes.io ──────────
+    let postcodeLookupResult = null;
+    try {
+        const axios = require('axios');
+        const response = await axios.get(
+            `https://api.postcodes.io/postcodes?lon=${lng}&lat=${lat}`,
+            { timeout: 5000 }
+        );
+        if (response.data.status === 200 && response.data.result && response.data.result.length > 0) {
+            postcodeLookupResult = response.data.result[0].postcode;
+            console.log(`📮 Reverse geocode result: "${postcodeLookupResult}"`);
+        }
+    } catch (err) {
+        console.warn("⚠️ postcodes.io reverse geocode failed, falling back to geometry:", err.message);
+    }
+
+    // ── Step 2: Try postcode-based zone lookup first ──────────────────────────
+    if (postcodeLookupResult) {
+        const postcodeZones = await findZoneByPostcode(postcodeLookupResult);
+        if (postcodeZones.length > 0) {
+            console.log("✅ Zone found via postcode lookup:", postcodeZones[0].name);
+            return postcodeZones;
+        }
+        console.log("⚠️ No zone matched by postcode, falling back to geometry...");
+    }
+
+    // ── Step 3: Fallback — geometry-based lookup (ST_Contains) ───────────────
+    console.log("🗺️ Trying geometry-based zone lookup...");
     const findZone = await zone.findAll({
         where: {
             status: true,
@@ -72,36 +171,11 @@ async function findZones(lat, lng) {
                 true
             ),
         },
-        include: [
-            {
-                model: cities,
-                required: true,
-                attributes: ["id", "name", "lat", "lng", "status"],
-                where: {
-                    deletedAt: { [Op.is]: null }
-                },
-                include: [
-                    {
-                        model: countries,
-                        required: true,
-                        attributes: ["id", "name", "shortName", "status"],
-                        where: {
-                            deletedAt: { [Op.is]: null }
-                        },
-                    },
-                ],
-            },
-            {
-                model: units,
-                as: 'currencyUnitZ',
-                required: false,
-                attributes: ["id", "name", "symbol"]
-            }
-        ],
-        attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates", "currencyUnitId"],
+        include: zoneInclude,
+        attributes: zoneAttributes,
     });
     
-    console.log(`Found ${findZone.length} zone(s)`);
+    console.log(`Found ${findZone.length} zone(s) via geometry`);
     if (findZone.length > 0) {
         console.log("Zone details:", {
             id: findZone[0].id,
