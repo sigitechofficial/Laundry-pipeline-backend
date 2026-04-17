@@ -1687,17 +1687,13 @@ exports.driverAddSerivces = async (req, res) => {
         : 0;
     console.log("Tip Amount:", tipAmount);
 
-    let subTotal = total;
-    console.log("Sub-Total------->>>", subTotal);
+    // subTotal = categoryCharges + serviceCharge + zoneMinimumAmount + tipAmount (full order value)
+    let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+    console.log("Sub-Total (full order value):", subTotal);
 
-    total += parsedServiceCharge;
-    console.log("Total Before Zone Deduction:", total);
-
-    total -= parsedZoneMinimum;
-
-    // Add tip to final total
-    total += tipAmount;
-    console.log("Total After Adding Tip:", total);
+    // total = subTotal - zoneMinimumAmount (deduct already paid upfront)
+    total = subTotal - parsedZoneMinimum;
+    console.log("Total (remaining balance):", total);
 
     // Calculate zone admin commission
     const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
