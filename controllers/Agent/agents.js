@@ -4114,7 +4114,7 @@ exports.updateInvoice = async (req, res) => {
     const allBookingServices = await customerSelectedService.findAll({
         where: { bookingId, status: true }
     });
-    const total = allBookingServices.reduce(
+    let total = allBookingServices.reduce(
         (sum, s) => sum + parseFloat(s.categoryPrice || 0), 0
     );
     console.log("All services total (cumulative):", total);
