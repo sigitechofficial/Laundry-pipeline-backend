@@ -4016,7 +4016,7 @@ exports.getEarningReportDashboard = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId, total } = req.body;
+    const { services, bookingId, subTotal, zoneMinimumAmount } = req.body;
 
     console.log("Services==============================>>", services)
 
@@ -4033,10 +4033,12 @@ exports.updateInvoice = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
     console.log("Current Date:", currentDate);
 
+    let servicesPrice = 0;
+
     if (services.length > 0) {
         for (let service of services) {
             let itemTotalPrice = parseFloat(service.categoryCharge || 0);
-            //total += itemTotalPrice;
+            servicesPrice += itemTotalPrice;
 
             // Build where clause - always include subCategoryId (never undefined)
             const whereClause = {
@@ -4087,26 +4089,18 @@ exports.updateInvoice = async (req, res) => {
         }
     }
 
-    // const parsedServiceCharge = parseFloat(serviceCharge) || 0;
-    // const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+    const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+    const parsedSubTotal = parseFloat(subTotal) || 0;
 
-    // let subTotal = total;
-    // console.log("Sub-Total------->>>", subTotal);
+    // newSubTotal = incoming subTotal + all services categoryCharges
+    const newSubTotal = parseFloat((parsedSubTotal + servicesPrice).toFixed(2));
+    // total = newSubTotal - zoneMinimumAmount (already charged upfront)
+    const total = parseFloat((newSubTotal - parsedZoneMinimum).toFixed(2));
 
-    // total += parsedServiceCharge;
-    // console.log("Total Before Zone Deduction:", total);
-
-    // total -= parsedZoneMinimum;
-
-    // // Round to 2 decimal places
-    // total = parseFloat(total.toFixed(2));
-    // subTotal = parseFloat(subTotal.toFixed(2));
-
-    // console.log("Final Total After Zone Deduction:", total);
-
-    // if (isNaN(total)) {
-    //     throw new Error("Calculated total is NaN. Please check your input values.");
-    // }
+    console.log("Services Price:", servicesPrice);
+    console.log("New Sub-Total:", newSubTotal);
+    console.log("Zone Minimum (deducted):", parsedZoneMinimum);
+    console.log("Final Total:", total);
 
     await billingDetails.update(
         {
@@ -4117,9 +4111,9 @@ exports.updateInvoice = async (req, res) => {
         { where: { bookingId: bookingId } }
     );
 
-
     await booking.update(
         {
+            subTotal: newSubTotal,
             orderAmount: total,
         },
         { where: { id: bookingId } }
