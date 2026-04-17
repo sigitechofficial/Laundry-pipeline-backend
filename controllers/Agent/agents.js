@@ -4016,12 +4016,37 @@ exports.getEarningReportDashboard = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId, subTotal, zoneMinimumAmount } = req.body;
+    const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
 
     console.log("Services==============================>>", services)
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new ValidationError("Invalid request. Please provide an array of services.");
+    }
+
+    // Fetch booking with zone and tip — mirrors driverAddServices
+    const bookings = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: zone,
+                attributes: ['id', 'name', 'zoneAdminComission']
+            },
+            {
+                model: tip,
+                as: 'tips',
+                attributes: ['id', 'amount'],
+                required: false
+            }
+        ]
+    });
+
+    if (!bookings) {
+        throw new NotFoundError("Booking not found");
+    }
+
+    const zoneData = bookings.zone;
+    if (!zoneData) {
+        throw new NotFoundError("Zone information not found for this booking");
     }
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -4033,20 +4058,16 @@ exports.updateInvoice = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
     console.log("Current Date:", currentDate);
 
-    let servicesPrice = 0;
-
+    // Save / update each service from the request
     if (services.length > 0) {
         for (let service of services) {
-            let itemTotalPrice = parseFloat(service.categoryCharge || 0);
-            servicesPrice += itemTotalPrice;
+            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
 
-            // Build where clause - always include subCategoryId (never undefined)
             const whereClause = {
                 bookingId,
                 id: service.id,
                 serviceId: service.serviceId,
                 categoryId: service.categoryId,
-                // Always include subCategoryId - use actual value or null (never undefined)
                 subCategoryId: service.subCategoryId !== undefined ? service.subCategoryId : null
             };
 
@@ -4056,7 +4077,6 @@ exports.updateInvoice = async (req, res) => {
 
             let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
 
-            // 👇 fallback: update the first one with null subCategoryId
             if (!matched) {
                 matched = existingRecords.find(r => r.subCategoryId === null);
             }
@@ -4089,32 +4109,61 @@ exports.updateInvoice = async (req, res) => {
         }
     }
 
+    // After saving, sum ALL active services on this booking so new prices
+    // are added on top of existing ones (not replaced)
+    const allBookingServices = await customerSelectedService.findAll({
+        where: { bookingId, status: true }
+    });
+    const total = allBookingServices.reduce(
+        (sum, s) => sum + parseFloat(s.categoryPrice || 0), 0
+    );
+    console.log("All services total (cumulative):", total);
+
+    const parsedServiceCharge = parseFloat(serviceCharge) || 0;
     const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
-    const parsedSubTotal = parseFloat(subTotal) || 0;
 
-    // newSubTotal = incoming subTotal + all services categoryCharges
-    const newSubTotal = parseFloat((parsedSubTotal + servicesPrice).toFixed(2));
-    // total = newSubTotal - zoneMinimumAmount (already charged upfront)
-    const total = parseFloat((newSubTotal - parsedZoneMinimum).toFixed(2));
+    // Get tip amount from booking (same as driverAddServices)
+    const tipAmount = bookings.tips && bookings.tips.length > 0
+        ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
+        : 0;
+    console.log("Tip Amount:", tipAmount);
 
-    console.log("Services Price:", servicesPrice);
-    console.log("New Sub-Total:", newSubTotal);
-    console.log("Zone Minimum (deducted):", parsedZoneMinimum);
+    // subTotal = categoryCharges + serviceCharge + zoneMinimumAmount + tipAmount
+    let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+    console.log("Sub-Total (full order value):", subTotal);
+
+    // total = subTotal - zoneMinimumAmount (already charged upfront)
+    total = subTotal - parsedZoneMinimum;
+    console.log("Total (remaining balance):", total);
+
+    // Zone admin commission
+    const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
+    const zoneAdminCommissionAmount = parseFloat(((subTotal * zoneAdminCommission) / 100).toFixed(2));
+    console.log("Zone Admin Commission Amount:", zoneAdminCommissionAmount);
+
+    // Round
+    total = parseFloat(total.toFixed(2));
+    subTotal = parseFloat(subTotal.toFixed(2));
     console.log("Final Total:", total);
+
+    if (isNaN(total)) {
+        throw new Error("Calculated total is NaN. Please check your input values.");
+    }
 
     await billingDetails.update(
         {
             total,
             discount: 0,
             paymentStatus: "Pending",
+            zoneAdminCommission: zoneAdminCommissionAmount,
         },
         { where: { bookingId: bookingId } }
     );
 
     await booking.update(
         {
-            subTotal: newSubTotal,
             orderAmount: total,
+            subTotal,
         },
         { where: { id: bookingId } }
     );
