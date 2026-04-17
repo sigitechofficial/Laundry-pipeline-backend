@@ -4016,7 +4016,7 @@ exports.getEarningReportDashboard = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
+    const { services, bookingId } = req.body;
 
     console.log("Services==============================>>", services)
 
@@ -4024,7 +4024,8 @@ exports.updateInvoice = async (req, res) => {
         throw new ValidationError("Invalid request. Please provide an array of services.");
     }
 
-    // Fetch booking with zone and tip — mirrors driverAddServices
+    // Fetch booking with zone, tip, and billingDetails so serviceCharge
+    // and zoneMinimumAmount are read from DB (not dependent on frontend sending them)
     const bookings = await booking.findByPk(bookingId, {
         include: [
             {
@@ -4035,6 +4036,12 @@ exports.updateInvoice = async (req, res) => {
                 model: tip,
                 as: 'tips',
                 attributes: ['id', 'amount'],
+                required: false
+            },
+            {
+                model: billingDetails,
+                as: 'billingDetail',
+                attributes: ['serviceCharge', 'upfrontAmount'],
                 required: false
             }
         ]
@@ -4119,8 +4126,12 @@ exports.updateInvoice = async (req, res) => {
     );
     console.log("All services total (cumulative):", total);
 
-    const parsedServiceCharge = parseFloat(serviceCharge) || 0;
-    const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+    // Read serviceCharge and zoneMinimumAmount from DB (billingDetails)
+    // so the calculation is always accurate regardless of what frontend sends
+    const parsedServiceCharge = parseFloat(bookings.billingDetail?.serviceCharge || 0);
+    const parsedZoneMinimum = parseFloat(bookings.billingDetail?.upfrontAmount || 0);
+    console.log("Service Charge (from DB):", parsedServiceCharge);
+    console.log("Zone Minimum / upfrontAmount (from DB):", parsedZoneMinimum);
 
     // Get tip amount from booking (same as driverAddServices)
     const tipAmount = bookings.tips && bookings.tips.length > 0
