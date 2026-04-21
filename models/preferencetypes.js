@@ -15,13 +15,22 @@ module.exports = (sequelize, DataTypes) => {
       preferenceTypes.hasMany(models.serviceWithPreferences)
       models.serviceWithPreferences.belongsTo(preferenceTypes)
 
-
       preferenceTypes.hasMany(models.preferenceValues)
       models.preferenceValues.belongsTo(preferenceTypes)
 
       //Relation with bookingPreference Model
       preferenceTypes.hasMany(models.bookingPreference)
       models.bookingPreference.belongsTo(preferenceTypes)
+
+      // Self-referencing: a type can have child types (e.g. Temperature is child of Wash Type)
+      preferenceTypes.hasMany(models.preferenceTypes, {
+        foreignKey: 'parentPreferenceTypeId',
+        as: 'childTypes'
+      })
+      preferenceTypes.belongsTo(models.preferenceTypes, {
+        foreignKey: 'parentPreferenceTypeId',
+        as: 'parentType'
+      })
     }
   }
   preferenceTypes.init({
@@ -33,6 +42,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN, 
       allowNull: false, 
       defaultValue: 1 
+    },
+    parentPreferenceTypeId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null
     }
   }, {
     sequelize,

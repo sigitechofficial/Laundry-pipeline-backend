@@ -797,7 +797,7 @@ class CustomerOrderService {
             const bookingPreferencesToCreate = [];
             
             for (const pref of preferencesArray) {
-                const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
                 
                 // Validate that preferenceTypeId and preferenceValueId are provided
                 if (!preferenceTypeId || !preferenceValueId) {
@@ -856,7 +856,8 @@ class CustomerOrderService {
                 bookingPreferencesToCreate.push({
                     bookingId: bookingData.id,
                     preferenceTypeId: preferenceTypeId,
-                    preferenceValueId: preferenceValueId
+                    preferenceValueId: preferenceValueId,
+                    parentPreferenceValueId: parentPreferenceValueId || null
                 });
             }
             

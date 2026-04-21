@@ -17,6 +17,11 @@ module.exports = (sequelize, DataTypes) => {
     bookingId: DataTypes.INTEGER,
     preferenceTypeId: DataTypes.INTEGER,
     preferenceValueId: DataTypes.INTEGER,
+    parentPreferenceValueId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null
+    },
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE
   }, {

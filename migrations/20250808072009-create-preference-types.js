@@ -15,6 +15,11 @@ module.exports = {
       status: {
         type: Sequelize.BOOLEAN
       },
+      parentPreferenceTypeId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        defaultValue: null
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

@@ -1932,7 +1932,7 @@ async function deleteReason(req, res) {
   * Add Preference Types
 */
 async function createPreferenceType(req, res) {
-    const { name } = req.body
+    const { name, parentPreferenceTypeId } = req.body
 
     const findPreferenceType = await preferenceTypes.findOne({
         where: {
@@ -1945,9 +1945,20 @@ async function createPreferenceType(req, res) {
         throw new customError('Preference Type Already Exists')
     }
 
+    // If parentPreferenceTypeId provided, verify it exists
+    if (parentPreferenceTypeId) {
+        const parentExists = await preferenceTypes.findOne({
+            where: { id: parentPreferenceTypeId, status: true }
+        });
+        if (!parentExists) {
+            throw new customError('Parent Preference Type Not Found');
+        }
+    }
+
     const createPreferenceType = await preferenceTypes.create({
         name,
-        status: true
+        status: true,
+        parentPreferenceTypeId: parentPreferenceTypeId || null
     })
 
     return ResponseHelper.success(res, "Preference Type Added", { createPreferenceType });
