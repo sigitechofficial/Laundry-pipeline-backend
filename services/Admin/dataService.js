@@ -239,7 +239,7 @@ class DataService {
                     attributes: ['id', 'value', 'status']
                 }
             ],
-            attributes: ['id', 'name', 'status']
+            attributes: ['id', 'name', 'status', 'parentPreferenceTypeId']
         });
         return getPreferenceTypes;
     }

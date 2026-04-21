@@ -238,6 +238,13 @@ router.patch('/updateReason/:reasonId', asyncMiddleware(adminController.updateRe
 //Delete Reason
 router.delete('/deleteReason/:reasonId', asyncMiddleware(adminController.deleteReason))
 
+//!-------------------------Add-On Services------------------------------------------------------------------//
+router.post('/createAddOnService', asyncMiddleware(adminController.createAddOnService))
+router.get('/getAllAddOnServices', asyncMiddleware(adminController.getAllAddOnServices))
+router.get('/getAddOnServiceById/:addOnServiceId', asyncMiddleware(adminController.getAddOnServiceById))
+router.patch('/updateAddOnService/:addOnServiceId', asyncMiddleware(adminController.updateAddOnService))
+router.delete('/deleteAddOnService/:addOnServiceId', asyncMiddleware(adminController.deleteAddOnService))
+
 //!-------------------------Account Preferences------------------------------------------------------------------//
 //Add Preference Types
 router.post('/createPreferenceType', asyncMiddleware(adminController.createPreferenceType))

@@ -95,7 +95,8 @@ const {
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
-    reasonService
+    reasonService,
+    addOnServicesService
 } = require('../../services/Admin');
 
 // Import FAQ and Blog services
@@ -1926,6 +1927,35 @@ async function deleteReason(req, res) {
     return ResponseHelper.success(res, "Reason Deleted Successfully", null);
 }
 
+//!--------------------------------------------Add-On Services Management-----------------------------------------------//
+async function createAddOnService(req, res) {
+    const created = await addOnServicesService.createAddOnService(req.body);
+    return ResponseHelper.success(res, "Add-on service created successfully", created);
+}
+
+async function getAllAddOnServices(req, res) {
+    const rows = await addOnServicesService.getAllAddOnServices();
+    return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
+}
+
+async function getAddOnServiceById(req, res) {
+    const { addOnServiceId } = req.params;
+    const row = await addOnServicesService.getAddOnServiceById(addOnServiceId);
+    return ResponseHelper.success(res, "Add-on service retrieved successfully", row);
+}
+
+async function updateAddOnService(req, res) {
+    const { addOnServiceId } = req.params;
+    const updated = await addOnServicesService.updateAddOnService(addOnServiceId, req.body);
+    return ResponseHelper.success(res, "Add-on service updated successfully", updated);
+}
+
+async function deleteAddOnService(req, res) {
+    const { addOnServiceId } = req.params;
+    await addOnServicesService.deleteAddOnService(addOnServiceId);
+    return ResponseHelper.success(res, "Add-on service deleted successfully", null);
+}
+
 
 //!-----------------------------Add Match Preferences-------------------------//
 /*
@@ -1970,8 +2000,8 @@ async function createPreferenceType(req, res) {
 */
 async function editPreferenceType(req, res) {
     const { preferenceTypeId } = req.params;
-    const { name } = req.body;
-    const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name);
+    const { name, parentPreferenceTypeId } = req.body;
+    const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name, parentPreferenceTypeId);
     return ResponseHelper.success(res, "Preference Type Edited", editPreferenceType);
 }
 
@@ -2551,6 +2581,12 @@ module.exports = {
     getReasonById,
     updateReason,
     deleteReason,
+    //!------------Add-On Services-----------//
+    createAddOnService,
+    getAllAddOnServices,
+    getAddOnServiceById,
+    updateAddOnService,
+    deleteAddOnService,
     //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,
