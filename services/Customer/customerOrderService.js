@@ -1285,6 +1285,9 @@ class CustomerOrderService {
                 },
                 {
                     model: customerSelectedService,
+                    where:{
+                        status:true
+                    },
                     attributes: [
                         "date",
                         "time",
