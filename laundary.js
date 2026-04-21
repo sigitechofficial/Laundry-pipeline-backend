@@ -39,12 +39,7 @@ const corsOptions = {
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:4000',
-      'http://localhost:5173',
-      'http://192.168.18.26:5174',
-      'http://192.168.18.27:5174',
       'http://localhost:5174',
-      'https://backendlaundary.fomino.ch',
-      'https://testlaundaryb.fomino.ch',
       'https://stagelaundry.sigisolutions.net',
       'https://prodlaundry.sigisolutions.net',
       'https://main.dwc10i0wbe49w.amplifyapp.com',
@@ -53,7 +48,8 @@ const corsOptions = {
       'https://admin.justdrycleans.com',
       'https://main.d38eb8q6y4vvam.amplifyapp.com',
       'https://www.justdrycleans.com',
-      'http://192.168.18.36:3001'
+      'https://dev.dkuj4lgqcrq22.amplifyapp.com',
+      'https://dev.d1l8r4pedzet1t.amplifyapp.com'
     ];
     
     if (allowedOrigins.includes(origin) || NGROK_REGEX.test(origin)) {
