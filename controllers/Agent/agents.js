@@ -32,7 +32,9 @@ const {
     servicePreferences,
     serviceCategories,
     preferencesServiceName,
-    tip
+    tip,
+    customerSelectedServiceAddOn,
+    addOnServices
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -1652,6 +1654,7 @@ exports.driverAddSerivces = async (req, res) => {
                 matched = existingRecords.find(r => r.subCategoryId === null);
             }
 
+            let selectedServiceRow;
             if (matched) {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
@@ -1663,9 +1666,10 @@ exports.driverAddSerivces = async (req, res) => {
                     time: currentTime,
                     status: true
                 });
+                selectedServiceRow = matched;
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                await customerSelectedService.create({
+                selectedServiceRow = await customerSelectedService.create({
                     date: currentDate,
                     time: currentTime,
                     bookingId: bookingId,
@@ -1676,6 +1680,29 @@ exports.driverAddSerivces = async (req, res) => {
                     items: service.items,
                     status: true
                 });
+            }
+
+            // Handle add-on services for this subCategory line item
+            if (Array.isArray(service.addOnServiceIds)) {
+                // Replace existing add-ons for this line item
+                await customerSelectedServiceAddOn.destroy({
+                    where: { customerSelectedServiceId: selectedServiceRow.id }
+                });
+
+                if (service.addOnServiceIds.length > 0) {
+                    const addOnRecords = await addOnServices.findAll({
+                        where: { id: service.addOnServiceIds }
+                    });
+                    for (const addOn of addOnRecords) {
+                        const addOnPrice = parseFloat(addOn.price || 0);
+                        total += addOnPrice;
+                        await customerSelectedServiceAddOn.create({
+                            customerSelectedServiceId: selectedServiceRow.id,
+                            addOnServiceId: addOn.id,
+                            price: addOnPrice
+                        });
+                    }
+                }
             }
         }
     }
@@ -1961,6 +1988,19 @@ exports.invoiceCreation = async (req, res) => {
                         model: subCategories,
                         required: false,
                         attributes: { exclude: ["createdAt", "updatedAt"] }
+                    },
+                    {
+                        model: customerSelectedServiceAddOn,
+                        as: 'addOns',
+                        required: false,
+                        attributes: ['id', 'addOnServiceId', 'price'],
+                        include: [
+                            {
+                                model: addOnServices,
+                                as: 'addOnService',
+                                attributes: ['id', 'name', 'price']
+                            }
+                        ]
                     }
                 ],
                 attributes: [
@@ -4090,6 +4130,7 @@ exports.updateInvoice = async (req, res) => {
                 matched = existingRecords.find(r => r.subCategoryId === null);
             }
 
+            let selectedServiceRow;
             if (matched) {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
@@ -4101,9 +4142,10 @@ exports.updateInvoice = async (req, res) => {
                     time: currentTime,
                     status: service.status
                 });
+                selectedServiceRow = matched;
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                await customerSelectedService.create({
+                selectedServiceRow = await customerSelectedService.create({
                     date: currentDate,
                     time: currentTime,
                     bookingId: bookingId,
@@ -4114,6 +4156,25 @@ exports.updateInvoice = async (req, res) => {
                     items: service.items,
                     status: service.status
                 });
+            }
+
+            // Handle add-on services for this subCategory line item
+            if (Array.isArray(service.addOnServiceIds)) {
+                await customerSelectedServiceAddOn.destroy({
+                    where: { customerSelectedServiceId: selectedServiceRow.id }
+                });
+                if (service.addOnServiceIds.length > 0) {
+                    const addOnRecords = await addOnServices.findAll({
+                        where: { id: service.addOnServiceIds }
+                    });
+                    for (const addOn of addOnRecords) {
+                        await customerSelectedServiceAddOn.create({
+                            customerSelectedServiceId: selectedServiceRow.id,
+                            addOnServiceId: addOn.id,
+                            price: parseFloat(addOn.price || 0)
+                        });
+                    }
+                }
             }
         }
     }
@@ -4126,7 +4187,19 @@ exports.updateInvoice = async (req, res) => {
     let total = allBookingServices.reduce(
         (sum, s) => sum + parseFloat(s.categoryPrice || 0), 0
     );
-    console.log("All services total (cumulative):", total);
+
+    // Add all add-on prices for active services
+    const activeServiceIds = allBookingServices.map(s => s.id);
+    if (activeServiceIds.length > 0) {
+        const allAddOns = await customerSelectedServiceAddOn.findAll({
+            where: { customerSelectedServiceId: activeServiceIds }
+        });
+        const addOnTotal = allAddOns.reduce((sum, a) => sum + parseFloat(a.price || 0), 0);
+        total += addOnTotal;
+        console.log("Add-on services total:", addOnTotal);
+    }
+
+    console.log("All services total (cumulative, incl. add-ons):", total);
 
     // Read serviceCharge and zoneMinimumAmount from DB (billingDetails)
     // so the calculation is always accurate regardless of what frontend sends
