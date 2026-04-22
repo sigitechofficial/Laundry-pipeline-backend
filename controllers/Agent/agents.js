@@ -34,7 +34,10 @@ const {
     preferencesServiceName,
     tip,
     customerSelectedServiceAddOn,
-    addOnServices
+    addOnServices,
+    bookingPreference,
+    preferenceTypes,
+    preferenceValues
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -2032,6 +2035,22 @@ exports.invoiceCreation = async (req, res) => {
             {
                 model: proofOfDeliveries,
                 attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
+            },
+            {
+                model: bookingPreference,
+                as: 'bookingPreferences',
+                required: false,
+                attributes: ['id', 'preferenceTypeId', 'preferenceValueId', 'parentPreferenceValueId'],
+                include: [
+                    {
+                        model: preferenceTypes,
+                        attributes: ['id', 'name']
+                    },
+                    {
+                        model: preferenceValues,
+                        attributes: ['id', 'value']
+                    }
+                ]
             }
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] }
