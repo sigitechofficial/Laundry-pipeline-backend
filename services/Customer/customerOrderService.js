@@ -1288,6 +1288,7 @@ class CustomerOrderService {
                     where:{
                         status:true
                     },
+                    required: false,
                     attributes: [
                         "date",
                         "time",
@@ -1462,8 +1463,8 @@ class CustomerOrderService {
         const noShowPolicyRaw = bookingPlain.noShowPolicyBookings;
         let noShowPolicy = null;
 
-        if (noShowPolicyRaw && noShowPolicyRaw.noShowPolicyConfig) {
-            const config = noShowPolicyRaw.noShowPolicyConfig;
+        if (noShowPolicyRaw && noShowPolicyRaw.noShowConfig) {
+            const config = noShowPolicyRaw.noShowConfig;
             noShowPolicy = {
                 id: noShowPolicyRaw.id,
                 name: noShowPolicyRaw.name,
