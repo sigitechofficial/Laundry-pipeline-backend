@@ -1558,7 +1558,7 @@ class CustomerOrderService {
             include: [
                 {
                     model: service,
-                    attributes: ["id", "name", "status", "image", "description"],
+                    attributes: ["id", "name", "status", "image", "description", "timeRequired"],
                     required: true,
                 },
                 {
@@ -1609,7 +1609,8 @@ class CustomerOrderService {
                         name: plainItem.service.name || '',
                         status: plainItem.service.status,
                         image: plainItem.service.image || null,
-                        description: plainItem.service.description || null
+                        description: plainItem.service.description || null,
+                        turnAroundTime: plainItem.service.timeRequired || null
                     },
                     categories: []
                 };
