@@ -91,6 +91,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
+const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
@@ -4492,6 +4493,15 @@ exports.getActivePolicies = async (req, res) => {
     const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
     const result = await activePoliciesService.getActivePolicies(zoneId);
     return ResponseHelper.success(res, "Active policies", result);
+};
+
+/**
+ * GET /api/agent/getAllAddOnServices
+ * Lists all add-on services from the admin-managed catalog (same data as admin getAllAddOnServices).
+ */
+exports.getAllAddOnServices = async (req, res) => {
+    const rows = await addOnServicesService.getAllAddOnServices();
+    return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 };
 
 //!---------------------------------------------Notification APIs----------------------------------------//
