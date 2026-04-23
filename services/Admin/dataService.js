@@ -281,6 +281,7 @@ class DataService {
 
         return (maxDistance / 1000).toFixed(2); // return km
     }
+
 }
 
 module.exports = new DataService();

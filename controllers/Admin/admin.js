@@ -103,6 +103,7 @@ const {
 const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
+const customerOrderService = require('../../services/Customer/customerOrderService');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
@@ -2521,6 +2522,12 @@ async function toggleBlogStatus(req, res) {
 }
 
 
+//!-------------Order Status----------------//
+async function getAllOrderStatuses(req, res) {
+    const result = await customerOrderService.allOrderStatus();
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
 //!-------------------Exports----------------//
 module.exports = {
     //!-------------Admin Dashboard--------//
@@ -2719,5 +2726,7 @@ module.exports = {
     getBlogById,
     updateBlog,
     deleteBlog,
-    toggleBlogStatus
+    toggleBlogStatus,
+    //!-------------Order Status----------------//
+    getAllOrderStatuses
 }

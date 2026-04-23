@@ -522,6 +522,11 @@ router.patch('/toggleBlogStatus/:blogId', asyncMiddleware(adminController.toggle
 
 
 
+//!-----------------------------------Order Status------------------------------------>>>>
+// Get All Order Statuses
+router.get('/allOrderStatuses', asyncMiddleware(adminController.getAllOrderStatuses))
+
+
 //!-----------------------------------Reports------------------------------------>>>>
 // 1. Top Services Report
 router.get('/reports/top-services', asyncMiddleware(reportsController.getTopServicesReport))
