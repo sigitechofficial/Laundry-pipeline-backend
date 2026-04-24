@@ -1512,9 +1512,21 @@ async function getZoneById(req, res) {
 
 async function updateZone(req, res) {
     const { zoneId } = req.params;
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
 
     const data = { ...req.body };
+
+    // If postcodes are being updated, run duplicate check before saving
+    if (data.postcodes !== undefined && data.postcodes !== null) {
+        let postcodesArray = data.postcodes;
+        if (typeof postcodesArray === 'string') {
+            try { postcodesArray = JSON.parse(postcodesArray); } catch (e) {
+                postcodesArray = postcodesArray.split(',').map(p => p.trim()).filter(Boolean);
+            }
+        }
+        if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+            await postcodeZoneService.checkDuplicatePostcodes(postcodesArray, parseInt(zoneId));
+        }
+    }
 
     if (data.coordinates) {
         data.coordinates = {

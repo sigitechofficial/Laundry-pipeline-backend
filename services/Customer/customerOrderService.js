@@ -51,6 +51,9 @@ const BUSINESS_TIME_ZONE = 'Europe/London';
 // Import stripe functions
 const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet } = require('../../controllers/stripe');
 
+// Import coupon service
+const couponService = require('./couponService');
+
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
  */
@@ -658,7 +661,8 @@ class CustomerOrderService {
             paymentMethodId,
             stripeCustomerId,
             tipAmount,
-            timeZone
+            timeZone,
+            couponCode
         } = data;
 
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
@@ -879,7 +883,20 @@ class CustomerOrderService {
         console.log(currentDate);
         console.log(currentTime);
 
-        const discount = 0;
+        // Validate coupon early so we fail fast before creating services/billing
+        let appliedCouponId = null;
+        let discount = 0;
+
+        if (couponCode) {
+            // We validate against the zone upfront amount + service charge as the pre-discount total.
+            // Actual discount is recorded after booking row is created.
+            const preDiscountTotal = parseFloat(
+                (parseFloat(zoneUpfrontAmount) + parseFloat(zoneSeviceCharge) + parseFloat(tipAmount || 0)).toFixed(2)
+            );
+            const couponResult = await couponService.validateCoupon(couponCode, preDiscountTotal, userId);
+            appliedCouponId = couponResult.couponId;
+            discount = couponResult.discountAmt;
+        }
 
         if (services && services.length > 0) {
             categoryCharge = services.reduce(
@@ -925,15 +942,21 @@ class CustomerOrderService {
         const parsedServiceCharge = parseFloat(zoneSeviceCharge) || 0;
         const parsedTip = parseFloat(tipAmount) || 0;
         const subTotal = parseFloat((parsedUpfront + parsedServiceCharge + parsedTip).toFixed(2));
+        const discountedTotal = parseFloat(Math.max(0, subTotal - discount).toFixed(2));
 
         await billingDetails.create({
             bookingId: bookingData.id,
             upfrontAmount,
             serviceCharge: parsedServiceCharge,
             discount,
-            total: subTotal,
+            total: discountedTotal,
             paymentStatus: "Pending",
         });
+
+        // Record coupon redemption after billing is created
+        if (appliedCouponId && discount > 0) {
+            await couponService.recordRedemption(appliedCouponId, userId, bookingData.id, discount);
+        }
 
         await bookingHistory.create({
             date: currentDate,
@@ -953,7 +976,7 @@ class CustomerOrderService {
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: fixTimeKey,
                 partialPayment: true,
-                subTotal: subTotal,
+                subTotal: discountedTotal,
                 tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }

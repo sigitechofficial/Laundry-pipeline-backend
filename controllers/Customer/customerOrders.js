@@ -1122,6 +1122,28 @@ async function getHomeConfig(req, res) {
     return ResponseHelper.success(res, result.message, result.data);
 }
 
+/*
+ * Apply / validate a coupon code before checkout.
+ * POST /customer/applyCoupon
+ * Body: { code, orderAmount }
+ */
+async function applyCoupon(req, res) {
+    const { code, orderAmount } = req.body;
+    const userId = req.user.id;
+
+    const couponService = require('../../services/Customer/couponService');
+    const result = await couponService.validateCoupon(code, orderAmount, userId);
+
+    return ResponseHelper.success(res, 'Coupon applied successfully', {
+        couponId: result.couponId,
+        discountAmt: result.discountAmt,
+        finalAmount: result.finalAmount,
+        discountType: result.couponData.discountType,
+        discountValue: result.couponData.discountValue,
+        code: result.couponData.code
+    });
+}
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1156,5 +1178,7 @@ module.exports = {
     rescheduleCustomerBooking,
     getCustomerRescheduleHistory,
     //---Home Config----//
-    getHomeConfig
+    getHomeConfig,
+    //---Coupon----//
+    applyCoupon
 };

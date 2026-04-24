@@ -326,6 +326,15 @@ class PostcodeZoneService {
         const normalizedInput = postcodes.map(pc => this.normalizePostcode(pc));
         console.log('🔍 [DuplicateCheck] Normalized input postcodes:', normalizedInput);
 
+        // Reject duplicates inside the same request payload.
+        const seenInputPostcodes = new Set();
+        for (const postcode of normalizedInput) {
+            if (seenInputPostcodes.has(postcode)) {
+                throw new ValidationError(`Postcode ${postcode} is duplicated in the request`);
+            }
+            seenInputPostcodes.add(postcode);
+        }
+
         const where = { status: true };
         if (excludeZoneId) {
             where.id = { [Op.ne]: excludeZoneId };

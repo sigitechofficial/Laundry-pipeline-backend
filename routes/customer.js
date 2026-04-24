@@ -121,6 +121,10 @@ router.get('/rescheduleHistory', validateAccessToken, asyncMiddleware(customerOt
 //Get home screen config (delivery, min order, service fee, no-show fee)
 router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherController.getHomeConfig))
 
+//!----------------------------Coupon---------------------//
+//Validate and apply a coupon code (returns discount amount and final total)
+router.post('/applyCoupon', validateAccessToken, asyncMiddleware(customerOtherController.applyCoupon))
+
 //!----------------------------Customer Postcode Address Lookup---------------------//
 //Get addresses by UK postcode
 router.get('/postcode/:postcode', validateAccessToken, asyncMiddleware(customerOtherController.getAddressesByPostcode));
