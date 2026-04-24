@@ -10,6 +10,7 @@ const validateAccessToken = require('../middlewares/adminValidateToken')
 const checkPermission = require('../middlewares/checkPermission')
 const { createDestinationDirectory } = require('../utils/destination')
 const agentController = require("../controllers/Agent/agents");
+const couponController = require('../controllers/Admin/couponController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -237,6 +238,13 @@ router.get('/getReasonById/:reasonId', asyncMiddleware(adminController.getReason
 router.patch('/updateReason/:reasonId', asyncMiddleware(adminController.updateReason))
 //Delete Reason
 router.delete('/deleteReason/:reasonId', asyncMiddleware(adminController.deleteReason))
+
+//!-------------------------Add-On Services------------------------------------------------------------------//
+router.post('/createAddOnService', asyncMiddleware(adminController.createAddOnService))
+router.get('/getAllAddOnServices', asyncMiddleware(adminController.getAllAddOnServices))
+router.get('/getAddOnServiceById/:addOnServiceId', asyncMiddleware(adminController.getAddOnServiceById))
+router.patch('/updateAddOnService/:addOnServiceId', asyncMiddleware(adminController.updateAddOnService))
+router.delete('/deleteAddOnService/:addOnServiceId', asyncMiddleware(adminController.deleteAddOnService))
 
 //!-------------------------Account Preferences------------------------------------------------------------------//
 //Add Preference Types
@@ -515,6 +523,11 @@ router.patch('/toggleBlogStatus/:blogId', asyncMiddleware(adminController.toggle
 
 
 
+//!-----------------------------------Order Status------------------------------------>>>>
+// Get All Order Statuses
+router.get('/allOrderStatuses', asyncMiddleware(adminController.getAllOrderStatuses))
+
+
 //!-----------------------------------Reports------------------------------------>>>>
 // 1. Top Services Report
 router.get('/reports/top-services', asyncMiddleware(reportsController.getTopServicesReport))
@@ -533,5 +546,19 @@ router.get('/reports/daily-earnings/zone', asyncMiddleware(reportsController.get
 // 8. Daily Earning Report by Shop
 router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.getDailyEarningByShopReport))
 
+
+//!-----------------------------------Coupon Management------------------------------------>>>>
+// Create a coupon
+router.post('/addCoupon', validateAccessToken, asyncMiddleware(couponController.createCoupon));
+// List all coupons (with optional ?isActive=true&page=1&limit=20)
+router.get('/getAllCoupons', validateAccessToken, asyncMiddleware(couponController.getAllCoupons));
+// Coupon usage/discount report (must be before /:id to avoid route conflict)
+router.get('/getCouponReport', validateAccessToken, asyncMiddleware(couponController.getCouponReport));
+// Get single coupon with redemption history
+router.get('/getCouponById/:id', validateAccessToken, asyncMiddleware(couponController.getCouponById));
+// Update a coupon
+router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
+// Deactivate (soft-delete) a coupon
+router.delete('/deleteCoupon/:id', validateAccessToken, asyncMiddleware(couponController.deactivateCoupon));
 
 module.exports = router

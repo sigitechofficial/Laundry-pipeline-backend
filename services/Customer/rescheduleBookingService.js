@@ -403,7 +403,7 @@ class RescheduleBookingService {
             const prefsToCreate = [];
 
             for (const pref of preferencesArray) {
-                const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
 
                 if (!preferenceTypeId || !preferenceValueId) {
                     throw new ValidationError(
@@ -436,7 +436,12 @@ class RescheduleBookingService {
                     );
                 }
 
-                prefsToCreate.push({ bookingId, preferenceTypeId, preferenceValueId });
+                prefsToCreate.push({
+                    bookingId,
+                    preferenceTypeId,
+                    preferenceValueId,
+                    parentPreferenceValueId: parentPreferenceValueId || null
+                });
             }
 
             if (prefsToCreate.length > 0) {

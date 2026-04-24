@@ -10,7 +10,10 @@ module.exports = (sequelize, DataTypes) => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      // define association here
+      customerSelectedService.hasMany(models.customerSelectedServiceAddOn, {
+        foreignKey: 'customerSelectedServiceId',
+        as: 'addOns'
+      });
     }
   }
   customerSelectedService.init({
@@ -37,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
     status:{
       type:DataTypes.BOOLEAN,
       defaultValue:false
+    },
+    serviceInstruction: {
+      type: DataTypes.TEXT,
+      allowNull: true
     }
   }, {
     sequelize,

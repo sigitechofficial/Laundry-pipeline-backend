@@ -15,10 +15,18 @@ class PrefrencesServices {
      * @param {string} name - Preference Type name
      * @returns {Object} Edited preference type data
      */
-    async editPreferenceType(preferenceTypeId, name) {
+    async editPreferenceType(preferenceTypeId, name, parentPreferenceTypeId) {
+        const updateData = { name };
+
+        // Allow explicitly setting or clearing the parent
+        if (parentPreferenceTypeId !== undefined) {
+            updateData.parentPreferenceTypeId = parentPreferenceTypeId || null;
+        }
+
         const editPreferenceType = await preferenceTypes.update(
-            { name },
-            { where: { id: preferenceTypeId } });
+            updateData,
+            { where: { id: preferenceTypeId } }
+        );
         if (!editPreferenceType) {
             throw new NotFoundError('Preference Type Not Found')
         }

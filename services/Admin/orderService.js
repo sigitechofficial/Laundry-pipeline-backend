@@ -553,7 +553,7 @@ class OrderService {
                     const bookingPreferencesToCreate = [];
                     
                     for (const pref of preferencesArray) {
-                        const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                        const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
                         
                         if (!preferenceTypeId || !preferenceValueId) {
                             throw new ValidationError(
@@ -610,7 +610,8 @@ class OrderService {
                         bookingPreferencesToCreate.push({
                             bookingId: orderId,
                             preferenceTypeId: preferenceTypeId,
-                            preferenceValueId: preferenceValueId
+                            preferenceValueId: preferenceValueId,
+                            parentPreferenceValueId: parentPreferenceValueId || null
                         });
                     }
                     

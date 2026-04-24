@@ -239,7 +239,7 @@ class DataService {
                     attributes: ['id', 'value', 'status']
                 }
             ],
-            attributes: ['id', 'name', 'status']
+            attributes: ['id', 'name', 'status', 'parentPreferenceTypeId']
         });
         return getPreferenceTypes;
     }
@@ -281,6 +281,7 @@ class DataService {
 
         return (maxDistance / 1000).toFixed(2); // return km
     }
+
 }
 
 module.exports = new DataService();

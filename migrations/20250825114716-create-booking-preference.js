@@ -18,6 +18,15 @@ module.exports = {
       preferenceValueId: {
         type: Sequelize.INTEGER
       },
+      parentPreferenceValueId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        defaultValue: null
+      },
+      preferenceInstruction: {
+        type: Sequelize.TEXT,
+        allowNull: true
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

@@ -51,6 +51,9 @@ const BUSINESS_TIME_ZONE = 'Europe/London';
 // Import stripe functions
 const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet } = require('../../controllers/stripe');
 
+// Import coupon service
+const couponService = require('./couponService');
+
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
  */
@@ -658,7 +661,8 @@ class CustomerOrderService {
             paymentMethodId,
             stripeCustomerId,
             tipAmount,
-            timeZone
+            timeZone,
+            couponCode
         } = data;
 
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
@@ -797,7 +801,7 @@ class CustomerOrderService {
             const bookingPreferencesToCreate = [];
             
             for (const pref of preferencesArray) {
-                const { preferenceTypeId, preferenceValueId, serviceId } = pref;
+                const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
                 
                 // Validate that preferenceTypeId and preferenceValueId are provided
                 if (!preferenceTypeId || !preferenceValueId) {
@@ -856,7 +860,9 @@ class CustomerOrderService {
                 bookingPreferencesToCreate.push({
                     bookingId: bookingData.id,
                     preferenceTypeId: preferenceTypeId,
-                    preferenceValueId: preferenceValueId
+                    preferenceValueId: preferenceValueId,
+                    parentPreferenceValueId: parentPreferenceValueId || null,
+                    preferenceInstruction: pref.preferenceInstruction || null
                 });
             }
             
@@ -878,7 +884,20 @@ class CustomerOrderService {
         console.log(currentDate);
         console.log(currentTime);
 
-        const discount = 0;
+        // Validate coupon early so we fail fast before creating services/billing
+        let appliedCouponId = null;
+        let discount = 0;
+
+        if (couponCode) {
+            // We validate against the zone upfront amount + service charge as the pre-discount total.
+            // Actual discount is recorded after booking row is created.
+            const preDiscountTotal = parseFloat(
+                (parseFloat(zoneUpfrontAmount) + parseFloat(zoneSeviceCharge) + parseFloat(tipAmount || 0)).toFixed(2)
+            );
+            const couponResult = await couponService.validateCoupon(couponCode, preDiscountTotal, userId);
+            appliedCouponId = couponResult.couponId;
+            discount = couponResult.discountAmt;
+        }
 
         if (services && services.length > 0) {
             categoryCharge = services.reduce(
@@ -899,6 +918,7 @@ class CustomerOrderService {
                 if (service.categoryId) serviceObj.categoryId = service.categoryId;
                 if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
                 if (service.categoryCharge) serviceObj.categoryPrice = total;
+                if (service.serviceInstruction) serviceObj.serviceInstruction = service.serviceInstruction;
 
                 return serviceObj;
             });
@@ -924,15 +944,21 @@ class CustomerOrderService {
         const parsedServiceCharge = parseFloat(zoneSeviceCharge) || 0;
         const parsedTip = parseFloat(tipAmount) || 0;
         const subTotal = parseFloat((parsedUpfront + parsedServiceCharge + parsedTip).toFixed(2));
+        const discountedTotal = parseFloat(Math.max(0, subTotal - discount).toFixed(2));
 
         await billingDetails.create({
             bookingId: bookingData.id,
             upfrontAmount,
             serviceCharge: parsedServiceCharge,
             discount,
-            total: subTotal,
+            total: discountedTotal,
             paymentStatus: "Pending",
         });
+
+        // Record coupon redemption after billing is created
+        if (appliedCouponId && discount > 0) {
+            await couponService.recordRedemption(appliedCouponId, userId, bookingData.id, discount);
+        }
 
         await bookingHistory.create({
             date: currentDate,
@@ -952,7 +978,7 @@ class CustomerOrderService {
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: fixTimeKey,
                 partialPayment: true,
-                subTotal: subTotal,
+                subTotal: discountedTotal,
                 tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }
@@ -1284,6 +1310,10 @@ class CustomerOrderService {
                 },
                 {
                     model: customerSelectedService,
+                    where:{
+                        status:true
+                    },
+                    required: false,
                     attributes: [
                         "date",
                         "time",
@@ -1458,8 +1488,8 @@ class CustomerOrderService {
         const noShowPolicyRaw = bookingPlain.noShowPolicyBookings;
         let noShowPolicy = null;
 
-        if (noShowPolicyRaw && noShowPolicyRaw.noShowPolicyConfig) {
-            const config = noShowPolicyRaw.noShowPolicyConfig;
+        if (noShowPolicyRaw && noShowPolicyRaw.noShowConfig) {
+            const config = noShowPolicyRaw.noShowConfig;
             noShowPolicy = {
                 id: noShowPolicyRaw.id,
                 name: noShowPolicyRaw.name,
@@ -1553,7 +1583,7 @@ class CustomerOrderService {
             include: [
                 {
                     model: service,
-                    attributes: ["id", "name", "status", "image", "description"],
+                    attributes: ["id", "name", "status", "image", "description", "timeRequired"],
                     required: true,
                 },
                 {
@@ -1604,7 +1634,8 @@ class CustomerOrderService {
                         name: plainItem.service.name || '',
                         status: plainItem.service.status,
                         image: plainItem.service.image || null,
-                        description: plainItem.service.description || null
+                        description: plainItem.service.description || null,
+                        turnAroundTime: plainItem.service.timeRequired || null
                     },
                     categories: []
                 };

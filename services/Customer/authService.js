@@ -715,7 +715,7 @@ class CustomerAuthService {
 
         // Handle social login for existing user
         if (socialProviders.includes(signedFrom)) {
-            const userFind = await users.findOne({
+            const socialUserFind = await users.findOne({
                 where: {
                     email: email,
                     userTypeId: 2,
@@ -740,23 +740,29 @@ class CustomerAuthService {
                 ]
             });
 
-            console.log("userFind------------>", userFind);
+            console.log("socialUserFind------------>", socialUserFind);
 
-            if (!userFind) {
+            if (!socialUserFind) {
+                // The email exists but was registered with email/password — give a helpful message
+                if (userFind && !userFind.signedFrom) {
+                    throw new ValidationError(
+                        `This email is registered with email and password. Please log in using your email and password instead of ${signedFrom}.`
+                    );
+                }
                 throw new NotFoundError("User not found. Please ensure the correct email and sign-in method.");
             }
 
-            if (!userFind.status) {
+            if (!socialUserFind.status) {
                 throw new UnauthorizedError('Blocked By admin Please contact admin to continue');
             }
 
-            const profileMissingFields = collectMissingFields(userFind);
+            const profileMissingFields = collectMissingFields(socialUserFind);
             if (profileMissingFields.length && signedFrom !== 'apple') {
                 throw new ValidationError('Information Missing', {
                     missingFields: profileMissingFields,
                     requiredFields: profileMissingFields,
-                    userId: userFind.id,
-                    email: userFind.email,
+                    userId: socialUserFind.id,
+                    email: socialUserFind.email,
                     signedFrom
                 });
             }
@@ -769,26 +775,26 @@ class CustomerAuthService {
                 console.log("⚠️ No dvToken provided, generated:", finalDvToken);
             }
 
-            const dvTokenFound = userFind.deviceToken?.find((ele) => ele.tokenId === finalDvToken);
+            const dvTokenFound = socialUserFind.deviceToken?.find((ele) => ele.tokenId === finalDvToken);
             if (!dvTokenFound) {
                 await deviceToken.create({
                     tokenId: finalDvToken,
                     status: true,
-                    userId: userFind.id
+                    userId: socialUserFind.id
                 });
             }
 
             // Generate access token
             const accessToken = jwt.sign({
-                id: userFind.id,
-                email: userFind.email,
+                id: socialUserFind.id,
+                email: socialUserFind.email,
                 dvToken: finalDvToken,
-                userTypeId: userFind.userTypeId
+                userTypeId: socialUserFind.userTypeId
             }, process.env.JWT_ACCESS_SECRET);
 
             // Store in Redis
             await redisCli.hSet(
-                `id-${userFind.id}`,
+                `id-${socialUserFind.id}`,
                 { [finalDvToken]: accessToken }
             );
 
@@ -797,7 +803,7 @@ class CustomerAuthService {
 
             return {
                 type: 'success',
-                userData: userFind,
+                userData: socialUserFind,
                 accessToken,
                 isGuest: false,
                 zoneId: zoneData ? zoneData.id : null,

@@ -479,6 +479,13 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getActivePolicies)
 );
+//Get all add-on services (admin catalog) for agent app
+router.get(
+    "/getAllAddOnServices",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getAllAddOnServices)
+);
 //Get Customer Services For Updating Invoice
 router.get(
     "/getCustomerServicestoUpdateInvoice",

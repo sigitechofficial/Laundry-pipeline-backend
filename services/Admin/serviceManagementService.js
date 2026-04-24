@@ -246,42 +246,52 @@ class ServiceManagementService {
      */
 
     async getAllPreferenceTypesAndServiceDetails(serviceId) {
-        console.log("Service Id ====>",serviceId)
+        console.log("Service Id ====>", serviceId)
+
+        // Fetch all preference types linked to this service (flat list)
         const preferencesData = await serviceWithPreferences.findAll({
-            where: {
-                serviceId: serviceId
-            },
+            where: { serviceId: serviceId },
             include: [
                 {
                     model: preferenceTypes,
-                    attributes: ['id','name'],
+                    attributes: ['id', 'name', 'parentPreferenceTypeId'],
                     include: [
                         {
                             model: preferenceValues,
-                            attributes: ['id','value']
-                        },
+                            attributes: ['id', 'value'],
+                            where: { status: true },
+                            required: false
+                        }
                     ]
                 }
-            ],
-            logging: console.log 
-        })
-
-        console.log("preferencesData======================>>>>>>",preferencesData)
+            ]
+        });
 
         if (!preferencesData) {
             throw new NotFoundError('Preference Data Not Found')
         }
 
+        // Build nested structure: parents contain childTypes array
+        const allTypes = preferencesData
+            .filter(row => row.preferenceType)
+            .map(row => row.preferenceType.toJSON());
+
+        // Separate parents (no parentPreferenceTypeId) from children
+        const parentTypes = allTypes.filter(t => !t.parentPreferenceTypeId);
+        const childTypes  = allTypes.filter(t =>  t.parentPreferenceTypeId);
+
+        // Attach children to their parent
+        const nestedPreferences = parentTypes.map(parent => ({
+            ...parent,
+            childTypes: childTypes.filter(child => child.parentPreferenceTypeId === parent.id)
+        }));
+
         const serviceCategoriesData = await serviceCategories.findAll({
-            where: {
-                serviceId: serviceId
-            },
+            where: { serviceId: serviceId },
             include: [
                 {
                     model: categories,
-                    where: {
-                        status: true
-                    },
+                    where: { status: true },
                     attributes: ['name', 'description'],
                     include: [
                         {
@@ -291,18 +301,16 @@ class ServiceManagementService {
                     ]
                 }
             ]
-        })
+        });
 
         if (!serviceCategoriesData) {
             throw new NotFoundError('Service Categories Data Not Found')
         }
 
-        let outObj = {
-            preferencesData: preferencesData,
+        return {
+            preferencesData: nestedPreferences,
             serviceCategoriesData: serviceCategoriesData
         }
-
-        return outObj
     }
 
 

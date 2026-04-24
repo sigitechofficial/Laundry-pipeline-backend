@@ -32,7 +32,12 @@ const {
     servicePreferences,
     serviceCategories,
     preferencesServiceName,
-    tip
+    tip,
+    customerSelectedServiceAddOn,
+    addOnServices,
+    bookingPreference,
+    preferenceTypes,
+    preferenceValues
 } = require("../../models");
 const sequelize = require("sequelize");
 const { Op } = require("sequelize");
@@ -91,6 +96,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
+const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
@@ -1651,6 +1657,7 @@ exports.driverAddSerivces = async (req, res) => {
                 matched = existingRecords.find(r => r.subCategoryId === null);
             }
 
+            let selectedServiceRow;
             if (matched) {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
@@ -1662,9 +1669,10 @@ exports.driverAddSerivces = async (req, res) => {
                     time: currentTime,
                     status: true
                 });
+                selectedServiceRow = matched;
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                await customerSelectedService.create({
+                selectedServiceRow = await customerSelectedService.create({
                     date: currentDate,
                     time: currentTime,
                     bookingId: bookingId,
@@ -1675,6 +1683,29 @@ exports.driverAddSerivces = async (req, res) => {
                     items: service.items,
                     status: true
                 });
+            }
+
+            // Handle add-on services for this subCategory line item
+            if (Array.isArray(service.addOnServiceIds)) {
+                // Replace existing add-ons for this line item
+                await customerSelectedServiceAddOn.destroy({
+                    where: { customerSelectedServiceId: selectedServiceRow.id }
+                });
+
+                if (service.addOnServiceIds.length > 0) {
+                    const addOnRecords = await addOnServices.findAll({
+                        where: { id: service.addOnServiceIds }
+                    });
+                    for (const addOn of addOnRecords) {
+                        const addOnPrice = parseFloat(addOn.price || 0);
+                        total += addOnPrice;
+                        await customerSelectedServiceAddOn.create({
+                            customerSelectedServiceId: selectedServiceRow.id,
+                            addOnServiceId: addOn.id,
+                            price: addOnPrice
+                        });
+                    }
+                }
             }
         }
     }
@@ -1960,11 +1991,24 @@ exports.invoiceCreation = async (req, res) => {
                         model: subCategories,
                         required: false,
                         attributes: { exclude: ["createdAt", "updatedAt"] }
+                    },
+                    {
+                        model: customerSelectedServiceAddOn,
+                        as: 'addOns',
+                        required: false,
+                        attributes: ['id', 'addOnServiceId', 'price'],
+                        include: [
+                            {
+                                model: addOnServices,
+                                as: 'addOnService',
+                                attributes: ['id', 'name', 'price']
+                            }
+                        ]
                     }
                 ],
                 attributes: [
                     "id", "date", "time", "categoryPrice", "bookingId",
-                    "categoryId", "serviceId", "subCategoryId", "items"
+                    "categoryId", "serviceId", "subCategoryId", "items", "serviceInstruction"
                 ]
             },
             {
@@ -1991,6 +2035,22 @@ exports.invoiceCreation = async (req, res) => {
             {
                 model: proofOfDeliveries,
                 attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
+            },
+            {
+                model: bookingPreference,
+                as: 'bookingPreferences',
+                required: false,
+                attributes: ['id', 'preferenceTypeId', 'preferenceValueId', 'parentPreferenceValueId', 'preferenceInstruction'],
+                include: [
+                    {
+                        model: preferenceTypes,
+                        attributes: ['id', 'name']
+                    },
+                    {
+                        model: preferenceValues,
+                        attributes: ['id', 'value']
+                    }
+                ]
             }
         ],
         attributes: { exclude: ["categoryId", "serviceId", "subCategoryId"] }
@@ -3039,7 +3099,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
                 attributes: ["id", "name", "price"],
             },
         ],
-        attributes: ['id', 'categoryPrice', 'items']
+        attributes: ['id', 'categoryPrice', 'items', 'serviceInstruction']
     });
 
     if (!customerServices || customerServices.length === 0) {
@@ -3070,7 +3130,8 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
         subCategoryName: item.subCategory.name,
         subCategoryPrice: item.subCategory.price,
         categoryPrice: item.categoryPrice,
-        items: item.items
+        items: item.items,
+        serviceInstruction: item.serviceInstruction || null
     }));
 
     return res.json(
@@ -4089,6 +4150,7 @@ exports.updateInvoice = async (req, res) => {
                 matched = existingRecords.find(r => r.subCategoryId === null);
             }
 
+            let selectedServiceRow;
             if (matched) {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
@@ -4100,9 +4162,10 @@ exports.updateInvoice = async (req, res) => {
                     time: currentTime,
                     status: service.status
                 });
+                selectedServiceRow = matched;
             } else {
                 console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                await customerSelectedService.create({
+                selectedServiceRow = await customerSelectedService.create({
                     date: currentDate,
                     time: currentTime,
                     bookingId: bookingId,
@@ -4113,6 +4176,25 @@ exports.updateInvoice = async (req, res) => {
                     items: service.items,
                     status: service.status
                 });
+            }
+
+            // Handle add-on services for this subCategory line item
+            if (Array.isArray(service.addOnServiceIds)) {
+                await customerSelectedServiceAddOn.destroy({
+                    where: { customerSelectedServiceId: selectedServiceRow.id }
+                });
+                if (service.addOnServiceIds.length > 0) {
+                    const addOnRecords = await addOnServices.findAll({
+                        where: { id: service.addOnServiceIds }
+                    });
+                    for (const addOn of addOnRecords) {
+                        await customerSelectedServiceAddOn.create({
+                            customerSelectedServiceId: selectedServiceRow.id,
+                            addOnServiceId: addOn.id,
+                            price: parseFloat(addOn.price || 0)
+                        });
+                    }
+                }
             }
         }
     }
@@ -4125,7 +4207,19 @@ exports.updateInvoice = async (req, res) => {
     let total = allBookingServices.reduce(
         (sum, s) => sum + parseFloat(s.categoryPrice || 0), 0
     );
-    console.log("All services total (cumulative):", total);
+
+    // Add all add-on prices for active services
+    const activeServiceIds = allBookingServices.map(s => s.id);
+    if (activeServiceIds.length > 0) {
+        const allAddOns = await customerSelectedServiceAddOn.findAll({
+            where: { customerSelectedServiceId: activeServiceIds }
+        });
+        const addOnTotal = allAddOns.reduce((sum, a) => sum + parseFloat(a.price || 0), 0);
+        total += addOnTotal;
+        console.log("Add-on services total:", addOnTotal);
+    }
+
+    console.log("All services total (cumulative, incl. add-ons):", total);
 
     // Read serviceCharge and zoneMinimumAmount from DB (billingDetails)
     // so the calculation is always accurate regardless of what frontend sends
@@ -4492,6 +4586,15 @@ exports.getActivePolicies = async (req, res) => {
     const zoneId = req.query.zoneId ? parseInt(req.query.zoneId) : null;
     const result = await activePoliciesService.getActivePolicies(zoneId);
     return ResponseHelper.success(res, "Active policies", result);
+};
+
+/**
+ * GET /api/agent/getAllAddOnServices
+ * Lists all add-on services from the admin-managed catalog (same data as admin getAllAddOnServices).
+ */
+exports.getAllAddOnServices = async (req, res) => {
+    const rows = await addOnServicesService.getAllAddOnServices();
+    return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 };
 
 //!---------------------------------------------Notification APIs----------------------------------------//

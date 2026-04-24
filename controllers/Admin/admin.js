@@ -95,13 +95,15 @@ const {
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
-    reasonService
+    reasonService,
+    addOnServicesService
 } = require('../../services/Admin');
 
 // Import FAQ and Blog services
 const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
+const customerOrderService = require('../../services/Customer/customerOrderService');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
@@ -1510,9 +1512,21 @@ async function getZoneById(req, res) {
 
 async function updateZone(req, res) {
     const { zoneId } = req.params;
-    const { name, coordinates, cityId, zoneMinimumAmount, currencyUnitId, distanceUnitId, serviceCharge, zoneAdminComission } = req.body;
 
     const data = { ...req.body };
+
+    // If postcodes are being updated, run duplicate check before saving
+    if (data.postcodes !== undefined && data.postcodes !== null) {
+        let postcodesArray = data.postcodes;
+        if (typeof postcodesArray === 'string') {
+            try { postcodesArray = JSON.parse(postcodesArray); } catch (e) {
+                postcodesArray = postcodesArray.split(',').map(p => p.trim()).filter(Boolean);
+            }
+        }
+        if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+            await postcodeZoneService.checkDuplicatePostcodes(postcodesArray, parseInt(zoneId));
+        }
+    }
 
     if (data.coordinates) {
         data.coordinates = {
@@ -1926,13 +1940,42 @@ async function deleteReason(req, res) {
     return ResponseHelper.success(res, "Reason Deleted Successfully", null);
 }
 
+//!--------------------------------------------Add-On Services Management-----------------------------------------------//
+async function createAddOnService(req, res) {
+    const created = await addOnServicesService.createAddOnService(req.body);
+    return ResponseHelper.success(res, "Add-on service created successfully", created);
+}
+
+async function getAllAddOnServices(req, res) {
+    const rows = await addOnServicesService.getAllAddOnServices();
+    return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
+}
+
+async function getAddOnServiceById(req, res) {
+    const { addOnServiceId } = req.params;
+    const row = await addOnServicesService.getAddOnServiceById(addOnServiceId);
+    return ResponseHelper.success(res, "Add-on service retrieved successfully", row);
+}
+
+async function updateAddOnService(req, res) {
+    const { addOnServiceId } = req.params;
+    const updated = await addOnServicesService.updateAddOnService(addOnServiceId, req.body);
+    return ResponseHelper.success(res, "Add-on service updated successfully", updated);
+}
+
+async function deleteAddOnService(req, res) {
+    const { addOnServiceId } = req.params;
+    await addOnServicesService.deleteAddOnService(addOnServiceId);
+    return ResponseHelper.success(res, "Add-on service deleted successfully", null);
+}
+
 
 //!-----------------------------Add Match Preferences-------------------------//
 /*
   * Add Preference Types
 */
 async function createPreferenceType(req, res) {
-    const { name } = req.body
+    const { name, parentPreferenceTypeId } = req.body
 
     const findPreferenceType = await preferenceTypes.findOne({
         where: {
@@ -1945,9 +1988,20 @@ async function createPreferenceType(req, res) {
         throw new customError('Preference Type Already Exists')
     }
 
+    // If parentPreferenceTypeId provided, verify it exists
+    if (parentPreferenceTypeId) {
+        const parentExists = await preferenceTypes.findOne({
+            where: { id: parentPreferenceTypeId, status: true }
+        });
+        if (!parentExists) {
+            throw new customError('Parent Preference Type Not Found');
+        }
+    }
+
     const createPreferenceType = await preferenceTypes.create({
         name,
-        status: true
+        status: true,
+        parentPreferenceTypeId: parentPreferenceTypeId || null
     })
 
     return ResponseHelper.success(res, "Preference Type Added", { createPreferenceType });
@@ -1959,8 +2013,8 @@ async function createPreferenceType(req, res) {
 */
 async function editPreferenceType(req, res) {
     const { preferenceTypeId } = req.params;
-    const { name } = req.body;
-    const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name);
+    const { name, parentPreferenceTypeId } = req.body;
+    const editPreferenceType = await prefrencesServices.editPreferenceType(preferenceTypeId, name, parentPreferenceTypeId);
     return ResponseHelper.success(res, "Preference Type Edited", editPreferenceType);
 }
 
@@ -2480,6 +2534,12 @@ async function toggleBlogStatus(req, res) {
 }
 
 
+//!-------------Order Status----------------//
+async function getAllOrderStatuses(req, res) {
+    const result = await customerOrderService.allOrderStatus();
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
 //!-------------------Exports----------------//
 module.exports = {
     //!-------------Admin Dashboard--------//
@@ -2540,6 +2600,12 @@ module.exports = {
     getReasonById,
     updateReason,
     deleteReason,
+    //!------------Add-On Services-----------//
+    createAddOnService,
+    getAllAddOnServices,
+    getAddOnServiceById,
+    updateAddOnService,
+    deleteAddOnService,
     //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,
@@ -2672,5 +2738,7 @@ module.exports = {
     getBlogById,
     updateBlog,
     deleteBlog,
-    toggleBlogStatus
+    toggleBlogStatus,
+    //!-------------Order Status----------------//
+    getAllOrderStatuses
 }

@@ -779,6 +779,7 @@ class AgentAuthService {
                 "lastName",
                 "email",
                 "password",
+                "signedFrom",
                 "status",
                 "userTypeId",
                 "verifiedAt",
@@ -883,11 +884,12 @@ class AgentAuthService {
             };
         }
 
-        // Warn if user previously used social login but is now using email/password
-        if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !data.signedFrom) {
-            throw new ValidationError("Social Login Required", { 
-                signedFrom: userFind.signedFrom
-            });
+        // Block email/password login if account was created via social auth
+        const userSignedFrom = (userFind?.signedFrom || '').toLowerCase();
+        if (userFind && ["google", "apple", "facebook"].includes(userSignedFrom) && !data.signedFrom) {
+            throw new ValidationError(
+                `You have signed up with this email using ${userFind.signedFrom}. Please continue with ${userFind.signedFrom}.`
+            );
         }
 
         // Handle social login flow
