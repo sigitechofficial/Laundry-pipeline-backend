@@ -861,7 +861,8 @@ class CustomerOrderService {
                     bookingId: bookingData.id,
                     preferenceTypeId: preferenceTypeId,
                     preferenceValueId: preferenceValueId,
-                    parentPreferenceValueId: parentPreferenceValueId || null
+                    parentPreferenceValueId: parentPreferenceValueId || null,
+                    preferenceInstruction: pref.preferenceInstruction || null
                 });
             }
             
@@ -917,6 +918,7 @@ class CustomerOrderService {
                 if (service.categoryId) serviceObj.categoryId = service.categoryId;
                 if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
                 if (service.categoryCharge) serviceObj.categoryPrice = total;
+                if (service.serviceInstruction) serviceObj.serviceInstruction = service.serviceInstruction;
 
                 return serviceObj;
             });

@@ -2008,7 +2008,7 @@ exports.invoiceCreation = async (req, res) => {
                 ],
                 attributes: [
                     "id", "date", "time", "categoryPrice", "bookingId",
-                    "categoryId", "serviceId", "subCategoryId", "items"
+                    "categoryId", "serviceId", "subCategoryId", "items", "serviceInstruction"
                 ]
             },
             {
@@ -2040,7 +2040,7 @@ exports.invoiceCreation = async (req, res) => {
                 model: bookingPreference,
                 as: 'bookingPreferences',
                 required: false,
-                attributes: ['id', 'preferenceTypeId', 'preferenceValueId', 'parentPreferenceValueId'],
+                attributes: ['id', 'preferenceTypeId', 'preferenceValueId', 'parentPreferenceValueId', 'preferenceInstruction'],
                 include: [
                     {
                         model: preferenceTypes,
@@ -3099,7 +3099,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
                 attributes: ["id", "name", "price"],
             },
         ],
-        attributes: ['id', 'categoryPrice', 'items']
+        attributes: ['id', 'categoryPrice', 'items', 'serviceInstruction']
     });
 
     if (!customerServices || customerServices.length === 0) {
@@ -3130,7 +3130,8 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
         subCategoryName: item.subCategory.name,
         subCategoryPrice: item.subCategory.price,
         categoryPrice: item.categoryPrice,
-        items: item.items
+        items: item.items,
+        serviceInstruction: item.serviceInstruction || null
     }));
 
     return res.json(
