@@ -3022,16 +3022,19 @@ exports.serviceDetail = async (req, res) => {
                 model: service,
                 attributes: ['id', 'name', 'status', 'image'],
                 paranoid: true,
+                required: true,
             },
             {
                 model: categories,
                 attributes: ['id', 'name', 'status', 'image', 'description'],
                 paranoid: true,
+                required: true,
                 include: [
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'status', 'price', 'description'],
-                        paranoid: true
+                        attributes: ['id', 'name', 'status', 'price', 'description', 'deletedAt'],
+                        paranoid: true,
+                        required: false
                     }
                 ]
             }
@@ -3065,7 +3068,9 @@ exports.serviceDetail = async (req, res) => {
                 status: item.category.status,
                 image: item.category.image,
                 description: item.category.description,
-                subCategories: item.category.subCategories || []
+                subCategories: (item.category.subCategories || [])
+                    .filter(sc => sc.deletedAt === null || sc.deletedAt === undefined)
+                    .map(({ deletedAt, ...sc }) => sc)
             });
         }
     }
