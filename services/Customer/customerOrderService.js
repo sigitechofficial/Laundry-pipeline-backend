@@ -1322,6 +1322,7 @@ class CustomerOrderService {
                         "serviceId",
                         "subCategoryId",
                         "items",
+                        "serviceInstruction",
                     ],
                     include: [
                         {
@@ -1342,6 +1343,18 @@ class CustomerOrderService {
                             required: false,
                             paranoid: false,
                         },
+                    ],
+                },
+                {
+                    model: bookingPreference,
+                    as: 'bookingPreferences',
+                    required: false,
+                    attributes: [
+                        "id",
+                        "preferenceTypeId",
+                        "preferenceValueId",
+                        "parentPreferenceValueId",
+                        "preferenceInstruction",
                     ],
                 },
                 {
