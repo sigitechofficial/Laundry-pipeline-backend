@@ -67,7 +67,6 @@ class EmployeeManagementService {
                 password: hashedPassword,
                 phoneNum: phoneNum || null,
                 roleId,
-                userTypeId: 1,      // admin-side user
                 classifiedAsId: 2,  // marks as employee (not super admin)
                 status: true,
                 verifiedAt: new Date(),
