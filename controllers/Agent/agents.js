@@ -3021,17 +3021,17 @@ exports.serviceDetail = async (req, res) => {
             {
                 model: service,
                 attributes: ['id', 'name', 'status', 'image'],
-                paranoid: false // Include soft-deleted services
+                paranoid: true,
             },
             {
                 model: categories,
                 attributes: ['id', 'name', 'status', 'image', 'description'],
-                paranoid: false,
+                paranoid: true,
                 include: [
                     {
                         model: subCategories,
                         attributes: ['id', 'name', 'status', 'price', 'description'],
-                        paranoid: false
+                        paranoid: true
                     }
                 ]
             }
