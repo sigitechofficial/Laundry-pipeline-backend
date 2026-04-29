@@ -169,12 +169,14 @@ async function onHoldCustomerShow(req, res) {
  *   on Hold Laundry Customer response Updated
  */
 async function customerResponseUpdate(req, res) {
-    const { bookingId, customerResponse } = req.body;
+    const { bookingId, customerResponse, timeZone, clientTimeZone } = req.body;
+    const resolvedTimeZone = timeZone || clientTimeZone || null;
 
     // Call service to handle business logic
     const result = await customerOrderService.customerResponseUpdate({
         bookingId,
-        customerResponse
+        customerResponse,
+        timeZone: resolvedTimeZone
     });
 
     // Return response using ResponseHelper success method

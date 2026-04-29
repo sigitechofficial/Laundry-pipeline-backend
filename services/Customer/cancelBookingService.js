@@ -144,12 +144,14 @@ class CancelBookingService {
             { where: { id: bookingId } }
         );
 
-        // Step 10: Create booking history entry
+        // Step 10: Create booking history entry using caller/business timezone wall-clock
+        const resolvedTz = this._resolveTimeZone(timeZone);
+        const cancellationMoment = moment.tz(resolvedTz);
         await bookingHistory.create({
             bookingId: bookingId,
             bookingStatusId: 19,
-            date: moment().format('YYYY-MM-DD'),
-            time: moment().format('HH:mm:ss')
+            date: cancellationMoment.format('YYYY-MM-DD'),
+            time: cancellationMoment.format('HH:mm:ss')
         });
 
         // Step 11: Process refund if applicable

@@ -6,6 +6,14 @@ const { zone, cities, units, users } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 class PostcodeZoneService {
+    constructor() {
+        // Outcode letter areas used for Greater London postcodes.
+        this.londonPostcodeAreas = new Set([
+            'E', 'EC', 'N', 'NW', 'SE', 'SW', 'W', 'WC',
+            'BR', 'CR', 'DA', 'EN', 'HA', 'IG', 'KT', 'RM', 'SM', 'TW', 'UB', 'WD'
+        ]);
+    }
+
     /**
      * Fetch coordinates for postcodes using postcodes.io API
      * @param {Array<string>} postcodes - Array of postcode strings
@@ -290,6 +298,49 @@ class PostcodeZoneService {
         return postcode.trim().replace(/\s+/g, '').toUpperCase();
     }
 
+    extractOutcode(normalizedPostcode) {
+        const match = normalizedPostcode.match(/^([A-Z]{1,2}[0-9][0-9A-Z]?)/);
+        return match ? match[1] : null;
+    }
+
+    isLondonCity(cityName) {
+        if (!cityName || typeof cityName !== 'string') return false;
+        return cityName.trim().toLowerCase().includes('london');
+    }
+
+    isLondonPostcode(normalizedPostcode) {
+        const outcode = this.extractOutcode(normalizedPostcode);
+        if (!outcode) return false;
+
+        const areaMatch = outcode.match(/^[A-Z]+/);
+        if (!areaMatch) return false;
+
+        return this.londonPostcodeAreas.has(areaMatch[0]);
+    }
+
+    async validatePostcodesByCity(postcodes, cityId) {
+        if (!cityId) return;
+
+        const city = await cities.findByPk(cityId, { attributes: ['id', 'name'] });
+        if (!city) {
+            throw new NotFoundError('City not found');
+        }
+
+        if (!this.isLondonCity(city.name)) {
+            return;
+        }
+
+        const invalidPostcodes = postcodes
+            .map(pc => this.normalizePostcode(pc))
+            .filter(pc => !this.isLondonPostcode(pc));
+
+        if (invalidPostcodes.length > 0) {
+            throw new ValidationError(
+                `Only London postcodes are allowed for city "${city.name}". Invalid postcodes: ${invalidPostcodes.join(', ')}`
+            );
+        }
+    }
+
     /**
      * Check if two postcodes conflict hierarchically.
      * Conflicts:  exact match, outcode covers full postcode, or full postcode falls inside outcode.
@@ -431,6 +482,9 @@ class PostcodeZoneService {
 
         console.log(`Processing ${postcodesArray.length} postcodes...`);
 
+        // Enforce city-specific postcode scope (London-only when city is London)
+        await this.validatePostcodesByCity(postcodesArray, zoneData.cityId);
+
         // Check for duplicate postcodes across existing zones
         await this.checkDuplicatePostcodes(postcodesArray);
 
@@ -503,6 +557,9 @@ class PostcodeZoneService {
                 }
             }
             if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
+                const targetCityId = otherZoneData.cityId || existingZone.cityId;
+                await this.validatePostcodesByCity(postcodesArray, targetCityId);
+
                 // Check for duplicate postcodes (exclude current zone)
                 await this.checkDuplicatePostcodes(postcodesArray, zoneId);
 

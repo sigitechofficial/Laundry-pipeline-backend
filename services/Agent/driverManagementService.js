@@ -14,12 +14,26 @@ const {
     ConflictError, 
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
+const momentTz = require('moment-timezone');
+
+const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 
 /**
  * Agent Driver Management Service
  * Handles all agent driver related business logic
  */
 class AgentDriverManagementService {
+    _getWallClockDateTime(timeZone) {
+        const normalizedTimeZone =
+            timeZone && typeof timeZone === 'string' && momentTz.tz.zone(timeZone.trim())
+                ? timeZone.trim()
+                : AGENT_BUSINESS_TIME_ZONE;
+        const wallClock = momentTz.tz(normalizedTimeZone);
+        return {
+            date: wallClock.format('YYYY-MM-DD'),
+            time: wallClock.format('HH:mm:ss')
+        };
+    }
 
     /**
      * Get All Agent Drivers
@@ -91,7 +105,7 @@ class AgentDriverManagementService {
      * @returns {Object} Assignment result
      */
     async agentAssignBookingToLaundryDriver(data) {
-        const { driverId, bookingId } = data;
+        const { driverId, bookingId, timeZone, clientTimeZone } = data;
 
         const orderAssign = await booking.update(
             {
@@ -105,13 +119,7 @@ class AgentDriverManagementService {
             }
         );
 
-        const currentTime = new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-
-        const currentDate = new Date().toISOString().split("T")[0];
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone || clientTimeZone);
 
         await bookingHistory.create({
             date: currentDate,
@@ -133,7 +141,7 @@ class AgentDriverManagementService {
      * @returns {Object} Self pickup result
      */
     async agentPickupOrderBySelf(data, agentId) {
-        const { bookingId } = data;
+        const { bookingId, timeZone, clientTimeZone } = data;
 
         const agentByselfPickup = await booking.update(
             {
@@ -147,13 +155,7 @@ class AgentDriverManagementService {
             }
         );
 
-        const currentTime = new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-
-        const currentDate = new Date().toISOString().split("T")[0];
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone || clientTimeZone);
 
         await bookingHistory.create({
             date: currentDate,

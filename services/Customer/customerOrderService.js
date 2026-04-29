@@ -579,6 +579,16 @@ class CustomerOrderService {
         return normalizedTimeZone;
     }
 
+    _getWallClockDateTime(timeZone) {
+        const resolvedTimeZone = this._resolveSourceTimeZone(timeZone);
+        const wallClock = moment.tz(resolvedTimeZone);
+        return {
+            date: wallClock.format('YYYY-MM-DD'),
+            time: wallClock.format('HH:mm:ss'),
+            resolvedTimeZone
+        };
+    }
+
     _convertSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName, timeZone) {
         const datePart = this._getDatePart(dateValue, dateFieldName);
         const timePart = this._getTimePart(timeValue, timeFieldName);
@@ -875,12 +885,7 @@ class CustomerOrderService {
         let total = 0;
         let categoryCharge = 0;
 
-        const currentTime = new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-        const currentDate = new Date().toISOString().split("T")[0];
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
         console.log(currentDate);
         console.log(currentTime);
 
@@ -1145,7 +1150,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object
      */
     async customerResponseUpdate(data) {
-        const { bookingId, customerResponse } = data;
+        const { bookingId, customerResponse, timeZone } = data;
 
         const bookingFind = await booking.findOne({
             where: {
@@ -1178,12 +1183,7 @@ class CustomerOrderService {
             { where: { bookingId: bookingId } }
         );
 
-        const currentTime = new Date().toLocaleTimeString("en-US", {
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-        });
-        const currentDate = new Date().toISOString().split("T")[0];
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
 
         await booking.update(
             {
