@@ -2320,13 +2320,10 @@ exports.onHoldConformation = async (req, res) => {
     console.log("records===============================>>>>>>>>", records);
 
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
+    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
+        req.body?.timeZone,
+        req.body?.clientTimeZone
+    );
     console.log("Current Date:", currentDate);
 
     const responseData = [];
@@ -2361,8 +2358,8 @@ exports.onHoldConformation = async (req, res) => {
         );
 
         await bookingHistory.create({
-            date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-            time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+            date: currentDate,
+            time: currentTime,
             bookingId,
             bookingStatusId: 18,
         });

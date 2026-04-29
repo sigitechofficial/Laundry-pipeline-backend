@@ -91,6 +91,7 @@ async function createBooking(req, res) {
         paymentMethodId,
         stripeCustomerId,
         tipAmount,
+        couponCode,
         timeZone,
         clientTimeZone
     } = req.body;
@@ -127,6 +128,7 @@ async function createBooking(req, res) {
         paymentMethodId,
         stripeCustomerId,
         tipAmount,
+        couponCode,
         timeZone: resolvedTimeZone
     }, userId);
 
