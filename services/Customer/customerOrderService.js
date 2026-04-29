@@ -914,6 +914,7 @@ class CustomerOrderService {
                     serviceId: service.serviceId,
                     date: currentDate,
                     time: currentTime,
+                    status: true,
                 };
                 if (service.categoryId) serviceObj.categoryId = service.categoryId;
                 if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
