@@ -1357,6 +1357,18 @@ class CustomerOrderService {
                         "parentPreferenceValueId",
                         "preferenceInstruction",
                     ],
+                    include: [
+                        {
+                            model: preferenceTypes,
+                            attributes: ["id", "name"],
+                            required: false,
+                        },
+                        {
+                            model: preferenceValues,
+                            attributes: ["id", "value"],
+                            required: false,
+                        },
+                    ],
                 },
                 {
                     model: bookingStatus,
