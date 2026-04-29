@@ -516,12 +516,13 @@ class RescheduleBookingService {
             { where: { id: bookingId } }
         );
 
-        // Step 9: Add booking history entry
+        // Step 9: Add booking history entry using caller/business timezone wall-clock
+        const rescheduleMoment = moment.tz(resolvedTz);
         await bookingHistory.create({
             bookingId,
             bookingStatusId: statusId,
-            date: moment().format('YYYY-MM-DD'),
-            time: moment().format('HH:mm:ss')
+            date: rescheduleMoment.format('YYYY-MM-DD'),
+            time: rescheduleMoment.format('HH:mm:ss')
         });
 
         // Step 10: If status is 1 (created, no agent accepted yet) re-fire the booking event

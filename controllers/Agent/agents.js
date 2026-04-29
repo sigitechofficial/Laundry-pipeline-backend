@@ -984,8 +984,8 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             
             await bookingHistory.create({
                 bookingId,
-                date: currentDate,
-                time: currentTime,
+                date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+                time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
                 bookingStatusId: 4,
             });
         }
@@ -1049,8 +1049,8 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     await bookingHistory.create({
         bookingId,
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingStatusId: 4,
     });
 
@@ -1106,8 +1106,8 @@ exports.driverStatusArrived = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingStatusId: 5,
         bookingId: bookingId,
     });
@@ -1224,8 +1224,8 @@ exports.agentInspectionStatus = async (req, res) => {
 
     const statusId = [6, 7];
     const bookinghistories = statusId.map(statusId => ({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -1276,8 +1276,8 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
 
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 8,
     });
@@ -1355,8 +1355,8 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
 
     const statusId = [10, 11];
     const bookinghistories = statusId.map(statusId => ({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -1408,8 +1408,8 @@ exports.laundryWashCompleted = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingStatusId: 12,
         bookingId: bookingId,
     });
@@ -1461,8 +1461,8 @@ exports.laundryDeliverToCustomer = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 13,
     });
@@ -1511,8 +1511,8 @@ exports.driverReachedForDelivery = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 14,
     });
@@ -1562,8 +1562,8 @@ exports.bookingDeliverToCustomer = async (req, res) => {
 
     const statusId = [16, 17];
     const bookinghistories = statusId.map(statusId => ({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -1756,8 +1756,8 @@ exports.driverAddSerivces = async (req, res) => {
     );
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 9,
     });
@@ -1853,8 +1853,8 @@ exports.agentUpdateInvoice = async (req, res) => {
         }, { where: { id: bookingId } })
 
         await bookingHistory.create({
-            date: currentDate,
-            time: currentTime,
+            date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+            time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
             bookingId: bookingId,
             bookingStatusId: 22,
         });
@@ -2361,8 +2361,8 @@ exports.onHoldConformation = async (req, res) => {
         );
 
         await bookingHistory.create({
-            date: currentDate,
-            time: currentTime,
+            date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+            time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
             bookingId,
             bookingStatusId: 18,
         });
@@ -2445,8 +2445,8 @@ exports.agentIssueResolved = async (req, res) => {
 
     const statusId = [11, 19];
     const bookinghistories = statusId.map(statusId => ({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -2545,8 +2545,8 @@ exports.agentAssignBookingToLaundryDriver = async (req, res) => {
     console.log(currentDate); // Example: "2025-01-28"
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 13,
     });
@@ -2580,8 +2580,8 @@ exports.agentPickupOrderBySelf = async (req, res) => {
     });
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 13,
     });
@@ -2614,8 +2614,8 @@ exports.agentCancelBooking = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
-        date: currentDate,
-        time: currentTime,
+        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
         bookingId: bookingId,
         bookingStatusId: 13,
         reasonId: reasonId,
