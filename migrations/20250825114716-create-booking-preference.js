@@ -12,6 +12,11 @@ module.exports = {
       bookingId: {
         type: Sequelize.INTEGER
       },
+      customerSelectedServiceId: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        defaultValue: null
+      },
       preferenceTypeId: {
         type: Sequelize.INTEGER
       },

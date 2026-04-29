@@ -802,26 +802,27 @@ class CustomerOrderService {
             // paymentIntentId will be set at Status 4 when payment is captured
         });
 
-        // Create booking preferences from serviceWithPreferences
+        // Validate booking preferences. We will create rows after selected services
+        // are created so we can attach customerSelectedServiceId.
+        const validatedPreferences = [];
         if (preferencesArray && preferencesArray.length > 0) {
-            // Get all service IDs from the booking
             const serviceIds = services.map(s => s.serviceId);
-            
-            // Validate and create booking preferences
-            const bookingPreferencesToCreate = [];
-            
+
             for (const pref of preferencesArray) {
                 const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
-                
-                // Validate that preferenceTypeId and preferenceValueId are provided
+
                 if (!preferenceTypeId || !preferenceValueId) {
                     throw new ValidationError(
                         "preferenceTypeId and preferenceValueId are required for each preference"
                     );
                 }
-                
-                // If serviceId is provided, validate that this preference belongs to the service
+
                 if (serviceId) {
+                    const serviceExistsInBooking = services.some(s => Number(s.serviceId) === Number(serviceId));
+                    if (!serviceExistsInBooking) {
+                        throw new ValidationError(`serviceId ${serviceId} in preferences is not part of selected services`);
+                    }
+
                     const servicePreferenceExists = await serviceWithPreferences.findOne({
                         where: {
                             serviceId: serviceId,
@@ -829,14 +830,13 @@ class CustomerOrderService {
                             status: true
                         }
                     });
-                    
+
                     if (!servicePreferenceExists) {
                         throw new ValidationError(
                             `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
                         );
                     }
                 } else {
-                    // If no serviceId, validate that at least one of the booking services has this preference
                     const servicePreferenceExists = await serviceWithPreferences.findOne({
                         where: {
                             serviceId: { [Op.in]: serviceIds },
@@ -844,15 +844,14 @@ class CustomerOrderService {
                             status: true
                         }
                     });
-                    
+
                     if (!servicePreferenceExists) {
                         throw new ValidationError(
                             `Preference type ${preferenceTypeId} is not available for any of the selected services`
                         );
                     }
                 }
-                
-                // Validate that preferenceValueId exists and belongs to preferenceTypeId
+
                 const preferenceValue = await preferenceValues.findOne({
                     where: {
                         id: preferenceValueId,
@@ -860,25 +859,21 @@ class CustomerOrderService {
                         status: true
                     }
                 });
-                
+
                 if (!preferenceValue) {
                     throw new ValidationError(
                         `Preference value ${preferenceValueId} is invalid or does not belong to preference type ${preferenceTypeId}`
                     );
                 }
-                
-                bookingPreferencesToCreate.push({
+
+                validatedPreferences.push({
                     bookingId: bookingData.id,
+                    serviceId: serviceId || null,
                     preferenceTypeId: preferenceTypeId,
                     preferenceValueId: preferenceValueId,
                     parentPreferenceValueId: parentPreferenceValueId || null,
                     preferenceInstruction: pref.preferenceInstruction || null
                 });
-            }
-            
-            // Bulk create booking preferences
-            if (bookingPreferencesToCreate.length > 0) {
-                await bookingPreference.bulkCreate(bookingPreferencesToCreate);
             }
         }
 
@@ -904,6 +899,7 @@ class CustomerOrderService {
             discount = couponResult.discountAmt;
         }
 
+        let serviceCreate = [];
         if (services && services.length > 0) {
             categoryCharge = services.reduce(
                 (acc, service) => acc + parseFloat(service.categoryCharge || 0),
@@ -929,8 +925,41 @@ class CustomerOrderService {
                 return serviceObj;
             });
             console.log("🚀 ~ createBooking ~ serviceData:", serviceData);
-            let serviceCreate = await customerSelectedService.bulkCreate(serviceData);
+            serviceCreate = await customerSelectedService.bulkCreate(serviceData);
             console.log("🚀 ~ createBooking ~ serviceCreate:", serviceCreate);
+
+            // Create booking preferences and attach them under each selected service
+            // whenever serviceId is provided in preferencesArray.
+            if (validatedPreferences.length > 0) {
+                const selectedServiceMap = new Map();
+                serviceCreate.forEach(selectedService => {
+                    const key = Number(selectedService.serviceId);
+                    if (!selectedServiceMap.has(key)) {
+                        selectedServiceMap.set(key, []);
+                    }
+                    selectedServiceMap.get(key).push(selectedService.id);
+                });
+
+                const bookingPreferencesToCreate = validatedPreferences.map(pref => {
+                    let customerSelectedServiceId = null;
+
+                    if (pref.serviceId) {
+                        const ids = selectedServiceMap.get(Number(pref.serviceId)) || [];
+                        customerSelectedServiceId = ids.length > 0 ? ids[0] : null;
+                    }
+
+                    return {
+                        bookingId: pref.bookingId,
+                        customerSelectedServiceId,
+                        preferenceTypeId: pref.preferenceTypeId,
+                        preferenceValueId: pref.preferenceValueId,
+                        parentPreferenceValueId: pref.parentPreferenceValueId,
+                        preferenceInstruction: pref.preferenceInstruction
+                    };
+                });
+
+                await bookingPreference.bulkCreate(bookingPreferencesToCreate);
+            }
         } else if (services.length === 0) {
             throw new ValidationError(
                 "Cannot Continue without Selection of Service Types",
@@ -1344,6 +1373,31 @@ class CustomerOrderService {
                             required: false,
                             paranoid: false,
                         },
+                        {
+                            model: bookingPreference,
+                            as: 'selectedServicePreferences',
+                            required: false,
+                            attributes: [
+                                "id",
+                                "customerSelectedServiceId",
+                                "preferenceTypeId",
+                                "preferenceValueId",
+                                "parentPreferenceValueId",
+                                "preferenceInstruction",
+                            ],
+                            include: [
+                                {
+                                    model: preferenceTypes,
+                                    attributes: ["id", "name"],
+                                    required: false,
+                                },
+                                {
+                                    model: preferenceValues,
+                                    attributes: ["id", "value"],
+                                    required: false,
+                                },
+                            ],
+                        },
                     ],
                 },
                 {
@@ -1352,6 +1406,7 @@ class CustomerOrderService {
                     required: false,
                     attributes: [
                         "id",
+                        "customerSelectedServiceId",
                         "preferenceTypeId",
                         "preferenceValueId",
                         "parentPreferenceValueId",
