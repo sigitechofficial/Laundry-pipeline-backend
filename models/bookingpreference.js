@@ -10,11 +10,23 @@ module.exports = (sequelize, DataTypes) => {
      * The `models/index` file will call this method automatically.
      */
     static associate(models) {
-      // define association here
+      bookingPreference.belongsTo(models.booking, {
+        foreignKey: 'bookingId',
+        as: 'booking'
+      });
+      bookingPreference.belongsTo(models.customerSelectedService, {
+        foreignKey: 'customerSelectedServiceId',
+        as: 'selectedService'
+      });
     }
   }
   bookingPreference.init({
     bookingId: DataTypes.INTEGER,
+    customerSelectedServiceId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null
+    },
     preferenceTypeId: DataTypes.INTEGER,
     preferenceValueId: DataTypes.INTEGER,
     parentPreferenceValueId: {
