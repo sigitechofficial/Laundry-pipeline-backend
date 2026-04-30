@@ -736,9 +736,9 @@ exports.agentBookingFilters = async (req, res) => {
             laundryShopId: addressFound.id,
             bookingStatusId: {
                 [Op.notIn]: [1, 13, 17]
-            },
-            orderBy: [['id', 'DESC']]
+            }
         },
+        order: [['id', 'DESC']],
         attributes: [
             "id",
             "ordertrackId",
