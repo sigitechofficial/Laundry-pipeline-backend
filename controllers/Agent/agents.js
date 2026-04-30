@@ -736,7 +736,8 @@ exports.agentBookingFilters = async (req, res) => {
             laundryShopId: addressFound.id,
             bookingStatusId: {
                 [Op.notIn]: [1, 13, 17]
-            }
+            },
+            orderBy: [['id', 'DESC']]
         },
         attributes: [
             "id",
@@ -1994,7 +1995,7 @@ exports.invoiceCreation = async (req, res) => {
                     {
                         model: subCategories,
                         required: false,
-                        attributes: { exclude: ["createdAt", "updatedAt"] }
+                        attributes: ["id", "name", "price", "status", "description", "barCode", "weightKg", "unitCount"]
                     },
                     {
                         model: customerSelectedServiceAddOn,
@@ -2244,7 +2245,7 @@ exports.customerServices = async (req, res) => {
             },
             {
                 model: subCategories,
-                attributes: ["id", "name", "price"],
+                attributes: ["id", "name", "price", "unitCount"],
             },
         ],
         attributes: ['id', 'categoryPrice', 'items']
@@ -2395,7 +2396,7 @@ exports.rejectedServiceItems = async (req, res) => {
             },
             {
                 model: subCategories,
-                attributes: ['id', 'name', 'price']
+                attributes: ['id', 'name', 'price', 'unitCount']
             }
         ],
         attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'deleted']
@@ -3033,7 +3034,7 @@ exports.serviceDetail = async (req, res) => {
                 include: [
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'status', 'price', 'description', 'deletedAt'],
+                        attributes: ['id', 'name', 'status', 'price', 'unitCount', 'description', 'deletedAt'],
                         paranoid: true,
                         required: false
                     }
@@ -3102,7 +3103,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
             },
             {
                 model: subCategories,
-                attributes: ["id", "name", "price"],
+                attributes: ["id", "name", "price", "unitCount"],
             },
         ],
         attributes: ['id', 'categoryPrice', 'items', 'serviceInstruction']
@@ -3358,7 +3359,7 @@ exports.printLabelData = async (req, res) => {
                     },
                     {
                         model: subCategories,
-                        attributes: ['id', 'name', 'price', 'barCode']
+                        attributes: ['id', 'name', 'price', 'unitCount', 'barCode']
                     }
                 ]
             }
@@ -3407,7 +3408,7 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
             },
             {
                 model: subCategories,
-                attributes: ["id", "name", "price"],
+                attributes: ["id", "name", "price", "unitCount"],
             },
         ],
         attributes: ['categoryPrice', 'items'],
@@ -4084,7 +4085,7 @@ exports.getEarningReportDashboard = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId } = req.body;
+    const { services, bookingId, timeZone, clientTimeZone } = req.body;
 
     console.log("Services==============================>>", services)
 
@@ -4124,14 +4125,11 @@ exports.updateInvoice = async (req, res) => {
         throw new NotFoundError("Zone information not found for this booking");
     }
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log("Current Date:", currentDate);
+    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
+        timeZone,
+        clientTimeZone
+    );
+    console.log("Update invoice timestamp (tz-aware):", currentDate, currentTime);
 
     // Save / update each service from the request
     if (services.length > 0) {
@@ -4279,6 +4277,14 @@ exports.updateInvoice = async (req, res) => {
         },
         { where: { id: bookingId } }
     );
+
+    // Keep invoice-update timeline aligned with client-selected timezone.
+    await bookingHistory.create({
+        date: currentDate,
+        time: currentTime,
+        bookingId: bookingId,
+        bookingStatusId: bookings.bookingStatusId,
+    });
 
     return ResponseHelper.success(res, "Invoice Updated", {});
 }

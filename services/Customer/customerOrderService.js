@@ -1369,7 +1369,7 @@ class CustomerOrderService {
                         },
                         {
                             model: subCategories,
-                            attributes: ["id", "name", "status", "price"],
+                            attributes: ["id", "name", "status", "price", "unitCount"],
                             required: false,
                             paranoid: false,
                         },
@@ -1674,7 +1674,7 @@ class CustomerOrderService {
                     include: [
                         {
                             model: subCategories,
-                            attributes: ["id", "name", "status", "price"],
+                            attributes: ["id", "name", "status", "price", "unitCount"],
                         },
                     ],
                 },
@@ -1748,7 +1748,8 @@ class CustomerOrderService {
                             id: plainSubCat.id,
                             name: plainSubCat.name,
                             status: plainSubCat.status,
-                            price: plainSubCat.price
+                            price: plainSubCat.price,
+                            unitCount: plainSubCat.unitCount ?? null
                         };
                     })
                 });
@@ -1941,7 +1942,7 @@ class CustomerOrderService {
                 },
                 {
                     model: subCategories,
-                    attributes: ['id', 'name', 'price']
+                    attributes: ['id', 'name', 'price', 'unitCount']
                 }
             ],
             attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
