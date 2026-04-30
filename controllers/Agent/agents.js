@@ -1814,6 +1814,7 @@ exports.agentUpdateInvoice = async (req, res) => {
     console.log("Req.body--------------------->", req.body)
 
     const bookings = await booking.findByPk(bookingId);
+    const wasStatus22 = Number(bookings?.bookingStatusId) === 22;
     const { date: currentDate, time: currentTime } = agentWallClockDateTime(
         timeZone,
         clientTimeZone
@@ -1846,18 +1847,6 @@ exports.agentUpdateInvoice = async (req, res) => {
                 }
             }
         );
-
-        await booking.update({
-            orderAmount: total,
-            bookingStatusId: 22
-        }, { where: { id: bookingId } })
-
-        await bookingHistory.create({
-            date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-            time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-            bookingId: bookingId,
-            bookingStatusId: 22,
-        });
 
         await OnHoldConfirmation.update(
             {
@@ -1897,6 +1886,21 @@ exports.agentUpdateInvoice = async (req, res) => {
 
 
     }
+    await booking.update({
+        orderAmount: total,
+        bookingStatusId: 22
+    }, { where: { id: bookingId } });
+
+    // Avoid duplicate status-22 history entries when booking is already 22.
+    if (!wasStatus22) {
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId: bookingId,
+            bookingStatusId: 22,
+        });
+    }
+
     const customerId=bookings.customerId;
     let title="Agent/Driver Updated Invoice";
     let body="Your agent/driver has updated invoice";

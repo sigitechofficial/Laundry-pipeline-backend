@@ -337,12 +337,14 @@ async function getOnHoldBookings(req, res) {
  * Update Customer response for on hold booking
  */
 async function updateCustomerResponseForOnHoldBooking(req, res) {
-    const { responses, bookingId } = req.body;
+    const { responses, bookingId, timeZone, clientTimeZone } = req.body;
+    const resolvedTimeZone = timeZone || clientTimeZone || null;
 
     // Call service to handle business logic
     const result = await customerOrderService.updateCustomerResponseForOnHoldBooking({
         responses,
-        bookingId
+        bookingId,
+        timeZone: resolvedTimeZone
     });
 
     // Return response using ResponseHelper success method
