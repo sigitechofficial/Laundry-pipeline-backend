@@ -52,6 +52,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.FLOAT,
       allowNull: true,
       comment: 'Weight in kg for weight-based services (e.g. 6 for 6kg). Null for item-based services.'
+    },
+    unitCount: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      comment: 'Units count for item-based subcategories'
     }
   }, {
     sequelize,

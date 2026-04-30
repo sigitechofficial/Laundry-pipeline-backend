@@ -839,7 +839,7 @@ async function bookingEventSentCheckTheShops(
                         },
                         {
                             model: subCategories,
-                            attributes: ["id", "name", "status"],
+                            attributes: ["id", "name", "status", "unitCount"],
                         },
                     ],
                 },
