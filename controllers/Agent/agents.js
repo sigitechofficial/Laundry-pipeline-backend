@@ -2009,6 +2009,29 @@ exports.invoiceCreation = async (req, res) => {
                                 attributes: ['id', 'name', 'price']
                             }
                         ]
+                    },
+                    {
+                        model: bookingPreference,
+                        as: 'selectedServicePreferences',
+                        required: false,
+                        attributes: [
+                            'id',
+                            'customerSelectedServiceId',
+                            'preferenceTypeId',
+                            'preferenceValueId',
+                            'parentPreferenceValueId',
+                            'preferenceInstruction'
+                        ],
+                        include: [
+                            {
+                                model: preferenceTypes,
+                                attributes: ['id', 'name']
+                            },
+                            {
+                                model: preferenceValues,
+                                attributes: ['id', 'value']
+                            }
+                        ]
                     }
                 ],
                 attributes: [
@@ -2045,7 +2068,14 @@ exports.invoiceCreation = async (req, res) => {
                 model: bookingPreference,
                 as: 'bookingPreferences',
                 required: false,
-                attributes: ['id', 'preferenceTypeId', 'preferenceValueId', 'parentPreferenceValueId', 'preferenceInstruction'],
+                attributes: [
+                    'id',
+                    'customerSelectedServiceId',
+                    'preferenceTypeId',
+                    'preferenceValueId',
+                    'parentPreferenceValueId',
+                    'preferenceInstruction'
+                ],
                 include: [
                     {
                         model: preferenceTypes,
