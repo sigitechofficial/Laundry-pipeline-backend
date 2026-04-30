@@ -1965,7 +1965,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with updated responses
      */
     async updateCustomerResponseForOnHoldBooking(data) {
-        const { responses, bookingId } = data;
+        const { responses, bookingId, timeZone } = data;
 
         if (!Number.isInteger(bookingId)) {
             throw new ValidationError("bookingId must be an integer");
@@ -2009,9 +2009,27 @@ class CustomerOrderService {
             });
         }
 
+        // Mark booking as customer-responded so agentIssueResolved can proceed.
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
+
+        await booking.update(
+            { bookingStatusId: 22 },
+            { where: { id: bookingId } }
+        );
+
+        await bookingHistory.create({
+            bookingId,
+            bookingStatusId: 22,
+            date: currentDate,
+            time: currentTime
+        });
+
         return {
             message: "Customer responses updated successfully",
-            data: { updatedResponses }
+            data: {
+                updatedResponses,
+                bookingStatusId: 22
+            }
         };
     }
 
