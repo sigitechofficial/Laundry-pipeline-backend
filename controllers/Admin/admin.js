@@ -384,6 +384,15 @@ async function getOrderForEdit(req, res) {
 }
 
 /*
+  * Get service details + booking selected services
+*/
+async function getServiceDetailWithBookingSelection(req, res) {
+    const { bookingId } = req.params;
+    const result = await orderService.getServiceDetailWithBookingSelection(bookingId);
+    return ResponseHelper.success(res, "Service details with booking selection fetched successfully", result);
+}
+
+/*
   * Delete Order (Soft Delete)
 */
 async function deleteOrder(req, res) {
@@ -2664,6 +2673,7 @@ module.exports = {
     completeOrders,
     editOrder,
     getOrderForEdit,
+    getServiceDetailWithBookingSelection,
     deleteOrder,
     updateInvoice,
     //!----------Service Management---------//
