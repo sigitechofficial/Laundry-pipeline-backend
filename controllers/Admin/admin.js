@@ -392,6 +392,15 @@ async function deleteOrder(req, res) {
     return ResponseHelper.success(res, "Order deleted successfully", result);
 }
 
+/*
+ * Admin Update Invoice
+ * Service-controller approach (logic in orderService).
+ */
+async function updateInvoice(req, res) {
+    const result = await orderService.updateInvoice(req.body);
+    return ResponseHelper.success(res, "Invoice updated successfully", result);
+}
+
 
 //!---------------------------------Service Management--------------------------------------->>
 
@@ -1481,6 +1490,15 @@ async function editZoneByPostcodes(req, res) {
     return ResponseHelper.success(res, "Zone updated successfully", updatedZone);
 }
 
+/*
+ * Validate if entered postcode is a valid London postcode
+ */
+async function validateLondonPostcode(req, res) {
+    const { postcode } = req.body;
+    const result = await postcodeZoneService.validateLondonPostcode(postcode);
+    return ResponseHelper.success(res, "Postcode validation result", result);
+}
+
 
 /*
    * Get Zones
@@ -2561,6 +2579,7 @@ module.exports = {
     addZones,
     addZonesByPostcodes,
     editZoneByPostcodes,
+    validateLondonPostcode,
     getZones,
     getZoneById,
     deleteZone,
@@ -2646,6 +2665,7 @@ module.exports = {
     editOrder,
     getOrderForEdit,
     deleteOrder,
+    updateInvoice,
     //!----------Service Management---------//
     getAdminServicesWithCategories,
     addServiceTypes,
