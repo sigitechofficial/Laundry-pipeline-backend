@@ -30,7 +30,9 @@ const {
     policy,
     cancellationPolicyConfig,
     noShowPolicyConfig,
-    units
+    units,
+    customerSelectedServiceAddOn,
+    addOnServices
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -1372,6 +1374,21 @@ class CustomerOrderService {
                             attributes: ["id", "name", "status", "price", "unitCount"],
                             required: false,
                             paranoid: false,
+                        },
+                        {
+                            model: customerSelectedServiceAddOn,
+                            as: 'addOns',
+                            required: false,
+                            separate: true,
+                            attributes: ['id', 'addOnServiceId', 'price'],
+                            include: [
+                                {
+                                    model: addOnServices,
+                                    as: 'addOnService',
+                                    attributes: ['id', 'name', 'price'],
+                                    required: false,
+                                },
+                            ],
                         },
                         {
                             model: bookingPreference,
