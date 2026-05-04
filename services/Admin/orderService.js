@@ -10,9 +10,12 @@ const {
     bookingStatus, 
     service, 
     categories, 
+    subCategories,
     billingDetails,
     bookingPreference,
+    preferenceTypes,
     serviceWithPreferences,
+    serviceCategories,
     preferenceValues,
     tip,
     zone,
@@ -340,6 +343,183 @@ class OrderService {
             }
 
             return orderDetails;
+    }
+
+    /**
+     * Get service detail catalog and booking-selected services
+     * @param {number} bookingId - Booking ID
+     * @returns {Object} Combined service catalog and selected services
+     */
+    async getServiceDetailWithBookingSelection(bookingId) {
+        if (!bookingId) {
+            throw new ValidationError('bookingId is required');
+        }
+
+        const bookingExists = await booking.findByPk(bookingId, { attributes: ['id'] });
+        if (!bookingExists) {
+            throw new NotFoundError('Booking not found');
+        }
+
+        const serviceData = await serviceCategories.findAll({
+            where: { status: true },
+            include: [
+                {
+                    model: service,
+                    attributes: ['id', 'name', 'status', 'image', 'description', 'timeRequired'],
+                    required: true
+                },
+                {
+                    model: categories,
+                    attributes: ['id', 'name', 'status', 'image', 'description'],
+                    required: true,
+                    include: [
+                        {
+                            model: subCategories,
+                            attributes: ['id', 'name', 'status', 'price', 'unitCount'],
+                            required: false
+                        }
+                    ]
+                }
+            ]
+        });
+
+        const grouped = {};
+        for (const item of serviceData) {
+            const plainItem = item.toJSON ? item.toJSON() : item;
+            const serviceObj = plainItem.service;
+            const categoryObj = plainItem.category || plainItem.categories;
+
+            if (!serviceObj || !categoryObj) continue;
+
+            if (!grouped[serviceObj.id]) {
+                grouped[serviceObj.id] = {
+                    serviceId: serviceObj.id,
+                    service: {
+                        id: serviceObj.id,
+                        name: serviceObj.name,
+                        status: serviceObj.status,
+                        image: serviceObj.image || null,
+                        description: serviceObj.description || null,
+                        turnAroundTime: serviceObj.timeRequired || null
+                    },
+                    categories: []
+                };
+            }
+
+            const existingCategory = grouped[serviceObj.id].categories.find(
+                cat => cat.categoryId === categoryObj.id
+            );
+
+            if (!existingCategory) {
+                grouped[serviceObj.id].categories.push({
+                    categoryId: categoryObj.id,
+                    category: {
+                        id: categoryObj.id,
+                        name: categoryObj.name,
+                        status: categoryObj.status,
+                        image: categoryObj.image || null,
+                        description: categoryObj.description || null
+                    },
+                    subCategories: (categoryObj.subCategories || []).map(subCat => ({
+                        id: subCat.id,
+                        name: subCat.name,
+                        status: subCat.status,
+                        price: subCat.price,
+                        unitCount: subCat.unitCount ?? null
+                    }))
+                });
+            }
+        }
+
+        const selectedServices = await customerSelectedService.findAll({
+            where: {
+                bookingId,
+                status: true
+            },
+            include: [
+                {
+                    model: service,
+                    attributes: ['id', 'name', 'status', 'image'],
+                    required: false
+                },
+                {
+                    model: categories,
+                    attributes: ['id', 'name', 'status', 'image', 'description'],
+                    required: false
+                },
+                {
+                    model: subCategories,
+                    attributes: ['id', 'name', 'status', 'price', 'unitCount'],
+                    required: false
+                },
+                {
+                    model: customerSelectedServiceAddOn,
+                    as: 'addOns',
+                    required: false,
+                    attributes: ['id', 'addOnServiceId', 'price'],
+                    include: [
+                        {
+                            model: addOnServices,
+                            as: 'addOnService',
+                            attributes: ['id', 'name', 'price']
+                        }
+                    ]
+                },
+                {
+                    model: bookingPreference,
+                    as: 'selectedServicePreferences',
+                    required: false,
+                    attributes: [
+                        'id',
+                        'customerSelectedServiceId',
+                        'preferenceTypeId',
+                        'preferenceValueId',
+                        'parentPreferenceValueId',
+                        'preferenceInstruction'
+                    ],
+                    include: [
+                        {
+                            model: preferenceTypes,
+                            attributes: ['id', 'name'],
+                            required: false
+                        },
+                        {
+                            model: preferenceValues,
+                            attributes: ['id', 'value'],
+                            required: false
+                        }
+                    ]
+                }
+            ],
+            attributes: [
+                'id',
+                'date',
+                'time',
+                'serviceId',
+                'categoryId',
+                'subCategoryId',
+                'items',
+                'categoryPrice',
+                'serviceInstruction'
+            ]
+        });
+
+        const selectedServiceIdSet = new Set(
+            selectedServices
+                .map(item => item?.serviceId)
+                .filter(Boolean)
+        );
+
+        const catalogWithSelectionFlag = Object.values(grouped).map(serviceItem => ({
+            ...serviceItem,
+            isSelectedInBooking: selectedServiceIdSet.has(serviceItem.serviceId)
+        }));
+
+        return {
+            bookingId: Number(bookingId),
+            serviceDetails: catalogWithSelectionFlag,
+            bookingSelectedServices: selectedServices
+        };
     }
 
     /**

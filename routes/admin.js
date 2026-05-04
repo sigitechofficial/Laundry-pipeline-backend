@@ -320,6 +320,10 @@ router.get('/allCancelOrders', asyncMiddleware(adminController.allCancelOrders))
 router.get('/completeOrders', asyncMiddleware(adminController.completeOrders))
 //Get Single Order for Editing
 router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrderForEdit))
+//Invoice creation detail (reuse agent logic) for admin panel
+router.get('/invoiceCreation/:bookingId', asyncMiddleware(agentController.invoiceCreation))
+//Get service details with selected booking services
+router.get('/serviceDetailWithBookingSelection/:bookingId', asyncMiddleware(adminController.getServiceDetailWithBookingSelection))
 //Edit Order
 router.patch('/editOrder/:orderId', asyncMiddleware(adminController.editOrder))
 //Delete Order (Soft Delete)

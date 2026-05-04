@@ -3023,9 +3023,6 @@ exports.editServiceStatus = async (req, res) => {
 
 
 
-
-
-
 /*
   *  Specific Service Detail For the Customer
 */
