@@ -342,6 +342,69 @@ class PostcodeZoneService {
     }
 
     /**
+     * Validate whether an entered postcode/outcode exists and belongs to London.
+     * Uses postcodes.io (/postcodes or /outcodes) plus London outcode-area rules.
+     * @param {string} postcode - postcode/outcode entered by user
+     * @returns {Object} Validation result
+     */
+    async validateLondonPostcode(postcode) {
+        if (!postcode || typeof postcode !== 'string') {
+            throw new ValidationError('Postcode is required');
+        }
+
+        const normalizedPostcode = this.normalizePostcode(postcode);
+        if (!normalizedPostcode) {
+            throw new ValidationError('Postcode is required');
+        }
+
+        const outcodeInput = this.isOutcode(normalizedPostcode);
+        const endpointType = outcodeInput ? 'outcode' : 'postcode';
+        const localLondonCheck = this.isLondonPostcode(normalizedPostcode);
+
+        let response;
+        try {
+            response = outcodeInput
+                ? await axios.get(`https://api.postcodes.io/outcodes/${encodeURIComponent(normalizedPostcode)}`, { timeout: 5000 })
+                : await axios.get(`https://api.postcodes.io/postcodes/${encodeURIComponent(normalizedPostcode)}`, { timeout: 5000 });
+        } catch (error) {
+            if (error.response && error.response.status === 404) {
+                return {
+                    input: postcode,
+                    normalizedPostcode,
+                    endpointType,
+                    isValid: false,
+                    isLondon: false,
+                    message: 'Postcode not found'
+                };
+            }
+            throw new ValidationError(`Failed to validate postcode: ${error.message}`);
+        }
+
+        const apiResult = response?.data?.result;
+        const apiTextChecks = [
+            apiResult?.admin_district,
+            apiResult?.admin_ward,
+            apiResult?.parish,
+            apiResult?.region,
+            apiResult?.country
+        ]
+            .filter(Boolean)
+            .map(value => String(value).toLowerCase());
+
+        const apiLondonCheck = apiTextChecks.some(value => value.includes('london'));
+        const isLondon = localLondonCheck || apiLondonCheck;
+
+        return {
+            input: postcode,
+            normalizedPostcode,
+            endpointType,
+            isValid: true,
+            isLondon,
+            message: isLondon ? 'Valid London postcode' : 'Valid postcode but not in London'
+        };
+    }
+
+    /**
      * Check if two postcodes conflict hierarchically.
      * Conflicts:  exact match, outcode covers full postcode, or full postcode falls inside outcode.
      * e.g. "SW1A" conflicts with "SW1A2AA" and vice-versa, but "SW1A1AA" does NOT conflict with "SW1A2BB".

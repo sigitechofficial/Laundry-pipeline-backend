@@ -176,6 +176,8 @@ router.delete('/deleteCity/:cityId', asyncMiddleware(adminController.deleteCity)
 router.post('/addZone', asyncMiddleware(adminController.addZones))
 //Add Zones by Postcodes
 router.post('/addZoneByPostcodes', asyncMiddleware(adminController.addZonesByPostcodes))
+//Validate if entered postcode belongs to London
+router.post('/validateLondonPostcode', asyncMiddleware(adminController.validateLondonPostcode))
 // Edit Zone by Postcodes (optionally send postcodes to regenerate polygon)
 router.put('/editZoneByPostcodes/:zoneId', asyncMiddleware(adminController.editZoneByPostcodes))
 // Get Zones
@@ -322,6 +324,8 @@ router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrder
 router.patch('/editOrder/:orderId', asyncMiddleware(adminController.editOrder))
 //Delete Order (Soft Delete)
 router.delete('/deleteOrder/:orderId', asyncMiddleware(adminController.deleteOrder))
+//Admin update invoice services for an order
+router.post('/updateInvoice', asyncMiddleware(adminController.updateInvoice))
 //For Order Items Sheet
 router.get(
     "/orderItemsSheet", asyncMiddleware(agentController.customerServices)

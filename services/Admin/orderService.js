@@ -1,6 +1,8 @@
 const { 
     booking, 
     customerSelectedService, 
+    customerSelectedServiceAddOn,
+    addOnServices,
     proofOfDeliveries,
     OnHoldConfirmation, 
     addressDb, 
@@ -20,12 +22,25 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
+const momentTz = require('moment-timezone');
 const { 
     ValidationError, 
     NotFoundError, 
     ConflictError,
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
+
+const ADMIN_BUSINESS_TIME_ZONE = 'Europe/London';
+
+function adminWallClockDateTime(timeZone, clientTimeZone) {
+    const candidate = timeZone || clientTimeZone;
+    const zone = candidate && momentTz.tz.zone(candidate) ? candidate : ADMIN_BUSINESS_TIME_ZONE;
+    const now = momentTz().tz(zone);
+    return {
+        date: now.format('YYYY-MM-DD'),
+        time: now.format('HH:mm:ss')
+    };
+}
 
 class OrderService {
     /**
@@ -839,6 +854,177 @@ class OrderService {
             orderId,
             message: 'Order deleted successfully',
             deletedAt: new Date()
+        };
+    }
+
+    /**
+     * Update invoice services (Admin side)
+     * Mirrors agent invoice-creation business logic in service-controller style.
+     * @param {Object} data - Request data
+     * @returns {Object} Invoice update summary
+     */
+    async updateInvoice(data) {
+        const {
+            services,
+            bookingId,
+            zoneMinimumAmount,
+            serviceCharge,
+            timeZone,
+            clientTimeZone,
+        } = data;
+
+        if (!Array.isArray(services) || services.length === 0) {
+            throw new ValidationError("Invalid request. Please provide an array of services.");
+        }
+
+        const { date: currentDate, time: currentTime } = adminWallClockDateTime(
+            timeZone,
+            clientTimeZone
+        );
+
+        const bookings = await booking.findByPk(bookingId, {
+            include: [
+                {
+                    model: zone,
+                    attributes: ['id', 'name', 'zoneAdminComission']
+                },
+                {
+                    model: tip,
+                    as: 'tips',
+                    attributes: ['id', 'amount'],
+                    required: false
+                }
+            ]
+        });
+
+        if (!bookings) {
+            throw new NotFoundError("Booking not found");
+        }
+
+        const zoneData = bookings.zone;
+        if (!zoneData) {
+            throw new NotFoundError("Zone information not found for this booking");
+        }
+
+        let total = 0;
+
+        for (const serviceItem of services) {
+            const itemTotalPrice = parseFloat(serviceItem.categoryCharge || 0);
+            total += itemTotalPrice;
+
+            const existingRecords = await customerSelectedService.findAll({
+                where: {
+                    bookingId,
+                    serviceId: serviceItem.serviceId,
+                    subCategoryId: { [Op.is]: null },
+                    categoryId: { [Op.is]: null },
+                }
+            });
+
+            let matched = existingRecords.find(r => r.subCategoryId === serviceItem.subCategoryId);
+            if (!matched) {
+                matched = existingRecords.find(r => r.subCategoryId === null);
+            }
+
+            let selectedServiceRow;
+            if (matched) {
+                await matched.update({
+                    categoryId: serviceItem.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: serviceItem.subCategoryId,
+                    items: serviceItem.items,
+                    date: currentDate,
+                    time: currentTime,
+                    status: true
+                });
+                selectedServiceRow = matched;
+            } else {
+                selectedServiceRow = await customerSelectedService.create({
+                    date: currentDate,
+                    time: currentTime,
+                    bookingId,
+                    serviceId: serviceItem.serviceId,
+                    categoryId: serviceItem.categoryId,
+                    categoryPrice: itemTotalPrice,
+                    subCategoryId: serviceItem.subCategoryId,
+                    items: serviceItem.items,
+                    status: true
+                });
+            }
+
+            if (Array.isArray(serviceItem.addOnServiceIds)) {
+                await customerSelectedServiceAddOn.destroy({
+                    where: { customerSelectedServiceId: selectedServiceRow.id }
+                });
+
+                if (serviceItem.addOnServiceIds.length > 0) {
+                    const addOnRecords = await addOnServices.findAll({
+                        where: { id: serviceItem.addOnServiceIds }
+                    });
+                    for (const addOn of addOnRecords) {
+                        const addOnPrice = parseFloat(addOn.price || 0);
+                        total += addOnPrice;
+                        await customerSelectedServiceAddOn.create({
+                            customerSelectedServiceId: selectedServiceRow.id,
+                            addOnServiceId: addOn.id,
+                            price: addOnPrice
+                        });
+                    }
+                }
+            }
+        }
+
+        const parsedServiceCharge = parseFloat(serviceCharge) || 0;
+        const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+        const tipAmount = bookings.tips && bookings.tips.length > 0
+            ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
+            : 0;
+
+        let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+        total = subTotal - parsedZoneMinimum;
+
+        const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
+        const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
+
+        total = parseFloat(total.toFixed(2));
+        subTotal = parseFloat(subTotal.toFixed(2));
+        const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
+
+        if (isNaN(total)) {
+            throw new Error("Calculated total is NaN. Please check your input values.");
+        }
+
+        await billingDetails.update(
+            {
+                total,
+                discount: 0,
+                paymentStatus: "Pending",
+                zoneAdminCommission: finalZoneAdminCommissionAmount,
+            },
+            { where: { bookingId } }
+        );
+
+        await bookingHistory.create({
+            date: currentDate,
+            time: currentTime,
+            bookingId,
+            bookingStatusId: 9,
+        });
+
+        await booking.update(
+            {
+                orderAmount: total,
+                bookingStatusId: 9,
+                subTotal,
+            },
+            { where: { id: bookingId } }
+        );
+
+        return {
+            bookingId,
+            total,
+            subTotal,
+            zoneAdminCommission: finalZoneAdminCommissionAmount
         };
     }
 }
