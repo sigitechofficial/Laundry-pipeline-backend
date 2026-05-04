@@ -531,6 +531,13 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.getCustomerServicesForOnHold)
 );
+//Get print label tags data (unitCount-based duplication)
+router.get(
+    "/printLabelData/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.printLabelData)
+);
 // Get rejectedServiceItems
 router.get(
     "/rejectedServiceItems/:bookingId",

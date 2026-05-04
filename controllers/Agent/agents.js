@@ -3358,31 +3358,32 @@ exports.getBussinessWrkinghours = async (req, res) => {
 
 
 exports.printLabelData = async (req, res) => {
-    const { bookingId } = req.params
-    const datafind = await booking.findAll({
-        where: {
-            id: bookingId
-        },
+    const { bookingId } = req.params;
+
+    const bookingData = await booking.findOne({
+        where: { id: bookingId },
         include: [
             {
                 model: users,
                 as: 'customer',
-                attributes
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
             },
             {
                 model: customerSelectedService,
                 where: {
-                    bookingId: bookingId
+                    bookingId: bookingId,
+                    status: true
                 },
-                attributes: ['id'],
+                required: false,
+                attributes: ['id', 'serviceId', 'categoryId', 'subCategoryId', 'items', 'categoryPrice'],
                 include: [
                     {
                         model: service,
-                        attributes: ['id', 'name'],
+                        attributes: ['id', 'name']
                     },
                     {
                         model: categories,
-                        attributes: ['id', 'name'],
+                        attributes: ['id', 'name']
                     },
                     {
                         model: subCategories,
@@ -3390,12 +3391,64 @@ exports.printLabelData = async (req, res) => {
                     }
                 ]
             }
-
         ]
-    })
+    });
 
+    if (!bookingData) {
+        throw new NotFoundError("Booking not found");
+    }
 
-    return ResponseHelper.success(res, "Print Label Data", {})
+    const selectedServices = bookingData.customerSelectedServices || [];
+
+    // Build printable tags and duplicate each selected subcategory
+    // based on its unitCount (null/1 => once, 2 => twice, etc.).
+    const rawTags = [];
+    selectedServices.forEach((selectedService, serviceIndex) => {
+        const subCategory = selectedService.subCategory;
+        if (!subCategory) return;
+
+        const parsedUnitCount = Number(subCategory.unitCount);
+        const repeatCount =
+            Number.isFinite(parsedUnitCount) && parsedUnitCount > 1
+                ? Math.floor(parsedUnitCount)
+                : 1;
+
+        for (let i = 0; i < repeatCount; i += 1) {
+            rawTags.push({
+                bookingId: bookingData.id,
+                orderTrackId: bookingData.orderTrackId,
+                customerId: bookingData.customer?.id || null,
+                customerName: `${bookingData.customer?.firstName || ''} ${bookingData.customer?.lastName || ''}`.trim(),
+                serviceId: selectedService.serviceId,
+                serviceName: selectedService.service?.name || null,
+                categoryId: selectedService.categoryId,
+                categoryName: selectedService.category?.name || null,
+                subCategoryId: selectedService.subCategoryId,
+                subCategoryName: subCategory.name,
+                subCategoryBarCode: subCategory.barCode || null,
+                subCategoryPrice: subCategory.price,
+                unitCount: subCategory.unitCount,
+                serviceOrder: serviceIndex + 1,
+                copyIndexWithinSubCategory: i + 1
+            });
+        }
+    });
+
+    const totalTags = rawTags.length;
+    const tags = rawTags.map((tag, index) => ({
+        ...tag,
+        printIndex: index + 1,
+        printDisplay: `${index + 1} of ${totalTags}`,
+        printDisplayCompact: `${index + 1}/${totalTags}`
+    }));
+
+    return ResponseHelper.success(res, "Print Label Data", {
+        bookingId: bookingData.id,
+        orderTrackId: bookingData.orderTrackId,
+        customer: bookingData.customer,
+        totalTags,
+        tags
+    });
 }
 
 
