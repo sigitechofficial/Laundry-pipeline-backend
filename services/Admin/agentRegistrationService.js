@@ -1,17 +1,17 @@
 require("dotenv").config();
-const { 
-    users, 
-    userType, 
-    otpVerification, 
-    deviceToken, 
-    features, 
-    bussinessInformation, 
-    bussinessWorkingHours, 
-    service, 
-    machines, 
-    machineCount, 
-    addressDb, 
-    zone, 
+const {
+    users,
+    userType,
+    otpVerification,
+    deviceToken,
+    features,
+    bussinessInformation,
+    bussinessWorkingHours,
+    service,
+    machines,
+    machineCount,
+    addressDb,
+    zone,
     units,
     agentSelectServices,
     countries,
@@ -22,12 +22,12 @@ const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
-const { 
-    UnauthorizedError, 
-    NotFoundError, 
-    ConflictError, 
+const {
+    UnauthorizedError,
+    NotFoundError,
+    ConflictError,
     ValidationError,
-    UnprocessableEntityError 
+    UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
 const stripe = require('../../controllers/stripe');
 
@@ -36,7 +36,7 @@ const stripe = require('../../controllers/stripe');
  * Handles complete agent registration process for admin side
  */
 class AgentRegistrationService {
-    
+
     /**
      * Register Agent (Complete Setup)
      * @param {Object} data - Registration data
@@ -44,14 +44,14 @@ class AgentRegistrationService {
      * @returns {Object} Registration result
      */
     async registerAgent(data, profileImg = null) {
-        const { 
-            firstName, 
-            lastName, 
-            password, 
-            phoneNum, 
-            countryId, 
-            cityId, 
-            email, 
+        const {
+            firstName,
+            lastName,
+            password,
+            phoneNum,
+            countryId,
+            cityId,
+            email,
             countryCode
         } = data;
 
@@ -71,7 +71,7 @@ class AgentRegistrationService {
 
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 8);
-        
+
         // Create user with agent type (userTypeId: 4) - ONLY USER, nothing else
         const userCreate = await users.create({
             email,
@@ -90,7 +90,7 @@ class AgentRegistrationService {
 
         // Create Stripe customer
         const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        
+
         // Update user with Stripe customer ID
         await users.update({
             stripeCustomerId: stripeCustomer
@@ -114,11 +114,11 @@ class AgentRegistrationService {
      * @returns {Object} Result
      */
     async addBusinessInformation(data, userId) {
-        const { 
-            shopName, 
-            matchProfileOptions, 
-            otherText, 
-            machineryCount, 
+        const {
+            shopName,
+            matchProfileOptions,
+            otherText,
+            machineryCount,
             services,
             serviceTimes,
             bussinessWorkingDays
@@ -170,7 +170,7 @@ class AgentRegistrationService {
                 machineId: ele.machineId,
                 bussinessInformationId: agentInfo.id
             }));
-            
+
             await machineCount.bulkCreate(machinesCountCreate);
         }
 
@@ -202,20 +202,20 @@ class AgentRegistrationService {
                 serviceTimes.map(async (ele) => {
                     // Check if service exists for this agent
                     const existingService = await agentSelectServices.findOne({
-                        where: { 
-                            agentServiceId: userId, 
-                            serviceId: ele.serviceId 
+                        where: {
+                            agentServiceId: userId,
+                            serviceId: ele.serviceId
                         }
                     });
-                    
+
                     if (existingService) {
                         await agentSelectServices.update({
                             serviceTimeRequired: ele.serviceTimeRequired
-                        }, { 
-                            where: { 
-                                agentServiceId: userId, 
-                                serviceId: ele.serviceId 
-                            } 
+                        }, {
+                            where: {
+                                agentServiceId: userId,
+                                serviceId: ele.serviceId
+                            }
                         });
                     }
                 })

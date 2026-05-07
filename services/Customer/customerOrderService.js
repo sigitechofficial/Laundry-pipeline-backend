@@ -108,28 +108,43 @@ async function findZoneByPostcode(postcode) {
 
     console.log(`🔍 Postcode lookup — full: "${normalized}", outcode: "${outcode}"`);
 
-    const zones = await zone.findOne({
+    // 1) Prefer exact full-postcode match first (most specific)
+    const exactZones = await zone.findAll({
         where: {
             status: true,
-            [Op.or]: [
-                // Exact match (e.g. stored "SW1A1AA" matches "SW1A1AA")
+            [Op.and]: [
                 sequelize.where(
                     sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(normalized)),
                     true
-                ),
-                // Outcode match (e.g. stored "SW1A" matches address "SW1A1AA")
-                sequelize.where(
-                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(outcode)),
-                    true
-                ),
+                )
             ]
         },
         include: zoneInclude,
         attributes: zoneAttributes,
     });
 
-    console.log(`📮 Postcode zone lookup found ${zones.name} zone(s)`);
-    return zones;
+    if (exactZones.length > 0) {
+        console.log(`📮 Postcode exact lookup found ${exactZones.length} zone(s)`);
+        return exactZones;
+    }
+
+    // 2) Fallback to outcode match (can be broader and return multiple)
+    const outcodeZones = await zone.findAll({
+        where: {
+            status: true,
+            [Op.and]: [
+                sequelize.where(
+                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(outcode)),
+                    true
+                )
+            ]
+        },
+        include: zoneInclude,
+        attributes: zoneAttributes,
+    });
+
+    console.log(`📮 Postcode outcode lookup found ${outcodeZones.length} zone(s)`);
+    return outcodeZones;
 }
 
 // Find zones function
@@ -155,11 +170,18 @@ async function findZones(lat, lng) {
     // ── Step 2: Try postcode-based zone lookup first ──────────────────────────
     if (postcodeLookupResult) {
         const postcodeZones = await findZoneByPostcode(postcodeLookupResult);
-        if (postcodeZones.length > 0) {
+        if (postcodeZones.length === 1) {
             console.log("✅ Zone found via postcode lookup:", postcodeZones[0].name);
             return postcodeZones;
         }
-        console.log("⚠️ No zone matched by postcode, falling back to geometry...");
+        if (postcodeZones.length > 1) {
+            console.log("⚠️ Multiple zones matched by postcode/outcode, disambiguating via geometry...");
+            // Do not return ambiguous postcode matches directly.
+            // We resolve to one final zone via geometry below.
+        }
+        if (postcodeZones.length === 0) {
+            console.log("⚠️ No zone matched by postcode, falling back to geometry...");
+        }
     }
 
     // ── Step 3: Fallback — geometry-based lookup (ST_Contains) ───────────────
@@ -178,6 +200,7 @@ async function findZones(lat, lng) {
         },
         include: zoneInclude,
         attributes: zoneAttributes,
+        order: [['id', 'ASC']],
     });
     
     console.log(`Found ${findZone.length} zone(s) via geometry`);
@@ -191,6 +214,13 @@ async function findZones(lat, lng) {
         });
     }
     
+    // Final safety: if overlapping polygons produce multiple zones,
+    // return only one deterministic zone to avoid frontend ambiguity.
+    if (findZone.length > 1) {
+        console.log(`⚠️ Multiple geometry zones (${findZone.length}) found; selecting deterministic zoneId=${findZone[0].id}`);
+        return [findZone[0]];
+    }
+
     return findZone;
 }
 
