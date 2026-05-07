@@ -108,7 +108,7 @@ async function findZoneByPostcode(postcode) {
 
     console.log(`🔍 Postcode lookup — full: "${normalized}", outcode: "${outcode}"`);
 
-    const zones = await zone.findAll({
+    const zones = await zone.findOne({
         where: {
             status: true,
             [Op.or]: [
@@ -128,7 +128,7 @@ async function findZoneByPostcode(postcode) {
         attributes: zoneAttributes,
     });
 
-    console.log(`📮 Postcode zone lookup found ${zones.length} zone(s)`);
+    console.log(`📮 Postcode zone lookup found ${zones.name} zone(s)`);
     return zones;
 }
 

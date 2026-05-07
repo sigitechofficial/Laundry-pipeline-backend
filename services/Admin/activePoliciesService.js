@@ -24,12 +24,21 @@ class ActivePoliciesService {
      * @param {string} type   - 'cancellation' | 'reschedule' | 'no_show'
      * @param {number} zoneId - the zone to scope the lookup to
      */
-    _nowWhere(type, zoneId) {
+    _normalizeZoneId(zoneId) {
+        if (zoneId === null || zoneId === undefined || zoneId === '') {
+            return null;
+        }
+        const parsed = Number(zoneId);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    _nowWhere(type, zoneId = null) {
         const now = new Date();
+        const normalizedZoneId = this._normalizeZoneId(zoneId);
         return {
             type,
             isActive: true,
-            zoneId,
+            ...(normalizedZoneId !== null ? { zoneId: normalizedZoneId } : {}),
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -53,8 +62,10 @@ class ActivePoliciesService {
      * @returns {Object|null}
      */
     async getActiveCancellationPolicy(zoneId) {
-        return policy.findOne({
-            where: this._nowWhere('cancellation', zoneId),
+        const normalizedZoneId = this._normalizeZoneId(zoneId);
+        const where = this._nowWhere('cancellation', normalizedZoneId);
+        let result = await policy.findOne({
+            where,
             include: [
                 {
                     model: cancellationPolicyConfig,
@@ -68,6 +79,25 @@ class ActivePoliciesService {
                 ['createdAt', 'DESC']
             ]
         });
+        // Fallback: when zone-specific policy is not found, use global active policy
+        if (!result && normalizedZoneId !== null) {
+            result = await policy.findOne({
+                where: this._nowWhere('cancellation', null),
+                include: [
+                    {
+                        model: cancellationPolicyConfig,
+                        as: 'cancellationConfig',
+                        required: false
+                    }
+                ],
+                order: [
+                    ['isDefault', 'DESC'],
+                    ['effectiveFrom', 'DESC'],
+                    ['createdAt', 'DESC']
+                ]
+            });
+        }
+        return result;
     }
 
     /**
@@ -76,8 +106,9 @@ class ActivePoliciesService {
      * @returns {Object|null}
      */
     async getActiveReschedulePolicy(zoneId) {
-        return policy.findOne({
-            where: this._nowWhere('reschedule', zoneId),
+        const normalizedZoneId = this._normalizeZoneId(zoneId);
+        let result = await policy.findOne({
+            where: this._nowWhere('reschedule', normalizedZoneId),
             include: [
                 {
                     model: reschedulePolicyConfig,
@@ -91,6 +122,24 @@ class ActivePoliciesService {
                 ['createdAt', 'DESC']
             ]
         });
+        if (!result && normalizedZoneId !== null) {
+            result = await policy.findOne({
+                where: this._nowWhere('reschedule', null),
+                include: [
+                    {
+                        model: reschedulePolicyConfig,
+                        as: 'rescheduleConfig',
+                        required: false
+                    }
+                ],
+                order: [
+                    ['isDefault', 'DESC'],
+                    ['effectiveFrom', 'DESC'],
+                    ['createdAt', 'DESC']
+                ]
+            });
+        }
+        return result;
     }
 
     /**
@@ -99,8 +148,9 @@ class ActivePoliciesService {
      * @returns {Object|null}
      */
     async getActiveNoShowPolicy(zoneId) {
-        return policy.findOne({
-            where: this._nowWhere('no_show', zoneId),
+        const normalizedZoneId = this._normalizeZoneId(zoneId);
+        let result = await policy.findOne({
+            where: this._nowWhere('no_show', normalizedZoneId),
             include: [
                 {
                     model: noShowPolicyConfig,
@@ -114,6 +164,24 @@ class ActivePoliciesService {
                 ['createdAt', 'DESC']
             ]
         });
+        if (!result && normalizedZoneId !== null) {
+            result = await policy.findOne({
+                where: this._nowWhere('no_show', null),
+                include: [
+                    {
+                        model: noShowPolicyConfig,
+                        as: 'noShowConfig',
+                        required: false
+                    }
+                ],
+                order: [
+                    ['isDefault', 'DESC'],
+                    ['effectiveFrom', 'DESC'],
+                    ['createdAt', 'DESC']
+                ]
+            });
+        }
+        return result;
     }
 
     /**
