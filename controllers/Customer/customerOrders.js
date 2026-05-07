@@ -1124,7 +1124,9 @@ async function getCustomerRescheduleHistory(req, res) {
  * Returns delivery window, min order, service fee, and no-show fee for the home screen info cards
  */
 async function getHomeConfig(req, res) {
-    const result = await customerOrderService.getHomeConfig();
+    const lat = req.query.lat ?? req.body?.lat;
+    const lng = req.query.lng ?? req.body?.lng;
+    const result = await customerOrderService.getHomeConfig({ lat, lng });
     return ResponseHelper.success(res, result.message, result.data);
 }
 

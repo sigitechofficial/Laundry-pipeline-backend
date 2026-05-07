@@ -2139,18 +2139,25 @@ class CustomerOrderService {
      * Delivery window, Minimum order amount, Service fee, No-show fee
      * @returns {Object} homeConfig data
      */
-    async getHomeConfig() {
-        // First fetch the active zone, then use its id to scope the policy lookups
-        const activeZone = await zone.findOne({
-            where: { status: true },
-            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
-            include: [{
-                model: units,
-                as: 'currencyUnitZ',
-                required: false,
-                attributes: ['id', 'name', 'symbol']
-            }]
-        });
+    async getHomeConfig(data = {}) {
+        const { lat, lng } = data;
+
+        if (lat === undefined || lat === null || lng === undefined || lng === null) {
+            throw new ValidationError("Latitude and Longitude are required");
+        }
+
+        const parsedLat = parseFloat(lat);
+        const parsedLng = parseFloat(lng);
+        if (Number.isNaN(parsedLat) || Number.isNaN(parsedLng)) {
+            throw new ValidationError("Latitude and Longitude must be valid numbers");
+        }
+
+        // Resolve zone from the given customer coordinates
+        const matchedZones = await findZones(parsedLat, parsedLng);
+        const activeZone = Array.isArray(matchedZones) ? matchedZones[0] : matchedZones;
+        if (!activeZone) {
+            throw new NotFoundError("No active zone found for the provided coordinates");
+        }
 
         const activeZoneId = activeZone?.id ?? null;
         const now = new Date();
@@ -2240,6 +2247,10 @@ class CustomerOrderService {
                     label: "Cancellation Fee",
                     value: cancellationFee,
                     currency: cancellationCurrency
+                },
+                zone: {
+                    id: activeZone.id,
+                    name: activeZone.name
                 }
             }
         };
