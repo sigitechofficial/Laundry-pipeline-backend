@@ -248,13 +248,14 @@ class ServiceManagementService {
     async getAllPreferenceTypesAndServiceDetails(serviceId) {
         console.log("Service Id ====>", serviceId)
 
-        // Fetch all preference types linked to this service (flat list)
+        // Fetch mapped preference types for this service (can include parent and/or child types).
         const preferencesData = await serviceWithPreferences.findAll({
-            where: { serviceId: serviceId },
+            where: { serviceId: serviceId, status: true },
             include: [
                 {
                     model: preferenceTypes,
                     attributes: ['id', 'name', 'parentPreferenceTypeId'],
+                    where: { status: true },
                     include: [
                         {
                             model: preferenceValues,
@@ -267,20 +268,71 @@ class ServiceManagementService {
             ]
         });
 
-        if (!preferencesData) {
-            throw new NotFoundError('Preference Data Not Found')
-        }
-
-        // Build nested structure: parents contain childTypes array
-        const allTypes = preferencesData
+        // Build flat map from mapped preference types (deduplicated by type id).
+        const mappedTypes = preferencesData
             .filter(row => row.preferenceType)
             .map(row => row.preferenceType.toJSON());
+        const typeMap = new Map(mappedTypes.map(type => [type.id, type]));
 
-        // Separate parents (no parentPreferenceTypeId) from children
-        const parentTypes = allTypes.filter(t => !t.parentPreferenceTypeId);
-        const childTypes  = allTypes.filter(t =>  t.parentPreferenceTypeId);
+        // If mapped row is a child, include its parent as top-level grouping node.
+        const mappedChildParentIds = [...new Set(
+            mappedTypes
+                .map(type => type.parentPreferenceTypeId)
+                .filter(parentId => parentId !== null && parentId !== undefined)
+        )];
+        if (mappedChildParentIds.length > 0) {
+            const parentRows = await preferenceTypes.findAll({
+                where: {
+                    id: { [Op.in]: mappedChildParentIds },
+                    status: true
+                },
+                attributes: ['id', 'name', 'parentPreferenceTypeId'],
+                include: [
+                    {
+                        model: preferenceValues,
+                        attributes: ['id', 'value'],
+                        where: { status: true },
+                        required: false
+                    }
+                ]
+            });
 
-        // Attach children to their parent
+            parentRows.forEach(parentRow => {
+                const parent = parentRow.toJSON();
+                if (!typeMap.has(parent.id)) {
+                    typeMap.set(parent.id, parent);
+                }
+            });
+        }
+
+        const allTypes = Array.from(typeMap.values());
+
+        // Parents are types without parentPreferenceTypeId.
+        const parentTypes = allTypes.filter(type => !type.parentPreferenceTypeId);
+        const parentIds = parentTypes.map(parent => parent.id);
+
+        // Load all active children for the selected parents.
+        let childTypes = [];
+        if (parentIds.length > 0) {
+            const childRows = await preferenceTypes.findAll({
+                where: {
+                    parentPreferenceTypeId: { [Op.in]: parentIds },
+                    status: true
+                },
+                attributes: ['id', 'name', 'parentPreferenceTypeId'],
+                include: [
+                    {
+                        model: preferenceValues,
+                        attributes: ['id', 'value'],
+                        where: { status: true },
+                        required: false
+                    }
+                ]
+            });
+            childTypes = childRows.map(childRow => childRow.toJSON());
+        }
+
+        // Attach children to their parent.
         const nestedPreferences = parentTypes.map(parent => ({
             ...parent,
             childTypes: childTypes.filter(child => child.parentPreferenceTypeId === parent.id)
