@@ -334,6 +334,10 @@ router.post('/updateInvoice', asyncMiddleware(adminController.updateInvoice))
 router.get(
     "/orderItemsSheet", asyncMiddleware(agentController.customerServices)
 );
+//For Print Label Tags Data (unitCount-based duplication)
+router.get(
+    "/printLabelData/:bookingId", asyncMiddleware(agentController.printLabelData)
+);
 
 //!-----------------------------Service Management------------------------------//
 //Get Services with CategOries && SubCategoriesCounts
