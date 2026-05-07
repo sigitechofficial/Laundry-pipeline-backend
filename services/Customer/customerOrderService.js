@@ -1379,7 +1379,6 @@ class CustomerOrderService {
                             model: customerSelectedServiceAddOn,
                             as: 'addOns',
                             required: false,
-                            separate: true,
                             attributes: ['id', 'addOnServiceId', 'price'],
                             include: [
                                 {
@@ -1556,6 +1555,51 @@ class CustomerOrderService {
         }
 
         const bookingPlain = bookingFind.toJSON ? bookingFind.toJSON() : bookingFind;
+
+        // Ensure add-ons are always populated for selected services.
+        // Some Sequelize nested include combinations can return empty hasMany arrays
+        // despite rows existing, so we hydrate add-ons explicitly by selected service IDs.
+        const selectedServices = Array.isArray(bookingPlain.customerSelectedServices)
+            ? bookingPlain.customerSelectedServices
+            : [];
+        const selectedServiceIds = selectedServices.map(s => s.id).filter(Boolean);
+
+        if (selectedServiceIds.length > 0) {
+            const addOnRows = await customerSelectedServiceAddOn.findAll({
+                where: { customerSelectedServiceId: { [Op.in]: selectedServiceIds } },
+                attributes: ['id', 'customerSelectedServiceId', 'addOnServiceId', 'price'],
+                include: [
+                    {
+                        model: addOnServices,
+                        as: 'addOnService',
+                        attributes: ['id', 'name', 'price'],
+                        required: false,
+                    },
+                ],
+                order: [['id', 'ASC']]
+            });
+
+            const addOnsByServiceId = {};
+            for (const row of addOnRows) {
+                const plain = row.toJSON ? row.toJSON() : row;
+                const key = plain.customerSelectedServiceId;
+                if (!addOnsByServiceId[key]) {
+                    addOnsByServiceId[key] = [];
+                }
+                addOnsByServiceId[key].push({
+                    id: plain.id,
+                    addOnServiceId: plain.addOnServiceId,
+                    price: plain.price,
+                    addOnService: plain.addOnService || null
+                });
+            }
+
+            bookingPlain.customerSelectedServices = selectedServices.map(serviceItem => ({
+                ...serviceItem,
+                addOns: addOnsByServiceId[serviceItem.id] || []
+            }));
+        }
+
         const cancellationPolicyRaw = bookingPlain.cancellationPolicyBookings;
         let cancellationPolicy = null;
 
