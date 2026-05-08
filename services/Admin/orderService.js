@@ -688,52 +688,71 @@ class OrderService {
         let categoryCharge = 0;
         let orderAmount = 0;
 
-        // Update services if provided
-        if (Array.isArray(services) && services.length > 0) {
-            // Delete existing services
-            await customerSelectedService.destroy({ where: { bookingId: orderId } });
+            // Update services if provided (merge with existing rows, do not delete old entries)
+            if (Array.isArray(services) && services.length > 0) {
+                const currentTime = new Date().toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                });
+                const currentDate = new Date().toISOString().split("T")[0];
 
-            // Calculate charges
-            categoryCharge = services.reduce(
-                (acc, svc) => acc + parseFloat(svc.categoryCharge || 0),
-                0
-            );
-            orderAmount = categoryCharge;
+                const existingServices = await customerSelectedService.findAll({
+                    where: { bookingId: orderId }
+                });
 
-            const currentTime = new Date().toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-            });
-            const currentDate = new Date().toISOString().split("T")[0];
+                const getServiceKey = (svc) => [
+                    String(svc.serviceId ?? ""),
+                    String(svc.categoryId ?? ""),
+                    String(svc.subCategoryId ?? "")
+                ].join("|");
 
-            // Create new services
-            const serviceData = services.map((svc) => {
-                let serviceObj = {
-                    bookingId: orderId,
-                    serviceId: svc.serviceId,
-                    date: svc.date || currentDate,
-                    time: svc.time || currentTime,
-                    items: svc.items || 1,
-                    categoryPrice: svc.categoryCharge || 0
-                };
+                const existingByKey = new Map();
+                for (const existingSvc of existingServices) {
+                    existingByKey.set(getServiceKey(existingSvc), existingSvc);
+                }
 
-                if (svc.categoryId) serviceObj.categoryId = svc.categoryId;
-                if (svc.subCategoryId) serviceObj.subCategoryId = svc.subCategoryId;
-                if (svc.servicePrice) serviceObj.servicePrice = svc.servicePrice;
-                if (svc.status !== undefined) serviceObj.status = svc.status;
+                for (const svc of services) {
+                    const serviceKey = getServiceKey(svc);
+                    const matchedService = existingByKey.get(serviceKey);
 
-                return serviceObj;
-            });
+                    const servicePayload = {
+                        bookingId: orderId,
+                        serviceId: svc.serviceId,
+                        date: svc.date || currentDate,
+                        time: svc.time || currentTime,
+                        items: svc.items || 1,
+                        categoryPrice: svc.categoryCharge || 0
+                    };
 
-            await customerSelectedService.bulkCreate(serviceData);
+                    if (svc.categoryId) servicePayload.categoryId = svc.categoryId;
+                    if (svc.subCategoryId) servicePayload.subCategoryId = svc.subCategoryId;
+                    if (svc.servicePrice) servicePayload.servicePrice = svc.servicePrice;
+                    if (svc.status !== undefined) servicePayload.status = svc.status;
 
-            // Update order amount
-            if (orderAmount > 0) {
-                orderUpdateData.orderAmount = orderAmount;
-                orderUpdateData.subTotal = orderAmount;
+                    if (matchedService) {
+                        await matchedService.update(servicePayload);
+                    } else {
+                        await customerSelectedService.create(servicePayload);
+                    }
+                }
+
+                const allBookingServices = await customerSelectedService.findAll({
+                    where: { bookingId: orderId }
+                });
+
+                // Recalculate from all services so previously saved lines are preserved
+                categoryCharge = allBookingServices.reduce(
+                    (acc, svc) => acc + parseFloat(svc.categoryPrice || 0),
+                    0
+                );
+                orderAmount = categoryCharge;
+
+                if (orderAmount > 0) {
+                    orderUpdateData.orderAmount = orderAmount;
+                    orderUpdateData.subTotal = orderAmount;
+                }
             }
-        }
 
         // Update booking preferences
         if (preferencesArray && Array.isArray(preferencesArray)) {
