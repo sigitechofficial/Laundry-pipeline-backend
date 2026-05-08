@@ -688,79 +688,6 @@ class OrderService {
         let categoryCharge = 0;
         let orderAmount = 0;
 
-        // Update services if provided
-        if (Array.isArray(services) && services.length > 0) {
-            // Delete existing services
-            await customerSelectedService.destroy({ where: { bookingId: orderId } });
-
-            // Calculate charges
-            categoryCharge = services.reduce(
-                (acc, svc) => acc + parseFloat(svc.categoryCharge || 0),
-                0
-            );
-            orderAmount = categoryCharge;
-
-            const currentTime = new Date().toLocaleTimeString("en-US", {
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-            });
-            const currentDate = new Date().toISOString().split("T")[0];
-
-            // Create new services
-            const serviceData = services.map((svc) => {
-                let serviceObj = {
-                    bookingId: orderId,
-                    serviceId: svc.serviceId,
-                    date: svc.date || currentDate,
-                    time: svc.time || currentTime,
-                    items: svc.items || 1,
-                    categoryPrice: svc.categoryCharge || 0
-                };
-
-                if (svc.categoryId) serviceObj.categoryId = svc.categoryId;
-                if (svc.subCategoryId) serviceObj.subCategoryId = svc.subCategoryId;
-                if (svc.servicePrice) serviceObj.servicePrice = svc.servicePrice;
-                if (svc.status !== undefined) serviceObj.status = svc.status;
-
-                return serviceObj;
-            });
-
-            await customerSelectedService.bulkCreate(serviceData);
-
-            // Update order amount
-            if (orderAmount > 0) {
-                orderUpdateData.orderAmount = orderAmount;
-                orderUpdateData.subTotal = orderAmount;
-            }
-        }
-
-        // Update booking preferences
-        if (preferencesArray && Array.isArray(preferencesArray)) {
-            // Delete existing preferences
-            await bookingPreference.destroy({ where: { bookingId: orderId } });
-
-            if (preferencesArray.length > 0) {
-                // Get service IDs from the booking
-                const serviceIds = services ? services.map(s => s.serviceId) :
-                    existingOrder.customerSelectedServices.map(s => s.serviceId);
-
-                const bookingPreferencesToCreate = [];
-
-                for (const pref of preferencesArray) {
-                    const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
-
-                    if (!preferenceTypeId || !preferenceValueId) {
-                        throw new ValidationError(
-                            "preferenceTypeId and preferenceValueId are required for each preference"
-                        );
-                    }
-
-<<<<<<< HEAD
-            // Calculate totals from services
-            let categoryCharge = 0;
-            let orderAmount = 0;
-
             // Update services if provided (merge with existing rows, do not delete old entries)
             if (Array.isArray(services) && services.length > 0) {
                 const currentTime = new Date().toLocaleTimeString("en-US", {
@@ -827,65 +754,30 @@ class OrderService {
                 }
             }
 
-            // Update booking preferences
-            if (preferencesArray && Array.isArray(preferencesArray)) {
-                // Delete existing preferences
-                await bookingPreference.destroy({ where: { bookingId: orderId } });
+        // Update booking preferences
+        if (preferencesArray && Array.isArray(preferencesArray)) {
+            // Delete existing preferences
+            await bookingPreference.destroy({ where: { bookingId: orderId } });
 
-                if (preferencesArray.length > 0) {
-                    // Get service IDs from the booking
-                    const serviceIds = services ? services.map(s => s.serviceId) : 
-                        existingOrder.customerSelectedServices.map(s => s.serviceId);
-                    
-                    const bookingPreferencesToCreate = [];
-                    
-                    for (const pref of preferencesArray) {
-                        const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
-                        
-                        if (!preferenceTypeId || !preferenceValueId) {
-                            throw new ValidationError(
-                                "preferenceTypeId and preferenceValueId are required for each preference"
-                            );
-                        }
-                        
-                        // Validate preference belongs to service
-                        if (serviceId) {
-                            const servicePreferenceExists = await serviceWithPreferences.findOne({
-                                where: {
-                                    serviceId: serviceId,
-                                    preferenceTypeId: preferenceTypeId,
-                                    status: true
-                                }
-                            });
-                            
-                            if (!servicePreferenceExists) {
-                                throw new ValidationError(
-                                    `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
-                                );
-                            }
-                        } else {
-                            const servicePreferenceExists = await serviceWithPreferences.findOne({
-                                where: {
-                                    serviceId: { [Op.in]: serviceIds },
-                                    preferenceTypeId: preferenceTypeId,
-                                    status: true
-                                }
-                            });
-                            
-                            if (!servicePreferenceExists) {
-                                throw new ValidationError(
-                                    `Preference type ${preferenceTypeId} is not available for any selected services`
-                                );
-                            }
-                        }
-                        
-                        // Validate preference value
-                        const preferenceValue = await preferenceValues.findOne({
-=======
+            if (preferencesArray.length > 0) {
+                // Get service IDs from the booking
+                const serviceIds = services ? services.map(s => s.serviceId) :
+                    existingOrder.customerSelectedServices.map(s => s.serviceId);
+
+                const bookingPreferencesToCreate = [];
+
+                for (const pref of preferencesArray) {
+                    const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
+
+                    if (!preferenceTypeId || !preferenceValueId) {
+                        throw new ValidationError(
+                            "preferenceTypeId and preferenceValueId are required for each preference"
+                        );
+                    }
+
                     // Validate preference belongs to service
                     if (serviceId) {
                         const servicePreferenceExists = await serviceWithPreferences.findOne({
->>>>>>> fc99233689cc19e85ddc74647e2d6e9b0080c026
                             where: {
                                 serviceId: serviceId,
                                 preferenceTypeId: preferenceTypeId,
