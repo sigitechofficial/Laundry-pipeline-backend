@@ -688,18 +688,8 @@ class OrderService {
             let categoryCharge = 0;
             let orderAmount = 0;
 
-            // Update services if provided
+            // Update services if provided (merge with existing rows, do not delete old entries)
             if (Array.isArray(services) && services.length > 0) {
-                // Delete existing services
-                await customerSelectedService.destroy({ where: { bookingId: orderId } });
-
-                // Calculate charges
-                categoryCharge = services.reduce(
-                    (acc, svc) => acc + parseFloat(svc.categoryCharge || 0),
-                    0
-                );
-                orderAmount = categoryCharge;
-
                 const currentTime = new Date().toLocaleTimeString("en-US", {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -707,9 +697,26 @@ class OrderService {
                 });
                 const currentDate = new Date().toISOString().split("T")[0];
 
-                // Create new services
-                const serviceData = services.map((svc) => {
-                    let serviceObj = {
+                const existingServices = await customerSelectedService.findAll({
+                    where: { bookingId: orderId }
+                });
+
+                const getServiceKey = (svc) => [
+                    String(svc.serviceId ?? ""),
+                    String(svc.categoryId ?? ""),
+                    String(svc.subCategoryId ?? "")
+                ].join("|");
+
+                const existingByKey = new Map();
+                for (const existingSvc of existingServices) {
+                    existingByKey.set(getServiceKey(existingSvc), existingSvc);
+                }
+
+                for (const svc of services) {
+                    const serviceKey = getServiceKey(svc);
+                    const matchedService = existingByKey.get(serviceKey);
+
+                    const servicePayload = {
                         bookingId: orderId,
                         serviceId: svc.serviceId,
                         date: svc.date || currentDate,
@@ -717,18 +724,30 @@ class OrderService {
                         items: svc.items || 1,
                         categoryPrice: svc.categoryCharge || 0
                     };
-                    
-                    if (svc.categoryId) serviceObj.categoryId = svc.categoryId;
-                    if (svc.subCategoryId) serviceObj.subCategoryId = svc.subCategoryId;
-                    if (svc.servicePrice) serviceObj.servicePrice = svc.servicePrice;
-                    if (svc.status !== undefined) serviceObj.status = svc.status;
 
-                    return serviceObj;
+                    if (svc.categoryId) servicePayload.categoryId = svc.categoryId;
+                    if (svc.subCategoryId) servicePayload.subCategoryId = svc.subCategoryId;
+                    if (svc.servicePrice) servicePayload.servicePrice = svc.servicePrice;
+                    if (svc.status !== undefined) servicePayload.status = svc.status;
+
+                    if (matchedService) {
+                        await matchedService.update(servicePayload);
+                    } else {
+                        await customerSelectedService.create(servicePayload);
+                    }
+                }
+
+                const allBookingServices = await customerSelectedService.findAll({
+                    where: { bookingId: orderId }
                 });
 
-                await customerSelectedService.bulkCreate(serviceData);
-                
-                // Update order amount
+                // Recalculate from all services so previously saved lines are preserved
+                categoryCharge = allBookingServices.reduce(
+                    (acc, svc) => acc + parseFloat(svc.categoryPrice || 0),
+                    0
+                );
+                orderAmount = categoryCharge;
+
                 if (orderAmount > 0) {
                     orderUpdateData.orderAmount = orderAmount;
                     orderUpdateData.subTotal = orderAmount;
