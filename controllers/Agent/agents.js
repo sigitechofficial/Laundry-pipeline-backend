@@ -1749,7 +1749,6 @@ exports.driverAddSerivces = async (req, res) => {
     await billingDetails.update(
         {
             total,
-            discount: 0,
             paymentStatus: "Pending",
             zoneAdminCommission: finalZoneAdminCommissionAmount, // Store zone admin commission
         },
@@ -4343,7 +4342,6 @@ exports.updateInvoice = async (req, res) => {
     await billingDetails.update(
         {
             total,
-            discount: 0,
             paymentStatus: "Pending",
             zoneAdminCommission: zoneAdminCommissionAmount,
         },
