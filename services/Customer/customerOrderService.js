@@ -147,6 +147,63 @@ async function findZoneByPostcode(postcode) {
     return outcodeZones;
 }
 
+/**
+ * If multiple zones match, choose the nearest zone by centroid distance.
+ * This avoids deterministic-but-wrong "lowest id wins" behavior.
+ */
+async function pickNearestZoneByCentroid(candidateZones, lat, lng) {
+    if (!Array.isArray(candidateZones) || candidateZones.length <= 1) {
+        return candidateZones || [];
+    }
+
+    const zoneIds = candidateZones
+        .map((z) => z?.id)
+        .filter((id) => Number.isInteger(id));
+
+    if (zoneIds.length <= 1) {
+        return [candidateZones[0]];
+    }
+
+    const safeLat = Number(lat);
+    const safeLng = Number(lng);
+    if (!Number.isFinite(safeLat) || !Number.isFinite(safeLng)) {
+        console.warn("⚠️ Invalid coordinates for nearest-zone tie-break; using first candidate");
+        return [candidateZones[0]];
+    }
+
+    const pointWkt = `POINT(${safeLng} ${safeLat})`;
+
+    const nearestZone = await zone.findOne({
+        where: {
+            status: true,
+            id: { [Op.in]: zoneIds }
+        },
+        include: zoneInclude,
+        attributes: [
+            ...zoneAttributes,
+            [
+                sequelize.fn(
+                    "ST_Distance",
+                    sequelize.fn("ST_Centroid", sequelize.col("coordinates")),
+                    sequelize.fn("ST_GeomFromText", pointWkt)
+                ),
+                "centroidDistance"
+            ]
+        ],
+        order: [
+            [sequelize.literal("centroidDistance"), "ASC"],
+            ["id", "ASC"]
+        ]
+    });
+
+    if (nearestZone) {
+        console.log(`📍 Multiple zones matched; nearest centroid zoneId=${nearestZone.id}`);
+        return [nearestZone];
+    }
+
+    return [candidateZones[0]];
+}
+
 // Find zones function
 async function findZones(lat, lng) {
     console.log("Finding zones for coordinates:", { lat, lng });
@@ -175,9 +232,8 @@ async function findZones(lat, lng) {
             return postcodeZones;
         }
         if (postcodeZones.length > 1) {
-            console.log("⚠️ Multiple zones matched by postcode/outcode, disambiguating via geometry...");
-            // Do not return ambiguous postcode matches directly.
-            // We resolve to one final zone via geometry below.
+            console.log("⚠️ Multiple zones matched by postcode/outcode, choosing nearest zone...");
+            return await pickNearestZoneByCentroid(postcodeZones, lat, lng);
         }
         if (postcodeZones.length === 0) {
             console.log("⚠️ No zone matched by postcode, falling back to geometry...");
@@ -215,10 +271,10 @@ async function findZones(lat, lng) {
     }
     
     // Final safety: if overlapping polygons produce multiple zones,
-    // return only one deterministic zone to avoid frontend ambiguity.
+    // choose nearest zone instead of lowest-id deterministic pick.
     if (findZone.length > 1) {
-        console.log(`⚠️ Multiple geometry zones (${findZone.length}) found; selecting deterministic zoneId=${findZone[0].id}`);
-        return [findZone[0]];
+        console.log(`⚠️ Multiple geometry zones (${findZone.length}) found; choosing nearest zone...`);
+        return await pickNearestZoneByCentroid(findZone, lat, lng);
     }
 
     return findZone;
