@@ -1735,22 +1735,32 @@ exports.driverAddSerivces = async (req, res) => {
     console.log("Zone Admin Commission %%%%%%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommission);
     console.log("Zone Admin Commission Amount%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommissionAmount);
 
+    // Read existing discount from billingDetails (set at booking creation via coupon)
+    const existingBilling = await billingDetails.findOne({ where: { bookingId: bookingId } });
+    const existingDiscount = parseFloat(existingBilling?.discount || 0);
+
     // Round to 2 decimal places
     total = parseFloat(total.toFixed(2));
     subTotal = parseFloat(subTotal.toFixed(2));
     const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
 
-    console.log("Final Total After Zone Deduction:", total);
+    // Apply existing coupon discount so it is not lost after invoice step
+    const discountedTotal = parseFloat(Math.max(0, total - existingDiscount).toFixed(2));
 
-    if (isNaN(total)) {
+    console.log("Existing Discount:", existingDiscount);
+    console.log("Final Total After Zone Deduction:", total);
+    console.log("Final Total After Discount:", discountedTotal);
+
+    if (isNaN(discountedTotal)) {
         throw new Error("Calculated total is NaN. Please check your input values.");
     }
 
     await billingDetails.update(
         {
-            total,
+            total: discountedTotal,
+            discount: existingDiscount,
             paymentStatus: "Pending",
-            zoneAdminCommission: finalZoneAdminCommissionAmount, // Store zone admin commission
+            zoneAdminCommission: finalZoneAdminCommissionAmount,
         },
         { where: { bookingId: bookingId } }
     );
@@ -1764,7 +1774,7 @@ exports.driverAddSerivces = async (req, res) => {
 
     await booking.update(
         {
-            orderAmount: total,
+            orderAmount: discountedTotal,
             bookingStatusId: 9,
             subTotal,
         },
