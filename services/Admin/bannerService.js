@@ -36,12 +36,27 @@ class BannerService {
   }
 
   normalizeZoneIds(zoneIds) {
-    if (zoneIds === undefined || zoneIds === null) return null;
-    if (!Array.isArray(zoneIds)) {
-      throw new ValidationError('zoneIds must be an array of integers');
+    if (zoneIds === undefined || zoneIds === null || zoneIds === '') return null;
+
+    // form-data sends comma-separated string e.g. "1,3" or single "1"
+    if (typeof zoneIds === 'string') {
+      const parts = zoneIds.split(',').map((s) => s.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      return parts.map((id) => parseInt(id, 10));
     }
-    if (zoneIds.length === 0) return [];
-    return zoneIds.map((id) => parseInt(id, 10));
+
+    // multer with repeated keys sends array of strings e.g. ["1", "3"]
+    if (Array.isArray(zoneIds)) {
+      if (zoneIds.length === 0) return null;
+      return zoneIds.map((id) => parseInt(id, 10));
+    }
+
+    // single number
+    const parsed = parseInt(zoneIds, 10);
+    if (Number.isNaN(parsed)) {
+      throw new ValidationError('zoneIds must be valid integers');
+    }
+    return [parsed];
   }
 
   async validateZoneIds(zoneIds) {
