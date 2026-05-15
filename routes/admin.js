@@ -11,6 +11,7 @@ const checkPermission = require('../middlewares/checkPermission')
 const { createDestinationDirectory } = require('../utils/destination')
 const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
+const bannerController = require('../controllers/Admin/bannerController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -112,6 +113,24 @@ const uploadBlogImage = multer({
 // Multer for multiple description images
 const uploadBlogDescriptionImages = multer({
     storage: uploadBlogPic
+});
+
+// Banner Image Multer
+const uploadBannerPic = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const destinationPath = './Public/BannerImages';
+        createDestinationDirectory(destinationPath, cb);
+    },
+    filename: (req, file, cb) => {
+        const timestamp = Date.now();
+        const random = Math.round(Math.random() * 1E9);
+        cb(null, `BannerImg-${timestamp}-${random}${path.extname(file.originalname)}`);
+    },
+});
+
+const uploadBannerImage = multer({
+    storage: uploadBannerPic,
+    limits: { fileSize: 5 * 1024 * 1024 },
 });
 
 
@@ -572,5 +591,17 @@ router.get('/getCouponById/:id', validateAccessToken, asyncMiddleware(couponCont
 router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
 // Deactivate (soft-delete) a coupon
 router.delete('/deleteCoupon/:id', validateAccessToken, asyncMiddleware(couponController.deactivateCoupon));
+
+//!-----------------------------------Banner & Offers------------------------------------>>>>
+// Create banner with image + payload in one request (multipart/form-data)
+router.post(
+    '/createBanner',
+    uploadBannerImage.single('image'),
+    asyncMiddleware(bannerController.createBanner)
+);
+// List / manage banners (JSON body or query only)
+router.get('/getAllBanners', asyncMiddleware(bannerController.getAllBanners));
+router.patch('/updateBanner/:id', asyncMiddleware(bannerController.updateBanner));
+router.delete('/deleteBanner/:id', asyncMiddleware(bannerController.deleteBanner));
 
 module.exports = router
