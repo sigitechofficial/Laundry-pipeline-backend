@@ -125,6 +125,10 @@ router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherC
 //Validate and apply a coupon code (returns discount amount and final total)
 router.post('/applyCoupon', validateAccessToken, asyncMiddleware(customerOtherController.applyCoupon))
 
+//!----------------------------Banners---------------------//
+//Get active banners for customer (optionally filter by zoneId or showOnHome)
+router.get('/getBanners', asyncMiddleware(customerOtherController.getActiveBanners))
+
 //!----------------------------Customer Postcode Address Lookup---------------------//
 //Get addresses by UK postcode
 router.get('/postcode/:postcode', validateAccessToken, asyncMiddleware(customerOtherController.getAddressesByPostcode));

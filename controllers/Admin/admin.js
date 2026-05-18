@@ -1694,8 +1694,6 @@ async function updateServicesSortOrder(req, res) {
   * Add Categories
 */
 async function AddCategories(req, res) {
-    const { name, description } = req.body;
-
     let CategoryImg = null;
 
     if (req.file) {
@@ -1706,6 +1704,10 @@ async function AddCategories(req, res) {
     const data = { ...req.body };
     if (CategoryImg) {
         data.image = CategoryImg;
+    }
+
+    if (data.serviceId != null && data.serviceId !== '') {
+        data.serviceId = Number(data.serviceId);
     }
 
     const category = await serviceManagementService.addCategory(data);
@@ -1719,8 +1721,8 @@ async function AddCategories(req, res) {
   * Get All Categories
 */
 async function getCategories(req, res) {
-
-        const getCategories = await serviceManagementService.getCategories();
+        const { serviceId } = req.query;
+        const getCategories = await serviceManagementService.getCategories({ serviceId });
         return ResponseHelper.success(res, "All Categories Fetched", getCategories);
 
 }
@@ -1730,8 +1732,21 @@ async function getCategories(req, res) {
 */
 async function editCategories(req, res) {
     const { categoryId } = req.params;
-    const { name, description } = req.body;
+
+    let CategoryImg = null;
+    if (req.file) {
+        let tempImage = req.file.path;
+        CategoryImg = tempImage.replace(/\\/g, "/");
+    }
+
     const data = { ...req.body };
+    if (CategoryImg) {
+        data.image = CategoryImg;
+    }
+    if (data.serviceId != null && data.serviceId !== '') {
+        data.serviceId = Number(data.serviceId);
+    }
+
     const editCategory = await serviceManagementService.editCategories(categoryId, data);
     return ResponseHelper.success(res, "Category Edited Successfully", editCategory);
 }

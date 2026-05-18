@@ -52,7 +52,8 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const {
     serviceManagementService,
-    activePoliciesService
+    activePoliciesService,
+    bannerService
 } = require('../../services/Admin');
 const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 
@@ -1152,6 +1153,11 @@ async function applyCoupon(req, res) {
     });
 }
 
+async function getActiveBanners(req, res) {
+    const result = await bannerService.getActiveBannersForCustomer(req.query);
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1188,5 +1194,7 @@ module.exports = {
     //---Home Config----//
     getHomeConfig,
     //---Coupon----//
-    applyCoupon
+    applyCoupon,
+    //---Banners----//
+    getActiveBanners
 };

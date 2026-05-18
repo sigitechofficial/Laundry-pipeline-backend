@@ -228,7 +228,7 @@ router.get('/getcategories', asyncMiddleware(adminController.getCategories))
 //Delete Categories
 router.delete('/deleteCategories/:categoryId', asyncMiddleware(adminController.deleteCategories))
 //Edit Categories
-router.patch('/editCategories/:categoryId', asyncMiddleware(adminController.editCategories))
+router.patch('/editCategories/:categoryId', uploadcategoryImage.single('CategoryImg'), asyncMiddleware(adminController.editCategories))
 //get Services
 router.get('/getServices', asyncMiddleware(adminController.getAllServices))
 //Update Services Sort Order

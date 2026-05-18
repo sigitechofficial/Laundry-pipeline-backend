@@ -36,6 +36,7 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
+const serviceManagementService = require('../Admin/serviceManagementService');
 const otpGenerator = require('otp-generator');
 const { sendEvent } = require('../../socket_io');
 const {
@@ -1803,115 +1804,79 @@ class CustomerOrderService {
      * @returns {Object} - Result object with service details
      */
     async serviceDetail() {
-
-        const serviceData = await serviceCategories.findAll({
-            where: {
-                status: true,
-            },
-            include: [
-                {
-                    model: service,
-                    attributes: ["id", "name", "status", "image", "description", "timeRequired"],
-                    required: true,
-                },
-                {
-                    model: categories,
-                    attributes: ["id", "name", "status", "image", "description"],
-                    required: true,
-                    include: [
-                        {
-                            model: subCategories,
-                            attributes: ["id", "name", "status", "price", "unitCount"],
-                        },
-                    ],
-                },
+        const activeServices = await service.findAll({
+            where: { status: true },
+            attributes: [
+                'id',
+                'name',
+                'status',
+                'image',
+                'description',
+                'timeRequired',
             ],
+            order: [['sortOrder', 'ASC']],
         });
 
-        if (!serviceData || serviceData.length === 0) {
-            throw new NotFoundError("No Service Details Found");
+        if (!activeServices || activeServices.length === 0) {
+            throw new NotFoundError('No Service Details Found');
         }
 
-        // Group by serviceId
-        const grouped = {};
+        const result = [];
 
-        for (const item of serviceData) {
-            // Convert Sequelize instance to plain object if needed
-            const plainItem = item.toJSON ? item.toJSON() : item;
-            
-            // Skip if service or category is null/undefined (soft-deleted or missing)
-            // Note: association name is 'category' (singular), not 'categories'
-            if (!plainItem.service || !plainItem.category) {
+        for (const svc of activeServices) {
+            const serviceCategoriesData =
+                await serviceManagementService.getServiceCategoriesDataForService(
+                    svc.id
+                );
+
+            if (!serviceCategoriesData.length) {
                 continue;
             }
 
-            // Validate that required properties exist
-            if (!plainItem.service.id || !plainItem.category.id) {
-                continue;
-            }
-
-            const serviceId = plainItem.service.id;
-            const categoryId = plainItem.category.id;
-
-            // Initialize service group if it doesn't exist
-            if (!grouped[serviceId]) {
-                grouped[serviceId] = {
-                    serviceId: serviceId,
-                    service: {
-                        id: plainItem.service.id,
-                        name: plainItem.service.name || '',
-                        status: plainItem.service.status,
-                        image: plainItem.service.image || null,
-                        description: plainItem.service.description || null,
-                        turnAroundTime: plainItem.service.timeRequired || null
-                    },
-                    categories: []
-                };
-            }
-
-            // Ensure grouped[serviceId] exists and has categories array
-            if (!grouped[serviceId] || !Array.isArray(grouped[serviceId].categories)) {
-                continue;
-            }
-
-            // Check if category already exists for this service
-            const existingCategory = grouped[serviceId].categories.find(
-                cat => cat && cat.categoryId === categoryId
-            );
-
-            if (!existingCategory) {
-                grouped[serviceId].categories.push({
-                    categoryId: categoryId,
+            result.push({
+                serviceId: svc.id,
+                service: {
+                    id: svc.id,
+                    name: svc.name || '',
+                    status: svc.status,
+                    image: svc.image || null,
+                    description: svc.description || null,
+                    turnAroundTime: svc.timeRequired || null,
+                },
+                categories: serviceCategoriesData.map((row) => ({
+                    categoryId: row.categoryId,
                     category: {
-                        id: plainItem.category.id,
-                        name: plainItem.category.name || '',
-                        status: plainItem.category.status,
-                        image: plainItem.category.image || null,
-                        description: plainItem.category.description || null
+                        id: row.category.id,
+                        name: row.category.name || '',
+                        status: true,
+                        image: null,
+                        description: row.category.description || null,
                     },
-                    subCategories: (plainItem.category.subCategories || []).map(subCat => {
-                        const plainSubCat = subCat.toJSON ? subCat.toJSON() : subCat;
-                        return {
-                            id: plainSubCat.id,
-                            name: plainSubCat.name,
-                            status: plainSubCat.status,
-                            price: plainSubCat.price,
-                            unitCount: plainSubCat.unitCount ?? null
-                        };
-                    })
-                });
-            }
+                    subCategories: (row.category.subCategories || []).map(
+                        (subCat) => {
+                            const plainSubCat = subCat.toJSON
+                                ? subCat.toJSON()
+                                : subCat;
+                            return {
+                                id: plainSubCat.id,
+                                name: plainSubCat.name,
+                                status: plainSubCat.status,
+                                price: plainSubCat.price,
+                                unitCount: plainSubCat.unitCount ?? null,
+                            };
+                        }
+                    ),
+                })),
+            });
         }
-
-        const result = Object.values(grouped);
 
         if (result.length === 0) {
-            throw new NotFoundError("No Service Details Found");
+            throw new NotFoundError('No Service Details Found');
         }
 
         return {
-            message: "Service Details",
-            data: { serviceData: result }
+            message: 'Service Details',
+            data: { serviceData: result },
         };
     }
 
