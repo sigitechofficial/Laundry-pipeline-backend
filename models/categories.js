@@ -27,6 +27,15 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with Model serviceCategories
       categories.hasMany(models.serviceCategories)
       models.serviceCategories.belongsTo(categories)
+
+      categories.belongsTo(models.service, {
+        foreignKey: 'serviceId',
+        as: 'service',
+      })
+      models.service.hasMany(categories, {
+        foreignKey: 'serviceId',
+        as: 'categories',
+      })
     }
   }
   categories.init({
@@ -47,7 +56,15 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.STRING(300),
       allowNull:true,
       defaultValue:null
-    }
+    },
+    serviceId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'services',
+        key: 'id',
+      },
+    },
   }, {
     sequelize,
     modelName: 'categories',

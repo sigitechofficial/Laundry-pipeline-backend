@@ -383,6 +383,56 @@ class BannerService {
       data: null
     };
   }
+
+  /**
+   * Customer-facing: get active banners for today, filtered by zone if provided.
+   * @param {Object} query - { zoneId, showOnHome }
+   */
+  async getActiveBannersForCustomer(query = {}) {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const where = {
+      isActive: true,
+      [Op.and]: [
+        { [Op.or]: [{ startDate: null }, { startDate: { [Op.lte]: today } }] },
+        { [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: today } }] }
+      ]
+    };
+
+    // Optional: only home slider banners
+    if (query.showOnHome !== undefined) {
+      where.showOnHome = query.showOnHome === 'true' || query.showOnHome === true;
+    }
+
+    const rows = await banner.findAll({
+      where,
+      order: [['displayOrder', 'ASC']]
+    });
+
+    // Filter by zoneId if provided
+    const zoneIdFilter = query.zoneId ? parseInt(query.zoneId, 10) : null;
+    let filtered = rows;
+    if (zoneIdFilter && !Number.isNaN(zoneIdFilter)) {
+      filtered = rows.filter((row) => {
+        const ids = row.zoneIds;
+        // null or empty = applies to all zones
+        if (!ids || !Array.isArray(ids) || ids.length === 0) return true;
+        return ids.includes(zoneIdFilter);
+      });
+    }
+
+    const banners = await Promise.all(
+      filtered.map(async (row) => {
+        const target = await this.resolveTarget(row.targetType, row.targetId);
+        return this.formatBanner(row, { target });
+      })
+    );
+
+    return {
+      message: 'Banners fetched successfully',
+      data: { banners }
+    };
+  }
 }
 
 module.exports = new BannerService();

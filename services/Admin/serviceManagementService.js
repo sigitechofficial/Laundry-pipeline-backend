@@ -19,6 +19,125 @@ const {
 
 class ServiceManagementService {
     /**
+     * Keep serviceCategories junction in sync when category.serviceId is set.
+     */
+    async syncServiceCategoryLink(serviceId, categoryId) {
+        if (!serviceId || !categoryId) return;
+
+        const existing = await serviceCategories.findOne({
+            where: { serviceId, categoryId },
+        });
+
+        if (!existing) {
+            await serviceCategories.create({
+                serviceId,
+                categoryId,
+                status: true,
+            });
+            return;
+        }
+
+        if (!existing.status) {
+            await existing.update({ status: true });
+        }
+    }
+
+    /**
+     * Build serviceCategoriesData payload for admin/customer UIs.
+     */
+    async getServiceCategoriesDataForService(serviceId) {
+        const numericServiceId = Number(serviceId);
+        if (!numericServiceId || Number.isNaN(numericServiceId)) {
+            throw new ValidationError('Valid serviceId is required');
+        }
+
+        const directCategories = await categories.findAll({
+            where: {
+                serviceId: numericServiceId,
+                status: true,
+            },
+            attributes: ['id', 'name', 'description', 'serviceId'],
+            include: [
+                {
+                    model: subCategories,
+                    attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount'],
+                    where: { status: true },
+                    required: false,
+                },
+            ],
+            order: [['name', 'ASC']],
+        });
+
+        const junctionRows = await serviceCategories.findAll({
+            where: { serviceId: numericServiceId, status: true },
+            include: [
+                {
+                    model: categories,
+                    where: { status: true },
+                    required: true,
+                    attributes: ['id', 'name', 'description', 'serviceId'],
+                    include: [
+                        {
+                            model: subCategories,
+                            attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount'],
+                            where: { status: true },
+                            required: false,
+                        },
+                    ],
+                },
+            ],
+        });
+
+        const seenCategoryIds = new Set();
+        const result = [];
+
+        for (const row of directCategories) {
+            const cat = row.toJSON();
+            seenCategoryIds.add(cat.id);
+            result.push({
+                id: `svc-cat-${cat.id}`,
+                serviceId: numericServiceId,
+                categoryId: cat.id,
+                status: true,
+                category: {
+                    id: cat.id,
+                    name: cat.name,
+                    description: cat.description,
+                    subCategories: cat.subCategories || [],
+                },
+            });
+        }
+
+        for (const junction of junctionRows) {
+            const cat = junction.category?.toJSON
+                ? junction.category.toJSON()
+                : junction.category;
+            if (!cat || seenCategoryIds.has(cat.id)) continue;
+            if (
+                cat.serviceId != null &&
+                Number(cat.serviceId) !== numericServiceId
+            ) {
+                continue;
+            }
+            seenCategoryIds.add(cat.id);
+            result.push({
+                id: junction.id,
+                serviceId: numericServiceId,
+                categoryId: cat.id,
+                status: junction.status,
+                category: {
+                    id: cat.id,
+                    name: cat.name,
+                    description: cat.description,
+                    subCategories: cat.subCategories || [],
+                },
+            });
+        }
+
+        return result;
+    }
+
+    /**
      * Get admin services with categories and counts
      * @returns {Object} Services with category counts
      */
@@ -161,9 +280,24 @@ class ServiceManagementService {
      * Get all categories
      * @returns {Array} List of all categories
      */
-    async getCategories() {
-            const getCategories = await categories.findAll();
-            return getCategories;
+    async getCategories(filters = {}) {
+            const where = {};
+            if (filters.serviceId != null && filters.serviceId !== '') {
+                where.serviceId = Number(filters.serviceId);
+            }
+
+            return categories.findAll({
+                where,
+                include: [
+                    {
+                        model: service,
+                        as: 'service',
+                        attributes: ['id', 'name'],
+                        required: false,
+                    },
+                ],
+                order: [['name', 'ASC']],
+            });
     }
 
     /**
@@ -174,11 +308,39 @@ class ServiceManagementService {
      * @returns {Object} Edited category data
      */
     async editCategories(categoryId, categoryData) {
-        const editCategory = await categories.update(categoryData, { where: { id: categoryId } });
-        if (!editCategory) {
-            throw new NotFoundError('Category Not Found')
+        const existing = await categories.findByPk(categoryId);
+        if (!existing) {
+            throw new NotFoundError('Category Not Found');
         }
-        return editCategory;
+
+        const payload = {};
+        const allowedFields = ['name', 'description', 'image', 'serviceId', 'status'];
+        allowedFields.forEach((field) => {
+            if (categoryData[field] === undefined) return;
+            if (field === 'serviceId' && categoryData[field] === '') return;
+            payload[field] = categoryData[field];
+        });
+
+        if (payload.serviceId != null && payload.serviceId !== '') {
+            payload.serviceId = Number(payload.serviceId);
+            const serviceRow = await service.findByPk(payload.serviceId);
+            if (!serviceRow) {
+                throw new NotFoundError('Service not found');
+            }
+        }
+
+        if (Object.keys(payload).length === 0) {
+            throw new ValidationError('No valid fields provided to update');
+        }
+
+        await categories.update(payload, { where: { id: categoryId } });
+
+        const updated = await categories.findByPk(categoryId);
+        if (updated?.serviceId) {
+            await this.syncServiceCategoryLink(updated.serviceId, updated.id);
+        }
+
+        return updated;
     }
     /**
      * Delete Categories
@@ -210,12 +372,10 @@ class ServiceManagementService {
     async deleteSubcategories(subCategoryId) {
         const deleteSubcategory = await subCategories.destroy({ where: { id: subCategoryId } });
         if (!deleteSubcategory) {
-    if (!deleteSubcategory) {
-            throw new NotFoundError('Subcategory Not Found')
+            throw new NotFoundError('Subcategory Not Found');
         }
         return deleteSubcategory;
     }
-}
 
     /**
      * Add a new service
@@ -235,7 +395,31 @@ class ServiceManagementService {
      */
 
     async addCategory(categoryData) {
-            const categoryCreate = await categories.create(categoryData);
+            const serviceId =
+                categoryData.serviceId != null && categoryData.serviceId !== ''
+                    ? Number(categoryData.serviceId)
+                    : null;
+
+            if (!serviceId || Number.isNaN(serviceId)) {
+                throw new ValidationError('serviceId is required when creating a category');
+            }
+
+            const serviceRow = await service.findByPk(serviceId);
+            if (!serviceRow) {
+                throw new NotFoundError('Service not found');
+            }
+
+            const payload = {
+                name: categoryData.name,
+                description: categoryData.description,
+                image: categoryData.image,
+                status:
+                    categoryData.status !== undefined ? categoryData.status : true,
+                serviceId,
+            };
+
+            const categoryCreate = await categories.create(payload);
+            await this.syncServiceCategoryLink(serviceId, categoryCreate.id);
             return categoryCreate;
     }
 
@@ -338,31 +522,13 @@ class ServiceManagementService {
             childTypes: childTypes.filter(child => child.parentPreferenceTypeId === parent.id)
         }));
 
-        const serviceCategoriesData = await serviceCategories.findAll({
-            where: { serviceId: serviceId },
-            include: [
-                {
-                    model: categories,
-                    where: { status: true },
-                    attributes: ['name', 'description'],
-                    include: [
-                        {
-                            model: subCategories,
-                            attributes: ['name', 'price', 'status', 'description']
-                        }
-                    ]
-                }
-            ]
-        });
-
-        if (!serviceCategoriesData) {
-            throw new NotFoundError('Service Categories Data Not Found')
-        }
+        const serviceCategoriesData =
+            await this.getServiceCategoriesDataForService(serviceId);
 
         return {
             preferencesData: nestedPreferences,
             serviceCategoriesData: serviceCategoriesData
-        }
+        };
     }
 
 
@@ -448,6 +614,12 @@ class ServiceManagementService {
             }));
 
             const createData = await serviceCategories.bulkCreate(serviceCategoriesData);
+
+            await categories.update(
+                { serviceId },
+                { where: { id: { [Op.in]: newCategoryIds } } }
+            );
+
             return createData;
     }
 
@@ -482,6 +654,31 @@ class ServiceManagementService {
         const unassignedCount = await serviceCategories.destroy({
             where: whereClause
         });
+
+        if (categoryIds && Array.isArray(categoryIds) && categoryIds.length > 0) {
+            await categories.update(
+                { serviceId: null },
+                {
+                    where: {
+                        id: { [Op.in]: categoryIds },
+                        serviceId: Number(serviceId),
+                    },
+                }
+            );
+        } else {
+            const linkedCategoryIds = existingAssignments.map((row) => row.categoryId);
+            if (linkedCategoryIds.length > 0) {
+                await categories.update(
+                    { serviceId: null },
+                    {
+                        where: {
+                            id: { [Op.in]: linkedCategoryIds },
+                            serviceId: Number(serviceId),
+                        },
+                    }
+                );
+            }
+        }
 
         return {
             unassignedCount: unassignedCount,
