@@ -45,6 +45,8 @@ router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.veri
 router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
 //logout user and destroy the Token in redis
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
+// Delete own customer account
+router.post('/deleteAccount',validateAccessToken,asyncMiddleware(customerAuthControllers.deleteAccount))
 //Session Api (registered customer or guest JWT)
 router.get("/session", validateAccessTokenOrGuest, asyncMiddleware(customerAuthControllers.session))
 // Guest (no DB row): JWT + Redis — does not use validateAccessToken / users table
@@ -82,6 +84,7 @@ router.get('/allServices',asyncMiddleware(customerOtherController.allServices))
 router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
 // Public support contact (email, phone, help URL, hours) — from DB
 router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
+router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.getAccountDeletionReasons))
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 

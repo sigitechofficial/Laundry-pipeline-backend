@@ -2090,18 +2090,21 @@ class CustomerOrderService {
 
         // Validate all items first
         for (const r of responses) {
-            const { customerResponse, onHoldId } = r ?? {};
+            const { customerResponse, onHoldId, note } = r ?? {};
             if (typeof customerResponse !== "boolean") {
                 throw new ValidationError("customerResponse must be boolean for each response");
             }
             if (!Number.isInteger(onHoldId)) {
                 throw new ValidationError("onHoldId must be an integer for each response");
             }
+            if (note != null && typeof note !== "string") {
+                throw new ValidationError("note must be a string when provided");
+            }
         }
 
         const updatedResponses = [];
 
-        for (const { customerResponse, onHoldId } of responses) {
+        for (const { customerResponse, onHoldId, note } of responses) {
             const onHoldBooking = await OnHoldConfirmation.findOne({
                 where: { id: onHoldId, bookingId }
             });
@@ -2112,6 +2115,15 @@ class CustomerOrderService {
 
             onHoldBooking.customerResponse = customerResponse;   // can be true or false
             onHoldBooking.responseConformation = true;
+
+            const trimmedNote = typeof note === "string" ? note.trim() : "";
+            if (trimmedNote) {
+                const customerNote = `Customer: ${trimmedNote}`;
+                onHoldBooking.description = onHoldBooking.description
+                    ? `${onHoldBooking.description}\n${customerNote}`
+                    : customerNote;
+            }
+
             await onHoldBooking.save();
 
             updatedResponses.push({

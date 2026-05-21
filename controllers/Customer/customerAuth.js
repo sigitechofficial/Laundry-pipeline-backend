@@ -506,6 +506,29 @@ async function updateUserProfile(req, res) {
     return ResponseHelper.success(res, result.message, {});
 }
 
+/*
+ * Delete customer account (self-service)
+ */
+async function deleteAccount(req, res) {
+    const userId = req.user.id;
+    const { email, reason, otherText } = req.body;
+
+    const result = await customerAuthService.deleteCustomerAccount({
+        userId,
+        email,
+        reason,
+        otherText,
+    });
+
+    try {
+        await redisCli.hDel(`tsh${userId}`, req.user.dvToken);
+    } catch (err) {
+        console.error('Redis cleanup on delete account:', err.message);
+    }
+
+    return ResponseHelper.success(res, result.message, {});
+}
+
 //!------------------------------------------Recurring functions----------------------------------------//
 let responsefunc = (status, message, data, error) => {
     return {
@@ -607,6 +630,7 @@ module.exports = {
     logout,
     getUserProfile,
     updateUserProfile,
+    deleteAccount,
     session,
     resendOTP,
     startGuestSession,

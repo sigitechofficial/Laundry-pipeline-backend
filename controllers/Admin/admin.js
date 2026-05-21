@@ -103,6 +103,7 @@ const {
 const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
+const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
@@ -1982,6 +1983,29 @@ async function deleteReason(req, res) {
     return ResponseHelper.success(res, "Reason Deleted Successfully", null);
 }
 
+//!--------------------------------------------Account Deletion Reasons-----------------------------------------------//
+async function getAccountDeletionReasons(req, res) {
+    const reasons = await accountDeletionReasonService.getAll();
+    return ResponseHelper.success(res, 'Account deletion reasons retrieved successfully', reasons);
+}
+
+async function createAccountDeletionReason(req, res) {
+    const created = await accountDeletionReasonService.create(req.body);
+    return ResponseHelper.success(res, 'Account deletion reason created successfully', created);
+}
+
+async function updateAccountDeletionReason(req, res) {
+    const { id } = req.params;
+    const updated = await accountDeletionReasonService.update(id, req.body);
+    return ResponseHelper.success(res, 'Account deletion reason updated successfully', updated);
+}
+
+async function deleteAccountDeletionReason(req, res) {
+    const { id } = req.params;
+    const result = await accountDeletionReasonService.delete(id);
+    return ResponseHelper.success(res, result.message, null);
+}
+
 //!--------------------------------------------Add-On Services Management-----------------------------------------------//
 async function createAddOnService(req, res) {
     const created = await addOnServicesService.createAddOnService(req.body);
@@ -2640,6 +2664,10 @@ module.exports = {
     //!-------------Reason Management--------//
     createReason,
     getAllReasons,
+    getAccountDeletionReasons,
+    createAccountDeletionReason,
+    updateAccountDeletionReason,
+    deleteAccountDeletionReason,
     getReasonById,
     updateReason,
     deleteReason,

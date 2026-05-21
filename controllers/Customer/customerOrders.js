@@ -59,6 +59,7 @@ const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const rescheduleBookingService = require('../../services/Customer/rescheduleBookingService');
+const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 
 //!------------------------Boooking Management-------------------------------//
 /*
@@ -157,7 +158,7 @@ async function updateBookingUpfrontAmount(req, res) {
  * Show Customer On Hold Reason
  */
 async function onHoldCustomerShow(req, res) {
-    const { bookingId } = req.body;
+    const bookingId = req.body?.bookingId ?? req.query?.bookingId;
 
     // Call service to handle business logic
     const result = await customerOrderService.onHoldCustomerShow({
@@ -1158,6 +1159,11 @@ async function getActiveBanners(req, res) {
     return ResponseHelper.success(res, result.message, result.data);
 }
 
+async function getAccountDeletionReasons(req, res) {
+    const reasons = await accountDeletionReasonService.getAll({ activeOnly: true });
+    return ResponseHelper.success(res, 'Account deletion reasons retrieved successfully', reasons);
+}
+
 module.exports = {
     createBooking,
     onHoldCustomerShow,
@@ -1196,5 +1202,6 @@ module.exports = {
     //---Coupon----//
     applyCoupon,
     //---Banners----//
-    getActiveBanners
+    getActiveBanners,
+    getAccountDeletionReasons,
 };

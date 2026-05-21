@@ -61,7 +61,8 @@ const {
     ValidationError, 
     NotFoundError, 
     ConflictError, 
-    UnauthorizedError 
+    UnauthorizedError,
+    UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
 
 /**
@@ -1299,6 +1300,60 @@ class CustomerAuthService {
 
         return {
             message: "User Profile Updated Successfully"
+        };
+    }
+
+    /**
+     * Delete customer account (self-service)
+     * @param {Object} params
+     * @param {number} params.userId
+     * @param {string} params.email - Must match account email
+     * @param {string} [params.reason]
+     * @param {string} [params.otherText]
+     */
+    async deleteCustomerAccount({ userId, email, reason, otherText }) {
+        const normalizedEmail = (email || '').trim().toLowerCase();
+
+        const customer = await users.findOne({
+            where: {
+                id: userId,
+                userTypeId: 2,
+                deletedAt: { [Op.is]: null },
+            },
+        });
+
+        if (!customer) {
+            throw new NotFoundError('Customer account not found');
+        }
+
+        if ((customer.email || '').trim().toLowerCase() !== normalizedEmail) {
+            throw new ValidationError('Email does not match your account');
+        }
+
+        const activeBookings = await booking.count({
+            where: {
+                customerId: userId,
+                bookingStatusId: {
+                    [Op.notIn]: [17, 19, 23],
+                },
+            },
+        });
+
+        if (activeBookings > 0) {
+            throw new UnprocessableEntityError(
+                `You have ${activeBookings} active booking(s). Please complete or cancel them before deleting your account.`
+            );
+        }
+
+        await deviceToken.destroy({ where: { userId } });
+        await otpVerification.destroy({ where: { userId } });
+
+        await users.destroy({ where: { id: userId, userTypeId: 2 } });
+
+        return {
+            message: 'Account deleted successfully',
+            reason: reason || null,
+            otherText: otherText || null,
         };
     }
 }

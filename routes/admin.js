@@ -260,6 +260,12 @@ router.patch('/updateReason/:reasonId', asyncMiddleware(adminController.updateRe
 //Delete Reason
 router.delete('/deleteReason/:reasonId', asyncMiddleware(adminController.deleteReason))
 
+//!-------------------------Account Deletion Reasons--------------------------------------------------------//
+router.get('/getAccountDeletionReasons', asyncMiddleware(adminController.getAccountDeletionReasons))
+router.post('/createAccountDeletionReason', asyncMiddleware(adminController.createAccountDeletionReason))
+router.patch('/updateAccountDeletionReason/:id', asyncMiddleware(adminController.updateAccountDeletionReason))
+router.delete('/deleteAccountDeletionReason/:id', asyncMiddleware(adminController.deleteAccountDeletionReason))
+
 //!-------------------------Add-On Services------------------------------------------------------------------//
 router.post('/createAddOnService', asyncMiddleware(adminController.createAddOnService))
 router.get('/getAllAddOnServices', asyncMiddleware(adminController.getAllAddOnServices))
