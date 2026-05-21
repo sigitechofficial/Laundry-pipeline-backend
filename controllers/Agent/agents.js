@@ -3409,18 +3409,25 @@ exports.printLabelData = async (req, res) => {
 
     const selectedServices = bookingData.customerSelectedServices || [];
 
-    // Build printable tags and duplicate each selected subcategory
-    // based on its unitCount (null/1 => once, 2 => twice, etc.).
+    // Tags per line = order quantity (items) × catalog unitCount (min 1 each).
     const rawTags = [];
     selectedServices.forEach((selectedService, serviceIndex) => {
         const subCategory = selectedService.subCategory;
         if (!subCategory) return;
 
+        const parsedQuantity = Number(selectedService.items);
+        const orderQuantity =
+            Number.isFinite(parsedQuantity) && parsedQuantity > 0
+                ? Math.floor(parsedQuantity)
+                : 1;
+
         const parsedUnitCount = Number(subCategory.unitCount);
-        const repeatCount =
-            Number.isFinite(parsedUnitCount) && parsedUnitCount > 1
+        const unitsPerItem =
+            Number.isFinite(parsedUnitCount) && parsedUnitCount > 0
                 ? Math.floor(parsedUnitCount)
                 : 1;
+
+        const repeatCount = orderQuantity * unitsPerItem;
 
         for (let i = 0; i < repeatCount; i += 1) {
             rawTags.push({
@@ -3436,9 +3443,13 @@ exports.printLabelData = async (req, res) => {
                 subCategoryName: subCategory.name,
                 subCategoryBarCode: subCategory.barCode || null,
                 subCategoryPrice: subCategory.price,
+                orderQuantity,
+                unitsPerItem,
                 unitCount: subCategory.unitCount,
+                tagsForLine: repeatCount,
                 serviceOrder: serviceIndex + 1,
-                copyIndexWithinSubCategory: i + 1
+                copyIndexWithinLine: i + 1,
+                copyIndexWithinSubCategory: i + 1,
             });
         }
     });
