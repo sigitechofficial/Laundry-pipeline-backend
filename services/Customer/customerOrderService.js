@@ -45,6 +45,7 @@ const {
     UnauthorizedError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
+const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 
@@ -862,6 +863,15 @@ class CustomerOrderService {
         const normalizedDeliveryTimeTo     = this._getTimePart(deliveryTimeTo,     'deliveryTimeTo');
         const normalizedCollectionDate     = this._getDatePart(collectionDate,     'collectionDate');
         const normalizedDeliveryDate       = this._getDatePart(deliveryDate,       'deliveryDate');
+
+        const bookingServiceIds = (services || []).map((s) => s.serviceId).filter(Boolean);
+        await assertDeliveryMeetsTurnaround(
+            service,
+            bookingServiceIds,
+            normalizedCollectionDate,
+            normalizedDeliveryDate,
+            ValidationError
+        );
 
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.

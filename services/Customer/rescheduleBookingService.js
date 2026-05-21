@@ -20,6 +20,7 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
+const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const {
     ValidationError,
     NotFoundError,
@@ -344,6 +345,22 @@ class RescheduleBookingService {
         if (newDeliveryMoment.isBefore(newCollectionMoment)) {
             throw new ValidationError("Delivery date must be after the collection date");
         }
+
+        let rescheduleServiceIds = (services || []).map((s) => s.serviceId).filter(Boolean);
+        if (!rescheduleServiceIds.length) {
+            const existingRows = await customerSelectedService.findAll({
+                where: { bookingId, status: true },
+                attributes: ['serviceId'],
+            });
+            rescheduleServiceIds = existingRows.map((r) => r.serviceId).filter(Boolean);
+        }
+        await assertDeliveryMeetsTurnaround(
+            service,
+            rescheduleServiceIds,
+            normalizedCollectionDate,
+            normalizedDeliveryDate,
+            ValidationError
+        );
 
         // Step 4: Get active reschedule policy for the booking's zone
         const activePolicy = await this.getActiveReschedulePolicy(bookingData.zoneId);
