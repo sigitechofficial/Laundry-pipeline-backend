@@ -1020,6 +1020,9 @@ class CustomerOrderService {
                 if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
                 if (service.categoryCharge) serviceObj.categoryPrice = total;
                 if (service.serviceInstruction) serviceObj.serviceInstruction = service.serviceInstruction;
+                if (service.items != null && service.items !== '') {
+                    serviceObj.items = Number(service.items);
+                }
 
                 return serviceObj;
             });

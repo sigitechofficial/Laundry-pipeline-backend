@@ -68,6 +68,12 @@ const { sendEvent } = require("../../socket_io");
 const moment = require("moment");
 const momentTz = require("moment-timezone");
 const axios = require("axios");
+const {
+    getLineQuantity,
+    getUnitCategoryCharge,
+    getLineSubtotal,
+    sumActiveBookingServicesSubtotal,
+} = require("../../utils/invoiceLineTotals");
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
@@ -1635,12 +1641,10 @@ exports.driverAddSerivces = async (req, res) => {
         throw new NotFoundError("Zone information not found for this booking");
     }
 
-    let total = 0;
-
     if (services.length > 0) {
         for (let service of services) {
-            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
-            total += itemTotalPrice;
+            const unitPrice = getUnitCategoryCharge(service.categoryCharge);
+            const qty = getLineQuantity(service.items);
 
             const existingRecords = await customerSelectedService.findAll({
                 where: {
@@ -1663,9 +1667,9 @@ exports.driverAddSerivces = async (req, res) => {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
                     categoryId: service.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: service.subCategoryId,
-                    items: service.items,
+                    items: qty,
                     date: currentDate,
                     time: currentTime,
                     status: true
@@ -1679,9 +1683,9 @@ exports.driverAddSerivces = async (req, res) => {
                     bookingId: bookingId,
                     serviceId: service.serviceId,
                     categoryId: service.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: service.subCategoryId,
-                    items: service.items,
+                    items: qty,
                     status: true
                 });
             }
@@ -1699,7 +1703,6 @@ exports.driverAddSerivces = async (req, res) => {
                     });
                     for (const addOn of addOnRecords) {
                         const addOnPrice = parseFloat(addOn.price || 0);
-                        total += addOnPrice;
                         await customerSelectedServiceAddOn.create({
                             customerSelectedServiceId: selectedServiceRow.id,
                             addOnServiceId: addOn.id,
@@ -1711,6 +1714,12 @@ exports.driverAddSerivces = async (req, res) => {
         }
     }
 
+    const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
+    console.log(
+        "[POST /agent/AgentAddSerivces] servicesSubtotal (qty-aware, incl. add-ons):",
+        servicesSubtotal
+    );
+
     const parsedServiceCharge = parseFloat(serviceCharge) || 0;
     const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
 
@@ -1720,12 +1729,13 @@ exports.driverAddSerivces = async (req, res) => {
         : 0;
     console.log("Tip Amount:", tipAmount);
 
-    // subTotal = categoryCharges + serviceCharge + zoneMinimumAmount + tipAmount (full order value)
-    let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+    // subTotal = all active lines (unit×qty + add-ons) + serviceCharge + zoneMinimumAmount + tipAmount
+    let subTotal =
+        servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
     console.log("Sub-Total (full order value):", subTotal);
 
     // total = subTotal - zoneMinimumAmount (deduct already paid upfront)
-    total = subTotal - parsedZoneMinimum;
+    let total = subTotal - parsedZoneMinimum;
     console.log("Total (remaining balance):", total);
 
     // Calculate zone admin commission
@@ -2297,11 +2307,29 @@ exports.customerServices = async (req, res) => {
         });
     }
 
-    // Calculate total
-    const totalAmount = customerServicesFind.reduce((sum, item) => {
-        const price = parseFloat(item.categoryPrice) || 0;
-        return sum + price;
-    }, 0);
+    const lineIds = customerServicesFind.map((item) => item.id);
+    let addOnTotal = 0;
+    if (lineIds.length > 0) {
+        const addOnRows = await customerSelectedServiceAddOn.findAll({
+            where: { customerSelectedServiceId: lineIds },
+            attributes: ['price'],
+        });
+        addOnTotal = addOnRows.reduce(
+            (sum, addOn) => sum + (parseFloat(addOn.price) || 0),
+            0
+        );
+    }
+
+    const totalAmount = parseFloat(
+        (
+            customerServicesFind.reduce(
+                (sum, item) =>
+                    sum +
+                    getLineSubtotal(item.categoryPrice, item.items),
+                0
+            ) + addOnTotal
+        ).toFixed(2)
+    );
 
     const groupedServices = customerServicesFind.reduce((acc, item) => {
         if (!item.service || !item.category || !item.subCategory) return acc;
@@ -3175,11 +3203,28 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
         );
     }
 
-    // Calculate total
-    const totalAmount = customerServices.reduce((sum, item) => {
-        const price = parseFloat(item.categoryPrice) || 0;
-        return sum + price;
-    }, 0);
+    const lineIds = customerServices.map((item) => item.id);
+    let addOnTotal = 0;
+    if (lineIds.length > 0) {
+        const addOnRows = await customerSelectedServiceAddOn.findAll({
+            where: { customerSelectedServiceId: lineIds },
+            attributes: ['price'],
+        });
+        addOnTotal = addOnRows.reduce(
+            (sum, addOn) => sum + (parseFloat(addOn.price) || 0),
+            0
+        );
+    }
+
+    const totalAmount = parseFloat(
+        (
+            customerServices.reduce(
+                (sum, item) =>
+                    sum + getLineSubtotal(item.categoryPrice, item.items),
+                0
+            ) + addOnTotal
+        ).toFixed(2)
+    );
 
     // Format each record
     const formattedServices = customerServices.map(item => ({
@@ -4206,7 +4251,15 @@ exports.getEarningReportDashboard = async (req, res) => {
 exports.updateInvoice = async (req, res) => {
     const { services, bookingId, timeZone, clientTimeZone } = req.body;
 
-    console.log("Services==============================>>", services)
+    console.log("[PATCH /agent/updateInvoice] agentId:", req.user?.id ?? null);
+    console.log("[PATCH /agent/updateInvoice] request body:", JSON.stringify(req.body, null, 2));
+    console.log("[PATCH /agent/updateInvoice] bookingId:", bookingId);
+    console.log("[PATCH /agent/updateInvoice] timeZone:", timeZone, "clientTimeZone:", clientTimeZone);
+    console.log(
+        "[PATCH /agent/updateInvoice] services:",
+        Array.isArray(services) ? `count=${services.length}` : typeof services,
+        Array.isArray(services) ? JSON.stringify(services, null, 2) : services
+    );
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new ValidationError("Invalid request. Please provide an array of services.");
@@ -4253,7 +4306,8 @@ exports.updateInvoice = async (req, res) => {
     // Save / update each service from the request
     if (services.length > 0) {
         for (let service of services) {
-            const itemTotalPrice = parseFloat(service.categoryCharge || 0);
+            const unitPrice = getUnitCategoryCharge(service.categoryCharge);
+            const qty = getLineQuantity(service.items);
 
             const whereClause = {
                 bookingId,
@@ -4278,9 +4332,9 @@ exports.updateInvoice = async (req, res) => {
                 console.log(`✅ Updating existing record (id ${matched.id})`);
                 await matched.update({
                     categoryId: service.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: service.subCategoryId || null,
-                    items: service.items,
+                    items: qty,
                     date: currentDate,
                     time: currentTime,
                     status: service.status
@@ -4294,9 +4348,9 @@ exports.updateInvoice = async (req, res) => {
                     bookingId: bookingId,
                     serviceId: service.serviceId,
                     categoryId: service.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: service.subCategoryId || null,
-                    items: service.items,
+                    items: qty,
                     status: service.status
                 });
             }
@@ -4322,27 +4376,12 @@ exports.updateInvoice = async (req, res) => {
         }
     }
 
-    // After saving, sum ALL active services on this booking so new prices
-    // are added on top of existing ones (not replaced)
-    const allBookingServices = await customerSelectedService.findAll({
-        where: { bookingId, status: true }
-    });
-    let total = allBookingServices.reduce(
-        (sum, s) => sum + parseFloat(s.categoryPrice || 0), 0
+    const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
+    console.log(
+        "[PATCH /agent/updateInvoice] servicesSubtotal (qty-aware, incl. add-ons):",
+        servicesSubtotal
     );
-
-    // Add all add-on prices for active services
-    const activeServiceIds = allBookingServices.map(s => s.id);
-    if (activeServiceIds.length > 0) {
-        const allAddOns = await customerSelectedServiceAddOn.findAll({
-            where: { customerSelectedServiceId: activeServiceIds }
-        });
-        const addOnTotal = allAddOns.reduce((sum, a) => sum + parseFloat(a.price || 0), 0);
-        total += addOnTotal;
-        console.log("Add-on services total:", addOnTotal);
-    }
-
-    console.log("All services total (cumulative, incl. add-ons):", total);
+    let total = servicesSubtotal;
 
     // Read serviceCharge and zoneMinimumAmount from DB (billingDetails)
     // so the calculation is always accurate regardless of what frontend sends

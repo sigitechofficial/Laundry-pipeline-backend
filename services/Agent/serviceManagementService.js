@@ -16,6 +16,7 @@ const {
     ConflictError, 
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
+const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
 
 /**
  * Agent Service Management Service
@@ -224,11 +225,7 @@ class AgentServiceManagementService {
             throw new NotFoundError("No Customer Selected Services");
         }
 
-        // Calculate total
-        const totalAmount = customerServicesFind.reduce((sum, item) => {
-            const price = parseFloat(item.categoryPrice) || 0;
-            return sum + price;
-        }, 0);
+        const totalAmount = await sumActiveBookingServicesSubtotal(bookingId);
 
         return {
             customerServices: customerServicesFind,
@@ -285,11 +282,7 @@ class AgentServiceManagementService {
             };
         }
 
-        // Calculate total
-        const totalAmount = customerServicesFind.reduce((sum, item) => {
-            const price = parseFloat(item.totalPrice) || parseFloat(item.categoryPrice) || 0;
-            return sum + price;
-        }, 0);
+        const totalAmount = await sumActiveBookingServicesSubtotal(bookingId);
 
         return {
             customerServices: customerServicesFind,
