@@ -32,7 +32,13 @@ module.exports = {
       price: {
         type: Sequelize.DECIMAL(10, 2),
         allowNull: false,
-        comment: 'Price snapshot at the time the agent added this add-on'
+        comment: 'Unit price snapshot at the time the agent added this add-on'
+      },
+      items: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        defaultValue: 1,
+        comment: 'Quantity of this add-on for the line'
       },
       createdAt: {
         allowNull: false,

@@ -26,7 +26,14 @@ module.exports = (sequelize, DataTypes) => {
     },
     price: {
       type: DataTypes.DECIMAL(10, 2),
-      allowNull: false
+      allowNull: false,
+      comment: 'Unit price snapshot'
+    },
+    items: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1,
+      comment: 'Quantity of this add-on on the line'
     }
   }, {
     sequelize,

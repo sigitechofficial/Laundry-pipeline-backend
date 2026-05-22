@@ -1667,7 +1667,7 @@ class CustomerOrderService {
         if (selectedServiceIds.length > 0) {
             const addOnRows = await customerSelectedServiceAddOn.findAll({
                 where: { customerSelectedServiceId: { [Op.in]: selectedServiceIds } },
-                attributes: ['id', 'customerSelectedServiceId', 'addOnServiceId', 'price'],
+                attributes: ['id', 'customerSelectedServiceId', 'addOnServiceId', 'price', 'items'],
                 include: [
                     {
                         model: addOnServices,
@@ -1686,10 +1686,14 @@ class CustomerOrderService {
                 if (!addOnsByServiceId[key]) {
                     addOnsByServiceId[key] = [];
                 }
+                const unitPrice = parseFloat(plain.price) || 0;
+                const items = parseInt(plain.items, 10) > 0 ? parseInt(plain.items, 10) : 1;
                 addOnsByServiceId[key].push({
                     id: plain.id,
                     addOnServiceId: plain.addOnServiceId,
                     price: plain.price,
+                    items,
+                    lineTotal: parseFloat((unitPrice * items).toFixed(2)),
                     addOnService: plain.addOnService || null
                 });
             }

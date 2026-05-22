@@ -72,6 +72,9 @@ const {
     getLineQuantity,
     getUnitCategoryCharge,
     getLineSubtotal,
+    getAddOnRowSubtotal,
+    serviceLineHasAddOnPayload,
+    replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
 
@@ -1690,26 +1693,12 @@ exports.driverAddSerivces = async (req, res) => {
                 });
             }
 
-            // Handle add-on services for this subCategory line item
-            if (Array.isArray(service.addOnServiceIds)) {
-                // Replace existing add-ons for this line item
-                await customerSelectedServiceAddOn.destroy({
-                    where: { customerSelectedServiceId: selectedServiceRow.id }
-                });
-
-                if (service.addOnServiceIds.length > 0) {
-                    const addOnRecords = await addOnServices.findAll({
-                        where: { id: service.addOnServiceIds }
-                    });
-                    for (const addOn of addOnRecords) {
-                        const addOnPrice = parseFloat(addOn.price || 0);
-                        await customerSelectedServiceAddOn.create({
-                            customerSelectedServiceId: selectedServiceRow.id,
-                            addOnServiceId: addOn.id,
-                            price: addOnPrice
-                        });
-                    }
-                }
+            if (serviceLineHasAddOnPayload(service)) {
+                await replaceAddOnsForServiceLine(
+                    selectedServiceRow.id,
+                    service,
+                    addOnServices
+                );
             }
         }
     }
@@ -2020,7 +2009,7 @@ exports.invoiceCreation = async (req, res) => {
                         model: customerSelectedServiceAddOn,
                         as: 'addOns',
                         required: false,
-                        attributes: ['id', 'addOnServiceId', 'price'],
+                        attributes: ['id', 'addOnServiceId', 'price', 'items'],
                         include: [
                             {
                                 model: addOnServices,
@@ -2315,7 +2304,7 @@ exports.customerServices = async (req, res) => {
             attributes: ['price'],
         });
         addOnTotal = addOnRows.reduce(
-            (sum, addOn) => sum + (parseFloat(addOn.price) || 0),
+            (sum, addOn) => sum + getAddOnRowSubtotal(addOn),
             0
         );
     }
@@ -3211,7 +3200,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
             attributes: ['price'],
         });
         addOnTotal = addOnRows.reduce(
-            (sum, addOn) => sum + (parseFloat(addOn.price) || 0),
+            (sum, addOn) => sum + getAddOnRowSubtotal(addOn),
             0
         );
     }
@@ -4355,23 +4344,12 @@ exports.updateInvoice = async (req, res) => {
                 });
             }
 
-            // Handle add-on services for this subCategory line item
-            if (Array.isArray(service.addOnServiceIds)) {
-                await customerSelectedServiceAddOn.destroy({
-                    where: { customerSelectedServiceId: selectedServiceRow.id }
-                });
-                if (service.addOnServiceIds.length > 0) {
-                    const addOnRecords = await addOnServices.findAll({
-                        where: { id: service.addOnServiceIds }
-                    });
-                    for (const addOn of addOnRecords) {
-                        await customerSelectedServiceAddOn.create({
-                            customerSelectedServiceId: selectedServiceRow.id,
-                            addOnServiceId: addOn.id,
-                            price: parseFloat(addOn.price || 0)
-                        });
-                    }
-                }
+            if (serviceLineHasAddOnPayload(service)) {
+                await replaceAddOnsForServiceLine(
+                    selectedServiceRow.id,
+                    service,
+                    addOnServices
+                );
             }
         }
     }

@@ -27,6 +27,13 @@ const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
 const {
+    getLineQuantity,
+    getUnitCategoryCharge,
+    serviceLineHasAddOnPayload,
+    replaceAddOnsForServiceLine,
+    sumActiveBookingServicesSubtotal,
+} = require('../../utils/invoiceLineTotals');
+const {
     ValidationError,
     NotFoundError,
     ConflictError,
@@ -1105,11 +1112,9 @@ class OrderService {
             throw new NotFoundError("Zone information not found for this booking");
         }
 
-        let total = 0;
-
         for (const serviceItem of services) {
-            const itemTotalPrice = parseFloat(serviceItem.categoryCharge || 0);
-            total += itemTotalPrice;
+            const unitPrice = getUnitCategoryCharge(serviceItem.categoryCharge);
+            const qty = getLineQuantity(serviceItem.items);
 
             const existingRecords = await customerSelectedService.findAll({
                 where: {
@@ -1129,9 +1134,9 @@ class OrderService {
             if (matched) {
                 await matched.update({
                     categoryId: serviceItem.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: serviceItem.subCategoryId,
-                    items: serviceItem.items,
+                    items: qty,
                     date: currentDate,
                     time: currentTime,
                     status: true
@@ -1144,34 +1149,23 @@ class OrderService {
                     bookingId,
                     serviceId: serviceItem.serviceId,
                     categoryId: serviceItem.categoryId,
-                    categoryPrice: itemTotalPrice,
+                    categoryPrice: unitPrice,
                     subCategoryId: serviceItem.subCategoryId,
-                    items: serviceItem.items,
+                    items: qty,
                     status: true
                 });
             }
 
-            if (Array.isArray(serviceItem.addOnServiceIds)) {
-                await customerSelectedServiceAddOn.destroy({
-                    where: { customerSelectedServiceId: selectedServiceRow.id }
-                });
-
-                if (serviceItem.addOnServiceIds.length > 0) {
-                    const addOnRecords = await addOnServices.findAll({
-                        where: { id: serviceItem.addOnServiceIds }
-                    });
-                    for (const addOn of addOnRecords) {
-                        const addOnPrice = parseFloat(addOn.price || 0);
-                        total += addOnPrice;
-                        await customerSelectedServiceAddOn.create({
-                            customerSelectedServiceId: selectedServiceRow.id,
-                            addOnServiceId: addOn.id,
-                            price: addOnPrice
-                        });
-                    }
-                }
+            if (serviceLineHasAddOnPayload(serviceItem)) {
+                await replaceAddOnsForServiceLine(
+                    selectedServiceRow.id,
+                    serviceItem,
+                    addOnServices
+                );
             }
         }
+
+        const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
 
         const parsedServiceCharge = parseFloat(serviceCharge) || 0;
         const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
@@ -1179,8 +1173,9 @@ class OrderService {
             ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
             : 0;
 
-        let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-        total = subTotal - parsedZoneMinimum;
+        let subTotal =
+            servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+        let total = subTotal - parsedZoneMinimum;
 
         const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
         const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
