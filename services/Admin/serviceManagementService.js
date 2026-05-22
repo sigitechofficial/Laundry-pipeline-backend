@@ -17,6 +17,22 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 
+function parseServiceBoolean(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function normalizeServicePayload(serviceData) {
+    const data = { ...serviceData };
+    if (data.numberOfBags !== undefined) {
+        data.numberOfBags = parseServiceBoolean(data.numberOfBags);
+    }
+    if (data.numberOfItems !== undefined) {
+        data.numberOfItems = parseServiceBoolean(data.numberOfItems);
+    }
+    return data;
+}
+
 class ServiceManagementService {
     /**
      * Keep serviceCategories junction in sync when category.serviceId is set.
@@ -383,7 +399,7 @@ class ServiceManagementService {
      * @returns {Object} Created service data
      */
     async addService(serviceData) {
-            const serviceCreate = await service.create(serviceData);
+            const serviceCreate = await service.create(normalizeServicePayload(serviceData));
             return serviceCreate;
     }
 
@@ -554,7 +570,7 @@ class ServiceManagementService {
      * @returns {Object} Edited service data
      */
     async editService(serviceId, serviceData) {
-        const editService = await service.update(serviceData, { where: { id: serviceId } });
+        const editService = await service.update(normalizeServicePayload(serviceData), { where: { id: serviceId } });
         if (!editService) {
             throw new NotFoundError('Service Not Found')
         }

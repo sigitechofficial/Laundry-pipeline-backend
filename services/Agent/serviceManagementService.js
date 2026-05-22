@@ -37,7 +37,16 @@ class AgentServiceManagementService {
             include: [
                 {
                     model: service,
-                    attributes: ["name"],
+                    attributes: [
+                        'id',
+                        'name',
+                        'image',
+                        'description',
+                        'timeRequired',
+                        'pricingBasis',
+                        'numberOfBags',
+                        'numberOfItems',
+                    ],
                 },
                 {
                     model: users,
@@ -107,7 +116,17 @@ class AgentServiceManagementService {
             include: [
                 {
                     model: service,
-                    attributes: ['id', 'name', 'status', 'image']
+                    attributes: [
+                        'id',
+                        'name',
+                        'status',
+                        'image',
+                        'description',
+                        'timeRequired',
+                        'pricingBasis',
+                        'numberOfBags',
+                        'numberOfItems',
+                    ],
                 },
                 {
                     model: categories,

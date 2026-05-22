@@ -1823,6 +1823,9 @@ class CustomerOrderService {
                 'image',
                 'description',
                 'timeRequired',
+                'pricingBasis',
+                'numberOfBags',
+                'numberOfItems',
             ],
             order: [['sortOrder', 'ASC']],
         });
@@ -1852,6 +1855,9 @@ class CustomerOrderService {
                     image: svc.image || null,
                     description: svc.description || null,
                     turnAroundTime: svc.timeRequired || null,
+                    pricingBasis: svc.pricingBasis || null,
+                    numberOfBags: Boolean(svc.numberOfBags),
+                    numberOfItems: Boolean(svc.numberOfItems),
                 },
                 categories: serviceCategoriesData.map((row) => ({
                     categoryId: row.categoryId,

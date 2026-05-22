@@ -2994,7 +2994,16 @@ exports.getAgentServices = async (req, res) => {
         include: [
             {
                 model: service,
-                attributes: ["name"],
+                attributes: [
+                    'id',
+                    'name',
+                    'image',
+                    'description',
+                    'timeRequired',
+                    'pricingBasis',
+                    'numberOfBags',
+                    'numberOfItems',
+                ],
             },
             {
                 model: users,
@@ -3058,7 +3067,17 @@ exports.serviceDetail = async (req, res) => {
         include: [
             {
                 model: service,
-                attributes: ['id', 'name', 'status', 'image'],
+                attributes: [
+                    'id',
+                    'name',
+                    'status',
+                    'image',
+                    'description',
+                    'timeRequired',
+                    'pricingBasis',
+                    'numberOfBags',
+                    'numberOfItems',
+                ],
                 paranoid: true,
                 required: true,
             },

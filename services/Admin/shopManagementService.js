@@ -231,11 +231,19 @@ class ShopManagementService {
                             {
                                 model: agentSelectServices,
                                 as: 'agentServices',
-                                attributes: ['id'],
+                                attributes: ['id', 'serviceId', 'status', 'serviceTimeRequired'],
                                 include: [
                                     {
                                         model: require('../../models').service,
-                                        attributes: ['id', 'name']
+                                        attributes: [
+                                            'id',
+                                            'name',
+                                            'description',
+                                            'timeRequired',
+                                            'status',
+                                            'numberOfBags',
+                                            'numberOfItems',
+                                        ]
                                     }
                                 ]
                             }

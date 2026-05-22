@@ -75,6 +75,18 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: 0,
       comment: 'Controls display order — lower number appears first (1 = top)'
+    },
+    numberOfBags: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: 'When true, customer/agent can collect number of bags for this service'
+    },
+    numberOfItems: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: 'When true, customer/agent can collect number of items for this service'
     }
   }, {
     sequelize,

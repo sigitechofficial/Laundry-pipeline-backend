@@ -40,6 +40,16 @@ module.exports = {
         allowNull: true,
         defaultValue: 0
       },
+      numberOfBags: {
+        type: Sequelize.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
+      },
+      numberOfItems: {
+        type: Sequelize.BOOLEAN,
+        allowNull: false,
+        defaultValue: false
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
