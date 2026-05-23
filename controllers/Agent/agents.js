@@ -4239,7 +4239,7 @@ exports.getEarningReportDashboard = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId, timeZone, clientTimeZone } = req.body;
+    const { services, bookingId, timeZone, clientTimeZone, zoneMinimumAmount, serviceCharge } = req.body;
 
     console.log("[PATCH /agent/updateInvoice] agentId:", req.user?.id ?? null);
     console.log("[PATCH /agent/updateInvoice] request body:", JSON.stringify(req.body, null, 2));
@@ -4272,7 +4272,7 @@ exports.updateInvoice = async (req, res) => {
             {
                 model: billingDetails,
                 as: 'billingDetail',
-                attributes: ['serviceCharge', 'upfrontAmount'],
+                attributes: ['serviceCharge', 'upfrontAmount', 'discount'],
                 required: false
             }
         ]
@@ -4360,14 +4360,13 @@ exports.updateInvoice = async (req, res) => {
         "[PATCH /agent/updateInvoice] servicesSubtotal (qty-aware, incl. add-ons):",
         servicesSubtotal
     );
-    let total = servicesSubtotal;
 
-    // Read serviceCharge and zoneMinimumAmount from DB (billingDetails)
-    // so the calculation is always accurate regardless of what frontend sends
-    const parsedServiceCharge = parseFloat(bookings.billingDetail?.serviceCharge || 0);
-    const parsedZoneMinimum = parseFloat(bookings.billingDetail?.upfrontAmount || 0);
-    console.log("Service Charge (from DB):", parsedServiceCharge);
-    console.log("Zone Minimum / upfrontAmount (from DB):", parsedZoneMinimum);
+    const parsedServiceCharge =
+        parseFloat(serviceCharge ?? bookings.billingDetail?.serviceCharge ?? 0) || 0;
+    const parsedZoneMinimum =
+        parseFloat(zoneMinimumAmount ?? bookings.billingDetail?.upfrontAmount ?? 0) || 0;
+    console.log("Service Charge:", parsedServiceCharge);
+    console.log("Zone Minimum / upfrontAmount:", parsedZoneMinimum);
 
     // Get tip amount from booking (same as driverAddServices)
     const tipAmount = bookings.tips && bookings.tips.length > 0
@@ -4375,40 +4374,56 @@ exports.updateInvoice = async (req, res) => {
         : 0;
     console.log("Tip Amount:", tipAmount);
 
-    // subTotal = categoryCharges + serviceCharge + zoneMinimumAmount + tipAmount
-    let subTotal = total + parsedServiceCharge + parsedZoneMinimum + tipAmount;
+    // subTotal = all active lines (unit×qty + add-ons) + serviceCharge + zoneMinimumAmount + tipAmount
+    let subTotal =
+        servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
     console.log("Sub-Total (full order value):", subTotal);
 
-    // total = subTotal - zoneMinimumAmount (already charged upfront)
-    total = subTotal - parsedZoneMinimum;
+    // total = subTotal - zoneMinimumAmount (deduct already paid upfront)
+    let total = subTotal - parsedZoneMinimum;
     console.log("Total (remaining balance):", total);
 
-    // Zone admin commission
+    // Calculate zone admin commission (same as driverAddServices)
     const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-    const zoneAdminCommissionAmount = parseFloat(((subTotal * zoneAdminCommission) / 100).toFixed(2));
+    const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
     console.log("Zone Admin Commission Amount:", zoneAdminCommissionAmount);
 
-    // Round
+    // Read existing discount from billingDetails (set at booking creation via coupon)
+    const existingDiscount = parseFloat(
+        bookings.billingDetail?.discount ??
+        (await billingDetails.findOne({ where: { bookingId } }))?.discount ??
+        0
+    );
+
+    // Round to 2 decimal places
     total = parseFloat(total.toFixed(2));
     subTotal = parseFloat(subTotal.toFixed(2));
-    console.log("Final Total:", total);
+    const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
 
-    if (isNaN(total)) {
+    // Apply existing coupon discount so it is not lost after invoice update
+    const discountedTotal = parseFloat(Math.max(0, total - existingDiscount).toFixed(2));
+
+    console.log("Existing Discount:", existingDiscount);
+    console.log("Final Total After Zone Deduction:", total);
+    console.log("Final Total After Discount:", discountedTotal);
+
+    if (isNaN(discountedTotal)) {
         throw new Error("Calculated total is NaN. Please check your input values.");
     }
 
     await billingDetails.update(
         {
-            total,
+            total: discountedTotal,
+            discount: existingDiscount,
             paymentStatus: "Pending",
-            zoneAdminCommission: zoneAdminCommissionAmount,
+            zoneAdminCommission: finalZoneAdminCommissionAmount,
         },
         { where: { bookingId: bookingId } }
     );
 
     await booking.update(
         {
-            orderAmount: total,
+            orderAmount: discountedTotal,
             subTotal,
         },
         { where: { id: bookingId } }
