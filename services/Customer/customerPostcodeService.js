@@ -1,249 +1,467 @@
 require("dotenv").config();
-const axios = require('axios');
-const { 
-    ValidationError, 
-    NotFoundError 
-} = require('../../middlewares/universalErrorHandler');
+const axios = require("axios");
+const redisCli = require("../../redis/redis");
+const {
+    ValidationError,
+    NotFoundError,
+    TooManyRequestsError,
+} = require("../../middlewares/universalErrorHandler");
 
-/**
- * Customer Postcode Service
- * Handles UK address lookup using getAddress.io API
- */
+const POSTCODE_REGEX = /^[A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2}$/;
+const OUTCODE_LETTERS = "ABCDEFGHJKLMNOPQRSTUVWXY";
+const CACHE_PREFIX = "addr:v2:";
+const COOLDOWN_PREFIX = "cooldown:pc:addr:";
+
+const CACHE_TTL_SEC = 14 * 24 * 60 * 60; // 2 weeks
+const COOLDOWN_SEC = 30; // seconds between paid address searches (per user)
+
 class CustomerPostcodeService {
-    /**
-     * Get list of addresses for a given UK postcode using getAddress.io API
-     * @param {string} postcode - UK postcode (e.g., "SW1A1AA" or "SW1A 1AA")
-     * @returns {Object} - List of addresses with formatted data
-     */
-    async getAddressesByPostcode(postcode) {
-        // Declare variables outside try block so they're accessible in catch
-        let normalizedPostcode = '';
-        let spacedPostcode = '';
-        
-        try {
-            // Normalize postcode (remove extra spaces, uppercase, but keep format)
-            // UK postcodes can be: SW1A1AA or SW1A 1AA
-            normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
-            
-            // Also create a version with proper spacing for display
-            // Format: [A-Z]{1,2}[0-9]{1,2}[A-Z]?[space][0-9][A-Z]{2}
-            spacedPostcode = normalizedPostcode.replace(/^([A-Z]{1,2}\d{1,2}[A-Z]?)(\d[A-Z]{2})$/, '$1 $2');
-            
-            if (!normalizedPostcode) {
-                throw new ValidationError('Postcode is required');
-            }
-
-            // Validate UK postcode format (basic regex)
-            const postcodeRegex = /^[A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2}$/;
-            if (!postcodeRegex.test(normalizedPostcode)) {
-                throw new ValidationError('Invalid UK postcode format');
-            }
-
-            // Check if API key is configured
-            if (!process.env.GETADDRESS_API_KEY) {
-                throw new ValidationError('getAddress.io API key is not configured');
-            }
-
-            // Call getAddress.io API using autocomplete endpoint (works with free/basic plans)
-            // Note: Using /autocomplete instead of /find as it's available on more subscription tiers
-            const apiUrl = `https://api.getaddress.io/autocomplete/${normalizedPostcode}`;
-            console.log(`🔍 Fetching addresses for postcode: ${normalizedPostcode} (spaced: ${spacedPostcode})`);
-            console.log(`🔑 API Key configured: ${process.env.GETADDRESS_API_KEY ? 'Yes (first 8 chars: ' + process.env.GETADDRESS_API_KEY.substring(0, 8) + '...)' : 'NO - MISSING!'}`);
-            console.log(`🌐 Full API URL: ${apiUrl}?all=true`);
-            
-            const response = await axios.get(apiUrl, {
-                params: {
-                    'api-key': process.env.GETADDRESS_API_KEY,
-                    'all': true  // Get all addresses for this postcode
-                },
-                timeout: 10000,
-                validateStatus: function (status) {
-                    // Don't throw on any status, we'll handle it
-                    return true;
-                }
-            });
-
-            console.log(`📊 API Response Status: ${response.status}`);
-            console.log(`📦 Response Data:`, JSON.stringify(response.data, null, 2));
-            console.log(`📋 Response Headers:`, JSON.stringify(response.headers, null, 2));
-
-            // Handle error responses
-            if (response.status === 404) {
-                throw new NotFoundError(
-                    `Postcode "${postcode}" not found. ` +
-                    `API Response: ${JSON.stringify(response.data)}. ` +
-                    `Please verify: (1) The postcode exists and is valid, (2) Your API key has available lookups, ` +
-                    `(3) Your subscription includes this postcode. Test with: SW1A1AA, M11AE, B11AA`
-                );
-            } else if (response.status === 401 || response.status === 403) {
-                throw new ValidationError(
-                    `Invalid or missing API key. Status: ${response.status}. ` +
-                    `Response: ${JSON.stringify(response.data)}. ` +
-                    `Please check GETADDRESS_API_KEY in your .env file. Get your key from: https://getaddress.io/dashboard`
-                );
-            } else if (response.status === 429) {
-                throw new ValidationError(
-                    `API rate limit exceeded. Status: ${response.status}. ` +
-                    `Response: ${JSON.stringify(response.data)}. ` +
-                    `You have used all available lookups for this billing period.`
-                );
-            } else if (response.status === 400) {
-                throw new ValidationError(
-                    `Invalid postcode format: "${postcode}". Status: ${response.status}. ` +
-                    `API Response: ${JSON.stringify(response.data)}`
-                );
-            } else if (response.status !== 200) {
-                throw new ValidationError(
-                    `Unexpected API response. Status: ${response.status}. ` +
-                    `Response: ${JSON.stringify(response.data)}`
-                );
-            }
-
-            if (response.data && response.data.suggestions && response.data.suggestions.length > 0) {
-                // Get coordinates from postcodes.io (free API for lat/lng)
-                let latitude = null;
-                let longitude = null;
-                
-                try {
-                    console.log('📍 Fetching coordinates from postcodes.io...');
-                    const coordResponse = await axios.get(`https://api.postcodes.io/postcodes/${spacedPostcode}`);
-                    
-                    if (coordResponse.data && coordResponse.data.result) {
-                        latitude = coordResponse.data.result.latitude;
-                        longitude = coordResponse.data.result.longitude;
-                        console.log(`✅ Coordinates found: ${latitude}, ${longitude}`);
-                    }
-                } catch (coordError) {
-                    console.warn(`⚠️ Could not fetch coordinates: ${coordError.message}`);
-                    // Continue without coordinates - not critical
-                }
-                
-                // Format addresses for response
-                // Autocomplete endpoint returns suggestions array with address, url, and id
-                const formattedAddresses = response.data.suggestions.map((suggestion, index) => {
-                    // Each suggestion has: { address, url, id }
-                    // Address format: "Street, Locality, Town, County, Postcode"
-                    const addressParts = suggestion.address.split(',').map(part => part.trim());
-                    
-                    // Parse address parts (typically: line1, line2, town, county, postcode)
-                    const line1 = addressParts[0] || '';
-                    const line2 = addressParts[1] || '';
-                    const town = addressParts[2] || '';
-                    const county = addressParts[3] || '';
-                    
-                    return {
-                        id: index,
-                        suggestionId: suggestion.id,  // getAddress.io's unique ID
-                        line1: line1,
-                        line2: line2,
-                        line3: '',
-                        locality: line2,
-                        town: town,
-                        county: county,
-                        postcode: normalizedPostcode,
-                        fullAddress: suggestion.address,
-                        latitude: latitude,  // Add coordinates to each address
-                        longitude: longitude
-                    };
-                });
-
-                return {
-                    postcode: normalizedPostcode,
-                    addressCount: formattedAddresses.length,
-                    addresses: formattedAddresses,
-                    latitude: latitude,
-                    longitude: longitude
-                };
-            } else {
-                throw new NotFoundError('No addresses found for this postcode');
-            }
-        } catch (error) {
-            // Log the full error for debugging
-            console.error(`❌ getAddress.io API Error:`, {
-                postcode: normalizedPostcode || postcode,
-                status: error.response?.status,
-                statusText: error.response?.statusText,
-                data: error.response?.data,
-                message: error.message,
-                code: error.code
-            });
-            
-            // Re-throw known errors
-            if (error instanceof ValidationError || error instanceof NotFoundError) {
-                throw error;
-            }
-            
-            // Network/timeout errors
-            if (error.code === 'ECONNABORTED') {
-                throw new ValidationError('Request timeout. Please try again.');
-            }
-            
-            if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-                throw new ValidationError('Cannot connect to getAddress.io API. Please check your internet connection.');
-            }
-            
-            // Generic error
-            throw new ValidationError(`Failed to fetch addresses: ${error.message}`);
-        }
+    normalizePostcode(postcode) {
+        return postcode.trim().replace(/\s+/g, "").toUpperCase();
     }
 
-    /**
-     * Get full address details by ID (after user selects from list)
-     * @param {string} postcode - UK postcode
-     * @param {number} addressIndex - Index of the selected address
-     * @returns {Object} - Full address details
-     */
-    async getAddressById(postcode, addressIndex) {
-        const result = await this.getAddressesByPostcode(postcode);
-        
-        const index = parseInt(addressIndex);
-        
-        if (isNaN(index)) {
-            throw new ValidationError('Invalid address index');
-        }
-        
-        if (index >= 0 && index < result.addresses.length) {
-            return {
-                ...result.addresses[index],
-                latitude: result.latitude,
-                longitude: result.longitude
-            };
-        } else {
-            throw new NotFoundError('Address not found at specified index');
-        }
+    formatSpacedPostcode(normalizedPostcode) {
+        return normalizedPostcode.replace(
+            /^([A-Z]{1,2}\d{1,2}[A-Z]?)(\d[A-Z]{2})$/,
+            "$1 $2"
+        );
     }
 
-    /**
-     * Validate UK postcode format
-     * @param {string} postcode - UK postcode to validate
-     * @returns {Object} - Validation result with isValid boolean
-     */
     validatePostcodeFormat(postcode) {
-        if (!postcode || typeof postcode !== 'string') {
+        if (!postcode || typeof postcode !== "string") {
             return {
                 isValid: false,
-                message: 'Postcode is required'
+                message: "Postcode is required",
             };
         }
 
-        const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
-        const postcodeRegex = /^[A-Z]{1,2}[0-9]{1,2}[A-Z]?[0-9][A-Z]{2}$/;
-        
-        if (!postcodeRegex.test(normalizedPostcode)) {
+        const normalizedPostcode = this.normalizePostcode(postcode);
+
+        if (!POSTCODE_REGEX.test(normalizedPostcode)) {
             return {
                 isValid: false,
-                message: 'Invalid UK postcode format',
-                normalizedPostcode
+                message: "Invalid UK postcode format",
+                normalizedPostcode,
             };
         }
 
         return {
             isValid: true,
-            message: 'Valid postcode format',
-            normalizedPostcode
+            message: "Valid postcode format",
+            normalizedPostcode,
+            spacedPostcode: this.formatSpacedPostcode(normalizedPostcode),
         };
+    }
+
+    async safeRedisGet(key) {
+        try {
+            return await redisCli.get(key);
+        } catch (error) {
+            console.warn("[postcode] Redis GET failed:", error.message);
+            return null;
+        }
+    }
+
+    async safeRedisSetEx(key, ttl, value) {
+        try {
+            await redisCli.setEx(key, ttl, value);
+        } catch (error) {
+            console.warn("[postcode] Redis SET failed:", error.message);
+        }
+    }
+
+    async safeRedisTtl(key) {
+        try {
+            return await redisCli.ttl(key);
+        } catch {
+            return COOLDOWN_SEC;
+        }
+    }
+
+    async safeRedisSetCooldown(key, ttl) {
+        try {
+            await redisCli.setEx(key, ttl, "1");
+        } catch (error) {
+            console.warn("[postcode] Redis cooldown SET failed:", error.message);
+        }
+    }
+
+    async assertAddressSearchCooldown(actorId) {
+        if (!actorId) {
+            return;
+        }
+
+        const key = `${COOLDOWN_PREFIX}${actorId}`;
+        const active = await this.safeRedisGet(key);
+        if (active) {
+            const retryAfterSeconds = await this.safeRedisTtl(key);
+            throw new TooManyRequestsError(
+                "Please wait before searching another postcode.",
+                { retryAfterSeconds: retryAfterSeconds > 0 ? retryAfterSeconds : COOLDOWN_SEC }
+            );
+        }
+    }
+
+    async setAddressSearchCooldown(actorId) {
+        if (!actorId) {
+            return;
+        }
+        await this.safeRedisSetCooldown(`${COOLDOWN_PREFIX}${actorId}`, COOLDOWN_SEC);
+    }
+
+    async verifyPostcodeWithPostcodesIo(postcode) {
+        const format = this.validatePostcodeFormat(postcode);
+        if (!format.isValid) {
+            throw new ValidationError(format.message);
+        }
+
+        const spacedPostcode = format.spacedPostcode;
+
+        try {
+            const response = await axios.get(
+                `https://api.postcodes.io/postcodes/${encodeURIComponent(spacedPostcode)}`,
+                { timeout: 8000 }
+            );
+
+            if (response.data?.status !== 200 || !response.data?.result) {
+                throw new NotFoundError(`Postcode "${spacedPostcode}" not found`);
+            }
+
+            const result = response.data.result;
+
+            return {
+                isValid: true,
+                message: "Postcode verified",
+                normalizedPostcode: format.normalizedPostcode,
+                spacedPostcode: result.postcode || spacedPostcode,
+                latitude: result.latitude ?? null,
+                longitude: result.longitude ?? null,
+                outcode: result.outcode || null,
+                incode: result.incode || null,
+                town: result.admin_district || result.parish || null,
+                county: result.admin_county || result.region || null,
+                country: result.country || null,
+                region: result.region || null,
+            };
+        } catch (error) {
+            if (error instanceof ValidationError || error instanceof NotFoundError) {
+                throw error;
+            }
+            if (error.response?.status === 404) {
+                throw new NotFoundError(`Postcode "${spacedPostcode}" not found`);
+            }
+            throw new ValidationError(`Failed to verify postcode: ${error.message}`);
+        }
+    }
+
+    compactPostcodeQuery(query) {
+        return (query || "").trim().replace(/\s+/g, "").toUpperCase();
+    }
+
+    async verifyOutcodeExists(outcode) {
+        try {
+            const response = await axios.get(
+                `https://api.postcodes.io/outcodes/${encodeURIComponent(outcode)}`,
+                { timeout: 3000, validateStatus: (status) => status < 500 }
+            );
+            return response.status === 200 && response.data?.status === 200;
+        } catch {
+            return false;
+        }
+    }
+
+    async resolveExistingOutcodes(candidates, limit = 15) {
+        const checks = await Promise.all(
+            candidates.map(async (outcode) =>
+                (await this.verifyOutcodeExists(outcode)) ? outcode : null
+            )
+        );
+
+        return checks.filter(Boolean).slice(0, limit);
+    }
+
+    buildOutcodeCandidates(compact) {
+        const areaMatch = compact.match(/^([A-Z]{1,2})(\d*)$/);
+        if (!areaMatch) {
+            return [];
+        }
+
+        const [, area, digits] = areaMatch;
+        const candidates = [];
+
+        if (!digits) {
+            for (let d = 1; d <= 20; d += 1) {
+                candidates.push(`${area}${d}`);
+            }
+            return candidates;
+        }
+
+        for (const letter of OUTCODE_LETTERS) {
+            candidates.push(`${area}${digits}${letter}`);
+        }
+
+        return candidates;
+    }
+
+    async fetchFullPostcodeAutocomplete(compact) {
+        const response = await axios.get(
+            `https://api.postcodes.io/postcodes/${encodeURIComponent(compact)}/autocomplete`,
+            {
+                params: { limit: 10 },
+                timeout: 8000,
+                validateStatus: (status) => status < 500,
+            }
+        );
+
+        if (response.status === 404) {
+            return [];
+        }
+
+        if (response.status !== 200) {
+            throw new ValidationError("Failed to autocomplete postcode");
+        }
+
+        return Array.isArray(response.data?.result) ? response.data.result : [];
+    }
+
+    async autocompletePostcode(query) {
+        const compact = this.compactPostcodeQuery(query);
+        if (compact.length < 2) {
+            return { suggestions: [], suggestionType: "postcode" };
+        }
+
+        try {
+            // Full postcode e.g. SW1A1AA or partial incode e.g. SW1A1
+            if (POSTCODE_REGEX.test(compact) || /^[A-Z]{1,2}\d{1,2}[A-Z]\d/.test(compact)) {
+                const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+                return { suggestions, suggestionType: "postcode" };
+            }
+
+            // Complete outcode with letter e.g. SW1A -> show full postcodes
+            if (/^[A-Z]{1,2}\d{1,2}[A-Z]$/.test(compact)) {
+                const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+                return { suggestions, suggestionType: "postcode" };
+            }
+
+            // Area only e.g. SW -> postcode districts (SW1, SW2); not valid outcodes on their own
+            if (/^[A-Z]{1,2}$/.test(compact)) {
+                const suggestions = this.buildOutcodeCandidates(compact).slice(0, 15);
+                return { suggestions, suggestionType: "outcode" };
+            }
+
+            // District with digits e.g. SW1, SW10 -> letter suffix outcodes (SW1A, SW10B)
+            if (/^[A-Z]{1,2}\d{1,2}$/.test(compact)) {
+                const candidates = this.buildOutcodeCandidates(compact);
+                const suggestions = await this.resolveExistingOutcodes(candidates, 15);
+                return { suggestions, suggestionType: "outcode" };
+            }
+
+            const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+            return { suggestions, suggestionType: "postcode" };
+        } catch (error) {
+            if (error instanceof ValidationError) {
+                throw error;
+            }
+            if (error.response?.status === 404) {
+                return { suggestions: [], suggestionType: "postcode" };
+            }
+            throw new ValidationError(`Failed to autocomplete postcode: ${error.message}`);
+        }
+    }
+
+    formatIdealAddress(addr, index, fallbackPostcode) {
+        const line1 = addr.line_1 || "";
+        const line2 = addr.line_2 || "";
+        const town = addr.post_town || "";
+        const county = addr.county || addr.postal_county || addr.traditional_county || "";
+        const postcode = this.normalizePostcode(addr.postcode || fallbackPostcode || "");
+        const fullAddress = [line1, line2, town, county, this.formatSpacedPostcode(postcode)]
+            .filter(Boolean)
+            .join(", ");
+
+        return {
+            id: index,
+            suggestionId: String(addr.udprn ?? index),
+            udprn: addr.udprn ?? null,
+            line1,
+            line2,
+            line3: addr.line_3 || "",
+            locality: addr.dependant_locality || addr.double_dependant_locality || line2,
+            town,
+            county,
+            postcode,
+            fullAddress,
+            latitude: addr.latitude ?? null,
+            longitude: addr.longitude ?? null,
+        };
+    }
+
+    async fetchAddressesFromIdeal(spacedPostcode) {
+        const apiKey = process.env.IDEAL_POSTCODES_API_KEY;
+        if (!apiKey) {
+            throw new ValidationError("Ideal Postcodes API key is not configured");
+        }
+
+        const normalizedPostcode = this.normalizePostcode(spacedPostcode);
+        const allAddresses = [];
+        let page = 0;
+        let total = null;
+
+        while (page < 20) {
+            const response = await axios.get(
+                `https://api.ideal-postcodes.co.uk/v1/postcodes/${encodeURIComponent(spacedPostcode)}`,
+                {
+                    params: {
+                        api_key: apiKey,
+                        page,
+                    },
+                    timeout: 15000,
+                    validateStatus: (status) => status < 500,
+                }
+            );
+
+            if (response.status === 404) {
+                throw new NotFoundError(`Postcode "${spacedPostcode}" not found`);
+            }
+
+            if (response.status === 401 || response.status === 403) {
+                throw new ValidationError("Invalid Ideal Postcodes API key");
+            }
+
+            if (response.status === 429) {
+                throw new TooManyRequestsError(
+                    "Address lookup service is busy. Please try again shortly.",
+                    { retryAfterSeconds: 60 }
+                );
+            }
+
+            if (response.status !== 200) {
+                throw new ValidationError(
+                    `Ideal Postcodes error (${response.status}): ${response.data?.message || "Unexpected response"}`
+                );
+            }
+
+            const batch = Array.isArray(response.data?.result) ? response.data.result : [];
+            if (typeof response.data?.total === "number") {
+                total = response.data.total;
+            }
+
+            batch.forEach((addr, idx) => {
+                allAddresses.push(
+                    this.formatIdealAddress(addr, allAddresses.length + idx, normalizedPostcode)
+                );
+            });
+
+            const limit = response.data?.limit || 100;
+            const fetchedAll =
+                total != null
+                    ? allAddresses.length >= total
+                    : batch.length < limit;
+
+            if (fetchedAll || batch.length === 0) {
+                break;
+            }
+
+            page += 1;
+        }
+
+        if (allAddresses.length === 0) {
+            throw new NotFoundError("No addresses found for this postcode");
+        }
+
+        return allAddresses;
+    }
+
+    async getCachedAddresses(normalizedPostcode) {
+        const raw = await this.safeRedisGet(`${CACHE_PREFIX}${normalizedPostcode}`);
+        if (!raw) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return null;
+        }
+    }
+
+    async setCachedAddresses(normalizedPostcode, payload) {
+        await this.safeRedisSetEx(
+            `${CACHE_PREFIX}${normalizedPostcode}`,
+            CACHE_TTL_SEC,
+            JSON.stringify(payload)
+        );
+    }
+
+    /**
+     * Hybrid lookup: postcodes.io verify (free) + Ideal Postcodes addresses (paid) + Redis cache.
+     */
+    async getAddressesByPostcode(postcode, actorId = null) {
+        const format = this.validatePostcodeFormat(postcode);
+        if (!format.isValid) {
+            throw new ValidationError(format.message);
+        }
+
+        const normalizedPostcode = format.normalizedPostcode;
+        const cached = await this.getCachedAddresses(normalizedPostcode);
+        if (cached) {
+            return { ...cached, fromCache: true };
+        }
+
+        await this.assertAddressSearchCooldown(actorId);
+
+        const verified = await this.verifyPostcodeWithPostcodesIo(normalizedPostcode);
+        const addresses = await this.fetchAddressesFromIdeal(verified.spacedPostcode);
+
+        const latitude =
+            verified.latitude ??
+            addresses.find((a) => a.latitude != null)?.latitude ??
+            null;
+        const longitude =
+            verified.longitude ??
+            addresses.find((a) => a.longitude != null)?.longitude ??
+            null;
+
+        const payload = {
+            postcode: normalizedPostcode,
+            spacedPostcode: verified.spacedPostcode,
+            addressCount: addresses.length,
+            addresses: addresses.map((addr) => ({
+                ...addr,
+                latitude: addr.latitude ?? latitude,
+                longitude: addr.longitude ?? longitude,
+            })),
+            latitude,
+            longitude,
+            town: verified.town,
+            county: verified.county,
+            fromCache: false,
+        };
+
+        await this.setCachedAddresses(normalizedPostcode, payload);
+        await this.setAddressSearchCooldown(actorId);
+
+        return payload;
+    }
+
+    async getAddressById(postcode, addressIndex, actorId = null) {
+        const result = await this.getAddressesByPostcode(postcode, actorId);
+        const index = parseInt(addressIndex, 10);
+
+        if (Number.isNaN(index)) {
+            throw new ValidationError("Invalid address index");
+        }
+
+        if (index >= 0 && index < result.addresses.length) {
+            return {
+                ...result.addresses[index],
+                latitude: result.addresses[index].latitude ?? result.latitude,
+                longitude: result.addresses[index].longitude ?? result.longitude,
+            };
+        }
+
+        throw new NotFoundError("Address not found at specified index");
     }
 }
 
 module.exports = new CustomerPostcodeService();
-

@@ -104,6 +104,7 @@ const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAge
 const ResponseHelper = require('../../utils/responseHelper');
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
@@ -4692,7 +4693,8 @@ const getNextHourTime = (time) => {
  */
 exports.getAddressesByPostcode = async (req, res) => {
     const { postcode } = req.params;
-    const result = await customerPostcodeService.getAddressesByPostcode(postcode);
+    const actorId = getPostcodeActorId(req);
+    const result = await customerPostcodeService.getAddressesByPostcode(postcode, actorId);
     return ResponseHelper.success(res, "Addresses fetched successfully", result);
 };
 
@@ -4706,22 +4708,29 @@ exports.getAddressesByPostcode = async (req, res) => {
  */
 exports.getAddressById = async (req, res) => {
     const { postcode, index } = req.params;
-    const result = await customerPostcodeService.getAddressById(postcode, parseInt(index));
+    const actorId = getPostcodeActorId(req);
+    const result = await customerPostcodeService.getAddressById(postcode, parseInt(index), actorId);
     return ResponseHelper.success(res, "Address fetched successfully", result);
 };
 
 /**
  * @route POST /api/agent/postcode/validate
  * @access Private (Agent)
- * @description Validate UK postcode format.
+ * @description Validate UK postcode via postcodes.io.
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @returns {Object} - JSON response with validation result.
  */
 exports.validatePostcode = async (req, res) => {
     const { postcode } = req.body;
-    const result = await customerPostcodeService.validatePostcodeFormat(postcode);
+    const result = await customerPostcodeService.verifyPostcodeWithPostcodesIo(postcode);
     return ResponseHelper.success(res, "Postcode validation result", result);
+};
+
+exports.autocompletePostcode = async (req, res) => {
+    const query = req.query.q || req.query.query || "";
+    const result = await customerPostcodeService.autocompletePostcode(query);
+    return ResponseHelper.success(res, "Postcode suggestions fetched successfully", result);
 };
 
 /**

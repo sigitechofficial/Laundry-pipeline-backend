@@ -9,6 +9,10 @@ const path=require('path')
 const validateAccessToken=require('../middlewares/accessToken')
 const validateGuestAccessToken=require('../middlewares/guestAccessToken')
 const validateAccessTokenOrGuest=require('../middlewares/accessTokenOrGuest')
+const {
+    postcodeAutocompleteRateLimit,
+    postcodeValidateRateLimit,
+} = require('../middlewares/postcodeRateLimit')
 const { route } = require('./driver')
 
 //!Multer Middlewares
@@ -133,11 +137,30 @@ router.post('/applyCoupon', validateAccessToken, asyncMiddleware(customerOtherCo
 router.get('/getBanners', asyncMiddleware(customerOtherController.getActiveBanners))
 
 //!----------------------------Customer Postcode Address Lookup---------------------//
-//Get addresses by UK postcode
-router.get('/postcode/:postcode', validateAccessToken, asyncMiddleware(customerOtherController.getAddressesByPostcode));
-//Get specific address by postcode and index
-router.get('/postcode/:postcode/address/:index', validateAccessToken, asyncMiddleware(customerOtherController.getAddressById));
-//Validate UK postcode format
-router.post('/postcode/validate', validateAccessToken, asyncMiddleware(customerOtherController.validatePostcode));
+// Free postcode suggestions (postcodes.io)
+router.get(
+    '/postcode/autocomplete',
+    validateAccessTokenOrGuest,
+    postcodeAutocompleteRateLimit,
+    asyncMiddleware(customerOtherController.autocompletePostcode)
+);
+// Free postcode verify (postcodes.io)
+router.post(
+    '/postcode/validate',
+    validateAccessTokenOrGuest,
+    postcodeValidateRateLimit,
+    asyncMiddleware(customerOtherController.validatePostcode)
+);
+// Paid address list (Ideal Postcodes) — must be after /autocomplete
+router.get(
+    '/postcode/:postcode/address/:index',
+    validateAccessTokenOrGuest,
+    asyncMiddleware(customerOtherController.getAddressById)
+);
+router.get(
+    '/postcode/:postcode',
+    validateAccessTokenOrGuest,
+    asyncMiddleware(customerOtherController.getAddressesByPostcode)
+);
 
 module.exports=router

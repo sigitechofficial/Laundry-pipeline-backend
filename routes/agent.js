@@ -9,6 +9,10 @@ const checkPermissions = require("../middlewares/checkPermission");
 const multer = require("multer");
 const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
+const {
+    postcodeAutocompleteRateLimit,
+    postcodeValidateRateLimit,
+} = require("../middlewares/postcodeRateLimit");
 const { access } = require("fs");
 const { route } = require("./driver");
 const { DATE } = require("sequelize");
@@ -574,25 +578,27 @@ router.get(
 );
 
 //!----------------------------Agent Postcode Lookup---------------------//
-// Route to get all addresses for a given postcode
 router.get(
-    '/postcode/:postcode',
+    '/postcode/autocomplete',
     validateAccessToken,
-    asyncMiddleware(agentController.getAddressesByPostcode)
+    postcodeAutocompleteRateLimit,
+    asyncMiddleware(agentController.autocompletePostcode)
 );
-
-// Route to get a specific address by postcode and index
+router.post(
+    '/postcode/validate',
+    validateAccessToken,
+    postcodeValidateRateLimit,
+    asyncMiddleware(agentController.validatePostcode)
+);
 router.get(
     '/postcode/:postcode/address/:index',
     validateAccessToken,
     asyncMiddleware(agentController.getAddressById)
 );
-
-// Route to validate a postcode format
-router.post(
-    '/postcode/validate',
+router.get(
+    '/postcode/:postcode',
     validateAccessToken,
-    asyncMiddleware(agentController.validatePostcode)
+    asyncMiddleware(agentController.getAddressesByPostcode)
 );
 
 //!----------------------------------------------------------Notification APIs----------------------------------------------------------//

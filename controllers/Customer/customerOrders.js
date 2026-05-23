@@ -58,6 +58,7 @@ const {
 const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
+const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const rescheduleBookingService = require('../../services/Customer/rescheduleBookingService');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 
@@ -979,6 +980,21 @@ function getTimePlusMinutes(mins = 40) {
  * @returns {Object} - List of addresses for the given postcode with coordinates
  * @description Fetches all addresses associated with a UK postcode for address selection during booking
  */
+const autocompletePostcode = async (req, res) => {
+    const query = req.query.q || req.query.query || "";
+
+    const result = await customerPostcodeService.autocompletePostcode(query);
+
+    return res.json({
+        status: "1",
+        message: "Postcode suggestions fetched successfully",
+        statusCode: 200,
+        data: result,
+        error: "",
+        timestamp: new Date().toISOString(),
+    });
+};
+
 const getAddressesByPostcode = async (req, res) => {
     const { postcode } = req.params;
     
@@ -986,7 +1002,8 @@ const getAddressesByPostcode = async (req, res) => {
         throw new customError('Postcode is required', 400);
     }
 
-    const result = await customerPostcodeService.getAddressesByPostcode(postcode);
+    const actorId = getPostcodeActorId(req);
+    const result = await customerPostcodeService.getAddressesByPostcode(postcode, actorId);
     
     return res.json({
         status: "1",
@@ -1018,7 +1035,8 @@ const getAddressById = async (req, res) => {
         throw new customError('Address index is required', 400);
     }
     
-    const result = await customerPostcodeService.getAddressById(postcode, index);
+    const actorId = getPostcodeActorId(req);
+    const result = await customerPostcodeService.getAddressById(postcode, index, actorId);
     
     return res.json({
         status: "1",
@@ -1045,14 +1063,14 @@ const validatePostcode = async (req, res) => {
         throw new customError('Postcode is required', 400);
     }
 
-    const result = customerPostcodeService.validatePostcodeFormat(postcode);
+    const result = await customerPostcodeService.verifyPostcodeWithPostcodesIo(postcode);
     
     return res.json({
-        status: result.isValid ? "1" : "0",
+        status: "1",
         message: result.message,
-        statusCode: result.isValid ? 200 : 400,
+        statusCode: 200,
         data: result,
-        error: result.isValid ? "" : result.message,
+        error: "",
         timestamp: new Date().toISOString()
     });
 };
@@ -1191,6 +1209,7 @@ module.exports = {
     getCustomerCancellationHistory,
     getActivePolicies,
     //---Customer Postcode Address Lookup----//
+    autocompletePostcode,
     getAddressesByPostcode,
     getAddressById,
     validatePostcode,
