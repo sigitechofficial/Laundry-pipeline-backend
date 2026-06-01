@@ -276,6 +276,17 @@ class RescheduleBookingService {
             timeZone
         } = newSchedule;
 
+        const scheduleTotalBags =
+            newSchedule.totalBags != null && newSchedule.totalBags !== ""
+                ? Number(newSchedule.totalBags)
+                : null;
+        const scheduleSameBagForAllServices =
+            newSchedule.sameBagForAllServices !== false;
+        const scheduleTotalItems =
+            newSchedule.totalItems != null && newSchedule.totalItems !== ""
+                ? Number(newSchedule.totalItems)
+                : null;
+
         // Normalize time strings to HH:mm:ss, store as-is
         const normalizedCollectionTimeFrom = this._getTimePart(collectionTimeFrom, 'collectionTimeFrom');
         const normalizedCollectionTimeTo   = this._getTimePart(collectionTimeTo,   'collectionTimeTo');
@@ -398,6 +409,8 @@ class RescheduleBookingService {
                 if (s.categoryId)    row.categoryId    = s.categoryId;
                 if (s.subCategoryId) row.subCategoryId = s.subCategoryId;
                 if (s.categoryCharge) row.categoryPrice = parseFloat(s.categoryCharge);
+                if (s.serviceInstruction) row.serviceInstruction = s.serviceInstruction;
+                if (s.items != null && s.items !== "") row.items = Number(s.items);
                 return row;
             });
             await customerSelectedService.bulkCreate(serviceRows);
@@ -528,7 +541,10 @@ class RescheduleBookingService {
                 orderAmount: newOrderAmount,
                 rescheduledCount: bookingData.rescheduledCount + 1,
                 rescheduleReason: reasonText || null,
-                rescheduleCharge: feeDetails.rescheduleCharge
+                rescheduleCharge: feeDetails.rescheduleCharge,
+                ...(scheduleTotalBags != null ? { totalBags: scheduleTotalBags } : {}),
+                sameBagForAllServices: scheduleSameBagForAllServices,
+                ...(scheduleTotalItems != null ? { totalItems: scheduleTotalItems } : {}),
             },
             { where: { id: bookingId } }
         );

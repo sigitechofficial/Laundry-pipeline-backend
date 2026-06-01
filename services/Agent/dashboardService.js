@@ -17,6 +17,7 @@ const {
     ConflictError, 
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
+const { wallClockNow } = require('../../utils/bookingTimeZone');
 
 /**
  * Agent Dashboard Service
@@ -29,7 +30,7 @@ class AgentDashboardService {
      * @param {number} agentId - Agent ID
      * @returns {Object} Available bookings data
      */
-    async getBookingHome(agentId) {
+    async getBookingHome(agentId, timeZone, clientTimeZone) {
         const userData = await users.findOne({
             where: {
                 id: agentId,
@@ -54,9 +55,7 @@ class AgentDashboardService {
         }
 
         let agentZone = userData.addressDb.zoneId;
-        const currentDate = new Date();
-        currentDate.setSeconds(0, 0);
-        const currentTimeString = currentDate.toTimeString().slice(0, 5);
+        const { timeHHmm: currentTimeString } = wallClockNow(timeZone, clientTimeZone);
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
         const bookingData = await booking.findAll({

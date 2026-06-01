@@ -48,8 +48,7 @@ const {
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
-
-const BUSINESS_TIME_ZONE = 'Europe/London';
+const { BUSINESS_TIME_ZONE, getOrderExpireTime } = require('../../utils/bookingTimeZone');
 
 
 // Import stripe functions
@@ -304,17 +303,6 @@ async function addressAdder(addNew, address, type, userId, addressId, cityId, co
     } else {
         return addressId;
     }
-}
-
-// Get time plus minutes function
-function getTimePlusMinutes(mins = 40) {
-    const dt = new Date(Date.now() + mins * 60000);
-    return dt.toLocaleTimeString("en-GB", {
-        timeZone: "Asia/Karachi",
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-    });
 }
 
 // Check if time slot booked function
@@ -753,6 +741,8 @@ class CustomerOrderService {
             pickUpAddressId,
             services,
             totalItems,
+            totalBags,
+            sameBagForAllServices,
             addressId,
             driverInstructionOptions,
             driverInstructionOptions1,
@@ -890,6 +880,8 @@ class CustomerOrderService {
             pickupAddresId: userPickUpAddressId,
             dropOffAddressId: userDropOffAddressId,
             totalItems: totalItems || 0,
+            totalBags: totalBags != null && totalBags !== "" ? Number(totalBags) : null,
+            sameBagForAllServices: sameBagForAllServices !== false,
             paymentConfirmed: false,
             partialPayment: false,
             zoneId: zoneId,
@@ -1073,7 +1065,7 @@ class CustomerOrderService {
         const upfrontAmount = zoneUpfrontAmount;
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-        const fixTimeKey = getTimePlusMinutes();
+        const fixTimeKey = getOrderExpireTime(40, timeZone);
         console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey);
 
         // Create the billing details

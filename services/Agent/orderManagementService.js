@@ -24,6 +24,11 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { confirmAndCapturePayment } = require('../../controllers/stripe');
 const { sendEvent } = require('../../socket_io');
+const {
+    wallClockNow,
+    resolveBookingTimeZone,
+    getActiveBookingCutoff,
+} = require('../../utils/bookingTimeZone');
 
 /**
  * Agent Order Management Service
@@ -36,7 +41,7 @@ class AgentOrderManagementService {
      * @param {number} agentId - Agent ID
      * @returns {Object} Available bookings data
      */
-    async getBookingHome(agentId) {
+    async getBookingHome(agentId, timeZone, clientTimeZone) {
         const userData = await users.findOne({
             where: {
                 id: agentId,
@@ -61,23 +66,32 @@ class AgentOrderManagementService {
         }
 
         let agentZone = userData.addressDb.zoneId;
-        console.log("🚀 ~ getBookingHome ~ agentZone:", agentZone);
-        const currentDate = new Date();
-        currentDate.setSeconds(0, 0);
-        const currentTimeString = currentDate.toTimeString().slice(0, 5);
+        const resolvedExpireTz = resolveBookingTimeZone(timeZone, clientTimeZone);
+        const { timeHHmm: currentTimeString } = wallClockNow(timeZone, clientTimeZone);
+        const expireCutoff = getActiveBookingCutoff(timeZone, clientTimeZone, 40);
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const createdAtCutoff =
+            expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
+
+        console.log(
+            "[getBookingHome] zone:",
+            agentZone,
+            "tz:",
+            resolvedExpireTz,
+            "now:",
+            currentTimeString,
+            "createdAt >=",
+            createdAtCutoff.toISOString()
+        );
 
         const bookingData = await booking.findAll({
             where: {
                 laundryShopId: null,
                 bookingStatusId: 1,
                 zoneId: agentZone,
-                orderExpireTime: {
-                    [Op.gte]: currentTimeString
-                },
                 createdAt: {
-                    [Op.gte]: twentyFourHoursAgo
-                }
+                    [Op.gte]: createdAtCutoff,
+                },
             },
             include: [
                 {

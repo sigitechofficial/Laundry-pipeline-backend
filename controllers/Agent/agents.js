@@ -46,11 +46,11 @@ const jwt = require("jsonwebtoken");
 var JSbarcode = require("jsbarcode");
 const redisCli = require("../../redis/redis");
 const otpGenerator = require("otp-generator");
-const { 
-    ValidationError, 
-    NotFoundError, 
-    ConflictError, 
-    UnauthorizedError 
+const {
+    ValidationError,
+    NotFoundError,
+    ConflictError,
+    UnauthorizedError
 } = require('../../middlewares/universalErrorHandler');
 const otpMail = require("../../helper/otpMail");
 const error = require("../../middlewares/error");
@@ -77,6 +77,11 @@ const {
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
+const {
+    wallClockNow,
+    resolveBookingTimeZone,
+    getActiveBookingCutoff,
+} = require("../../utils/bookingTimeZone");
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
@@ -406,23 +411,39 @@ exports.getBookingHome = async (req, res) => {
         }
     }
 
+    if (!userData?.addressDb?.zoneId) {
+        throw new NotFoundError("Agent shop address or zone not found");
+    }
+
     let agentZone = userData.addressDb.zoneId;
-    console.log("ðŸš€ ~ getBookingHome ~ agentZone:", agentZone);
-    const currentDate = new Date();
-    currentDate.setSeconds(0, 0);
-    const currentTimeString = currentDate.toTimeString().slice(0, 5);
+    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
+    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
+    const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
+    const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
+    const expireCutoff = getActiveBookingCutoff(queryTimeZone, queryClientTimeZone, 40);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const createdAtCutoff =
+        expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
+
+    console.log(
+        "[getBookingHome] zone:",
+        agentZone,
+        "tz:",
+        resolvedExpireTz,
+        "now:",
+        currentTimeString,
+        "createdAt >=",
+        createdAtCutoff.toISOString()
+    );
+
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
             bookingStatusId: 1,
             zoneId: agentZone,
-            orderExpireTime: {
-                [Op.gte]: currentTimeString
-            },
             createdAt: {
-                [Op.gte]: twentyFourHoursAgo
-            }
+                [Op.gte]: createdAtCutoff,
+            },
         },
         include: [
             {
@@ -461,6 +482,8 @@ exports.getBookingHome = async (req, res) => {
             'paymentConfirmed',
             "partialPayment",
             "totalItems",
+            "totalBags",
+            "sameBagForAllServices",
             "orderAmount",
             "frequency",
             "deliveryDate",
@@ -714,16 +737,15 @@ exports.orderDetailsById = async (req, res) => {
  *  Agent booking Filters
  */
 
+
 exports.agentBookingFilters = async (req, res) => {
     const agentId = req.user.id;
 
-    const { filterType } = req.query
+    const { filterType } = req.query;
 
     const addressFound = await addressDb.findOne({
         where: { userId: agentId },
     });
-
-    console.log("addressFound==========================>>", addressFound.id)
 
     if (!addressFound) {
         throw new NotFoundError("Address not found for agent");
@@ -731,16 +753,11 @@ exports.agentBookingFilters = async (req, res) => {
 
     const results = {};
 
-
-
-    // Slot bookings
-    if (filterType === 'slots') {
+    if (filterType === "slots") {
         results.slots = await getSlotBookings(addressFound.id);
         return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
     }
 
-
-    // All bookings (any booking with this laundryShopId)
     results.All = await booking.findAll({
         where: {
             laundryShopId: addressFound.id,
@@ -748,12 +765,12 @@ exports.agentBookingFilters = async (req, res) => {
                 [Op.notIn]: [1, 13, 17]
             }
         },
-        order: [['id', 'DESC']],
+        order: [["id", "DESC"]],
         attributes: [
             "id",
-            "ordertrackId",
+            "orderTrackId",
             "collectionTimeFrom",
-            "collectiontimeTo",
+            "collectionTimeTo",
             "collectionDate",
             "deliveryTimeFrom",
             "deliveryTimeTo",
@@ -761,69 +778,219 @@ exports.agentBookingFilters = async (req, res) => {
             "driverInstructionOptions",
             "driverInstructionOptions1",
             "driverInstruction",
-            "bookingStatusId"
+            "bookingStatusId",
+            "totalItems",
+            "noOfBags",
+            "allInOneBag"
         ],
         include: [
             {
                 model: bookingStatus,
-                attributes: ['id', 'title', 'description']
-            }
-            ,
+                attributes: ["id", "title", "description"]
+            },
             {
                 model: addressDb,
                 as: "laundryShop",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                attributes: [
+                    "streetAddress",
+                    "district",
+                    "province",
+                    "addressType",
+                    "lat",
+                    "lng",
+                    "postalcode"
+                ],
                 include: [
                     {
                         model: countries,
-                        attributes: ['id', 'name', 'shortName']
+                        attributes: ["id", "name", "shortName"]
                     },
                     {
                         model: cities,
-                        attributes: ['id', 'name']
+                        attributes: ["id", "name"]
                     }
                 ]
             },
             {
                 model: addressDb,
                 as: "pickupAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                attributes: [
+                    "streetAddress",
+                    "district",
+                    "province",
+                    "addressType",
+                    "lat",
+                    "lng",
+                    "postalcode"
+                ],
                 include: [
                     {
                         model: countries,
-                        attributes: ['id', 'name', 'shortName']
+                        attributes: ["id", "name", "shortName"]
                     },
                     {
                         model: cities,
-                        attributes: ['id', 'name']
+                        attributes: ["id", "name"]
                     }
                 ]
             },
             {
                 model: addressDb,
                 as: "dropOffAddress",
-                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                attributes: [
+                    "streetAddress",
+                    "district",
+                    "province",
+                    "addressType",
+                    "lat",
+                    "lng",
+                    "postalcode"
+                ],
                 include: [
                     {
                         model: countries,
-                        attributes: ['id', 'name', 'shortName']
+                        attributes: ["id", "name", "shortName"]
                     },
                     {
                         model: cities,
-                        attributes: ['id', 'name']
+                        attributes: ["id", "name"]
                     }
                 ]
             },
             {
                 model: users,
                 as: "customer",
-                attributes: ["firstName", "lastName", "email", "phoneNum"],
+                attributes: [
+                    "firstName",
+                    "lastName",
+                    "email",
+                    "phoneNum"
+                ],
             },
+            {
+                model: customerSelectedService,
+                required: false,
+                where: {
+                    status: true
+                },
+                attributes: [
+                    "id",
+                    "date",
+                    "time",
+                    "servicePrice",
+                    "categoryPrice",
+                    "bookingId",
+                    "serviceId",
+                    "categoryId",
+                    "subCategoryId",
+                    "items",
+                    "noOfBags",
+                    "serviceInstruction",
+                    "status"
+                ],
+                include: [
+                    {
+                        model: service,
+                        required: false,
+                        attributes: [
+                            "id",
+                            "name",
+                            "status",
+                            "image",
+                            "description",
+                            "pricingBasis",
+                            "numberOfBags",
+                            "numberOfItems"
+                        ]
+                    },
+                    {
+                        model: categories,
+                        required: false,
+                        attributes: [
+                            "id",
+                            "name",
+                            "status",
+                            "image",
+                            "description"
+                        ]
+                    },
+                    {
+                        model: subCategories,
+                        required: false,
+                        attributes: [
+                            "id",
+                            "name",
+                            "price",
+                            "status",
+                            "description",
+                            "barCode",
+                            "weightKg",
+                            "unitCount"
+                        ]
+                    },
+                    {
+                        model: customerSelectedServiceAddOn,
+                        as: "addOns",
+                        required: false,
+                        attributes: [
+                            "id",
+                            "customerSelectedServiceId",
+                            "addOnServiceId",
+                            "price",
+                            "items"
+                        ],
+                        include: [
+                            {
+                                model: addOnServices,
+                                as: "addOnService",
+                                required: false,
+                                attributes: [
+                                    "id",
+                                    "name",
+                                    "price"
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        model: bookingPreference,
+                        as: "selectedServicePreferences",
+                        required: false,
+                        attributes: [
+                            "id",
+                            "bookingId",
+                            "customerSelectedServiceId",
+                            "preferenceTypeId",
+                            "preferenceValueId",
+                            "parentPreferenceValueId",
+                            "preferenceInstruction"
+                        ],
+                        include: [
+                            {
+                                model: preferenceTypes,
+                                required: false,
+                                attributes: [
+                                    "id",
+                                    "name"
+                                ]
+                            },
+                            {
+                                model: preferenceValues,
+                                required: false,
+                                attributes: [
+                                    "id",
+                                    "value"
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
         ],
     });
 
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
-}
+};
 
 
 
@@ -978,21 +1145,21 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     if (bookingfind.paymentConfirmed) {
         console.log("⚠️ Payment already confirmed for this booking - skipping charge");
         console.log(`📋 Existing Payment Intent ID: ${bookingfind.paymentIntentId}`);
-        
+
         // Still update status to "On The Way" if needed
         if (bookingfind.bookingStatusId !== 4) {
             await booking.update(
                 { bookingStatusId: 4 },
                 { where: { id: bookingId } }
             );
-            
+
             const currentTime = new Date().toLocaleTimeString("en-US", {
                 hour: "2-digit",
                 minute: "2-digit",
                 hour12: false,
             });
             const currentDate = new Date().toISOString().split("T")[0];
-            
+
             await bookingHistory.create({
                 bookingId,
                 date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
@@ -1000,7 +1167,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 bookingStatusId: 4,
             });
         }
-        
+
         return res.status(200).json({
             status: "1",
             message: "Booking status updated to On The Way (Payment already confirmed)",
@@ -1027,7 +1194,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     // Charge immediately using saved payment method with idempotency protection
     const paymentIntent = await chargeOffSession(
-        upfrontAmount, 
+        upfrontAmount,
         bookingfind.customer.stripeCustomerId,
         bookingfind.paymentMethodId,
         idempotencyKey  // Pass idempotency key to prevent duplicate charges
@@ -1042,7 +1209,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     // Update booking with payment intent ID and status
     // paymentConfirmed flag prevents future retries at application level
     await booking.update(
-        { 
+        {
             bookingStatusId: 4,
             paymentIntentId: paymentIntent.id,
             paymentConfirmed: true  // CRITICAL - marks as paid (prevents retries)
@@ -1065,14 +1232,14 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         bookingStatusId: 4,
     });
 
-    const customerId=bookingfind.customerId;
-    let title="Driver On The Way";
-    let body="Your driver is on the way to the pickup location";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingfind.driverId,
+    const customerId = bookingfind.customerId;
+    let title = "Driver On The Way";
+    let body = "Your driver is on the way to the pickup location";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingfind.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return ResponseHelper.success(res, "Booking status updated and payment captured", {
         paymentIntentId: paymentIntent.id,
@@ -1083,7 +1250,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
 /*
  *   Agent Booking status Arrived
- */ 
+ */
 exports.driverStatusArrived = async (req, res) => {
     const { bookingId } = req.params;
 
@@ -1123,14 +1290,14 @@ exports.driverStatusArrived = async (req, res) => {
         bookingId: bookingId,
     });
 
-    const customerId=bookingfind.customerId;
-    let title="Driver Arrived";
-    let body="Your driver has arrived at the pickup location";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingfind.driverId,
+    const customerId = bookingfind.customerId;
+    let title = "Driver Arrived";
+    let body = "Your driver has arrived at the pickup location";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingfind.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     // Send driver arrived email (non-blocking)
     try {
@@ -1242,14 +1409,14 @@ exports.agentInspectionStatus = async (req, res) => {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
-    const customerId=bookingFind.customerId;
-    let title="Driver Picked Up";
-    let body="Your driver has picked up your laundry";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingFind.driverId,
+    const customerId = bookingFind.customerId;
+    let title = "Driver Picked Up";
+    let body = "Your driver has picked up your laundry";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingFind.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return ResponseHelper.success(res, "Booking PickingUp and Inspection Status Updated", {});
 }
@@ -1293,14 +1460,14 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
         bookingStatusId: 8,
     });
 
-    const customerId=bookingCheck.customerId;
-    let title="Driver Reached At Laundry Shop";
-    let body="Your driver has reached at the laundry shop";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
+    const customerId = bookingCheck.customerId;
+    let title = "Driver Reached At Laundry Shop";
+    let body = "Your driver has reached at the laundry shop";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingCheck.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
 }
@@ -1373,14 +1540,14 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
-    const customerId=bookingCheck.customerId;
-    let title="Laundry Invoice Generated";
-    let body="Your laundry invoice has been generated";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
+    const customerId = bookingCheck.customerId;
+    let title = "Laundry Invoice Generated";
+    let body = "Your laundry invoice has been generated";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingCheck.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
 }
@@ -1424,14 +1591,14 @@ exports.laundryWashCompleted = async (req, res) => {
         bookingStatusId: 12,
         bookingId: bookingId,
     });
-    const customerId=bookingCheck.customerId;
-    let title="Laundry Has Been Washed At Shop";
-    let body="Your laundry has been washed at the shop";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
+    const customerId = bookingCheck.customerId;
+    let title = "Laundry Has Been Washed At Shop";
+    let body = "Your laundry has been washed at the shop";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingCheck.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
     return ResponseHelper.success(res, "Laundry Has Been Washed At Shop", {});
 }
 
@@ -1528,14 +1695,14 @@ exports.driverReachedForDelivery = async (req, res) => {
         bookingStatusId: 14,
     });
 
-    const customerId=bookingCheck.customerId;
-    let title="Driver Reached at Customer Destination";
-    let body="Your driver has reached at the customer destination";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
+    const customerId = bookingCheck.customerId;
+    let title = "Driver Reached at Customer Destination";
+    let body = "Your driver has reached at the customer destination";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingCheck.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
     return ResponseHelper.success(res, "Driver reached for delivery", {});
 }
@@ -1580,14 +1747,14 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     }))
     await bookingHistory.bulkCreate(bookinghistories);
 
-    const customerId=bookingCheck.customerId;
-    let title="Laundry Delivered to Customer";
-    let body="Your laundry has been delivered to customer";
-    let data={
-        bookingId:bookingId,
-        driverId:bookingCheck.driverId,
+    const customerId = bookingCheck.customerId;
+    let title = "Laundry Delivered to Customer";
+    let body = "Your laundry has been delivered to customer";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookingCheck.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
 
     return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {});
@@ -1731,7 +1898,7 @@ exports.driverAddSerivces = async (req, res) => {
     // Calculate zone admin commission
     const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
     const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
-    
+
     console.log("Zone Admin Commission %%%%%%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommission);
     console.log("Zone Admin Commission Amount%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommissionAmount);
 
@@ -1911,14 +2078,14 @@ exports.agentUpdateInvoice = async (req, res) => {
         });
     }
 
-    const customerId=bookings.customerId;
-    let title="Agent/Driver Updated Invoice";
-    let body="Your agent/driver has updated invoice";
-    let data={
-        bookingId:bookingId,
-        driverId:bookings.driverId,
+    const customerId = bookings.customerId;
+    let title = "Agent/Driver Updated Invoice";
+    let body = "Your agent/driver has updated invoice";
+    let data = {
+        bookingId: bookingId,
+        driverId: bookings.driverId,
     }
-    sendNotification(customerId,title,body,data);
+    sendNotification(customerId, title, body, data);
 
 
     return res.status(200).json({
@@ -2143,7 +2310,7 @@ exports.invoiceCreation = async (req, res) => {
         const hasConfirmed = bookingData.OnHoldConfirmations.some(
             item => item.customerResponse === true
         );
-        
+
         customerHasResponded = hasConfirmed ? true : false;
     }
     // If no OnHoldConfirmation records exist, customerHasResponded remains null
@@ -2713,7 +2880,7 @@ exports.addRole = async (req, res) => {
                 featureId: ele.id,
                 roleId: newRole.id,
                 create: perms.create === true || perms.write === true,
-                read:   perms.read   === true,
+                read: perms.read === true,
                 update: perms.update === true || perms.write === true,
                 delete: perms.delete === true || perms.write === true,
             };
@@ -2763,7 +2930,7 @@ exports.updateRoles = async (req, res) => {
                     featureId: ele.id,
                     roleId,
                     create: perms.create === true || perms.write === true,
-                    read:   perms.read   === true,
+                    read: perms.read === true,
                     update: perms.update === true || perms.write === true,
                     delete: perms.delete === true || perms.write === true,
                 };
@@ -3115,7 +3282,7 @@ exports.serviceDetail = async (req, res) => {
             }
         ]
     });
-    
+
 
 
     const grouped = {};

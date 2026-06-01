@@ -102,6 +102,15 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.INTEGER,
       allowNull:true,
     },
+    totalBags: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    sameBagForAllServices: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+    },
     orderAmount: {
       type:DataTypes.FLOAT,
       allowNull:true,
