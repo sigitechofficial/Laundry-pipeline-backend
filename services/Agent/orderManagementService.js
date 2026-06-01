@@ -1,11 +1,11 @@
 require("dotenv").config();
-const { 
-    users, 
-    booking, 
-    addressDb, 
-    countries, 
-    cities, 
-    bookingStatus, 
+const {
+    users,
+    booking,
+    addressDb,
+    countries,
+    cities,
+    bookingStatus,
     customerSelectedService,
     categories,
     subCategories,
@@ -16,11 +16,11 @@ const {
 } = require('../../models');
 const moment = require('moment');
 const { Op } = require('sequelize');
-const { 
-    UnauthorizedError, 
-    NotFoundError, 
-    ConflictError, 
-    ValidationError 
+const {
+    UnauthorizedError,
+    NotFoundError,
+    ConflictError,
+    ValidationError
 } = require('../../middlewares/universalErrorHandler');
 const { confirmAndCapturePayment } = require('../../controllers/stripe');
 const { sendEvent } = require('../../socket_io');
@@ -976,7 +976,7 @@ class AgentOrderManagementService {
         }
 
         await booking.update(
-            { 
+            {
                 bookingStatusId: 12, // Cancelled status
                 cancellationReason: reason,
                 cancelledBy: agentId,
