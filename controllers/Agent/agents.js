@@ -482,8 +482,6 @@ exports.getBookingHome = async (req, res) => {
             'paymentConfirmed',
             "partialPayment",
             "totalItems",
-            "totalBags",
-            "sameBagForAllServices",
             "orderAmount",
             "frequency",
             "deliveryDate",
