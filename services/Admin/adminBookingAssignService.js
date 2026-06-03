@@ -129,19 +129,22 @@ class AdminBookingAssignService {
         await booking.update(
             {
                 laundryShopId: shop.id,
-                bookingStatusId: 2,
+                bookingStatusId: 3,
+                driverId: ownerId || null,
                 agentBroadcastHeld: false,
                 agentVisibleAt: null,
             },
             { where: { id: bookingId } }
         );
 
-        await bookingHistory.create({
-            bookingId,
-            bookingStatusId: 2,
-            date: dateStr,
-            time: timeStr,
-        });
+        await bookingHistory.bulkCreate(
+            [2, 3].map((statusId) => ({
+                bookingId,
+                bookingStatusId: statusId,
+                date: dateStr,
+                time: timeStr,
+            }))
+        );
 
         const biz = await bussinessInformation.findOne({
             where: { shopAddressId: shop.id },
@@ -150,10 +153,9 @@ class AdminBookingAssignService {
 
         if (ownerId) {
             sendEvent(ownerId, {
-                type: "adminAssignedOrder",
+                type: "AcceptedOrder",
                 data: {
-                    bookingId,
-                    laundryShopId: shop.id,
+                    data: bookingId,
                     message: "Order assigned to your shop by admin",
                 },
             });
@@ -162,7 +164,7 @@ class AdminBookingAssignService {
         return {
             bookingId,
             laundryShopId: shop.id,
-            bookingStatusId: 2,
+            bookingStatusId: 3,
             shopName: biz?.shopName || null,
         };
     }
