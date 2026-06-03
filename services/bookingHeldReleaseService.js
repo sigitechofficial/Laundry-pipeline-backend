@@ -54,17 +54,7 @@ async function releaseHeldBookings() {
             serviceId: s.serviceId,
         }));
 
-        const visibleAt = new Date();
-        await booking.update(
-            {
-                agentBroadcastHeld: false,
-                agentVisibleAt: visibleAt,
-                orderExpireTime: getOrderExpireTime(BUSINESS_TIME_ZONE),
-            },
-            { where: { id: row.id } }
-        );
-
-        await bookingEventSentCheckTheShops(
+        const { notifiedCount } = await bookingEventSentCheckTheShops(
             row.id,
             row.zoneId,
             row.collectionDate,
@@ -75,6 +65,20 @@ async function releaseHeldBookings() {
             row.deliveryTimeFrom,
             servicePayload,
             BUSINESS_TIME_ZONE
+        );
+
+        if (notifiedCount === 0) {
+            continue;
+        }
+
+        const visibleAt = new Date();
+        await booking.update(
+            {
+                agentBroadcastHeld: false,
+                agentVisibleAt: visibleAt,
+                orderExpireTime: getOrderExpireTime(BUSINESS_TIME_ZONE),
+            },
+            { where: { id: row.id } }
         );
 
         released += 1;

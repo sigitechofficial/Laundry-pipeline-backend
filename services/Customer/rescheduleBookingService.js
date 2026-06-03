@@ -113,7 +113,7 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
 
     if (availableShops.length === 0) {
         console.log('⚠️ Reschedule: No available/open shops for new time slot — no event sent');
-        return;
+        return { notifiedCount: 0 };
     }
 
     // Fetch full booking details for the event payload
@@ -181,14 +181,17 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
         }
     };
 
+    let notifiedCount = 0;
     availableShops.forEach((shop) => {
         if (shop.user && shop.user.id) {
             sendEvent(shop.user.id, eventData);
+            notifiedCount += 1;
             console.log(`📡 Reschedule event sent to shop owner: ${shop.user.id}`);
         } else {
             console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
         }
     });
+    return { notifiedCount };
 }
 
 /**
@@ -574,15 +577,7 @@ class RescheduleBookingService {
                 console.log(
                     '🔄 Booking status is 1 — re-triggering agent notification with new schedule'
                 );
-                await booking.update(
-                    {
-                        agentBroadcastHeld: false,
-                        agentVisibleAt: new Date(),
-                        orderExpireTime: getOrderExpireTime(resolvedTz),
-                    },
-                    { where: { id: bookingId } }
-                );
-                await findAvailableShopsAndNotify(bookingId, {
+                const notifyResult = await findAvailableShopsAndNotify(bookingId, {
                     zoneId: bookingData.zoneId,
                     collectionDate: normalizedCollectionDate,
                     collectionTimeFrom: normalizedCollectionTimeFrom,
@@ -591,9 +586,29 @@ class RescheduleBookingService {
                     deliveryTimeFrom: normalizedDeliveryTimeFrom,
                     deliveryTimeTo: normalizedDeliveryTimeTo,
                 });
+                const notifiedCount = notifyResult?.notifiedCount ?? 0;
+
+                if (notifiedCount === 0) {
+                    await booking.update(
+                        { agentBroadcastHeld: true, agentVisibleAt: null },
+                        { where: { id: bookingId } }
+                    );
+                    console.log(
+                        `[reschedule] booking ${bookingId} held — no agent notified`
+                    );
+                } else {
+                    await booking.update(
+                        {
+                            agentBroadcastHeld: false,
+                            agentVisibleAt: new Date(),
+                            orderExpireTime: getOrderExpireTime(resolvedTz),
+                        },
+                        { where: { id: bookingId } }
+                    );
+                }
             } else {
                 await booking.update(
-                    { agentBroadcastHeld: true },
+                    { agentBroadcastHeld: true, agentVisibleAt: null },
                     { where: { id: bookingId } }
                 );
                 console.log(

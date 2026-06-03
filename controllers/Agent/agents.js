@@ -83,6 +83,7 @@ const {
     getActiveBookingCutoff,
     BOOKING_ACCEPT_WINDOW_MINUTES,
 } = require("../../utils/bookingTimeZone");
+const { isAnyShopOpenInZone } = require("../../utils/shopWorkingHours");
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
@@ -426,6 +427,12 @@ exports.getBookingHome = async (req, res) => {
     const createdAtCutoff =
         expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
 
+    const zoneOpenNow = await isAnyShopOpenInZone(
+        agentZone,
+        queryTimeZone,
+        queryClientTimeZone
+    );
+
     console.log(
         "[getBookingHome] zone:",
         agentZone,
@@ -433,16 +440,27 @@ exports.getBookingHome = async (req, res) => {
         resolvedExpireTz,
         "now:",
         currentTimeString,
+        "zoneOpen:",
+        zoneOpenNow,
         "createdAt >=",
         createdAtCutoff.toISOString()
     );
+
+    if (!zoneOpenNow) {
+        return ResponseHelper.success(res, "Agent Orders fetched", {
+            bookingData: [],
+            isConnectAccountConnected,
+            connectAccountId,
+            zoneShopsOpen: false,
+        });
+    }
 
     const bookingData = await booking.findAll({
         where: {
             laundryShopId: null,
             bookingStatusId: 1,
             zoneId: agentZone,
-            [Op.or]: [{ agentBroadcastHeld: false }, { agentBroadcastHeld: null }],
+            agentBroadcastHeld: { [Op.not]: true },
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -520,6 +538,7 @@ exports.getBookingHome = async (req, res) => {
         bookingData: bookingDataForResponse,
         isConnectAccountConnected,
         connectAccountId,
+        zoneShopsOpen: true,
     });
 }
 

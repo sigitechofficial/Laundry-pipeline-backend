@@ -617,14 +617,19 @@ async function bookingEventSentCheckTheShops(
                 zone: bookingDetails.zone || {},
             },
         };
+        let notifiedCount = 0;
         availableShops.forEach((shop) => {
             if (shop.user && shop.user.id) {
                 sendEvent(shop.user.id, eventData);
+                notifiedCount += 1;
             } else {
                 console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
             }
         });
+        return { notifiedCount, availableShopCount: availableShops.length };
     }
+
+    return { notifiedCount: 0, availableShopCount: 0 };
 }
 
 /**
@@ -1139,16 +1144,19 @@ class CustomerOrderService {
         let bookingId = bookingData.id;
         const resolvedTz = timeZone || BUSINESS_TIME_ZONE;
         const zoneOpenNow = await isAnyShopOpenInZone(zoneId, resolvedTz);
+        let agentBroadcastHeld = false;
 
-        if (zoneOpenNow) {
+        if (!zoneOpenNow) {
+            agentBroadcastHeld = true;
             await booking.update(
-                {
-                    agentBroadcastHeld: false,
-                    agentVisibleAt: new Date(),
-                },
+                { agentBroadcastHeld: true, agentVisibleAt: null },
                 { where: { id: bookingId } }
             );
-            bookingEventSentCheckTheShops(
+            console.log(
+                `[createBooking] booking ${bookingId} held — no shop open in zone ${zoneId} (tz=${resolvedTz})`
+            );
+        } else {
+            const { notifiedCount } = await bookingEventSentCheckTheShops(
                 bookingId,
                 zoneId,
                 collectionDate,
@@ -1160,14 +1168,25 @@ class CustomerOrderService {
                 services,
                 resolvedTz
             );
-        } else {
-            await booking.update(
-                { agentBroadcastHeld: true },
-                { where: { id: bookingId } }
-            );
-            console.log(
-                `[createBooking] booking ${bookingId} held — no shop open in zone ${zoneId} (tz=${resolvedTz})`
-            );
+
+            if (notifiedCount === 0) {
+                agentBroadcastHeld = true;
+                await booking.update(
+                    { agentBroadcastHeld: true, agentVisibleAt: null },
+                    { where: { id: bookingId } }
+                );
+                console.log(
+                    `[createBooking] booking ${bookingId} held — zone open but no agent notified`
+                );
+            } else {
+                await booking.update(
+                    {
+                        agentBroadcastHeld: false,
+                        agentVisibleAt: new Date(),
+                    },
+                    { where: { id: bookingId } }
+                );
+            }
         }
 
         // Send booking confirmation email (non-blocking)
@@ -1213,10 +1232,10 @@ class CustomerOrderService {
         }
 
         return {
-            message: zoneOpenNow
-                ? "Booking Created"
-                : "Booking Created. Agents will be notified when shops open.",
-            agentBroadcastHeld: !zoneOpenNow,
+            message: agentBroadcastHeld
+                ? "Booking Created. Agents will be notified when shops open."
+                : "Booking Created",
+            agentBroadcastHeld,
         };
     }
 
