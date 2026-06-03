@@ -442,9 +442,20 @@ exports.getBookingHome = async (req, res) => {
             laundryShopId: null,
             bookingStatusId: 1,
             zoneId: agentZone,
-            createdAt: {
-                [Op.gte]: createdAtCutoff,
-            },
+            [Op.or]: [{ agentBroadcastHeld: false }, { agentBroadcastHeld: null }],
+            [Op.and]: [
+                {
+                    [Op.or]: [
+                        { agentVisibleAt: { [Op.gte]: expireCutoff } },
+                        {
+                            [Op.and]: [
+                                { agentVisibleAt: { [Op.is]: null } },
+                                { createdAt: { [Op.gte]: createdAtCutoff } },
+                            ],
+                        },
+                    ],
+                },
+            ],
         },
         include: [
             {

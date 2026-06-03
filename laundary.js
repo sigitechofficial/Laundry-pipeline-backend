@@ -151,6 +151,9 @@ async function startServer() {
       console.log('\x1b[32m%s\x1b[0m', '<================= Database synchronized =======================>');
     }
 
+    const { startHeldBookingReleaseJob } = require('./services/bookingHeldReleaseService');
+    startHeldBookingReleaseJob();
+
     server.listen(server_port, function (err) {
       if (err) throw err;
 

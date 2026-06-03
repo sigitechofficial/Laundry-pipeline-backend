@@ -28,6 +28,8 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { sendEvent } = require('../../socket_io');
 const { chargeOffSession } = require('../../controllers/stripe');
+const { isShopOpenNow, isAnyShopOpenInZone } = require('../../utils/shopWorkingHours');
+const { getOrderExpireTime } = require('../../utils/bookingTimeZone');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
 
@@ -102,12 +104,15 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
             }
         });
         if (!conflictingBookings || conflictingBookings.length === 0) {
-            availableShops.push(shop);
+            const ownerId = shop.user?.id || shop.userId;
+            if (await isShopOpenNow(ownerId, BUSINESS_TIME_ZONE)) {
+                availableShops.push(shop);
+            }
         }
     }
 
     if (availableShops.length === 0) {
-        console.log('⚠️ Reschedule: No available shops found for new time slot — no event sent');
+        console.log('⚠️ Reschedule: No available/open shops for new time slot — no event sent');
         return;
     }
 
@@ -561,16 +566,40 @@ class RescheduleBookingService {
         // Step 10: If status is 1 (created, no agent accepted yet) re-fire the booking event
         // so agents are notified of the updated schedule and services
         if (statusId === 1) {
-            console.log('🔄 Booking status is 1 (no agent accepted yet) — re-triggering agent notification with new schedule');
-            await findAvailableShopsAndNotify(bookingId, {
-                zoneId: bookingData.zoneId,
-                collectionDate: normalizedCollectionDate,
-                collectionTimeFrom: normalizedCollectionTimeFrom,
-                collectionTimeTo: normalizedCollectionTimeTo,
-                deliveryDate: normalizedDeliveryDate,
-                deliveryTimeFrom: normalizedDeliveryTimeFrom,
-                deliveryTimeTo: normalizedDeliveryTimeTo
-            });
+            const zoneOpenNow = await isAnyShopOpenInZone(
+                bookingData.zoneId,
+                resolvedTz
+            );
+            if (zoneOpenNow) {
+                console.log(
+                    '🔄 Booking status is 1 — re-triggering agent notification with new schedule'
+                );
+                await booking.update(
+                    {
+                        agentBroadcastHeld: false,
+                        agentVisibleAt: new Date(),
+                        orderExpireTime: getOrderExpireTime(resolvedTz),
+                    },
+                    { where: { id: bookingId } }
+                );
+                await findAvailableShopsAndNotify(bookingId, {
+                    zoneId: bookingData.zoneId,
+                    collectionDate: normalizedCollectionDate,
+                    collectionTimeFrom: normalizedCollectionTimeFrom,
+                    collectionTimeTo: normalizedCollectionTimeTo,
+                    deliveryDate: normalizedDeliveryDate,
+                    deliveryTimeFrom: normalizedDeliveryTimeFrom,
+                    deliveryTimeTo: normalizedDeliveryTimeTo,
+                });
+            } else {
+                await booking.update(
+                    { agentBroadcastHeld: true },
+                    { where: { id: bookingId } }
+                );
+                console.log(
+                    `[reschedule] booking ${bookingId} held — no shop open in zone`
+                );
+            }
         }
 
         return {

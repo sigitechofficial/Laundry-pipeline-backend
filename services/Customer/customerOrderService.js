@@ -53,6 +53,10 @@ const {
     BOOKING_ACCEPT_WINDOW_MINUTES,
     getOrderExpireTime,
 } = require('../../utils/bookingTimeZone');
+const {
+    isAnyShopOpenInZone,
+    isShopOpenNow,
+} = require('../../utils/shopWorkingHours');
 
 
 // Import stripe functions
@@ -399,7 +403,9 @@ async function bookingEventSentCheckTheShops(
     deliveryDate,
     deliveryTimeTo,
     deliveryTimeFrom,
-    services
+    services,
+    timeZone,
+    clientTimeZone
 ) {
     console.log(collectionTimeTo);
     console.log(collectionTimeFrom);
@@ -461,7 +467,11 @@ async function bookingEventSentCheckTheShops(
         );
         console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
         if (!checkSlots || checkSlots.length === 0) {
-            availableShops.push(shop);
+            const ownerId = shop.user?.id || shop.userId;
+            const shopOpen = await isShopOpenNow(ownerId, timeZone, clientTimeZone);
+            if (shopOpen) {
+                availableShops.push(shop);
+            }
         }
     }
 
@@ -1127,17 +1137,38 @@ class CustomerOrderService {
         }
 
         let bookingId = bookingData.id;
-        bookingEventSentCheckTheShops(
-            bookingId,
-            zoneId,
-            collectionDate,
-            collectionTimeTo,
-            collectionTimeFrom,
-            deliveryDate,
-            deliveryTimeTo,
-            deliveryTimeFrom,
-            services
-        );
+        const resolvedTz = timeZone || BUSINESS_TIME_ZONE;
+        const zoneOpenNow = await isAnyShopOpenInZone(zoneId, resolvedTz);
+
+        if (zoneOpenNow) {
+            await booking.update(
+                {
+                    agentBroadcastHeld: false,
+                    agentVisibleAt: new Date(),
+                },
+                { where: { id: bookingId } }
+            );
+            bookingEventSentCheckTheShops(
+                bookingId,
+                zoneId,
+                collectionDate,
+                collectionTimeTo,
+                collectionTimeFrom,
+                deliveryDate,
+                deliveryTimeTo,
+                deliveryTimeFrom,
+                services,
+                resolvedTz
+            );
+        } else {
+            await booking.update(
+                { agentBroadcastHeld: true },
+                { where: { id: bookingId } }
+            );
+            console.log(
+                `[createBooking] booking ${bookingId} held — no shop open in zone ${zoneId} (tz=${resolvedTz})`
+            );
+        }
 
         // Send booking confirmation email (non-blocking)
         try {
@@ -1182,7 +1213,10 @@ class CustomerOrderService {
         }
 
         return {
-            message: "Booking Created"
+            message: zoneOpenNow
+                ? "Booking Created"
+                : "Booking Created. Agents will be notified when shops open.",
+            agentBroadcastHeld: !zoneOpenNow,
         };
     }
 
@@ -2363,4 +2397,6 @@ class CustomerOrderService {
     }
 }
 
-module.exports = new CustomerOrderService();
+const customerOrderService = new CustomerOrderService();
+customerOrderService.bookingEventSentCheckTheShops = bookingEventSentCheckTheShops;
+module.exports = customerOrderService;

@@ -183,7 +183,16 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true,
     defaultValue: 0.00
-  }
+  },
+  agentBroadcastHeld: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  agentVisibleAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   }, {
     sequelize,
     modelName: 'booking',
