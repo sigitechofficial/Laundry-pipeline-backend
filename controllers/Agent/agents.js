@@ -1366,8 +1366,8 @@ exports.AddPickupDeliveryProof = async (req, res) => {
 
     await booking.update(
         {
-            totalitems: noOfItems,
-            noOfBags: noOfBags,
+            totalItems: noOfItems != null && noOfItems !== "" ? Number(noOfItems) : null,
+            noOfBags: noOfBags != null && noOfBags !== "" ? Number(noOfBags) : null,
         },
         {
             where: { id: bookingId },
