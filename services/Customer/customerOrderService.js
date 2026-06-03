@@ -56,6 +56,7 @@ const {
 const {
     isAnyShopOpenInZone,
     isPlatformOpenNow,
+    isShopOpenNow,
 } = require('../../utils/shopWorkingHours');
 
 
