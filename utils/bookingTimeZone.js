@@ -5,9 +5,9 @@ const BUSINESS_TIME_ZONE = 'Europe/London';
 
 /**
  * Single source of truth: accept window for agents (filter, API, DB orderExpireTime clock).
- * Change only this value — e.g. 5 → expiry ~now+5min in DB (22:00 → 22:05).
+ * Change only this value — e.g. 30 → expiry ~now+30min in DB (22:00 → 22:30).
  */
-const BOOKING_ACCEPT_WINDOW_MINUTES = 5;
+const BOOKING_ACCEPT_WINDOW_MINUTES = 30;
 
 /**
  * Resolve IANA timezone from app headers/body (timeZone or clientTimeZone).
