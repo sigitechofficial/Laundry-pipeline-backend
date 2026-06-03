@@ -421,11 +421,7 @@ exports.getBookingHome = async (req, res) => {
     const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
     const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
-    const expireCutoff = getActiveBookingCutoff(
-        queryTimeZone,
-        queryClientTimeZone,
-        BOOKING_ACCEPT_WINDOW_MINUTES
-    );
+    const expireCutoff = getActiveBookingCutoff(queryTimeZone, queryClientTimeZone);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const createdAtCutoff =
         expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;

@@ -68,7 +68,7 @@ class AgentOrderManagementService {
         let agentZone = userData.addressDb.zoneId;
         const resolvedExpireTz = resolveBookingTimeZone(timeZone, clientTimeZone);
         const { timeHHmm: currentTimeString } = wallClockNow(timeZone, clientTimeZone);
-        const expireCutoff = getActiveBookingCutoff(timeZone, clientTimeZone, 40);
+        const expireCutoff = getActiveBookingCutoff(timeZone, clientTimeZone);
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         const createdAtCutoff =
             expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;

@@ -3,7 +3,10 @@ const moment = require('moment-timezone');
 /** Default IANA zone for UK laundry operations (customer + agent). */
 const BUSINESS_TIME_ZONE = 'Europe/London';
 
-/** Minutes an unassigned booking stays visible to agents (getBookingHome filter + API). */
+/**
+ * Single source of truth: accept window for agents (filter, API, DB orderExpireTime clock).
+ * Change only this value — e.g. 5 → expiry ~now+5min in DB (22:00 → 22:05).
+ */
 const BOOKING_ACCEPT_WINDOW_MINUTES = 5;
 
 /**
@@ -40,19 +43,23 @@ function wallClockNow(timeZone, clientTimeZone) {
 }
 
 /**
- * orderExpireTime value (~now + mins) in the same timezone used for agent filtering.
- * @param {number} [mins]
+ * DB orderExpireTime: wall-clock when accept window ends (now + BOOKING_ACCEPT_WINDOW_MINUTES).
  * @param {string} [timeZone]
  * @param {string} [clientTimeZone]
+ * @param {number} [mins]
  */
-function getOrderExpireTime(mins = 40, timeZone, clientTimeZone) {
+function getOrderExpireTime(
+    timeZone,
+    clientTimeZone,
+    mins = BOOKING_ACCEPT_WINDOW_MINUTES
+) {
     const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
-    return moment.tz(tz).add(mins, 'minutes').format('HH:mm');
+    return moment.tz(tz).add(mins, 'minutes').format('HH:mm:ss');
 }
 
 /**
  * Bookings created after this instant are still inside the agent accept window.
- * Matches getOrderExpireTime (now + 40m) without TIME-column midnight bugs.
+ * Uses BOOKING_ACCEPT_WINDOW_MINUTES — same as getOrderExpireTime.
  * @param {string} [timeZone]
  * @param {string} [clientTimeZone]
  * @param {number} [windowMinutes]

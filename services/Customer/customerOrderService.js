@@ -1065,7 +1065,7 @@ class CustomerOrderService {
         const upfrontAmount = zoneUpfrontAmount;
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-        const fixTimeKey = getOrderExpireTime(40, timeZone);
+        const fixTimeKey = getOrderExpireTime(timeZone);
         console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey);
 
         // Create the billing details
