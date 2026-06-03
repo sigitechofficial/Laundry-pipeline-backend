@@ -104,6 +104,7 @@ const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
+const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
 
@@ -2419,6 +2420,27 @@ async function updatePlatformOperationalHours(req, res) {
     );
 }
 
+//!----------------------------------Admin manual shop assign (expired unassigned)-----------------------------------------//
+
+async function getBookingAssignableShops(req, res) {
+    const { bookingId } = req.params;
+    const data = await adminBookingAssignService.getAssignableShops(bookingId);
+    return ResponseHelper.success(res, 'Assignable shops fetched', data);
+}
+
+async function assignBookingToShop(req, res) {
+    const { bookingId } = req.params;
+    const { laundryShopId } = req.body;
+    if (!laundryShopId) {
+        throw new ValidationError('laundryShopId is required');
+    }
+    const data = await adminBookingAssignService.assignBookingToShop(
+        bookingId,
+        laundryShopId
+    );
+    return ResponseHelper.success(res, 'Order assigned to shop successfully', data);
+}
+
 //!----------------------------------FAQ Management-----------------------------------------//
 
 /**
@@ -2821,6 +2843,8 @@ module.exports = {
     updateSupportContact,
     getPlatformOperationalHours,
     updatePlatformOperationalHours,
+    getBookingAssignableShops,
+    assignBookingToShop,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

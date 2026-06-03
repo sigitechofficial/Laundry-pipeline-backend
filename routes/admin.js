@@ -181,6 +181,15 @@ router.patch(
     asyncMiddleware(adminController.updatePlatformOperationalHours)
 )
 
+router.get(
+    '/bookings/:bookingId/assignableShops',
+    asyncMiddleware(adminController.getBookingAssignableShops)
+)
+router.patch(
+    '/bookings/:bookingId/assignShop',
+    asyncMiddleware(adminController.assignBookingToShop)
+)
+
 //Add vehicle
 router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
 

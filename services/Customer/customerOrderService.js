@@ -55,7 +55,7 @@ const {
 } = require('../../utils/bookingTimeZone');
 const {
     isAnyShopOpenInZone,
-    isShopOpenNow,
+    isPlatformOpenNow,
 } = require('../../utils/shopWorkingHours');
 
 
@@ -1143,10 +1143,21 @@ class CustomerOrderService {
 
         let bookingId = bookingData.id;
         const resolvedTz = timeZone || BUSINESS_TIME_ZONE;
-        const zoneOpenNow = await isAnyShopOpenInZone(zoneId, resolvedTz);
+        const platformOpenNow = await isPlatformOpenNow(resolvedTz);
+        const zoneOpenNow =
+            platformOpenNow && (await isAnyShopOpenInZone(zoneId, resolvedTz));
         let agentBroadcastHeld = false;
 
-        if (!zoneOpenNow) {
+        if (!platformOpenNow) {
+            agentBroadcastHeld = true;
+            await booking.update(
+                { agentBroadcastHeld: true, agentVisibleAt: null },
+                { where: { id: bookingId } }
+            );
+            console.log(
+                `[createBooking] booking ${bookingId} held — outside platform hours (tz=${resolvedTz})`
+            );
+        } else if (!zoneOpenNow) {
             agentBroadcastHeld = true;
             await booking.update(
                 { agentBroadcastHeld: true, agentVisibleAt: null },

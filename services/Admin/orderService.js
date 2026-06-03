@@ -24,6 +24,7 @@ const {
     users
 } = require('../../models');
 const { Op } = require('sequelize');
+const adminBookingAssignService = require('./adminBookingAssignService');
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
 const {
@@ -162,8 +163,12 @@ class OrderService {
         const hasNextPage = page < totalPages;
         const hasPrevPage = page > 1;
 
+        const enrichedBookings = bookings.map((row) =>
+            adminBookingAssignService.enrichBookingForAdmin(row)
+        );
+
         return {
-            bookings,
+            bookings: enrichedBookings,
             totalCount,
             pagination: {
                 currentPage: page,
