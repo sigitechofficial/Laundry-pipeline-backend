@@ -3,6 +3,9 @@ const moment = require('moment-timezone');
 /** Default IANA zone for UK laundry operations (customer + agent). */
 const BUSINESS_TIME_ZONE = 'Europe/London';
 
+/** Minutes an unassigned booking stays visible to agents (getBookingHome filter + API). */
+const BOOKING_ACCEPT_WINDOW_MINUTES = 5;
+
 /**
  * Resolve IANA timezone from app headers/body (timeZone or clientTimeZone).
  * @param {string} [timeZone]
@@ -55,13 +58,18 @@ function getOrderExpireTime(mins = 40, timeZone, clientTimeZone) {
  * @param {number} [windowMinutes]
  * @returns {Date}
  */
-function getActiveBookingCutoff(timeZone, clientTimeZone, windowMinutes = 40) {
+function getActiveBookingCutoff(
+    timeZone,
+    clientTimeZone,
+    windowMinutes = BOOKING_ACCEPT_WINDOW_MINUTES
+) {
     const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
     return moment.tz(tz).subtract(windowMinutes, 'minutes').toDate();
 }
 
 module.exports = {
     BUSINESS_TIME_ZONE,
+    BOOKING_ACCEPT_WINDOW_MINUTES,
     resolveBookingTimeZone,
     wallClockNow,
     getOrderExpireTime,

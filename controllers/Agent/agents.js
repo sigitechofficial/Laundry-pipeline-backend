@@ -81,6 +81,7 @@ const {
     wallClockNow,
     resolveBookingTimeZone,
     getActiveBookingCutoff,
+    BOOKING_ACCEPT_WINDOW_MINUTES,
 } = require("../../utils/bookingTimeZone");
 
 /** Same default as customer booking / reschedule services (IANA). */
@@ -420,7 +421,11 @@ exports.getBookingHome = async (req, res) => {
     const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
     const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
-    const expireCutoff = getActiveBookingCutoff(queryTimeZone, queryClientTimeZone, 40);
+    const expireCutoff = getActiveBookingCutoff(
+        queryTimeZone,
+        queryClientTimeZone,
+        BOOKING_ACCEPT_WINDOW_MINUTES
+    );
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const createdAtCutoff =
         expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
@@ -486,19 +491,29 @@ exports.getBookingHome = async (req, res) => {
             "frequency",
             "deliveryDate",
             "deliveryTimeFrom",
-            "orderExpireTime",
             "deliveryTimeTo",
             "pickupAddresId",
             "dropOffAddressId",
             "laundryShopId",
-            "customerId"
-        ]
+            "customerId",
+            "createdAt",
+        ],
     });
 
-    //return res.json(bookingData)
+    const bookingDataForResponse = bookingData.map((row) => {
+        const plain = row.get({ plain: true });
+        return {
+            ...plain,
+            createdAt: plain.createdAt,
+            orderExpireTime: BOOKING_ACCEPT_WINDOW_MINUTES,
+        };
+    });
 
-
-    return ResponseHelper.success(res, "Agent Orders fetched", { bookingData, isConnectAccountConnected, connectAccountId });
+    return ResponseHelper.success(res, "Agent Orders fetched", {
+        bookingData: bookingDataForResponse,
+        isConnectAccountConnected,
+        connectAccountId,
+    });
 }
 
 /*
