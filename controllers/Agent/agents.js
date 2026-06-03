@@ -3622,6 +3622,10 @@ exports.getBussinessInforMation = async (req, res) => {
 exports.getBussinessWrkinghours = async (req, res) => {
     const { userId } = req.params;
 
+    const platformOperationalHoursService = require("../../services/Admin/platformOperationalHoursService");
+    const platformOperationalHours =
+        await platformOperationalHoursService.getAll();
+
     const bussinesWorkingHours = await bussinessWorkingHours.findAll({
         where: {
             userId: userId,
@@ -3638,6 +3642,7 @@ exports.getBussinessWrkinghours = async (req, res) => {
 
     let outObj = {
         bussinesWorkingHours: bussinesWorkingHours,
+        platformOperationalHours,
     };
 
     return ResponseHelper.success(res, "Information fetched", outObj);

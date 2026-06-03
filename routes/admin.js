@@ -171,6 +171,16 @@ router.use(validateAccessToken, checkPermission)
 router.get('/getSupportContact', asyncMiddleware(adminController.getSupportContact))
 router.patch('/updateSupportContact', asyncMiddleware(adminController.updateSupportContact))
 
+// Platform operational hours (all shops — outer bounds)
+router.get(
+    '/platformOperationalHours',
+    asyncMiddleware(adminController.getPlatformOperationalHours)
+)
+router.patch(
+    '/platformOperationalHours',
+    asyncMiddleware(adminController.updatePlatformOperationalHours)
+)
+
 //Add vehicle
 router.post('/addvehicle', uploadVehicleTypeImage.single('image'), asyncMiddleware(adminController.addVehicle))
 

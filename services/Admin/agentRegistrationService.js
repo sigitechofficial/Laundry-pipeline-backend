@@ -317,6 +317,11 @@ class AgentRegistrationService {
             throw new NotFoundError('User not found');
         }
 
+        const platformOperationalHoursService = require('./platformOperationalHoursService');
+        await platformOperationalHoursService.validateShopWorkingDays(
+            bussinessWorkingDays
+        );
+
         // Update working hours
         for (const ele of bussinessWorkingDays) {
             await bussinessWorkingHours.update(

@@ -3,6 +3,7 @@ const {
     addressDb,
     bussinessWorkingHours,
     bussinessInformation,
+    platformOperationalHours,
 } = require("../models");
 const { resolveBookingTimeZone } = require("./bookingTimeZone");
 
@@ -65,8 +66,46 @@ async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
     return hoursRow;
 }
 
+async function findTodayPlatformHoursRow(dayOfWeek) {
+    return platformOperationalHours.findOne({
+        where: { dayOfWeek },
+        attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+    });
+}
+
+function isNowWithinHoursWindow(now, date, tz, openTime, closeTime) {
+    const openStr = normalizeTimeString(openTime);
+    const closeStr = normalizeTimeString(closeTime);
+    if (!openStr || !closeStr) return false;
+
+    const openAt = moment.tz(`${date} ${openStr}`, "YYYY-MM-DD HH:mm:ss", tz);
+    const closeAt = moment.tz(`${date} ${closeStr}`, "YYYY-MM-DD HH:mm:ss", tz);
+    if (!openAt.isValid() || !closeAt.isValid()) return false;
+
+    return now.isSameOrAfter(openAt) && now.isBefore(closeAt);
+}
+
 /**
- * Shop open now: working day (status true) and openTime <= now < closeTime.
+ * Platform open now for the current day.
+ */
+async function isPlatformOpenNow(timeZone, clientTimeZone) {
+    const { now, dayOfWeek, date, tz } = getWallClockContext(
+        timeZone,
+        clientTimeZone
+    );
+    const platformRow = await findTodayPlatformHoursRow(dayOfWeek);
+    if (!platformRow || !platformRow.status) return false;
+    return isNowWithinHoursWindow(
+        now,
+        date,
+        tz,
+        platformRow.openTime,
+        platformRow.closeTime
+    );
+}
+
+/**
+ * Shop open now: platform window + shop day on + shop openTime <= now < closeTime.
  * @param {number} shopUserId - laundry shop owner users.id
  */
 async function isShopOpenNow(shopUserId, timeZone, clientTimeZone) {
@@ -77,19 +116,31 @@ async function isShopOpenNow(shopUserId, timeZone, clientTimeZone) {
         clientTimeZone
     );
 
+    const platformRow = await findTodayPlatformHoursRow(dayOfWeek);
+    if (!platformRow || !platformRow.status) return false;
+    if (
+        !isNowWithinHoursWindow(
+            now,
+            date,
+            tz,
+            platformRow.openTime,
+            platformRow.closeTime
+        )
+    ) {
+        return false;
+    }
+
     const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
 
     if (!hoursRow || !hoursRow.status) return false;
 
-    const openStr = normalizeTimeString(hoursRow.openTime);
-    const closeStr = normalizeTimeString(hoursRow.closeTime);
-    if (!openStr || !closeStr) return false;
-
-    const openAt = moment.tz(`${date} ${openStr}`, "YYYY-MM-DD HH:mm:ss", tz);
-    const closeAt = moment.tz(`${date} ${closeStr}`, "YYYY-MM-DD HH:mm:ss", tz);
-    if (!openAt.isValid() || !closeAt.isValid()) return false;
-
-    return now.isSameOrAfter(openAt) && now.isBefore(closeAt);
+    return isNowWithinHoursWindow(
+        now,
+        date,
+        tz,
+        hoursRow.openTime,
+        hoursRow.closeTime
+    );
 }
 
 /**
@@ -135,8 +186,10 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
 
 module.exports = {
     isShopOpenNow,
+    isPlatformOpenNow,
     isAnyShopOpenInZone,
     getOpenShopUserIdsInZone,
     getWallClockContext,
     findTodayWorkingHoursRow,
+    findTodayPlatformHoursRow,
 };

@@ -103,6 +103,7 @@ const {
 const faqService = require('../../services/Admin/faqService');
 const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
+const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
 
@@ -2398,6 +2399,26 @@ async function updateSupportContact(req, res) {
     return ResponseHelper.success(res, 'Support contact updated successfully', data);
 }
 
+//!----------------------------------Platform Operational Hours-----------------------------------------//
+
+async function getPlatformOperationalHours(req, res) {
+    const data = await platformOperationalHoursService.getAll();
+    return ResponseHelper.success(
+        res,
+        'Platform operational hours retrieved successfully',
+        data
+    );
+}
+
+async function updatePlatformOperationalHours(req, res) {
+    const data = await platformOperationalHoursService.updateAll(req.body);
+    return ResponseHelper.success(
+        res,
+        'Platform operational hours updated successfully',
+        data
+    );
+}
+
 //!----------------------------------FAQ Management-----------------------------------------//
 
 /**
@@ -2798,6 +2819,8 @@ module.exports = {
     //!-------------Support contact config--------//
     getSupportContact,
     updateSupportContact,
+    getPlatformOperationalHours,
+    updatePlatformOperationalHours,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

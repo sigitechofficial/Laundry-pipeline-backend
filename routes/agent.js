@@ -520,6 +520,11 @@ router.patch(
     "/workingHoursUpdate/:userId",
     asyncMiddleware(agentAuthController.workingHoursUpdate)
 );
+// Platform operational hours bounds (read-only for agent app)
+router.get(
+    "/platformOperationalHours",
+    asyncMiddleware(adminController.getPlatformOperationalHours)
+);
 //!-----------------------------------------OnHold Api----------------------------------------------------------------------//
 //Get On Hold Options
 router.get(

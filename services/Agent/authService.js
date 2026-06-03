@@ -680,6 +680,11 @@ class AgentAuthService {
      * @returns {Object} Update result
      */
     async workingHoursUpdate(data) {
+        const platformOperationalHoursService = require('../Admin/platformOperationalHoursService');
+        await platformOperationalHoursService.validateShopWorkingDays(
+            data.bussinessWorkingDays
+        );
+
         for (const ele of data.bussinessWorkingDays) {
             await bussinessWorkingHours.update(
                 {
