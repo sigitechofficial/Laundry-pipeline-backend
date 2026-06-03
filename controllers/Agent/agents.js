@@ -83,7 +83,11 @@ const {
     getActiveBookingCutoff,
     BOOKING_ACCEPT_WINDOW_MINUTES,
 } = require("../../utils/bookingTimeZone");
-const { isAnyShopOpenInZone } = require("../../utils/shopWorkingHours");
+const {
+    isShopOpenNow,
+    findTodayWorkingHoursRow,
+    getWallClockContext,
+} = require("../../utils/shopWorkingHours");
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
@@ -427,30 +431,43 @@ exports.getBookingHome = async (req, res) => {
     const createdAtCutoff =
         expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
 
-    const zoneOpenNow = await isAnyShopOpenInZone(
-        agentZone,
+    const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
+    const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
+    const agentShopOpen = await isShopOpenNow(
+        agentId,
         queryTimeZone,
         queryClientTimeZone
     );
 
     console.log(
-        "[getBookingHome] zone:",
+        "[getBookingHome] agent:",
+        agentId,
+        "zone:",
         agentZone,
         "tz:",
         resolvedExpireTz,
+        "day:",
+        dayOfWeek,
+        "hoursStatus:",
+        todayHours?.status,
+        "open:",
+        todayHours?.openTime,
+        "close:",
+        todayHours?.closeTime,
         "now:",
         currentTimeString,
-        "zoneOpen:",
-        zoneOpenNow,
+        "agentShopOpen:",
+        agentShopOpen,
         "createdAt >=",
         createdAtCutoff.toISOString()
     );
 
-    if (!zoneOpenNow) {
+    if (!agentShopOpen) {
         return ResponseHelper.success(res, "Agent Orders fetched", {
             bookingData: [],
             isConnectAccountConnected,
             connectAccountId,
+            agentShopOpen: false,
             zoneShopsOpen: false,
         });
     }
@@ -538,6 +555,7 @@ exports.getBookingHome = async (req, res) => {
         bookingData: bookingDataForResponse,
         isConnectAccountConnected,
         connectAccountId,
+        agentShopOpen: true,
         zoneShopsOpen: true,
     });
 }

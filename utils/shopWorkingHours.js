@@ -1,5 +1,9 @@
 const moment = require("moment-timezone");
-const { addressDb, bussinessWorkingHours } = require("../models");
+const {
+    addressDb,
+    bussinessWorkingHours,
+    bussinessInformation,
+} = require("../models");
 const { resolveBookingTimeZone } = require("./bookingTimeZone");
 
 const DAY_NAMES = [
@@ -37,6 +41,31 @@ function getWallClockContext(timeZone, clientTimeZone) {
 }
 
 /**
+ * Resolve today's hours row for a shop owner (userId or bussinessInformation link).
+ */
+async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
+    let hoursRow = await bussinessWorkingHours.findOne({
+        where: { userId: shopUserId, dayOfWeek },
+        attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+    });
+
+    if (!hoursRow) {
+        const biz = await bussinessInformation.findOne({
+            where: { userId: shopUserId },
+            attributes: ["id"],
+        });
+        if (biz?.id) {
+            hoursRow = await bussinessWorkingHours.findOne({
+                where: { bussinessInformationId: biz.id, dayOfWeek },
+                attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+            });
+        }
+    }
+
+    return hoursRow;
+}
+
+/**
  * Shop open now: working day (status true) and openTime <= now < closeTime.
  * @param {number} shopUserId - laundry shop owner users.id
  */
@@ -48,10 +77,7 @@ async function isShopOpenNow(shopUserId, timeZone, clientTimeZone) {
         clientTimeZone
     );
 
-    const hoursRow = await bussinessWorkingHours.findOne({
-        where: { userId: shopUserId, dayOfWeek },
-        attributes: ["openTime", "closeTime", "status"],
-    });
+    const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
 
     if (!hoursRow || !hoursRow.status) return false;
 
@@ -112,4 +138,5 @@ module.exports = {
     isAnyShopOpenInZone,
     getOpenShopUserIdsInZone,
     getWallClockContext,
+    findTodayWorkingHoursRow,
 };
