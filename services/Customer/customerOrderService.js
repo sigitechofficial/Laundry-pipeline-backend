@@ -48,7 +48,11 @@ const {
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
-const { BUSINESS_TIME_ZONE, getOrderExpireTime } = require('../../utils/bookingTimeZone');
+const {
+    BUSINESS_TIME_ZONE,
+    BOOKING_ACCEPT_WINDOW_MINUTES,
+    getOrderExpireTime,
+} = require('../../utils/bookingTimeZone');
 
 
 // Import stripe functions
@@ -582,7 +586,10 @@ async function bookingEventSentCheckTheShops(
                 totalItems: bookingDetails.totalItems || 0,
                 orderAmount: bookingDetails?.billingDetail?.total || 0,
                 frequency: bookingDetails.frequency || "Just Once",
-                orderExpireTime: bookingDetails.orderExpireTime || null,
+                createdAt: bookingDetails.createdAt,
+                orderExpireTime: BOOKING_ACCEPT_WINDOW_MINUTES,
+                acceptWindowMinutes: BOOKING_ACCEPT_WINDOW_MINUTES,
+                orderExpireTimeClock: bookingDetails.orderExpireTime || null,
                 pickupAddresId: bookingDetails.pickupAddresId || null,
                 dropOffAddressId: bookingDetails.dropOffAddressId || null,
                 laundryShopId: availableShops[0]?.id || null,
@@ -1066,7 +1073,9 @@ class CustomerOrderService {
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
         const fixTimeKey = getOrderExpireTime(timeZone);
-        console.log("🚀 ~ createBooking ~ fixTimeKey===============+++++++++++++++++++++++++++:", fixTimeKey);
+        console.log(
+            `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${fixTimeKey} tz=${timeZone || "default"}`
+        );
 
         // Create the billing details
         const parsedUpfront = parseFloat(upfrontAmount) || 0;
