@@ -14,7 +14,10 @@ const {
     isAgentAcceptExpired,
 } = require("../../utils/bookingAgentWindow");
 const { sendEvent } = require("../../socket_io");
-const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
+const {
+    getCountryContextFromZoneId,
+} = require("../../utils/countryTimeZone");
+const { BUSINESS_TIME_ZONE } = require("../../utils/bookingTimeZone");
 
 class AdminBookingAssignService {
     async getAssignableShops(bookingId) {
@@ -27,6 +30,7 @@ class AdminBookingAssignService {
                 "agentBroadcastHeld",
                 "agentVisibleAt",
                 "createdAt",
+                "orderExpireTime",
                 "orderTrackId",
             ],
         });
@@ -35,13 +39,13 @@ class AdminBookingAssignService {
             throw new NotFoundError("Booking not found");
         }
 
-        if (!canAdminAssignBooking(bookingRow)) {
+        const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
+        if (!canAdminAssignBooking(bookingRow, countryCtx.ianaTimeZone)) {
             throw new ValidationError(
                 "This order is not eligible for manual assign. It must be unassigned and past the agent accept window."
             );
         }
 
-        const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         const platformOpen = await isPlatformOpenNow(countryCtx.countryId);
         if (!platformOpen) {
             throw new ValidationError(
@@ -92,15 +96,15 @@ class AdminBookingAssignService {
             throw new NotFoundError("Booking not found");
         }
 
-        if (!canAdminAssignBooking(bookingRow)) {
+        const assignCountryCtx = await getCountryContextFromZoneId(
+            bookingRow.zoneId
+        );
+        if (!canAdminAssignBooking(bookingRow, assignCountryCtx.ianaTimeZone)) {
             throw new ValidationError(
                 "Order cannot be assigned: not expired or already assigned."
             );
         }
 
-        const assignCountryCtx = await getCountryContextFromZoneId(
-            bookingRow.zoneId
-        );
         if (!await isPlatformOpenNow(assignCountryCtx.countryId)) {
             throw new ValidationError(
                 "Platform is closed. Assign during platform operational hours."
@@ -178,17 +182,49 @@ class AdminBookingAssignService {
         };
     }
 
-    enrichBookingForAdmin(bookingInstance) {
+    enrichBookingForAdmin(bookingInstance, timeZone) {
         const plain = bookingInstance.get
             ? bookingInstance.get({ plain: true })
             : bookingInstance;
-        const expired = isAgentAcceptExpired(plain);
+        const tz = timeZone || BUSINESS_TIME_ZONE;
+        const expired = isAgentAcceptExpired(plain, tz);
         return {
             ...plain,
             agentAcceptExpired: expired,
-            canAdminAssign: canAdminAssignBooking(plain),
+            canAdminAssign: canAdminAssignBooking(plain, tz),
             agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
         };
+    }
+
+    /**
+     * Enrich order list with assign flags using each booking zone's country timezone.
+     */
+    async enrichBookingsForAdminList(bookingInstances) {
+        const zoneIds = [
+            ...new Set(
+                bookingInstances
+                    .map((row) => {
+                        const plain = row.get ? row.get({ plain: true }) : row;
+                        return plain.zoneId;
+                    })
+                    .filter(Boolean)
+            ),
+        ];
+
+        const tzByZone = new Map();
+        await Promise.all(
+            zoneIds.map(async (zoneId) => {
+                const ctx = await getCountryContextFromZoneId(zoneId);
+                tzByZone.set(zoneId, ctx.ianaTimeZone);
+            })
+        );
+
+        return bookingInstances.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            const tz =
+                tzByZone.get(plain.zoneId) || BUSINESS_TIME_ZONE;
+            return this.enrichBookingForAdmin(plain, tz);
+        });
     }
 }
 

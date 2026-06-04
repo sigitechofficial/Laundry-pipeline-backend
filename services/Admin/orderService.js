@@ -163,9 +163,8 @@ class OrderService {
         const hasNextPage = page < totalPages;
         const hasPrevPage = page > 1;
 
-        const enrichedBookings = bookings.map((row) =>
-            adminBookingAssignService.enrichBookingForAdmin(row)
-        );
+        const enrichedBookings =
+            await adminBookingAssignService.enrichBookingsForAdminList(bookings);
 
         return {
             bookings: enrichedBookings,
