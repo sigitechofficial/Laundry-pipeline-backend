@@ -741,6 +741,12 @@ class OrderService {
                     if (svc.subCategoryId) servicePayload.subCategoryId = svc.subCategoryId;
                     if (svc.servicePrice) servicePayload.servicePrice = svc.servicePrice;
                     if (svc.status !== undefined) servicePayload.status = svc.status;
+                    if (svc.serviceInstruction) servicePayload.serviceInstruction = svc.serviceInstruction;
+                    const bagVal = svc.bags ?? svc.bagsCount;
+                    if (bagVal != null && bagVal !== "") {
+                        const n = Number(bagVal);
+                        if (Number.isFinite(n) && n > 0) servicePayload.bags = Math.floor(n);
+                    }
 
                     if (matchedService) {
                         await matchedService.update(servicePayload);

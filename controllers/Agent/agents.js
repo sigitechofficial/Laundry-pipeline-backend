@@ -529,6 +529,8 @@ exports.getBookingHome = async (req, res) => {
             'paymentConfirmed',
             "partialPayment",
             "totalItems",
+            "totalBags",
+            "sameBagForAllServices",
             "orderAmount",
             "frequency",
             "deliveryDate",
@@ -837,8 +839,9 @@ exports.agentBookingFilters = async (req, res) => {
             "driverInstruction",
             "bookingStatusId",
             "totalItems",
+            "totalBags",
+            "sameBagForAllServices",
             "noOfBags",
-            "allInOneBag"
         ],
         include: [
             {
@@ -941,7 +944,7 @@ exports.agentBookingFilters = async (req, res) => {
                     "categoryId",
                     "subCategoryId",
                     "items",
-                    "noOfBags",
+                    "bags",
                     "serviceInstruction",
                     "status"
                 ],
@@ -1412,10 +1415,15 @@ exports.AddPickupDeliveryProof = async (req, res) => {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+    const parsedBags =
+        noOfBags != null && noOfBags !== "" ? Number(noOfBags) : null;
     await booking.update(
         {
             totalItems: noOfItems != null && noOfItems !== "" ? Number(noOfItems) : null,
-            noOfBags: noOfBags != null && noOfBags !== "" ? Number(noOfBags) : null,
+            noOfBags: parsedBags,
+            ...(parsedBags != null && Number.isFinite(parsedBags)
+                ? { totalBags: parsedBags }
+                : {}),
         },
         {
             where: { id: bookingId },
@@ -2269,7 +2277,7 @@ exports.invoiceCreation = async (req, res) => {
                 ],
                 attributes: [
                     "id", "date", "time", "categoryPrice", "bookingId",
-                    "categoryId", "serviceId", "subCategoryId", "items", "serviceInstruction"
+                    "categoryId", "serviceId", "subCategoryId", "items", "bags", "serviceInstruction"
                 ]
             },
             {
@@ -3403,7 +3411,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
                 attributes: ["id", "name", "price", "unitCount"],
             },
         ],
-        attributes: ['id', 'categoryPrice', 'items', 'serviceInstruction']
+        attributes: ['id', 'categoryPrice', 'items', 'bags', 'serviceInstruction']
     });
 
     if (!customerServices || customerServices.length === 0) {
@@ -3452,6 +3460,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
         subCategoryPrice: item.subCategory.price,
         categoryPrice: item.categoryPrice,
         items: item.items,
+        bags: item.bags ?? null,
         serviceInstruction: item.serviceInstruction || null
     }));
 

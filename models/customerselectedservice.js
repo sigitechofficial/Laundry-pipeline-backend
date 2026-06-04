@@ -41,6 +41,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true
     },
+    bags: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Estimated bags for this service line when not using one shared bag',
+    },
     status:{
       type:DataTypes.BOOLEAN,
       defaultValue:false

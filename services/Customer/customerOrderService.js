@@ -540,6 +540,8 @@ async function bookingEventSentCheckTheShops(
                     subCategoryId: serviceItem?.subCategory?.id,
                     subCategoryName: serviceItem?.subCategory?.name,
                     subCategoryStatus: serviceItem?.subCategory?.status,
+                    items: serviceItem.items ?? null,
+                    bags: serviceItem.bags ?? null,
                 }))
                 : [];
 
@@ -1038,6 +1040,11 @@ class CustomerOrderService {
                 if (service.items != null && service.items !== '') {
                     serviceObj.items = Number(service.items);
                 }
+                const bagVal = service.bags ?? service.bagsCount;
+                if (bagVal != null && bagVal !== '') {
+                    const n = Number(bagVal);
+                    if (Number.isFinite(n) && n > 0) serviceObj.bags = Math.floor(n);
+                }
 
                 return serviceObj;
             });
@@ -1520,6 +1527,7 @@ class CustomerOrderService {
                         "serviceId",
                         "subCategoryId",
                         "items",
+                        "bags",
                         "serviceInstruction",
                     ],
                     include: [

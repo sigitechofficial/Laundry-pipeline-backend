@@ -419,6 +419,11 @@ class RescheduleBookingService {
                 if (s.categoryCharge) row.categoryPrice = parseFloat(s.categoryCharge);
                 if (s.serviceInstruction) row.serviceInstruction = s.serviceInstruction;
                 if (s.items != null && s.items !== "") row.items = Number(s.items);
+                const bagVal = s.bags ?? s.bagsCount;
+                if (bagVal != null && bagVal !== "") {
+                    const n = Number(bagVal);
+                    if (Number.isFinite(n) && n > 0) row.bags = Math.floor(n);
+                }
                 return row;
             });
             await customerSelectedService.bulkCreate(serviceRows);
