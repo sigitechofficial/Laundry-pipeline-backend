@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN ianaTimeZone VARCHAR(64) NULL;

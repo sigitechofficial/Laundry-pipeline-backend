@@ -16,13 +16,43 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
+const {
+    parseTimeZoneFromBody,
+    resolveAgentTimeZone,
+} = require('../../utils/agentTimeZone');
 
 /**
  * Agent Authentication Service
  * Handles all agent authentication related business logic
  */
 class AgentAuthService {
-    
+    _ianaTimeZoneUpdate(data) {
+        const tz = parseTimeZoneFromBody(data);
+        return tz ? { ianaTimeZone: tz } : {};
+    }
+
+    async _getUserIanaTimeZone(userId) {
+        const row = await users.findByPk(userId, {
+            attributes: ['ianaTimeZone'],
+        });
+        return row?.ianaTimeZone || null;
+    }
+
+    /** Plain user JSON for API responses (no password). */
+    _toPlainUserForResponse(userRow) {
+        if (!userRow) return null;
+        const plain = userRow.get ? userRow.get({ plain: true }) : { ...userRow };
+        delete plain.password;
+        return plain;
+    }
+
+    /** Set resolved agent TZ on user object only (single place in nested responses). */
+    _withAgentTimeZone(plainUser, tz) {
+        if (!plainUser) return null;
+        if (tz) plainUser.ianaTimeZone = tz;
+        return plainUser;
+    }
+
     /**
      * Register Agent With OTP
      * @param {Object} data - Registration data
@@ -117,6 +147,7 @@ class AgentAuthService {
                 countryId: data.countryId,
                 cityId: data.cityId,
                 image: profileImg || userfindByEmail.image, // Keep existing image if new one not provided
+                ...this._ianaTimeZoneUpdate(data),
             }, {
                 where: { id: userfindByEmail.id }
             });
@@ -205,10 +236,13 @@ class AgentAuthService {
                 where: { userId: userfindByEmail.id }
             });
 
+            const savedTz = await this._getUserIanaTimeZone(userfindByEmail.id);
+
             return {
                 otpId: updatedOtp.id,
                 userId: userfindByEmail.id,
                 accessToken,
+                ianaTimeZone: savedTz,
                 message: "User details updated. New OTP sent to your email."
             };
         } else {
@@ -266,7 +300,8 @@ class AgentAuthService {
                 stripeCustomerId: stripeCustomer,
                 image: profileImg,
                 countryId: data.countryId,
-                cityId: data.cityId
+                cityId: data.cityId,
+                ...this._ianaTimeZoneUpdate(data),
             }, {
                 where: { id: userCreate.id }
             });
@@ -287,10 +322,13 @@ class AgentAuthService {
                 );
             }
 
+            const savedTz = await this._getUserIanaTimeZone(userCreate.id);
+
             return {
                 otpId: otpCreation.id,
                 userId: userCreate.id,
-                accessToken
+                accessToken,
+                ianaTimeZone: savedTz,
             };
         }
     }
@@ -319,8 +357,11 @@ class AgentAuthService {
             }));
             let output = await bussinessWorkingHours.bulkCreate(dataMap);
 
+            const ianaTimeZone = await this._getUserIanaTimeZone(data.userId);
+
             return {
-                userId: data.userId
+                userId: data.userId,
+                ianaTimeZone,
             };
         } else {
             const otpData = await otpVerification.findByPk(data.otpId);
@@ -353,8 +394,11 @@ class AgentAuthService {
             }));
             let output = await bussinessWorkingHours.bulkCreate(dataMap);
 
+            const ianaTimeZone = await this._getUserIanaTimeZone(data.userId);
+
             return {
-                userId: data.userId
+                userId: data.userId,
+                ianaTimeZone,
             };
         }
     }
@@ -794,6 +838,7 @@ class AgentAuthService {
                 "phoneNum",
                 "classifiedAsId",
                 "roleId",
+                "ianaTimeZone",
                 [
                     sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
@@ -803,6 +848,12 @@ class AgentAuthService {
 
         if (!userFind) {
             throw new NotFoundError("User not Exists with this credentials");
+        }
+
+        const tzUpdate = this._ianaTimeZoneUpdate(data);
+        if (Object.keys(tzUpdate).length) {
+            await users.update(tzUpdate, { where: { id: userFind.id } });
+            userFind.ianaTimeZone = tzUpdate.ianaTimeZone;
         }
 
         if (userFind?.classifiedAsId === 2) {
@@ -1051,7 +1102,8 @@ class AgentAuthService {
             joinedOn: userFind.dataValues.joinedOn,
             phoneNum: userFind.phoneNum,
             features: featureData,
-            isConnectAccountConnected
+            isConnectAccountConnected,
+            ianaTimeZone: resolveAgentTimeZone(data, userFind.ianaTimeZone),
         };
     }
 
@@ -1279,6 +1331,7 @@ class AgentAuthService {
                 "phoneNum",
                 "classifiedAsId",
                 "roleId",
+                "ianaTimeZone",
                 [
                     sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
@@ -1291,6 +1344,12 @@ class AgentAuthService {
                 "Sorry no user found!",
                 { message: "Please contact support for more information" }
             );
+        }
+
+        const sessionTzUpdate = this._ianaTimeZoneUpdate(data);
+        if (Object.keys(sessionTzUpdate).length) {
+            await users.update(sessionTzUpdate, { where: { id: userData.id } });
+            userData.ianaTimeZone = sessionTzUpdate.ianaTimeZone;
         }
 
         if (!userData.status) {
@@ -1395,13 +1454,19 @@ class AgentAuthService {
             }
         }
 
+        const ianaTimeZone = resolveAgentTimeZone(data, userData.ianaTimeZone);
+        const plainUser = this._withAgentTimeZone(
+            this._toPlainUserForResponse(userData),
+            ianaTimeZone
+        );
+
         return {
-            userData,
+            userData: plainUser,
             accessToken,
             isGuest: data.guestUser,
             featureData,
             isConnectAccountConnected,
-            connectAccountId: agentInfo?.[0]?.connectAccountId || null
+            connectAccountId: agentInfo?.[0]?.connectAccountId || null,
         };
     }
 
@@ -1423,16 +1488,19 @@ class AgentAuthService {
                     required: false
                 }
             ],
-            attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode']
+            attributes: ['id', 'firstName', 'lastName', 'image', 'email', 'phoneNum', 'userTypeId', 'stripeCustomerId', 'countryCode', 'ianaTimeZone']
         });
 
         if (!userData) {
             throw new NotFoundError('No User Exists with this email');
         }
 
+        const plainUser = this._toPlainUserForResponse(userData);
+
         return {
-            userData,
-            isConnectAccountConnected: userData.agentInfo?.[0]?.isConnectAccountConnected || false
+            userData: plainUser,
+            isConnectAccountConnected: userData.agentInfo?.[0]?.isConnectAccountConnected || false,
+            connectAccountId: userData.agentInfo?.[0]?.connectAccountId || null,
         };
     }
 
@@ -1467,9 +1535,13 @@ class AgentAuthService {
             email: data.email,
             countryCode: data.countryCode,
             image: data.isProfileImgChanged === "true" ? profileImage : undefined,
+            ...this._ianaTimeZoneUpdate(data),
         }, { where: { id: data.userId } });
 
+        const ianaTimeZone = await this._getUserIanaTimeZone(data.userId);
+
         return {
+            ianaTimeZone,
         };
     }
 

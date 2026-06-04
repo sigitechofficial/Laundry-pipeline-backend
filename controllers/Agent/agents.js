@@ -263,6 +263,10 @@ exports.agentAddressEdit = async (req, res) => {
 exports.getAgentAddress = async (req, res) => {
     const agentId = req.user.id;
 
+    const agentUser = await users.findByPk(agentId, {
+        attributes: ["id", "ianaTimeZone"],
+    });
+
     const agentAddress = await addressDb.findOne({
         where: {
             userId: agentId,
@@ -286,7 +290,7 @@ exports.getAgentAddress = async (req, res) => {
         include: [
             {
                 model: countries,
-                attributes: ["id", "name", "shortName"],
+                attributes: ["id", "name", "shortName", "ianaTimeZone"],
             },
             {
                 model: cities,
@@ -303,7 +307,16 @@ exports.getAgentAddress = async (req, res) => {
         throw new NotFoundError("No address found for this agent");
     }
 
-    return ResponseHelper.success(res, "Agent Address Retrieved Successfully", agentAddress);
+    const plain = agentAddress.get({ plain: true });
+
+    const agentTz = agentUser?.ianaTimeZone || null;
+    const shopTz = plain.country?.ianaTimeZone || null;
+
+    return ResponseHelper.success(res, "Agent Address Retrieved Successfully", {
+        ...plain,
+        ianaTimeZone: agentTz,
+        shopOperationalTimeZone: shopTz,
+    });
 }
 
 /*
@@ -379,6 +392,7 @@ exports.getBookingHome = async (req, res) => {
         where: {
             id: agentId,
         },
+        attributes: ["id", "ianaTimeZone"],
         include: [
             {
                 model: addressDb,
@@ -424,7 +438,10 @@ exports.getBookingHome = async (req, res) => {
     }
 
     let agentZone = userData.addressDb.zoneId;
-    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
+    const queryTimeZone =
+        req.query?.timeZone ||
+        req.body?.timeZone ||
+        userData?.ianaTimeZone;
     const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
     const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
