@@ -2403,7 +2403,8 @@ async function updateSupportContact(req, res) {
 //!----------------------------------Platform Operational Hours-----------------------------------------//
 
 async function getPlatformOperationalHours(req, res) {
-    const data = await platformOperationalHoursService.getAll();
+    const countryId = req.query.countryId ?? req.body?.countryId;
+    const data = await platformOperationalHoursService.getAll(countryId);
     return ResponseHelper.success(
         res,
         'Platform operational hours retrieved successfully',

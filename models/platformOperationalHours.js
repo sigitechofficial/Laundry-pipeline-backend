@@ -2,10 +2,20 @@
 const { Model } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
-  class platformOperationalHours extends Model {}
+  class platformOperationalHours extends Model {
+    static associate(models) {
+      platformOperationalHours.belongsTo(models.countries, {
+        foreignKey: "countryId",
+      });
+    }
+  }
 
   platformOperationalHours.init(
     {
+      countryId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
       dayOfWeek: {
         type: DataTypes.ENUM(
           "Monday",

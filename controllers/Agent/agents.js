@@ -430,11 +430,14 @@ exports.getBookingHome = async (req, res) => {
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
+    const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
     const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
     const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
     const agentShopOpen = await isShopOpenNow(
         agentId,
-        queryTimeZone,
+        agentCountryCtx.countryId,
+        queryTimeZone || agentCountryCtx.ianaTimeZone,
         queryClientTimeZone
     );
 
@@ -3637,8 +3640,10 @@ exports.getBussinessWrkinghours = async (req, res) => {
     const { userId } = req.params;
 
     const platformOperationalHoursService = require("../../services/Admin/platformOperationalHoursService");
+    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
+    const countryCtx = await getCountryContextFromShopUserId(userId);
     const platformOperationalHours =
-        await platformOperationalHoursService.getAll();
+        await platformOperationalHoursService.getAll(countryCtx.countryId);
 
     const bussinesWorkingHours = await bussinessWorkingHours.findAll({
         where: {
@@ -3662,6 +3667,23 @@ exports.getBussinessWrkinghours = async (req, res) => {
     return ResponseHelper.success(res, "Information fetched", outObj);
 }
 
+exports.getAgentPlatformOperationalHours = async (req, res) => {
+    const agentId = req.user?.id;
+    if (!agentId) {
+        throw new ValidationError("Unauthorized");
+    }
+
+    const platformOperationalHoursService = require("../../services/Admin/platformOperationalHoursService");
+    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
+    const countryCtx = await getCountryContextFromShopUserId(agentId);
+    const data = await platformOperationalHoursService.getAll(countryCtx.countryId);
+
+    return ResponseHelper.success(
+        res,
+        "Platform operational hours retrieved successfully",
+        data
+    );
+};
 
 exports.printLabelData = async (req, res) => {
     const { bookingId } = req.params;

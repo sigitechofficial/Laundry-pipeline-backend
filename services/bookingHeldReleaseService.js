@@ -5,9 +5,9 @@ const {
 } = require("../models");
 const { isAnyShopOpenInZone } = require("../utils/shopWorkingHours");
 const {
-    BUSINESS_TIME_ZONE,
     getOrderExpireTime,
 } = require("../utils/bookingTimeZone");
+const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
 
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
@@ -40,9 +40,10 @@ async function releaseHeldBookings() {
     let released = 0;
 
     for (const row of heldBookings) {
+        const countryCtx = await getCountryContextFromZoneId(row.zoneId);
         const zoneOpen = await isAnyShopOpenInZone(
             row.zoneId,
-            BUSINESS_TIME_ZONE
+            countryCtx.ianaTimeZone
         );
         if (!zoneOpen) continue;
 
@@ -64,7 +65,7 @@ async function releaseHeldBookings() {
             row.deliveryTimeTo,
             row.deliveryTimeFrom,
             servicePayload,
-            BUSINESS_TIME_ZONE
+            countryCtx.ianaTimeZone
         );
 
         if (notifiedCount === 0) {
@@ -76,7 +77,7 @@ async function releaseHeldBookings() {
             {
                 agentBroadcastHeld: false,
                 agentVisibleAt: visibleAt,
-                orderExpireTime: getOrderExpireTime(BUSINESS_TIME_ZONE),
+                orderExpireTime: getOrderExpireTime(countryCtx.ianaTimeZone),
             },
             { where: { id: row.id } }
         );

@@ -1,4 +1,4 @@
-const { platformOperationalHours } = require("../../models");
+const { platformOperationalHours, countries } = require("../../models");
 const { ValidationError } = require("../../middlewares/universalErrorHandler");
 const {
   DAY_ORDER,
@@ -6,19 +6,31 @@ const {
   timeToMinutes,
   assertShopHoursWithinPlatform,
 } = require("../../utils/platformOperationalHours");
+const { getCountryContextById } = require("../../utils/countryTimeZone");
 
 const DEFAULT_OPEN = "07:00:00";
 const DEFAULT_CLOSE = "20:00:00";
 
+function parseCountryId(countryId) {
+  const id = Number(countryId);
+  if (!Number.isInteger(id) || id < 1) {
+    throw new ValidationError("countryId is required");
+  }
+  return id;
+}
+
 class PlatformOperationalHoursService {
-  async ensureSeeded() {
-    const count = await platformOperationalHours.count();
+  async ensureSeeded(countryId) {
+    const cid = parseCountryId(countryId);
+    const count = await platformOperationalHours.count({
+      where: { countryId: cid },
+    });
     if (count >= 7) return;
 
     const now = new Date();
     for (let i = 0; i < DAY_ORDER.length; i += 1) {
       await platformOperationalHours.findOrCreate({
-        where: { dayOfWeek: DAY_ORDER[i] },
+        where: { countryId: cid, dayOfWeek: DAY_ORDER[i] },
         defaults: {
           openTime: DEFAULT_OPEN,
           closeTime: DEFAULT_CLOSE,
@@ -30,10 +42,14 @@ class PlatformOperationalHoursService {
     }
   }
 
-  async getAll() {
-    await this.ensureSeeded();
+  async getAll(countryId) {
+    const cid = parseCountryId(countryId);
+    await this.ensureSeeded(cid);
+
+    const countryCtx = await getCountryContextById(cid);
     const rows = await platformOperationalHours.findAll({
-      attributes: ["id", "dayOfWeek", "openTime", "closeTime", "status"],
+      where: { countryId: cid },
+      attributes: ["id", "countryId", "dayOfWeek", "openTime", "closeTime", "status"],
     });
 
     const orderIndex = new Map(DAY_ORDER.map((d, i) => [d, i]));
@@ -44,6 +60,9 @@ class PlatformOperationalHoursService {
     );
 
     return {
+      countryId: cid,
+      countryName: countryCtx.countryName,
+      ianaTimeZone: countryCtx.ianaTimeZone,
       days: rows.map((r) => r.get({ plain: true })),
       dayOrder: DAY_ORDER,
     };
@@ -70,13 +89,23 @@ class PlatformOperationalHoursService {
   }
 
   async updateAll(payload) {
+    const countryId = parseCountryId(
+      payload?.countryId ?? payload?.country?.id
+    );
     const days = payload?.days || payload?.platformOperationalDays;
     if (!Array.isArray(days) || days.length === 0) {
       throw new ValidationError("days array is required");
     }
 
+    const countryRow = await countries.findByPk(countryId, {
+      attributes: ["id"],
+    });
+    if (!countryRow) {
+      throw new ValidationError("Invalid countryId");
+    }
+
     days.forEach((d) => this._validatePlatformDay(d));
-    await this.ensureSeeded();
+    await this.ensureSeeded(countryId);
 
     for (const day of days) {
       const openTime = normalizeTimeString(day.openTime) || DEFAULT_OPEN;
@@ -87,15 +116,15 @@ class PlatformOperationalHoursService {
           closeTime,
           status: Boolean(day.status),
         },
-        { where: { dayOfWeek: day.dayOfWeek } }
+        { where: { countryId, dayOfWeek: day.dayOfWeek } }
       );
     }
 
-    return this.getAll();
+    return this.getAll(countryId);
   }
 
-  async validateShopWorkingDays(shopDays) {
-    const platform = await this.getAll();
+  async validateShopWorkingDays(countryId, shopDays) {
+    const platform = await this.getAll(countryId);
     assertShopHoursWithinPlatform(shopDays, platform.days);
   }
 }

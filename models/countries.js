@@ -25,6 +25,8 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with AddressDb
       countries.hasMany(models.addressDb)
       models.addressDb.belongsTo(countries)
+
+      countries.hasMany(models.platformOperationalHours, { foreignKey: "countryId" })
     }
   }
   countries.init({
@@ -39,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
     image: {
       type: DataTypes.STRING,
       allowNull: true
+    },
+    ianaTimeZone: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
     },
     status: {
       type: DataTypes.BOOLEAN,

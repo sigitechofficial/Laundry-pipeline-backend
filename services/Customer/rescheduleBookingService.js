@@ -29,9 +29,11 @@ const {
 const { sendEvent } = require('../../socket_io');
 const { chargeOffSession } = require('../../controllers/stripe');
 const { isShopOpenNow, isAnyShopOpenInZone } = require('../../utils/shopWorkingHours');
-const { getOrderExpireTime } = require('../../utils/bookingTimeZone');
-
-const BUSINESS_TIME_ZONE = 'Europe/London';
+const {
+    getOrderExpireTime,
+    BUSINESS_TIME_ZONE,
+} = require('../../utils/bookingTimeZone');
+const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 
 /**
  * Helper: find shops in zone available for a given time slot
@@ -47,6 +49,8 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
         deliveryTimeFrom,
         deliveryTimeTo
     } = updatedBooking;
+
+    const countryCtx = await getCountryContextFromZoneId(zoneId);
 
     // Fetch all laundry shops in the zone
     const shopsInZone = await addressDb.findAll({
@@ -105,7 +109,13 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
         });
         if (!conflictingBookings || conflictingBookings.length === 0) {
             const ownerId = shop.user?.id || shop.userId;
-            if (await isShopOpenNow(ownerId, BUSINESS_TIME_ZONE)) {
+            if (
+                await isShopOpenNow(
+                    ownerId,
+                    countryCtx.countryId,
+                    countryCtx.ianaTimeZone
+                )
+            ) {
                 availableShops.push(shop);
             }
         }

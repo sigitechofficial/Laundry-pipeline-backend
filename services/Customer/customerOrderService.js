@@ -410,6 +410,10 @@ async function bookingEventSentCheckTheShops(
     timeZone,
     clientTimeZone
 ) {
+    const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
+    const countryCtx = await getCountryContextFromZoneId(zoneId);
+    const resolvedTz = timeZone || countryCtx.ianaTimeZone;
+
     console.log(collectionTimeTo);
     console.log(collectionTimeFrom);
     console.log(deliveryDate);
@@ -471,7 +475,12 @@ async function bookingEventSentCheckTheShops(
         console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
         if (!checkSlots || checkSlots.length === 0) {
             const ownerId = shop.user?.id || shop.userId;
-            const shopOpen = await isShopOpenNow(ownerId, timeZone, clientTimeZone);
+            const shopOpen = await isShopOpenNow(
+                ownerId,
+                countryCtx.countryId,
+                resolvedTz,
+                clientTimeZone
+            );
             if (shopOpen) {
                 availableShops.push(shop);
             }
@@ -1160,10 +1169,16 @@ class CustomerOrderService {
         }
 
         let bookingId = bookingData.id;
-        const resolvedTz = timeZone || BUSINESS_TIME_ZONE;
-        const platformOpenNow = await isPlatformOpenNow(resolvedTz);
+        const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
+        const countryCtx = await getCountryContextFromZoneId(zoneId);
+        const resolvedTz = timeZone || countryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
+        const platformOpenNow = await isPlatformOpenNow(
+            countryCtx.countryId,
+            resolvedTz
+        );
         const zoneOpenNow =
-            platformOpenNow && (await isAnyShopOpenInZone(zoneId, resolvedTz));
+            platformOpenNow &&
+            (await isAnyShopOpenInZone(zoneId, resolvedTz));
         let agentBroadcastHeld = false;
 
         if (!platformOpenNow) {

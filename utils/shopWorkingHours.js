@@ -6,6 +6,11 @@ const {
     platformOperationalHours,
 } = require("../models");
 const { resolveBookingTimeZone } = require("./bookingTimeZone");
+const {
+    getCountryContextById,
+    getCountryContextFromZoneId,
+    getCountryContextFromShopUserId,
+} = require("./countryTimeZone");
 
 const DAY_NAMES = [
     "Sunday",
@@ -26,13 +31,34 @@ function normalizeTimeString(timeValue) {
 }
 
 /**
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
+ * Wall clock from explicit IANA zone (agent query override).
  */
 function getWallClockContext(timeZone, clientTimeZone) {
     const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
     const now = moment.tz(tz);
     return {
+        tz,
+        now,
+        dayOfWeek: DAY_NAMES[now.day()],
+        nowTime: now.format("HH:mm:ss"),
+        date: now.format("YYYY-MM-DD"),
+    };
+}
+
+/**
+ * @param {number} countryId
+ * @param {string} [timeZone]
+ * @param {string} [clientTimeZone]
+ */
+async function getWallClockContextForCountry(countryId, timeZone, clientTimeZone) {
+    const countryCtx = await getCountryContextById(countryId);
+    const tz = resolveBookingTimeZone(
+        timeZone || countryCtx.ianaTimeZone,
+        clientTimeZone
+    );
+    const now = moment.tz(tz);
+    return {
+        countryId: countryCtx.countryId,
         tz,
         now,
         dayOfWeek: DAY_NAMES[now.day()],
@@ -66,10 +92,10 @@ async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
     return hoursRow;
 }
 
-async function findTodayPlatformHoursRow(dayOfWeek) {
+async function findTodayPlatformHoursRow(dayOfWeek, countryId) {
     return platformOperationalHours.findOne({
-        where: { dayOfWeek },
-        attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+        where: { dayOfWeek, countryId },
+        attributes: ["openTime", "closeTime", "status", "dayOfWeek", "countryId"],
     });
 }
 
@@ -86,14 +112,16 @@ function isNowWithinHoursWindow(now, date, tz, openTime, closeTime) {
 }
 
 /**
- * Platform open now for the current day.
+ * Platform open now for the current day in the given country.
+ * @param {number} countryId
  */
-async function isPlatformOpenNow(timeZone, clientTimeZone) {
-    const { now, dayOfWeek, date, tz } = getWallClockContext(
+async function isPlatformOpenNow(countryId, timeZone, clientTimeZone) {
+    const { now, dayOfWeek, date, tz } = await getWallClockContextForCountry(
+        countryId,
         timeZone,
         clientTimeZone
     );
-    const platformRow = await findTodayPlatformHoursRow(dayOfWeek);
+    const platformRow = await findTodayPlatformHoursRow(dayOfWeek, countryId);
     if (!platformRow || !platformRow.status) return false;
     return isNowWithinHoursWindow(
         now,
@@ -107,16 +135,27 @@ async function isPlatformOpenNow(timeZone, clientTimeZone) {
 /**
  * Shop open now: platform window + shop day on + shop openTime <= now < closeTime.
  * @param {number} shopUserId - laundry shop owner users.id
+ * @param {number} [countryId] - defaults from shop address / zone
  */
-async function isShopOpenNow(shopUserId, timeZone, clientTimeZone) {
+async function isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
     if (!shopUserId) return false;
 
-    const { tz, now, dayOfWeek, date } = getWallClockContext(
+    let resolvedCountryId = countryId;
+    if (!resolvedCountryId) {
+        const ctx = await getCountryContextFromShopUserId(shopUserId);
+        resolvedCountryId = ctx.countryId;
+    }
+
+    const { tz, now, dayOfWeek, date } = await getWallClockContextForCountry(
+        resolvedCountryId,
         timeZone,
         clientTimeZone
     );
 
-    const platformRow = await findTodayPlatformHoursRow(dayOfWeek);
+    const platformRow = await findTodayPlatformHoursRow(
+        dayOfWeek,
+        resolvedCountryId
+    );
     if (!platformRow || !platformRow.status) return false;
     if (
         !isNowWithinHoursWindow(
@@ -147,6 +186,8 @@ async function isShopOpenNow(shopUserId, timeZone, clientTimeZone) {
  * At least one laundry shop in zone is open right now.
  */
 async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
+    const countryCtx = await getCountryContextFromZoneId(zoneId);
+
     const shops = await addressDb.findAll({
         where: {
             zoneId,
@@ -156,7 +197,14 @@ async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
     });
 
     for (const shop of shops) {
-        if (await isShopOpenNow(shop.userId, timeZone, clientTimeZone)) {
+        if (
+            await isShopOpenNow(
+                shop.userId,
+                countryCtx.countryId,
+                timeZone,
+                clientTimeZone
+            )
+        ) {
             return true;
         }
     }
@@ -167,6 +215,8 @@ async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
  * Shop user IDs in zone that are open now.
  */
 async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
+    const countryCtx = await getCountryContextFromZoneId(zoneId);
+
     const shops = await addressDb.findAll({
         where: {
             zoneId,
@@ -177,7 +227,14 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
 
     const openIds = new Set();
     for (const shop of shops) {
-        if (await isShopOpenNow(shop.userId, timeZone, clientTimeZone)) {
+        if (
+            await isShopOpenNow(
+                shop.userId,
+                countryCtx.countryId,
+                timeZone,
+                clientTimeZone
+            )
+        ) {
             openIds.add(shop.userId);
         }
     }
@@ -190,6 +247,7 @@ module.exports = {
     isAnyShopOpenInZone,
     getOpenShopUserIdsInZone,
     getWallClockContext,
+    getWallClockContextForCountry,
     findTodayWorkingHoursRow,
     findTodayPlatformHoursRow,
 };

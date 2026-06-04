@@ -318,7 +318,10 @@ class AgentRegistrationService {
         }
 
         const platformOperationalHoursService = require('./platformOperationalHoursService');
+        const { getCountryContextFromShopUserId } = require('../../utils/countryTimeZone');
+        const countryCtx = await getCountryContextFromShopUserId(userId);
         await platformOperationalHoursService.validateShopWorkingDays(
+            countryCtx.countryId,
             bussinessWorkingDays
         );
 

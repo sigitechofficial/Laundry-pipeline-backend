@@ -681,7 +681,10 @@ class AgentAuthService {
      */
     async workingHoursUpdate(data) {
         const platformOperationalHoursService = require('../Admin/platformOperationalHoursService');
+        const { getCountryContextFromShopUserId } = require('../../utils/countryTimeZone');
+        const countryCtx = await getCountryContextFromShopUserId(data.userId);
         await platformOperationalHoursService.validateShopWorkingDays(
+            countryCtx.countryId,
             data.bussinessWorkingDays
         );
 

@@ -14,7 +14,7 @@ const {
     isAgentAcceptExpired,
 } = require("../../utils/bookingAgentWindow");
 const { sendEvent } = require("../../socket_io");
-const { BUSINESS_TIME_ZONE } = require("../../utils/bookingTimeZone");
+const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
 
 class AdminBookingAssignService {
     async getAssignableShops(bookingId) {
@@ -41,7 +41,8 @@ class AdminBookingAssignService {
             );
         }
 
-        const platformOpen = await isPlatformOpenNow(BUSINESS_TIME_ZONE);
+        const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
+        const platformOpen = await isPlatformOpenNow(countryCtx.countryId);
         if (!platformOpen) {
             throw new ValidationError(
                 "Platform is closed. Assign when platform operational hours are active."
@@ -59,7 +60,10 @@ class AdminBookingAssignService {
         const shopList = [];
         for (const shop of shops) {
             const ownerId = shop.userId;
-            const openNow = await isShopOpenNow(ownerId, BUSINESS_TIME_ZONE);
+            const openNow = await isShopOpenNow(
+                ownerId,
+                countryCtx.countryId
+            );
             const biz = await bussinessInformation.findOne({
                 where: { shopAddressId: shop.id },
                 attributes: ["shopName"],
@@ -94,7 +98,10 @@ class AdminBookingAssignService {
             );
         }
 
-        if (!await isPlatformOpenNow(BUSINESS_TIME_ZONE)) {
+        const assignCountryCtx = await getCountryContextFromZoneId(
+            bookingRow.zoneId
+        );
+        if (!await isPlatformOpenNow(assignCountryCtx.countryId)) {
             throw new ValidationError(
                 "Platform is closed. Assign during platform operational hours."
             );
@@ -116,7 +123,9 @@ class AdminBookingAssignService {
         }
 
         const ownerId = shop.userId;
-        if (!(await isShopOpenNow(ownerId, BUSINESS_TIME_ZONE))) {
+        if (
+            !(await isShopOpenNow(ownerId, assignCountryCtx.countryId))
+        ) {
             throw new ValidationError(
                 "Shop is closed right now. Assign only when the shop is open."
             );
