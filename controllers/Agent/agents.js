@@ -80,8 +80,10 @@ const {
 const {
     wallClockNow,
     resolveBookingTimeZone,
-    getActiveBookingCutoff,
     BOOKING_ACCEPT_WINDOW_MINUTES,
+    isBookingAcceptWindowOpen,
+    getAcceptWindowMinutesRemaining,
+    formatOrderExpireTimeForApi,
 } = require("../../utils/bookingTimeZone");
 const {
     isShopOpenNow,
@@ -426,10 +428,7 @@ exports.getBookingHome = async (req, res) => {
     const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
     const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
-    const expireCutoff = getActiveBookingCutoff(queryTimeZone, queryClientTimeZone);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const createdAtCutoff =
-        expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
 
     const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
     const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
@@ -459,7 +458,7 @@ exports.getBookingHome = async (req, res) => {
         "agentShopOpen:",
         agentShopOpen,
         "createdAt >=",
-        createdAtCutoff.toISOString()
+        twentyFourHoursAgo.toISOString()
     );
 
     if (!agentShopOpen) {
@@ -478,19 +477,7 @@ exports.getBookingHome = async (req, res) => {
             bookingStatusId: 1,
             zoneId: agentZone,
             agentBroadcastHeld: { [Op.not]: true },
-            [Op.and]: [
-                {
-                    [Op.or]: [
-                        { agentVisibleAt: { [Op.gte]: expireCutoff } },
-                        {
-                            [Op.and]: [
-                                { agentVisibleAt: { [Op.is]: null } },
-                                { createdAt: { [Op.gte]: createdAtCutoff } },
-                            ],
-                        },
-                    ],
-                },
-            ],
+            createdAt: { [Op.gte]: twentyFourHoursAgo },
         },
         include: [
             {
@@ -541,17 +528,35 @@ exports.getBookingHome = async (req, res) => {
             "laundryShopId",
             "customerId",
             "createdAt",
+            "orderExpireTime",
         ],
     });
 
-    const bookingDataForResponse = bookingData.map((row) => {
-        const plain = row.get({ plain: true });
-        return {
-            ...plain,
-            createdAt: plain.createdAt,
-            orderExpireTime: BOOKING_ACCEPT_WINDOW_MINUTES,
-        };
-    });
+    const bookingDataForResponse = bookingData
+        .filter((row) => {
+            const plain = row.get({ plain: true });
+            return isBookingAcceptWindowOpen(
+                plain.createdAt,
+                plain.orderExpireTime,
+                queryTimeZone,
+                queryClientTimeZone
+            );
+        })
+        .map((row) => {
+            const plain = row.get({ plain: true });
+            const minutesLeft = getAcceptWindowMinutesRemaining(
+                plain.createdAt,
+                plain.orderExpireTime,
+                queryTimeZone,
+                queryClientTimeZone
+            );
+            return {
+                ...plain,
+                createdAt: plain.createdAt,
+                orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
+                acceptWindowMinutes: minutesLeft,
+            };
+        });
 
     return ResponseHelper.success(res, "Agent Orders fetched", {
         bookingData: bookingDataForResponse,

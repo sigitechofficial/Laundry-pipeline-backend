@@ -52,6 +52,8 @@ const {
     BUSINESS_TIME_ZONE,
     BOOKING_ACCEPT_WINDOW_MINUTES,
     getOrderExpireTime,
+    getAcceptWindowMinutesRemaining,
+    formatOrderExpireTimeForApi,
 } = require('../../utils/bookingTimeZone');
 const {
     isAnyShopOpenInZone,
@@ -600,9 +602,17 @@ async function bookingEventSentCheckTheShops(
                 orderAmount: bookingDetails?.billingDetail?.total || 0,
                 frequency: bookingDetails.frequency || "Just Once",
                 createdAt: bookingDetails.createdAt,
-                orderExpireTime: BOOKING_ACCEPT_WINDOW_MINUTES,
-                acceptWindowMinutes: BOOKING_ACCEPT_WINDOW_MINUTES,
-                orderExpireTimeClock: bookingDetails.orderExpireTime || null,
+                orderExpireTime: formatOrderExpireTimeForApi(
+                    bookingDetails.orderExpireTime
+                ),
+                acceptWindowMinutes: getAcceptWindowMinutesRemaining(
+                    bookingDetails.createdAt,
+                    bookingDetails.orderExpireTime,
+                    timeZone
+                ),
+                orderExpireTimeClock: formatOrderExpireTimeForApi(
+                    bookingDetails.orderExpireTime
+                ),
                 pickupAddresId: bookingDetails.pickupAddresId || null,
                 dropOffAddressId: bookingDetails.dropOffAddressId || null,
                 laundryShopId: availableShops[0]?.id || null,

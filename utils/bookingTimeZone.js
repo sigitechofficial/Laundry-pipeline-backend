@@ -74,6 +74,80 @@ function getActiveBookingCutoff(
     return moment.tz(tz).subtract(windowMinutes, 'minutes').toDate();
 }
 
+function normalizeTimeString(timeValue) {
+    if (timeValue == null || timeValue === '') return null;
+    const raw = String(timeValue).trim();
+    if (/^\d{2}:\d{2}:\d{2}$/.test(raw)) return raw;
+    if (/^\d{2}:\d{2}$/.test(raw)) return `${raw}:00`;
+    return null;
+}
+
+/**
+ * Expiry instant from booking.createdAt date + bookings.orderExpireTime (TIME).
+ */
+function getBookingExpireMoment(
+    createdAt,
+    orderExpireTime,
+    timeZone,
+    clientTimeZone
+) {
+    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+    if (!createdAt) return null;
+    const timeStr = normalizeTimeString(orderExpireTime);
+    if (!timeStr) return null;
+
+    const created = moment.tz(createdAt, tz);
+    let expire = moment.tz(
+        `${created.format('YYYY-MM-DD')} ${timeStr}`,
+        'YYYY-MM-DD HH:mm:ss',
+        tz
+    );
+    if (expire.isBefore(created)) {
+        expire = expire.add(1, 'day');
+    }
+    return expire;
+}
+
+/** Whether agents can still accept (now < DB orderExpireTime on booking day). */
+function isBookingAcceptWindowOpen(
+    createdAt,
+    orderExpireTime,
+    timeZone,
+    clientTimeZone
+) {
+    const expire = getBookingExpireMoment(
+        createdAt,
+        orderExpireTime,
+        timeZone,
+        clientTimeZone
+    );
+    if (!expire) return true;
+    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+    return moment.tz(tz).isBefore(expire);
+}
+
+/** Minutes left until orderExpireTime; used for agent countdown. */
+function getAcceptWindowMinutesRemaining(
+    createdAt,
+    orderExpireTime,
+    timeZone,
+    clientTimeZone
+) {
+    const expire = getBookingExpireMoment(
+        createdAt,
+        orderExpireTime,
+        timeZone,
+        clientTimeZone
+    );
+    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+    if (!expire) return BOOKING_ACCEPT_WINDOW_MINUTES;
+    return Math.max(0, Math.ceil(expire.diff(moment.tz(tz), 'minutes', true)));
+}
+
+function formatOrderExpireTimeForApi(orderExpireTime) {
+    return normalizeTimeString(orderExpireTime);
+}
+
 module.exports = {
     BUSINESS_TIME_ZONE,
     BOOKING_ACCEPT_WINDOW_MINUTES,
@@ -81,4 +155,9 @@ module.exports = {
     wallClockNow,
     getOrderExpireTime,
     getActiveBookingCutoff,
+    normalizeTimeString,
+    getBookingExpireMoment,
+    isBookingAcceptWindowOpen,
+    getAcceptWindowMinutesRemaining,
+    formatOrderExpireTimeForApi,
 };
