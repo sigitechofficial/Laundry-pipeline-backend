@@ -111,6 +111,29 @@ function agentWallClockDateTime(timeZone, clientTimeZone) {
     };
 }
 
+/** Optional non-negative integer from multipart fields (empty/missing → undefined). */
+function parseOptionalProofCount(value, fieldName) {
+    if (value === undefined || value === null) return undefined;
+    const trimmed = String(value).trim();
+    if (trimmed === "") return undefined;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) {
+        throw new ValidationError(`${fieldName} must be a valid non-negative number`);
+    }
+    return Math.trunc(n);
+}
+
+function normalizeProofDeliveryType(value) {
+    if (value === undefined || value === null) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase().replace(/[\s_-]/g, "");
+    if (lower === "pickup") return "pickUp";
+    if (lower === "dropoff" || lower === "delivery") return "dropOff";
+    if (trimmed === "pickUp" || trimmed === "dropOff") return trimmed;
+    return null;
+}
+
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
@@ -1410,50 +1433,61 @@ exports.driverStatusArrived = async (req, res) => {
  */
 exports.AddPickupDeliveryProof = async (req, res) => {
     const { noOfItems, note, bookingId, deliveryType, noOfBags } = req.body;
-    console.log("ðŸš€ ~ AddPickupDeliveryProof ~ req.body:", req.body);
     const userId = req.user.id;
 
-    if (!req.files.length) {
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const normalizedDeliveryType = normalizeProofDeliveryType(deliveryType);
+    if (!normalizedDeliveryType) {
+        throw new ValidationError("deliveryType is required (pickUp or dropOff)");
+    }
+
+    if (!req.files?.length) {
         throw new ValidationError("Proof Images are not uploaded. Please Upload the Images");
     }
 
-    let imgArr = req.files.map((ele) => {
-        let tmpPath = ele.path;
-        let imagePath = tmpPath.replace(/\\/g, "/");
-        return {
+    const parsedItems = parseOptionalProofCount(noOfItems, "noOfItems");
+    const parsedBags = parseOptionalProofCount(noOfBags, "noOfBags");
+
+    const bookingFind = await booking.findOne({ where: { id: bookingId } });
+    if (!bookingFind) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    const trimmedNote =
+        note != null && String(note).trim() !== "" ? String(note).trim() : null;
+
+    const imgArr = req.files.map((ele) => {
+        const imagePath = ele.path.replace(/\\/g, "/");
+        const row = {
             imgUpload: imagePath,
             userId,
             bookingId,
-            noOfItems,
-            note,
-            deliveryType
+            note: trimmedNote,
+            deliveryType: normalizedDeliveryType,
         };
+        if (parsedItems !== undefined) {
+            row.noOfItems = parsedItems;
+        }
+        return row;
     });
 
     await proofOfDeliveries.bulkCreate(imgArr);
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
+    const bookingUpdates = {};
+    if (parsedItems !== undefined) {
+        bookingUpdates.totalItems = parsedItems;
+    }
+    if (parsedBags !== undefined) {
+        bookingUpdates.noOfBags = parsedBags;
+        bookingUpdates.totalBags = parsedBags;
+    }
 
-    const currentDate = new Date().toISOString().split("T")[0];
-
-    const parsedBags =
-        noOfBags != null && noOfBags !== "" ? Number(noOfBags) : null;
-    await booking.update(
-        {
-            totalItems: noOfItems != null && noOfItems !== "" ? Number(noOfItems) : null,
-            noOfBags: parsedBags,
-            ...(parsedBags != null && Number.isFinite(parsedBags)
-                ? { totalBags: parsedBags }
-                : {}),
-        },
-        {
-            where: { id: bookingId },
-        }
-    );
+    if (Object.keys(bookingUpdates).length > 0) {
+        await booking.update(bookingUpdates, { where: { id: bookingId } });
+    }
 
     return ResponseHelper.success(res, "Driver proof Pics Uploaded Successfully", {});
 }
