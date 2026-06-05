@@ -102,7 +102,6 @@ async function createBooking(req, res) {
     } = req.body;
 
     const userId = req.user.id;
-    const resolvedTimeZone = timeZone || clientTimeZone;
 
     // Call service to handle business logic
     // NOTE: Both setupIntentId and paymentMethodId are saved.
@@ -136,7 +135,8 @@ async function createBooking(req, res) {
         stripeCustomerId,
         tipAmount,
         couponCode,
-        timeZone: resolvedTimeZone
+        timeZone,
+        clientTimeZone,
     }, userId);
 
     // Return response using ResponseHelper success method
