@@ -41,7 +41,7 @@ function buildTzBlock(ianaTimeZone, countryName, shortLabelOverride) {
     displayLabel: `${countryName || ianaTimeZone} (${ianaTimeZone})`,
     utcOffsetNow: now.format("Z"),
     abbreviationNow: now.format("z"),
-    nowIso: now.toISO(true),
+    nowIso: now.format("YYYY-MM-DDTHH:mm:ssZ"),
     nowFormatted: now.format("h:mm A"),
   };
 }
