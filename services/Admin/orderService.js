@@ -1226,6 +1226,7 @@ class OrderService {
 
         return {
             bookingId,
+            servicesSubtotal,
             total,
             subTotal,
             zoneAdminCommission: finalZoneAdminCommissionAmount

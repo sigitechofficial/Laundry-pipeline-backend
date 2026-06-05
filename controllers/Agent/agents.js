@@ -2068,7 +2068,11 @@ exports.driverAddSerivces = async (req, res) => {
         console.error('⚠️ Failed to send invoice ready email (non-blocking):', emailError.message);
     }
 
-    return ResponseHelper.success(res, "Agent/Driver Added Detail", {});
+    return ResponseHelper.success(res, "Agent/Driver Added Detail", {
+        servicesSubtotal,
+        subTotal,
+        total: discountedTotal,
+    });
 }
 
 
@@ -2405,8 +2409,12 @@ exports.invoiceCreation = async (req, res) => {
     }
     // If no OnHoldConfirmation records exist, customerHasResponded remains null
 
+    const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
+    bookingData.servicesSubtotal = servicesSubtotal;
+
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
+        servicesSubtotal,
         remainingTime,
         customerHasResponded
     });
@@ -2550,7 +2558,8 @@ exports.customerServices = async (req, res) => {
     if (!customerServicesFind || customerServicesFind.length === 0) {
         return ResponseHelper.success(res, "No Customer Selected Services", {
             customerServices: [],
-            totalAmount: 0
+            totalAmount: 0,
+            servicesSubtotal: 0,
         });
     }
 
@@ -2577,6 +2586,7 @@ exports.customerServices = async (req, res) => {
             ) + addOnTotal
         ).toFixed(2)
     );
+    const servicesSubtotal = totalAmount;
 
     const groupedServices = customerServicesFind.reduce((acc, item) => {
         if (!item.service || !item.category || !item.subCategory) return acc;
@@ -2620,7 +2630,8 @@ exports.customerServices = async (req, res) => {
 
     return ResponseHelper.success(res, "Customer Selected Services", {
         customerServices: formattedResponse,
-        totalAmount
+        totalAmount,
+        servicesSubtotal,
     });
 }
 
@@ -4719,7 +4730,11 @@ exports.updateInvoice = async (req, res) => {
         bookingStatusId: bookings.bookingStatusId,
     });
 
-    return ResponseHelper.success(res, "Invoice Updated", {});
+    return ResponseHelper.success(res, "Invoice Updated", {
+        servicesSubtotal,
+        subTotal,
+        total: discountedTotal,
+    });
 }
 
 //!---------------Recurring Functions-------------------------//
