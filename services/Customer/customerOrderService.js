@@ -84,7 +84,7 @@ const zoneInclude = [
             {
                 model: countries,
                 required: true,
-                attributes: ["id", "name", "shortName", "status"],
+                attributes: ["id", "name", "shortName", "status", "ianaTimeZone"],
                 where: { deletedAt: { [Op.is]: null } },
             },
         ],
@@ -796,6 +796,7 @@ class CustomerOrderService {
             stripeCustomerId,
             tipAmount,
             timeZone,
+            clientTimeZone,
             couponCode
         } = data;
 
@@ -910,6 +911,12 @@ class CustomerOrderService {
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
         // paymentIntentId will be set at Status 4 when payment is captured.
+        const { getCountryContextFromZoneId: resolveCountryFromZone } = require("../../utils/countryTimeZone");
+        const bookingCountryCtx = await resolveCountryFromZone(zoneId);
+        const operationalTimeZone =
+            timeZone || bookingCountryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
+        const customerLocalTimeZone = clientTimeZone || null;
+
         const bookingData = await booking.create({
             collectionDate: normalizedCollectionDate,
             collectionTimeFrom: normalizedCollectionTimeFrom,
@@ -934,6 +941,8 @@ class CustomerOrderService {
             subTotal: 0,
             setupIntentId: setupIntentId,
             paymentMethodId: paymentMethodId,
+            operationalTimeZone,
+            customerLocalTimeZone,
             // paymentIntentId will be set at Status 4 when payment is captured
         });
 
@@ -2090,6 +2099,7 @@ class CustomerOrderService {
         let cityName = zoneData[0].city.name;
         let countryId = zoneData[0].city.country.id;
         let countryName = zoneData[0].city.country.name;
+        let ianaTimeZone = zoneData[0].city.country.ianaTimeZone || null;
         let currencyUnitId = zoneData[0].currencyUnitId;
         let currencyUnit = zoneData[0].currencyUnitZ;
 
@@ -2106,6 +2116,8 @@ class CustomerOrderService {
                 cityName,
                 countryId,
                 countryName,
+                ianaTimeZone,
+                operationalTimeZone: ianaTimeZone,
                 currencyUnitId,
                 currency: currencyUnit ? {
                     id: currencyUnit.id,

@@ -95,6 +95,7 @@ router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOt
 router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
 //fetch Zone and Charges (registered or guest)
 router.get('/fetchZoneAndCharges',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
+router.get('/bookingSlots',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.getBookingSlots))
 //Create Intent Using Stripe
 router.post('/createIntentUsingStripe',validateAccessToken,asyncMiddleware(customerOtherController.createIntentUsingStripe))
 // Route to get all on-hold bookings for a given booking ID

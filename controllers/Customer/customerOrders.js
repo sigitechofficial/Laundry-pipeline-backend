@@ -274,6 +274,24 @@ async function fetchZoneAndCharges(req, res) {
     return ResponseHelper.success(res, result.message, result.data);
 }
 
+/*
+ *  Country-scoped booking slots (platform operational hours)
+ */
+async function getBookingSlots(req, res) {
+    const bookingSlotsService = require("../../services/Customer/bookingSlotsService");
+    const result = await bookingSlotsService.getBookingSlots({
+        countryId: req.query.countryId,
+        zoneId: req.query.zoneId,
+        clientTimeZone: req.query.clientTimeZone,
+        type: req.query.type,
+        daysCount: req.query.daysCount,
+        startAfterHours: req.query.startAfterHours,
+        fromDate: req.query.fromDate,
+    });
+
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
 
 /*
  *  Create Intent Using Stripe
@@ -1206,6 +1224,7 @@ module.exports = {
     customerAddresses,
     updateBookingUpfrontAmount,
     fetchZoneAndCharges,
+    getBookingSlots,
     createIntentUsingStripe,
     getOnHoldBookings,
     updateCustomerResponseForOnHoldBooking,

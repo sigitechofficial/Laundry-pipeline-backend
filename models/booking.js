@@ -193,6 +193,14 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  operationalTimeZone: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+  },
+  customerLocalTimeZone: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+  },
   }, {
     sequelize,
     modelName: 'booking',
