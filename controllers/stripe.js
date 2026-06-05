@@ -115,7 +115,7 @@ async function chargeOffSession(amount, customerId, paymentMethodId, idempotency
         }
 
         const paymentIntent = await stripe.paymentIntents.create(params, options);
-        
+
         console.log(`✅ Payment charged successfully: ${paymentIntent.id}, Status: ${paymentIntent.status}`);
         return paymentIntent;
     } catch (error) {
@@ -137,12 +137,14 @@ async function createSetupIntent(customerId) {
     try {
         const setupIntent = await stripe.setupIntents.create({
             customer: customerId,
-            payment_method_types: ['card'],
             usage: 'off_session',
-        })
-        return setupIntent
+            automatic_payment_methods: {
+                enabled: true,
+            },
+        });
+        return setupIntent;
     } catch (error) {
-        throw new customError(`${error.message} `, 200)
+        throw new customError(`${error.message} `, 200);
     }
 }
 
@@ -244,7 +246,7 @@ async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
     try {
         const paymentMethod = await stripe.paymentMethods.attach(savedPaymentMethodId, {
             customer: customerId,
-        }); 
+        });
         return paymentMethod
     } catch (error) {
         throw new customError(`${error.message} `, 200)
@@ -349,7 +351,7 @@ async function createStripeAccountLink(accountId) {
         }
 
         const returnUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
-        
+
         console.log('🔗 Creating account link...');
         console.log('   Account ID:', accountId);
         console.log('   Return URL:', returnUrl);
@@ -407,7 +409,7 @@ async function createConnectAccount(email, country = 'GB') {
         console.log('✅ Stripe Connect account created:', account.id);
 
         const returnUrl = 'https://prodlaundry.sigisolutions.net/app/BottomBarScreen';
-        
+
         console.log('🔗 Creating onboarding link...');
         console.log('   Return URL:', returnUrl);
 
@@ -424,9 +426,9 @@ async function createConnectAccount(email, country = 'GB') {
 
         console.log('✅ Onboarding link created successfully:', accountLink.url);
 
-        return { 
-            accountLink: accountLink.url, 
-            accountId: account.id 
+        return {
+            accountLink: accountLink.url,
+            accountId: account.id
         };
     } catch (error) {
         console.error('❌ Create Connect Account Error:', error.message);
