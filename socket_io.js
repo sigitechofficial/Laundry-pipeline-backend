@@ -1,5 +1,6 @@
 require('dotenv').config()
 const { Server } = require('socket.io')
+const agentBookingDeclineService = require('./services/Agent/agentBookingDeclineService');
 const { users,
     userType,
     booking,
@@ -142,6 +143,7 @@ const intilizeSocketFunc = (server) => {
                     bookingStatusId: statusId
                 }))
                 await bookingHistory.bulkCreate(bookinghistories);
+                await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
                 const eventData = {
                     type: 'AcceptedOrder',
                     data: {

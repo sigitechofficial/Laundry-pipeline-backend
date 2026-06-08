@@ -18,6 +18,7 @@ const {
     getCountryContextFromZoneId,
 } = require("../../utils/countryTimeZone");
 const { BUSINESS_TIME_ZONE } = require("../../utils/bookingTimeZone");
+const agentBookingDeclineService = require("../Agent/agentBookingDeclineService");
 
 class AdminBookingAssignService {
     async getAssignableShops(bookingId) {
@@ -40,9 +41,10 @@ class AdminBookingAssignService {
         }
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
-        if (!canAdminAssignBooking(bookingRow, countryCtx.ianaTimeZone)) {
+        const hasAgentDecline = await agentBookingDeclineService.hasAnyDecline(bookingId);
+        if (!canAdminAssignBooking(bookingRow, countryCtx.ianaTimeZone, { hasAgentDecline })) {
             throw new ValidationError(
-                "This order is not eligible for manual assign. It must be unassigned and past the agent accept window."
+                "This order is not eligible for manual assign. It must be unassigned and past the agent accept window or declined by an agent."
             );
         }
 
@@ -99,9 +101,10 @@ class AdminBookingAssignService {
         const assignCountryCtx = await getCountryContextFromZoneId(
             bookingRow.zoneId
         );
-        if (!canAdminAssignBooking(bookingRow, assignCountryCtx.ianaTimeZone)) {
+        const hasAgentDecline = await agentBookingDeclineService.hasAnyDecline(bookingId);
+        if (!canAdminAssignBooking(bookingRow, assignCountryCtx.ianaTimeZone, { hasAgentDecline })) {
             throw new ValidationError(
-                "Order cannot be assigned: not expired or already assigned."
+                "Order cannot be assigned: not expired, not declined by an agent, or already assigned."
             );
         }
 
@@ -164,6 +167,8 @@ class AdminBookingAssignService {
             attributes: ["shopName"],
         });
 
+        await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
+
         if (ownerId) {
             sendEvent(ownerId, {
                 type: "AcceptedOrder",
@@ -182,16 +187,18 @@ class AdminBookingAssignService {
         };
     }
 
-    enrichBookingForAdmin(bookingInstance, timeZone) {
+    enrichBookingForAdmin(bookingInstance, timeZone, agentDeclineCount = 0) {
         const plain = bookingInstance.get
             ? bookingInstance.get({ plain: true })
             : bookingInstance;
         const tz = timeZone || BUSINESS_TIME_ZONE;
         const expired = isAgentAcceptExpired(plain, tz);
+        const hasAgentDecline = agentDeclineCount > 0;
         return {
             ...plain,
             agentAcceptExpired: expired,
-            canAdminAssign: canAdminAssignBooking(plain, tz),
+            agentDeclineCount,
+            canAdminAssign: canAdminAssignBooking(plain, tz, { hasAgentDecline }),
             agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
         };
     }
@@ -219,11 +226,19 @@ class AdminBookingAssignService {
             })
         );
 
+        const bookingIds = bookingInstances.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            return plain.id;
+        });
+        const declineCountByBooking =
+            await agentBookingDeclineService.getDeclineCountByBookingIds(bookingIds);
+
         return bookingInstances.map((row) => {
             const plain = row.get ? row.get({ plain: true }) : row;
             const tz =
                 tzByZone.get(plain.zoneId) || BUSINESS_TIME_ZONE;
-            return this.enrichBookingForAdmin(plain, tz);
+            const declineCount = declineCountByBooking.get(plain.id) || 0;
+            return this.enrichBookingForAdmin(plain, tz, declineCount);
         });
     }
 }

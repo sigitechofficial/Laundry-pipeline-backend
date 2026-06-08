@@ -58,7 +58,18 @@ function isAgentAcceptExpired(booking, timeZone) {
     );
 }
 
-function canAdminAssignBooking(booking, timeZone) {
+function isUnassignedPendingBooking(booking) {
+    if (!booking) return false;
+    if (Number(booking.bookingStatusId) !== 1) return false;
+    if (booking.laundryShopId != null && booking.laundryShopId !== '') {
+        return false;
+    }
+    return true;
+}
+
+function canAdminAssignBooking(booking, timeZone, options = {}) {
+    if (!isUnassignedPendingBooking(booking)) return false;
+    if (options.hasAgentDecline) return true;
     return isAgentAcceptExpired(booking, timeZone);
 }
 
@@ -67,5 +78,6 @@ module.exports = {
     getBookingVisibleAt,
     resolveTimeZoneForBooking,
     isAgentAcceptExpired,
+    isUnassignedPendingBooking,
     canAdminAssignBooking,
 };

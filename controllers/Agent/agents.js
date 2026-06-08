@@ -145,6 +145,7 @@ const activePoliciesService = require('../../services/Admin/activePoliciesServic
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
+const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -514,14 +515,23 @@ exports.getBookingHome = async (req, res) => {
         });
     }
 
+    const declinedBookingIds =
+        await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
+
+    const bookingWhere = {
+        laundryShopId: null,
+        bookingStatusId: 1,
+        zoneId: agentZone,
+        agentBroadcastHeld: { [Op.not]: true },
+        createdAt: { [Op.gte]: twentyFourHoursAgo },
+    };
+
+    if (declinedBookingIds.length > 0) {
+        bookingWhere.id = { [Op.notIn]: declinedBookingIds };
+    }
+
     const bookingData = await booking.findAll({
-        where: {
-            laundryShopId: null,
-            bookingStatusId: 1,
-            zoneId: agentZone,
-            agentBroadcastHeld: { [Op.not]: true },
-            createdAt: { [Op.gte]: twentyFourHoursAgo },
-        },
+        where: bookingWhere,
         include: [
             {
                 model: addressDb,
@@ -609,6 +619,23 @@ exports.getBookingHome = async (req, res) => {
         zoneShopsOpen: true,
     });
 }
+
+exports.agentRejectOrder = async (req, res) => {
+    const agentId = req.user.id;
+    const { bookingId } = req.body;
+
+    if (!bookingId) {
+        throw new ValidationError('bookingId is required');
+    }
+
+    const result = await agentBookingDeclineService.rejectBooking(agentId, bookingId);
+
+    const message = result.alreadyDeclined
+        ? 'Booking already declined'
+        : 'Booking declined successfully';
+
+    return ResponseHelper.success(res, message, result);
+};
 
 /*
  * Get ALl Order of Agent

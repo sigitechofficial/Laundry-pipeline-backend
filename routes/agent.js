@@ -209,6 +209,13 @@ router.post(
     validateAccessToken,
     asyncMiddleware(agentController.agentAcceptOrder)
 );
+//Agent reject/decline incoming booking (hidden from this agent only)
+router.post(
+    "/rejectOrder",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.agentRejectOrder)
+);
 // //Get Invoice Details for Agent
 // router.get('/agentInvoiceMake',validateAccessToken,asyncMiddleware(agentController.orderDetailsforInvoice))
 //Get All Services
