@@ -41,7 +41,19 @@ const agentBusinessInfo = async (req, res) => {
     const data = { ...req.body };
 
     const result = await authService.agentBusinessInfo(data);
-    return ResponseHelper.success(res, "Business information added successfully", result);
+
+    if (result.agentApprovalPending) {
+        res.clearCookie("accessToken", {
+            httpOnly: true,
+            secure: true,
+            sameSite: "None",
+            path: "/agent",
+        });
+    }
+
+    const message =
+        result.message || "Business information added successfully";
+    return ResponseHelper.success(res, message, result);
 };
 
 // Business info added

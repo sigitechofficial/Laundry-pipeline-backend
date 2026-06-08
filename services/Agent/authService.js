@@ -53,6 +53,7 @@ class AgentAuthService {
         if (approval === 'pending') {
             throw new UnauthorizedError('Please wait for admin approval', {
                 agentApprovalPending: true,
+                agentApprovalStatus: 'pending',
                 message:
                     'Your account is under review. Please wait for admin approval.',
             });
@@ -63,9 +64,62 @@ class AgentAuthService {
                 : '';
             throw new UnauthorizedError('Your registration was rejected by admin', {
                 agentApprovalRejected: true,
+                agentApprovalStatus: 'rejected',
                 rejectionReason: user.rejectionReason || null,
                 message: `Your registration was rejected by admin.${reasonSuffix}`,
             });
+        }
+    }
+
+    _buildAgentApprovalConnectMeta({
+        agentApprovalStatus = 'approved',
+        connectAccountId = null,
+        isConnectAccountConnected = false,
+        onboardingUrl = null,
+        message = null,
+    } = {}) {
+        const status = agentApprovalStatus || 'approved';
+        const pending = status === 'pending';
+        const rejected = status === 'rejected';
+        const connectRequired =
+            !pending && !rejected && !!connectAccountId && !isConnectAccountConnected;
+
+        let defaultMessage = message;
+        if (!defaultMessage) {
+            if (pending) {
+                defaultMessage =
+                    'Registration complete. Please wait for admin approval.';
+            } else if (rejected) {
+                defaultMessage = 'Your registration was rejected by admin.';
+            } else if (connectRequired) {
+                defaultMessage =
+                    'Please complete Stripe Connect setup to receive payouts.';
+            }
+        }
+
+        const meta = {
+            agentApprovalStatus: status,
+            agentApprovalPending: pending,
+            agentApprovalRejected: rejected,
+            message: defaultMessage,
+            connectAccountId: connectAccountId || null,
+            isConnectAccountConnected: !!isConnectAccountConnected,
+            stripeConnectRequired: connectRequired,
+        };
+
+        if (!pending && !rejected && onboardingUrl) {
+            meta.onboardingUrl = onboardingUrl;
+        }
+
+        return meta;
+    }
+
+    async _revokeAllAgentSessions(userId) {
+        if (!userId) return;
+        try {
+            await redisCli.del(`id-${userId}`);
+        } catch (err) {
+            console.error('⚠️ Failed to revoke agent sessions:', err.message);
         }
     }
 
@@ -574,22 +628,7 @@ class AgentAuthService {
                 throw new Error('Failed to create Stripe Connect account - no account ID returned');
             }
 
-            // Small delay to ensure account is fully initialized in Stripe
             await new Promise(resolve => setTimeout(resolve, 500));
-            
-            console.log('🔗 Creating Stripe Onboarding Link...');
-            console.log('   Account ID:', connectAccountId);
-            
-            onboardingUrl = await stripe.createStripeAccountLink(
-                connectAccountId
-            );
-
-            if (!onboardingUrl) {
-                throw new Error('Failed to create Stripe onboarding link - no URL returned');
-            }
-
-            console.log('✅ Stripe Onboarding Link Generated:', onboardingUrl);
-            console.log('📝 Connect Account ID:', connectAccountId);
 
             await bussinessInformation.update({
                 connectAccountId: connectAccountId,
@@ -601,14 +640,23 @@ class AgentAuthService {
             console.error('❌ Stripe Connect Account creation failed:', error);
             console.error('   Error message:', error.message);
             console.error('   Error stack:', error.stack);
-            // Don't fail silently - throw the error so it can be handled properly
             throw new Error(`Stripe Connect Account creation failed: ${error.message}`);
         }
 
+        await this._revokeAllAgentSessions(data.userId);
+
+        const approvalMeta = this._buildAgentApprovalConnectMeta({
+            agentApprovalStatus: 'pending',
+            connectAccountId,
+            isConnectAccountConnected: false,
+            onboardingUrl: null,
+            message: 'Registration complete. Please wait for admin approval.',
+        });
+
         return {
             agentInfo,
-            onboardingUrl: onboardingUrl,
-            connectAccountId: connectAccountId
+            userId: data.userId,
+            ...approvalMeta,
         };
     }
 
@@ -634,6 +682,11 @@ class AgentAuthService {
             throw new NotFoundError('Business information not found for this Connect account. Please contact support.');
         }
 
+        const agentUser = await users.findByPk(businessInfo.agentId, {
+            attributes: ['id', 'userTypeId', 'agentApprovalStatus', 'rejectionReason'],
+        });
+        this._assertAgentApprovalForLogin(agentUser);
+
         try {
             // Check account status first
             const accountStatus = await stripe.checkConnectAccountStatus(connectAccountId);
@@ -657,11 +710,14 @@ class AgentAuthService {
                 }
 
                 return {
-                    message: 'Account is already fully onboarded',
-                    connectAccountId: connectAccountId,
                     shopName: businessInfo.shopName,
-                    isConnectAccountConnected: true,
-                    accountStatus: accountStatus
+                    accountStatus: accountStatus,
+                    ...this._buildAgentApprovalConnectMeta({
+                        agentApprovalStatus: agentUser?.agentApprovalStatus || 'approved',
+                        connectAccountId,
+                        isConnectAccountConnected: true,
+                        message: 'Account is already fully onboarded',
+                    }),
                 };
             }
 
@@ -677,12 +733,16 @@ class AgentAuthService {
             console.log('⚠️  Note: This link is single-use and expires in 24 hours');
 
             return {
-                onboardingUrl: onboardingUrl,
-                connectAccountId: connectAccountId,
                 shopName: businessInfo.shopName,
-                isConnectAccountConnected: false,
                 accountStatus: accountStatus,
-                message: 'New onboarding link generated. Please complete the onboarding process.'
+                ...this._buildAgentApprovalConnectMeta({
+                    agentApprovalStatus: agentUser?.agentApprovalStatus || 'approved',
+                    connectAccountId,
+                    isConnectAccountConnected: false,
+                    onboardingUrl,
+                    message:
+                        'New onboarding link generated. Please complete the onboarding process.',
+                }),
             };
         } catch (error) {
             console.error('Stripe Onboarding Link generation failed:', error);
@@ -1116,6 +1176,8 @@ class AgentAuthService {
             }
         }
 
+        const connectAccountId = agentInfo?.[0]?.connectAccountId || null;
+
         return {
             userId: String(userFind.id),
             firstName: userFind.firstName,
@@ -1130,7 +1192,14 @@ class AgentAuthService {
             phoneNum: userFind.phoneNum,
             features: featureData,
             isConnectAccountConnected,
+            connectAccountId,
             ianaTimeZone: resolveAgentTimeZone(data, userFind.ianaTimeZone),
+            ...this._buildAgentApprovalConnectMeta({
+                agentApprovalStatus: userFind.agentApprovalStatus || 'approved',
+                connectAccountId,
+                isConnectAccountConnected,
+                onboardingUrl: null,
+            }),
         };
     }
 
@@ -1491,13 +1560,21 @@ class AgentAuthService {
             ianaTimeZone
         );
 
+        const connectAccountId = agentInfo?.[0]?.connectAccountId || null;
+
         return {
             userData: plainUser,
             accessToken,
             isGuest: data.guestUser,
             featureData,
             isConnectAccountConnected,
-            connectAccountId: agentInfo?.[0]?.connectAccountId || null,
+            connectAccountId,
+            ...this._buildAgentApprovalConnectMeta({
+                agentApprovalStatus: userData.agentApprovalStatus || 'approved',
+                connectAccountId,
+                isConnectAccountConnected,
+                onboardingUrl: null,
+            }),
         };
     }
 
