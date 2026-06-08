@@ -15,6 +15,7 @@ const roleManagementService = require('./roleManagementService');
 const featureManagementService = require('./featureManagementService');
 const locationManagementService = require('./locationManagementService');
 const agentRegistrationService = require('./agentRegistrationService');
+const agentApprovalService = require('./agentApprovalService');
 const cancellationPolicyService = require('./cancellationPolicyService');
 const noShowPolicyService = require('./noShowPolicyService');
 const reschedulePolicyService = require('./reschedulePolicyService');
@@ -41,6 +42,7 @@ module.exports = {
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
+    agentApprovalService,
     cancellationPolicyService,
     noShowPolicyService,
     reschedulePolicyService,

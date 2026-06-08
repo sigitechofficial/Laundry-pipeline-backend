@@ -47,6 +47,28 @@ class AgentAuthService {
     }
 
     /** Set resolved agent TZ on user object only (single place in nested responses). */
+    _assertAgentApprovalForLogin(user) {
+        if (!user || Number(user.userTypeId) !== 4) return;
+        const approval = user.agentApprovalStatus || 'approved';
+        if (approval === 'pending') {
+            throw new UnauthorizedError('Please wait for admin approval', {
+                agentApprovalPending: true,
+                message:
+                    'Your account is under review. Please wait for admin approval.',
+            });
+        }
+        if (approval === 'rejected') {
+            const reasonSuffix = user.rejectionReason
+                ? ` ${user.rejectionReason}`
+                : '';
+            throw new UnauthorizedError('Your registration was rejected by admin', {
+                agentApprovalRejected: true,
+                rejectionReason: user.rejectionReason || null,
+                message: `Your registration was rejected by admin.${reasonSuffix}`,
+            });
+        }
+    }
+
     _withAgentTimeZone(plainUser, tz) {
         if (!plainUser) return null;
         if (tz) plainUser.ianaTimeZone = tz;
@@ -523,7 +545,8 @@ class AgentAuthService {
         );
 
         await users.update({
-            bussinessInformationId: agentInfo.id
+            bussinessInformationId: agentInfo.id,
+            agentApprovalStatus: 'pending',
         }, { where: { id: data.userId } });
 
         // Create Stripe Connect Account
@@ -839,6 +862,8 @@ class AgentAuthService {
                 "classifiedAsId",
                 "roleId",
                 "ianaTimeZone",
+                "agentApprovalStatus",
+                "rejectionReason",
                 [
                     sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
@@ -926,6 +951,8 @@ class AgentAuthService {
                 addBusinessInformationMissing: true,
             });
         }
+
+        this._assertAgentApprovalForLogin(userFind);
 
         // Social login: Create if not found
         if ((!userFind && data.signedFrom === 'google') || (!userFind && data.signedFrom === 'facebook') || (!userFind && data.signedFrom === 'apple')) {
@@ -1332,6 +1359,8 @@ class AgentAuthService {
                 "classifiedAsId",
                 "roleId",
                 "ianaTimeZone",
+                "agentApprovalStatus",
+                "rejectionReason",
                 [
                     sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
                     "joinedOn",
@@ -1412,6 +1441,8 @@ class AgentAuthService {
                 outObj: outObj
             });
         }
+
+        this._assertAgentApprovalForLogin(userData);
         
         const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === data.dvToken);
         if (!dvTokenFound) {
@@ -1581,7 +1612,15 @@ class AgentAuthService {
         // Get the agent this employee belongs to
         const agentData = await users.findOne({
             where: { id: employeeData.employeeOff },
-            attributes: ['id', 'firstName', 'lastName', 'email'],
+            attributes: [
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'userTypeId',
+                'agentApprovalStatus',
+                'rejectionReason',
+            ],
             include: [
                 {
                     model: bussinessInformation,
@@ -1591,6 +1630,8 @@ class AgentAuthService {
                 }
             ]
         });
+
+        this._assertAgentApprovalForLogin(agentData);
 
         // Get permissions for the employee's role — only Agent/Agent Employee/both features
         const permissionData = await permissions.findAll({

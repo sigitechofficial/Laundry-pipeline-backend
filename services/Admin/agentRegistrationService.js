@@ -81,6 +81,7 @@ class AgentRegistrationService {
             userTypeId: 4, // Agent type
             password: hashedPassword,
             status: true,
+            agentApprovalStatus: 'approved',
             countryCode,
             verifiedAt: new Date(), // Skip OTP verification for admin registration
             image: profileImg,

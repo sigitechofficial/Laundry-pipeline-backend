@@ -157,6 +157,15 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(64),
       allowNull: true,
     },
+    agentApprovalStatus: {
+      type: DataTypes.ENUM('pending', 'approved', 'rejected'),
+      allowNull: false,
+      defaultValue: 'approved',
+    },
+    rejectionReason: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
     createdAt: {
       allowNull: false,
       type: DataTypes.DATE

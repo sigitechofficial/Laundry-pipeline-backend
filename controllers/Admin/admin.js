@@ -95,6 +95,7 @@ const {
     featureManagementService,
     locationManagementService,
     agentRegistrationService,
+    agentApprovalService,
     reasonService,
     addOnServicesService
 } = require('../../services/Admin');
@@ -678,6 +679,39 @@ async function deleteAgentEmployee(req, res) {
 
 
     //!----------Agent Registration Management---------//
+
+/*
+ * List agents pending admin approval
+ */
+async function getPendingAgents(req, res) {
+    const agents = await agentApprovalService.getPendingAgents();
+    return ResponseHelper.success(res, "Pending agents fetched", { agents });
+}
+
+/*
+ * Approve or reject an agent
+ */
+async function updateAgentApproval(req, res) {
+    const { agentId } = req.params;
+    const { action, reason } = req.body;
+
+    if (!action) {
+        throw new ValidationError('action is required (approve or reject)');
+    }
+
+    const result = await agentApprovalService.updateAgentApproval(
+        agentId,
+        action,
+        reason
+    );
+
+    const message =
+        action === 'approve'
+            ? 'Agent approved successfully'
+            : 'Agent rejected successfully';
+
+    return ResponseHelper.success(res, message, result);
+}
 
 /*
  * Register Agent (Admin Side)
@@ -2783,6 +2817,8 @@ module.exports = {
     getAllAgentEmployees,
     deleteAgentEmployee,
     //!----------Agent Registration Management---------//
+    getPendingAgents,
+    updateAgentApproval,
     registerAgent,
     addAgentBusinessInfo,
     addAgentServices,

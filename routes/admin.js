@@ -441,6 +441,10 @@ router.get('/getAllAgentEmployees/:agentId', asyncMiddleware(adminController.get
 //Delete Agent Employee (Soft Delete)
 router.delete('/deleteAgentEmployee/:employeeId', asyncMiddleware(adminController.deleteAgentEmployee))
 
+//Agent approval (self-registered agents)
+router.get('/pendingAgents', asyncMiddleware(adminController.getPendingAgents))
+router.patch('/agents/:agentId/approval', asyncMiddleware(adminController.updateAgentApproval))
+
 //Register Agent (Admin Side)
 router.post('/registerAgent', uploadcategoryImage.single('profileImg'), asyncMiddleware(adminController.registerAgent))
 
