@@ -443,6 +443,7 @@ router.delete('/deleteAgentEmployee/:employeeId', asyncMiddleware(adminControlle
 
 //Agent approval (self-registered agents)
 router.get('/pendingAgents', asyncMiddleware(adminController.getPendingAgents))
+router.get('/rejectedAgents', asyncMiddleware(adminController.getRejectedAgents))
 router.patch('/agents/:agentId/approval', asyncMiddleware(adminController.updateAgentApproval))
 
 //Register Agent (Admin Side)

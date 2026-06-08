@@ -3,11 +3,32 @@ const { Op } = require('sequelize');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 class AgentApprovalService {
-    async getPendingAgents() {
+    _mapAgentRow(row) {
+        const plain = row.get({ plain: true });
+        const shop = Array.isArray(plain.agentInfo)
+            ? plain.agentInfo[0]
+            : plain.agentInfo;
+        return {
+            id: plain.id,
+            firstName: plain.firstName,
+            lastName: plain.lastName,
+            email: plain.email,
+            phoneNum: plain.phoneNum,
+            countryCode: plain.countryCode,
+            createdAt: plain.createdAt,
+            agentApprovalStatus: plain.agentApprovalStatus,
+            rejectionReason: plain.rejectionReason || null,
+            shopName: shop?.shopName || null,
+            matchProfileOptions: shop?.matchProfileOptions || null,
+            address: plain.addressDb || null,
+        };
+    }
+
+    async getAgentsByApprovalStatus(status) {
         const agents = await users.findAll({
             where: {
                 userTypeId: 4,
-                agentApprovalStatus: 'pending',
+                agentApprovalStatus: status,
                 deletedAt: { [Op.is]: null },
             },
             attributes: [
@@ -19,6 +40,7 @@ class AgentApprovalService {
                 'countryCode',
                 'createdAt',
                 'agentApprovalStatus',
+                'rejectionReason',
             ],
             include: [
                 {
@@ -36,25 +58,15 @@ class AgentApprovalService {
             order: [['createdAt', 'DESC']],
         });
 
-        return agents.map((row) => {
-            const plain = row.get({ plain: true });
-            const shop = Array.isArray(plain.agentInfo)
-                ? plain.agentInfo[0]
-                : plain.agentInfo;
-            return {
-                id: plain.id,
-                firstName: plain.firstName,
-                lastName: plain.lastName,
-                email: plain.email,
-                phoneNum: plain.phoneNum,
-                countryCode: plain.countryCode,
-                createdAt: plain.createdAt,
-                agentApprovalStatus: plain.agentApprovalStatus,
-                shopName: shop?.shopName || null,
-                matchProfileOptions: shop?.matchProfileOptions || null,
-                address: plain.addressDb || null,
-            };
-        });
+        return agents.map((row) => this._mapAgentRow(row));
+    }
+
+    async getPendingAgents() {
+        return this.getAgentsByApprovalStatus('pending');
+    }
+
+    async getRejectedAgents() {
+        return this.getAgentsByApprovalStatus('rejected');
     }
 
     async updateAgentApproval(agentId, action, reason) {
@@ -71,6 +83,7 @@ class AgentApprovalService {
         }
 
         if (action === 'approve') {
+            const wasRejected = agent.agentApprovalStatus === 'rejected';
             await users.update(
                 {
                     agentApprovalStatus: 'approved',
@@ -81,6 +94,7 @@ class AgentApprovalService {
             return {
                 id: Number(agentId),
                 agentApprovalStatus: 'approved',
+                restored: wasRejected,
             };
         }
 

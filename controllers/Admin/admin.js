@@ -688,6 +688,11 @@ async function getPendingAgents(req, res) {
     return ResponseHelper.success(res, "Pending agents fetched", { agents });
 }
 
+async function getRejectedAgents(req, res) {
+    const agents = await agentApprovalService.getRejectedAgents();
+    return ResponseHelper.success(res, "Rejected agents fetched", { agents });
+}
+
 /*
  * Approve or reject an agent
  */
@@ -707,7 +712,9 @@ async function updateAgentApproval(req, res) {
 
     const message =
         action === 'approve'
-            ? 'Agent approved successfully'
+            ? result.restored
+                ? 'Agent restored and approved successfully'
+                : 'Agent approved successfully'
             : 'Agent rejected successfully';
 
     return ResponseHelper.success(res, message, result);
@@ -2818,6 +2825,7 @@ module.exports = {
     deleteAgentEmployee,
     //!----------Agent Registration Management---------//
     getPendingAgents,
+    getRejectedAgents,
     updateAgentApproval,
     registerAgent,
     addAgentBusinessInfo,
