@@ -70,7 +70,17 @@ const {
  * Handles all customer authentication related business logic
  */
 class CustomerAuthService {
-    
+    _socialSignInRequiredMessage(signedFrom) {
+        const labels = {
+            google: 'Google',
+            facebook: 'Facebook',
+            apple: 'Apple',
+        };
+        if (!signedFrom || !labels[signedFrom]) return null;
+        const label = labels[signedFrom];
+        return `This email is already registered with ${label}. Please sign in with ${label}.`;
+    }
+
     /**
      * Register customer with OTP
      * @param {Object} data - Registration data
@@ -125,6 +135,7 @@ class CustomerAuthService {
                 'phoneNum',
                 'userTypeId',
                 'verifiedAt',
+                'signedFrom',
                 'image',
                 'stripeCustomerId',
                 [
@@ -156,6 +167,14 @@ class CustomerAuthService {
             if (userfindByEmail.userTypeId !== 2) {
                 throw new ConflictError('User with this email already exists');
             }
+
+            const socialSignInMessage = this._socialSignInRequiredMessage(
+                userfindByEmail.signedFrom
+            );
+            if (socialSignInMessage) {
+                throw new ConflictError(socialSignInMessage);
+            }
+
             if (userfindByEmail.verifiedAt) {
                 throw new ConflictError('User with this email already exists');
             }
@@ -711,7 +730,11 @@ class CustomerAuthService {
 
         // Handle existing user with different social login method
         if (userFind && ["google", "apple", "facebook"].includes(userFind.signedFrom) && !signedFrom) {
-            throw new ValidationError(`You have previously signed up using ${userFind.signedFrom}. Please log in using ${userFind.signedFrom}.`);
+            const socialSignInMessage = this._socialSignInRequiredMessage(userFind.signedFrom);
+            throw new ValidationError(
+                socialSignInMessage ||
+                    `You have previously signed up using ${userFind.signedFrom}. Please log in using ${userFind.signedFrom}.`
+            );
         }
 
         // Handle social login for existing user
