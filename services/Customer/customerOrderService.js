@@ -46,6 +46,7 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
+const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
@@ -1889,11 +1890,16 @@ class CustomerOrderService {
             }
         }
 
+        const servicesSubtotal = await sumActiveBookingServicesSubtotal(
+            bookingPlain.id
+        );
+
         const resultData = {
             ...bookingPlain,
+            servicesSubtotal,
             cardDetails,
             cancellationPolicy,
-            noShowPolicy
+            noShowPolicy,
         };
         delete resultData.cancellationPolicyBookings;
         delete resultData.noShowPolicyBookings;
