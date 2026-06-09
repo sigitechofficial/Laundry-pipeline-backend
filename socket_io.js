@@ -1,6 +1,7 @@
 require('dotenv').config()
 const { Server } = require('socket.io')
 const agentBookingDeclineService = require('./services/Agent/agentBookingDeclineService');
+const { notifyBookingTakenByAgent } = require('./utils/bookingTakenNotify');
 const { users,
     userType,
     booking,
@@ -120,38 +121,76 @@ const intilizeSocketFunc = (server) => {
         socket.on('agentAcceptOrder', async (bookingData) => {
             try {
                 const bookingDetails = JSON.parse(bookingData);
-                let bookingId = bookingDetails.id
-                let agentId = bookingDetails.agentId
-                await booking.update({
-                    bookingStatusId: 3,
-                    laundryShopId: bookingDetails.laundryShopId,
-                    driverId: agentId
-                }, { where: { id: bookingId } })
+                const bookingId = bookingDetails.id;
+                const agentId = bookingDetails.agentId;
+
+                const bookingRow = await booking.findByPk(bookingId, {
+                    attributes: ['id', 'zoneId', 'laundryShopId', 'bookingStatusId'],
+                });
+
+                if (
+                    !bookingRow ||
+                    bookingRow.laundryShopId != null ||
+                    Number(bookingRow.bookingStatusId) !== 1
+                ) {
+                    await sendEvent(agentId, {
+                        type: 'orderTakenByOtherAgent',
+                        data: {
+                            bookingId: Number(bookingId),
+                            message: 'This order was already taken',
+                        },
+                    });
+                    return;
+                }
+
+                const [affectedCount] = await booking.update(
+                    {
+                        bookingStatusId: 3,
+                        laundryShopId: bookingDetails.laundryShopId,
+                        driverId: agentId,
+                    },
+                    {
+                        where: {
+                            id: bookingId,
+                            laundryShopId: null,
+                            bookingStatusId: 1,
+                        },
+                    }
+                );
+
+                if (!affectedCount) {
+                    await sendEvent(agentId, {
+                        type: 'orderTakenByOtherAgent',
+                        data: {
+                            bookingId: Number(bookingId),
+                            message: 'This order was already taken',
+                        },
+                    });
+                    return;
+                }
+
                 const currentTime = new Date().toLocaleTimeString('en-US', {
                     hour: '2-digit',
                     minute: '2-digit',
                     hour12: false,
                 });
                 const currentDate = new Date().toISOString().split('T')[0];
-                console.log(currentDate);
-                console.log(currentTime);
                 const statusId = [2, 3];
-                const bookinghistories = statusId.map(statusId => ({
+                const bookinghistories = statusId.map((statusId) => ({
                     date: currentDate,
                     time: currentTime,
-                    bookingId: bookingId,
-                    bookingStatusId: statusId
-                }))
+                    bookingId,
+                    bookingStatusId: statusId,
+                }));
                 await bookingHistory.bulkCreate(bookinghistories);
                 await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
-                const eventData = {
-                    type: 'AcceptedOrder',
-                    data: {
-                        data: bookingId,
-                        message: 'Order Accepted By Agent'
-                    }
-                }
-                sendEvent(agentId, eventData)
+
+                await notifyBookingTakenByAgent({
+                    bookingId,
+                    zoneId: bookingRow.zoneId,
+                    assignedUserId: agentId,
+                    source: 'agent',
+                });
             } catch (error) {
                 console.error("Error in event listeing agentAceeptOrder : ", error)
             }

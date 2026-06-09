@@ -13,7 +13,7 @@ const {
     canAdminAssignBooking,
     isAgentAcceptExpired,
 } = require("../../utils/bookingAgentWindow");
-const { sendEvent } = require("../../socket_io");
+const { notifyBookingTakenByAgent } = require("../../utils/bookingTakenNotify");
 const {
     getCountryContextFromZoneId,
 } = require("../../utils/countryTimeZone");
@@ -170,12 +170,11 @@ class AdminBookingAssignService {
         await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
 
         if (ownerId) {
-            sendEvent(ownerId, {
-                type: "AcceptedOrder",
-                data: {
-                    data: bookingId,
-                    message: "Order assigned to your shop by admin",
-                },
+            await notifyBookingTakenByAgent({
+                bookingId,
+                zoneId: bookingRow.zoneId,
+                assignedUserId: ownerId,
+                source: 'admin',
             });
         }
 
