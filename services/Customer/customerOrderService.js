@@ -655,8 +655,6 @@ async function bookingEventSentCheckTheShops(
     return { notifiedCount: 0, availableShopCount: 0 };
 }
 
-const activePoliciesService = require('../Admin/activePoliciesService');
-
 function mapCancellationPolicyResponse(cancellationPolicyRaw) {
     if (!cancellationPolicyRaw?.cancellationConfig) return null;
     const config = cancellationPolicyRaw.cancellationConfig;
@@ -973,11 +971,6 @@ class CustomerOrderService {
             timeZone || bookingCountryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
         const customerLocalTimeZone = clientTimeZone || null;
 
-        const {
-            activeCancellationPolicy,
-            activeNoShowPolicy,
-        } = await activePoliciesService.getActivePolicies(zoneId);
-
         const bookingData = await booking.create({
             collectionDate: normalizedCollectionDate,
             collectionTimeFrom: normalizedCollectionTimeFrom,
@@ -1004,8 +997,6 @@ class CustomerOrderService {
             paymentMethodId: paymentMethodId,
             operationalTimeZone,
             customerLocalTimeZone,
-            cancellationPolicyId: activeCancellationPolicy?.id || null,
-            noShowPolicyId: activeNoShowPolicy?.id || null,
             // paymentIntentId will be set at Status 4 when payment is captured
         });
 
@@ -1875,24 +1866,10 @@ class CustomerOrderService {
             }));
         }
 
-        let cancellationPolicy = mapCancellationPolicyResponse(
+        const cancellationPolicy = mapCancellationPolicyResponse(
             bookingPlain.cancellationPolicyBookings
         );
-        let noShowPolicy = mapNoShowPolicyResponse(bookingPlain.noShowPolicyBookings);
-
-        // Legacy bookings may not have policy IDs snapshotted — fall back to zone active policies
-        if (!cancellationPolicy && bookingPlain.zoneId) {
-            const activeCancellation = await activePoliciesService.getActiveCancellationPolicy(
-                bookingPlain.zoneId
-            );
-            cancellationPolicy = mapCancellationPolicyResponse(activeCancellation);
-        }
-        if (!noShowPolicy && bookingPlain.zoneId) {
-            const activeNoShow = await activePoliciesService.getActiveNoShowPolicy(
-                bookingPlain.zoneId
-            );
-            noShowPolicy = mapNoShowPolicyResponse(activeNoShow);
-        }
+        const noShowPolicy = mapNoShowPolicyResponse(bookingPlain.noShowPolicyBookings);
 
         // Fetch saved card details from Stripe using the stored paymentMethodId
         let cardDetails = null;

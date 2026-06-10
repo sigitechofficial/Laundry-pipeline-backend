@@ -137,14 +137,12 @@ class CancelBookingService {
             userId: customerId
         });
 
-        // Step 9: Update booking status to Cancelled (19) and set cancellation policy ID
-        await booking.update(
-            { 
-                bookingStatusId: 19,
-                cancellationPolicyId: activeCancellationPolicy?.id || null
-            },
-            { where: { id: bookingId } }
-        );
+        // Step 9: Cancel booking; attach cancellation policy only when a real policy exists
+        const cancelPayload = { bookingStatusId: 19 };
+        if (activeCancellationPolicy?.id) {
+            cancelPayload.cancellationPolicyId = activeCancellationPolicy.id;
+        }
+        await booking.update(cancelPayload, { where: { id: bookingId } });
 
         // Step 10: Create booking history entry using caller/business timezone wall-clock
         const resolvedTz = this._resolveTimeZone(timeZone);
