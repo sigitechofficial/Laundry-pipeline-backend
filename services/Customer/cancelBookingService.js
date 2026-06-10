@@ -2,6 +2,7 @@ const { booking, cancelBooking, users, policy, cancellationPolicyConfig, booking
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
 const { chargeOffSession } = require('../../controllers/stripe');
+const activePoliciesService = require('../Admin/activePoliciesService');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
 const { 
@@ -51,6 +52,7 @@ class CancelBookingService {
                 'customerId', 
                 'bookingStatusId', 
                 'zoneId',
+                'cancellationPolicyId',
                 'collectionDate', 
                 'collectionTimeFrom',
                 'orderAmount',
@@ -79,8 +81,8 @@ class CancelBookingService {
             throw new ValidationError("Cannot cancel completed bookings");
         }
 
-        // Step 5: Get active cancellation policy for the booking's zone
-        const activeCancellationPolicy = await this.getActiveCancellationPolicy(bookingData.zoneId);
+        // Step 5: Use snapshotted policy when present, otherwise zone/global active policy
+        const activeCancellationPolicy = await this.resolveCancellationPolicy(bookingData);
 
         // Step 6: Calculate cancellation charges based on policy
         const cancellationDetails = await this.calculateCancellationCharge(
@@ -185,71 +187,51 @@ class CancelBookingService {
     }
 
     /**
-     * Get active cancellation policy for a specific zone.
-     * Falls back to a free-policy object if no zone-specific policy is configured.
-     * @param {number} zoneId
-     * @returns {Object} Active cancellation policy with config
+     * Resolve cancellation policy for a booking.
+     * Prefers the policy snapshotted on the booking, then zone/global active policy,
+     * then a built-in free-cancellation fallback for charge calculation.
+     * @param {Object} bookingData
+     * @returns {Object} Cancellation policy with config (may lack id on fallback)
      */
-    async getActiveCancellationPolicy(zoneId) {
-        const now = new Date();
-        const activePolicy = await policy.findOne({
-            where: {
-                type: 'cancellation',
-                isActive: true,
-                zoneId: zoneId,
-                [Op.and]: [
+    async resolveCancellationPolicy(bookingData) {
+        if (bookingData.cancellationPolicyId) {
+            const snapshotted = await policy.findOne({
+                where: { id: bookingData.cancellationPolicyId },
+                include: [
                     {
-                        [Op.or]: [
-                            { effectiveFrom: null },
-                            { effectiveFrom: { [Op.lte]: now } }
-                        ]
+                        model: cancellationPolicyConfig,
+                        as: 'cancellationConfig',
+                        required: false,
                     },
-                    {
-                        [Op.or]: [
-                            { effectiveTo: null },
-                            { effectiveTo: { [Op.gte]: now } }
-                        ]
-                    }
-                ]
-            },
-            include: [
-                {
-                    model: cancellationPolicyConfig,
-                    as: 'cancellationConfig',
-                    required: false
-                }
-            ],
-            order: [
-                ['isDefault', 'DESC'],
-                ['effectiveFrom', 'DESC'],
-                ['createdAt', 'DESC']
-            ]
-        });
-
-        if (!activePolicy) {
-            // No zone-specific policy configured — free cancellation fallback
-            return {
-                cancellationConfig: {
-                    prePickupFreeChargeWindowMinutes: 120,
-                    prePickupFirstCancellationLeniency: true,
-                    prePickupAbsoluteAmount: 0,
-                    prePickupPercentage: 0,
-                    unprocessedAbsoluteAmount: 0,
-                    unprocessedPercentage: 0,
-                    unprocessedAfterPickupMinutes: 30,
-                    unprocessedOrderValuePercentage: 0,
-                    allowCancelUnprocessed: true,
-                    courtesyWindowDays: 30,
-                    courtesyCapAmount: 0,
-                    courtesyCount: 1,
-                    customerLeniencyEnabled: false,
-                    prePickupAbsoluteCurrency: 'USD',
-                    unprocessedAbsoluteCurrency: 'USD'
-                }
-            };
+                ],
+            });
+            if (snapshotted) return snapshotted;
         }
 
-        return activePolicy;
+        const activePolicy = await activePoliciesService.getActiveCancellationPolicy(
+            bookingData.zoneId
+        );
+        if (activePolicy) return activePolicy;
+
+        return {
+            cancellationConfig: {
+                prePickupFreeChargeWindowMinutes: 120,
+                prePickupFirstCancellationLeniency: true,
+                prePickupAbsoluteAmount: 0,
+                prePickupPercentage: 0,
+                unprocessedAbsoluteAmount: 0,
+                unprocessedPercentage: 0,
+                unprocessedAfterPickupMinutes: 30,
+                unprocessedOrderValuePercentage: 0,
+                allowCancelUnprocessed: true,
+                courtesyWindowDays: 30,
+                courtesyCapAmount: 0,
+                courtesyCount: 1,
+                customerLeniencyEnabled: false,
+                prePickupAbsoluteCurrency: 'USD',
+                unprocessedAbsoluteCurrency: 'USD',
+            },
+        };
     }
 
     /**

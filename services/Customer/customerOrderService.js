@@ -655,6 +655,61 @@ async function bookingEventSentCheckTheShops(
     return { notifiedCount: 0, availableShopCount: 0 };
 }
 
+const activePoliciesService = require('../Admin/activePoliciesService');
+
+function mapCancellationPolicyResponse(cancellationPolicyRaw) {
+    if (!cancellationPolicyRaw?.cancellationConfig) return null;
+    const config = cancellationPolicyRaw.cancellationConfig;
+    return {
+        id: cancellationPolicyRaw.id,
+        name: cancellationPolicyRaw.name,
+        description: cancellationPolicyRaw.description || null,
+        freeCancellationWindowMinutes: config.prePickupFreeChargeWindowMinutes ?? null,
+        firstCancellationFree: config.prePickupFirstCancellationLeniency ?? false,
+        prePickupChargeAmount: config.prePickupAbsoluteAmount ?? null,
+        prePickupChargeCurrency: config.prePickupAbsoluteCurrency ?? null,
+        prePickupChargePercentage: config.prePickupPercentage ?? null,
+        unprocessedChargeAmount: config.unprocessedAbsoluteAmount ?? null,
+        unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency ?? null,
+        unprocessedChargePercentage: config.unprocessedPercentage ?? null,
+        unprocessedAfterPickupMinutes: config.unprocessedAfterPickupMinutes ?? null,
+        unprocessedOrderValuePercentage: config.unprocessedOrderValuePercentage ?? null,
+        allowCancelUnprocessed: config.allowCancelUnprocessed ?? true,
+        courtesyWindowDays: config.courtesyWindowDays ?? null,
+        courtesyCount: config.courtesyCount ?? null,
+        courtesyCapAmount: config.courtesyCapAmount ?? null,
+        customerLeniencyEnabled: config.customerLeniencyEnabled ?? true,
+    };
+}
+
+function mapNoShowPolicyResponse(noShowPolicyRaw) {
+    if (!noShowPolicyRaw?.noShowConfig) return null;
+    const config = noShowPolicyRaw.noShowConfig;
+    return {
+        id: noShowPolicyRaw.id,
+        name: noShowPolicyRaw.name,
+        description: noShowPolicyRaw.description || null,
+        enableForPickup: config.enableForPickup ?? true,
+        enableForDelivery: config.enableForDelivery ?? true,
+        feeType: config.feeType ?? null,
+        currency: config.currency ?? null,
+        pickupNoShowFee: config.pickupNoShowFee ?? null,
+        deliveryNoShowFee: config.deliveryNoShowFee ?? null,
+        storageFeePerDay: config.storageFeePerDay ?? null,
+        percentageFee: config.percentageFee ?? null,
+        graceMinutesOnSite: config.graceMinutesOnSite ?? null,
+        driverLateSLA: config.driverLateSLA ?? null,
+        autoForgiveFirstNoShow: config.autoForgiveFirstNoShow ?? true,
+        autoForgiveCount: config.autoForgiveCount ?? null,
+        autoForgivePeriod: config.autoForgivePeriod ?? null,
+        requirePaymentAfterCap: config.requirePaymentAfterCap ?? true,
+        perCustomerCap: config.perCustomerCap ?? null,
+        capWindowDays: config.capWindowDays ?? null,
+        absoluteWaiverAmount: config.absoluteWaiverAmount ?? null,
+        percentageWaiverAmount: config.percentageWaiverAmount ?? null,
+    };
+}
+
 /**
  * Customer Order Service
  * Handles all customer order related business logic
@@ -918,6 +973,11 @@ class CustomerOrderService {
             timeZone || bookingCountryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
         const customerLocalTimeZone = clientTimeZone || null;
 
+        const {
+            activeCancellationPolicy,
+            activeNoShowPolicy,
+        } = await activePoliciesService.getActivePolicies(zoneId);
+
         const bookingData = await booking.create({
             collectionDate: normalizedCollectionDate,
             collectionTimeFrom: normalizedCollectionTimeFrom,
@@ -944,6 +1004,8 @@ class CustomerOrderService {
             paymentMethodId: paymentMethodId,
             operationalTimeZone,
             customerLocalTimeZone,
+            cancellationPolicyId: activeCancellationPolicy?.id || null,
+            noShowPolicyId: activeNoShowPolicy?.id || null,
             // paymentIntentId will be set at Status 4 when payment is captured
         });
 
@@ -1677,7 +1739,7 @@ class CustomerOrderService {
                 },
                 {
                     model: proofOfDeliveries,
-                    attributes: ["id", "imgUpload", "noOfItems", "note", "deliveryType", "createdAt", "updatedAt"],
+                    attributes: ["id", "imgUpload", "noOfItems", "noOfBags", "note", "deliveryType", "createdAt", "updatedAt"],
                 },
                 {
                     model: tip,
@@ -1813,61 +1875,23 @@ class CustomerOrderService {
             }));
         }
 
-        const cancellationPolicyRaw = bookingPlain.cancellationPolicyBookings;
-        let cancellationPolicy = null;
+        let cancellationPolicy = mapCancellationPolicyResponse(
+            bookingPlain.cancellationPolicyBookings
+        );
+        let noShowPolicy = mapNoShowPolicyResponse(bookingPlain.noShowPolicyBookings);
 
-        if (cancellationPolicyRaw && cancellationPolicyRaw.cancellationConfig) {
-            const config = cancellationPolicyRaw.cancellationConfig;
-            cancellationPolicy = {
-                id: cancellationPolicyRaw.id,
-                name: cancellationPolicyRaw.name,
-                description: cancellationPolicyRaw.description || null,
-                freeCancellationWindowMinutes: config.prePickupFreeChargeWindowMinutes ?? null,
-                firstCancellationFree: config.prePickupFirstCancellationLeniency ?? false,
-                prePickupChargeAmount: config.prePickupAbsoluteAmount ?? null,
-                prePickupChargeCurrency: config.prePickupAbsoluteCurrency ?? null,
-                prePickupChargePercentage: config.prePickupPercentage ?? null,
-                unprocessedChargeAmount: config.unprocessedAbsoluteAmount ?? null,
-                unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency ?? null,
-                unprocessedChargePercentage: config.unprocessedPercentage ?? null,
-                unprocessedAfterPickupMinutes: config.unprocessedAfterPickupMinutes ?? null,
-                unprocessedOrderValuePercentage: config.unprocessedOrderValuePercentage ?? null,
-                allowCancelUnprocessed: config.allowCancelUnprocessed ?? true,
-                courtesyWindowDays: config.courtesyWindowDays ?? null,
-                courtesyCount: config.courtesyCount ?? null,
-                courtesyCapAmount: config.courtesyCapAmount ?? null,
-                customerLeniencyEnabled: config.customerLeniencyEnabled ?? true
-            };
+        // Legacy bookings may not have policy IDs snapshotted — fall back to zone active policies
+        if (!cancellationPolicy && bookingPlain.zoneId) {
+            const activeCancellation = await activePoliciesService.getActiveCancellationPolicy(
+                bookingPlain.zoneId
+            );
+            cancellationPolicy = mapCancellationPolicyResponse(activeCancellation);
         }
-
-        const noShowPolicyRaw = bookingPlain.noShowPolicyBookings;
-        let noShowPolicy = null;
-
-        if (noShowPolicyRaw && noShowPolicyRaw.noShowConfig) {
-            const config = noShowPolicyRaw.noShowConfig;
-            noShowPolicy = {
-                id: noShowPolicyRaw.id,
-                name: noShowPolicyRaw.name,
-                description: noShowPolicyRaw.description || null,
-                enableForPickup: config.enableForPickup ?? true,
-                enableForDelivery: config.enableForDelivery ?? true,
-                feeType: config.feeType ?? null,
-                currency: config.currency ?? null,
-                pickupNoShowFee: config.pickupNoShowFee ?? null,
-                deliveryNoShowFee: config.deliveryNoShowFee ?? null,
-                storageFeePerDay: config.storageFeePerDay ?? null,
-                percentageFee: config.percentageFee ?? null,
-                graceMinutesOnSite: config.graceMinutesOnSite ?? null,
-                driverLateSLA: config.driverLateSLA ?? null,
-                autoForgiveFirstNoShow: config.autoForgiveFirstNoShow ?? true,
-                autoForgiveCount: config.autoForgiveCount ?? null,
-                autoForgivePeriod: config.autoForgivePeriod ?? null,
-                requirePaymentAfterCap: config.requirePaymentAfterCap ?? true,
-                perCustomerCap: config.perCustomerCap ?? null,
-                capWindowDays: config.capWindowDays ?? null,
-                absoluteWaiverAmount: config.absoluteWaiverAmount ?? null,
-                percentageWaiverAmount: config.percentageWaiverAmount ?? null
-            };
+        if (!noShowPolicy && bookingPlain.zoneId) {
+            const activeNoShow = await activePoliciesService.getActiveNoShowPolicy(
+                bookingPlain.zoneId
+            );
+            noShowPolicy = mapNoShowPolicyResponse(activeNoShow);
         }
 
         // Fetch saved card details from Stripe using the stored paymentMethodId

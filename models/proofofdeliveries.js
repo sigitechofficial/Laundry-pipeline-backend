@@ -22,6 +22,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true
     },
+    noOfBags: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
     note: {
       type: DataTypes.STRING,
       allowNull: true

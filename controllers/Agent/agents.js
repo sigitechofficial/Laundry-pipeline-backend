@@ -1498,6 +1498,9 @@ exports.AddPickupDeliveryProof = async (req, res) => {
         if (parsedItems !== undefined) {
             row.noOfItems = parsedItems;
         }
+        if (parsedBags !== undefined) {
+            row.noOfBags = parsedBags;
+        }
         return row;
     });
 
@@ -2393,7 +2396,7 @@ exports.invoiceCreation = async (req, res) => {
             },
             {
                 model: proofOfDeliveries,
-                attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
+                attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'note', 'deliveryType', 'bookingId', 'userId']
             },
             {
                 model: bookingPreference,

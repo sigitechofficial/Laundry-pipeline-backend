@@ -222,7 +222,7 @@ class DriverService {
                 include: [
                     {
                         model: proofOfDeliveries,
-                        attributes: ['id', 'imgUpload', 'noOfItems', 'bookingId', 'userId']
+                        attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'bookingId', 'userId']
                     },
                     {
                         model: addressDb,

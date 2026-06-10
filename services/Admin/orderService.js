@@ -338,7 +338,7 @@ class OrderService {
                 },
                 {
                     model: proofOfDeliveries,
-                    attributes: ['id', 'imgUpload', 'noOfItems', 'note', 'deliveryType', 'bookingId', 'userId']
+                    attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'note', 'deliveryType', 'bookingId', 'userId']
                 },
                 {
                     model: tip,
