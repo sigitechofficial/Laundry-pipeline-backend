@@ -203,11 +203,72 @@ class CustomerPostcodeService {
         return candidates;
     }
 
-    async fetchFullPostcodeAutocomplete(compact) {
+    rankPostcodeSuggestions(compact, suggestions) {
+        if (!Array.isArray(suggestions) || suggestions.length === 0) {
+            return [];
+        }
+
+        const exact = [];
+        const prefix = [];
+        const rest = [];
+
+        for (const suggestion of suggestions) {
+            const normalized = this.compactPostcodeQuery(suggestion);
+            if (normalized === compact) {
+                exact.push(suggestion);
+            } else if (normalized.startsWith(compact)) {
+                prefix.push(suggestion);
+            } else {
+                rest.push(suggestion);
+            }
+        }
+
+        prefix.sort(
+            (a, b) =>
+                this.compactPostcodeQuery(a).length - this.compactPostcodeQuery(b).length
+        );
+
+        const ranked = [...exact, ...prefix, ...rest];
+        const seen = new Set();
+
+        return ranked.filter((suggestion) => {
+            const key = this.compactPostcodeQuery(suggestion);
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+    }
+
+    rankOutcodeSuggestions(compact, suggestions) {
+        if (!Array.isArray(suggestions) || suggestions.length === 0) {
+            return [];
+        }
+
+        const exact = [];
+        const prefix = [];
+        const rest = [];
+
+        for (const suggestion of suggestions) {
+            const normalized = this.compactPostcodeQuery(suggestion);
+            if (normalized === compact) {
+                exact.push(suggestion);
+            } else if (normalized.startsWith(compact)) {
+                prefix.push(suggestion);
+            } else {
+                rest.push(suggestion);
+            }
+        }
+
+        return [...exact, ...prefix, ...rest];
+    }
+
+    async fetchFullPostcodeAutocomplete(compact, limit = 20) {
         const response = await axios.get(
             `https://api.postcodes.io/postcodes/${encodeURIComponent(compact)}/autocomplete`,
             {
-                params: { limit: 10 },
+                params: { limit },
                 timeout: 8000,
                 validateStatus: (status) => status < 500,
             }
@@ -233,30 +294,35 @@ class CustomerPostcodeService {
         try {
             // Full postcode e.g. SW1A1AA or partial incode e.g. SW1A1
             if (POSTCODE_REGEX.test(compact) || /^[A-Z]{1,2}\d{1,2}[A-Z]\d/.test(compact)) {
-                const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+                const raw = await this.fetchFullPostcodeAutocomplete(compact);
+                const suggestions = this.rankPostcodeSuggestions(compact, raw);
                 return { suggestions, suggestionType: "postcode" };
             }
 
             // Complete outcode with letter e.g. SW1A -> show full postcodes
             if (/^[A-Z]{1,2}\d{1,2}[A-Z]$/.test(compact)) {
-                const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+                const raw = await this.fetchFullPostcodeAutocomplete(compact);
+                const suggestions = this.rankPostcodeSuggestions(compact, raw);
                 return { suggestions, suggestionType: "postcode" };
             }
 
             // Area only e.g. SW -> postcode districts (SW1, SW2); not valid outcodes on their own
             if (/^[A-Z]{1,2}$/.test(compact)) {
-                const suggestions = this.buildOutcodeCandidates(compact).slice(0, 15);
+                const raw = this.buildOutcodeCandidates(compact).slice(0, 15);
+                const suggestions = this.rankOutcodeSuggestions(compact, raw);
                 return { suggestions, suggestionType: "outcode" };
             }
 
             // District with digits e.g. SW1, SW10 -> letter suffix outcodes (SW1A, SW10B)
             if (/^[A-Z]{1,2}\d{1,2}$/.test(compact)) {
                 const candidates = this.buildOutcodeCandidates(compact);
-                const suggestions = await this.resolveExistingOutcodes(candidates, 15);
+                const raw = await this.resolveExistingOutcodes(candidates, 15);
+                const suggestions = this.rankOutcodeSuggestions(compact, raw);
                 return { suggestions, suggestionType: "outcode" };
             }
 
-            const suggestions = await this.fetchFullPostcodeAutocomplete(compact);
+            const raw = await this.fetchFullPostcodeAutocomplete(compact);
+            const suggestions = this.rankPostcodeSuggestions(compact, raw);
             return { suggestions, suggestionType: "postcode" };
         } catch (error) {
             if (error instanceof ValidationError) {
