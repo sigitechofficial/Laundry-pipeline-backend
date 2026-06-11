@@ -201,6 +201,15 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.STRING(64),
     allowNull: true,
   },
+  invoiceStatus: {
+    type: DataTypes.ENUM("none", "draft", "finalized"),
+    allowNull: false,
+    defaultValue: "none",
+  },
+  invoiceDraftSavedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   }, {
     sequelize,
     modelName: 'booking',

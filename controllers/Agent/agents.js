@@ -138,6 +138,7 @@ const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
 const ResponseHelper = require('../../utils/responseHelper');
+const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
@@ -2098,6 +2099,7 @@ exports.driverAddSerivces = async (req, res) => {
             orderAmount: discountedTotal,
             bookingStatusId: 9,
             subTotal,
+            invoiceStatus: "finalized",
         },
         { where: { id: bookingId } }
     );
@@ -2254,6 +2256,30 @@ exports.agentUpdateInvoice = async (req, res) => {
     });
 
 }
+
+/*
+ * Save invoice as draft (no notification, no status change)
+ */
+exports.saveInvoiceDraft = async (req, res) => {
+    const agentId = req.user.id;
+    const result = await invoiceManagementService.saveInvoiceDraft({
+        agentId,
+        ...req.body,
+    });
+    return ResponseHelper.success(res, "Invoice saved as draft", result);
+};
+
+/*
+ * Get saved invoice draft for agent booking
+ */
+exports.getInvoiceDraft = async (req, res) => {
+    const agentId = req.user.id;
+    const result = await invoiceManagementService.getInvoiceDraft({
+        agentId,
+        bookingId: req.params.bookingId,
+    });
+    return ResponseHelper.success(res, "Invoice draft retrieved", result);
+};
 
 /*
  *  Invoice Creation

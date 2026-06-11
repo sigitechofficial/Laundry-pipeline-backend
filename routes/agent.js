@@ -334,6 +334,20 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.invoiceDetailTab)
 );
+// Save invoice as draft (no customer notification)
+router.post(
+    "/invoice/save-draft",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.saveInvoiceDraft)
+);
+// Get saved invoice draft
+router.get(
+    "/invoice/draft/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getInvoiceDraft)
+);
 
 //Invoice Generate Status
 router.patch(
