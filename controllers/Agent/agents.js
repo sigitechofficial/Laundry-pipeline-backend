@@ -137,6 +137,7 @@ function normalizeProofDeliveryType(value) {
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
+const { getPickupChargeAmount, getPrepaidInvoiceDeduction } = require("../../utils/invoicePrepaidDeduction");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const { sendNotification } = require("../../utils/notification");
@@ -1249,7 +1250,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 model: billingDetails,
                 as: 'billingDetail',
                 required: false,
-                attributes: ['upfrontAmount', 'total', 'paymentStatus'],
+                attributes: ['upfrontAmount', 'serviceCharge', 'total', 'paymentStatus'],
             },
         ],
     });
@@ -1271,9 +1272,11 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new ValidationError("Payment method not found. Setup Intent was not completed properly.");
     }
 
-    const upfrontAmount = bookingfind.billingDetail?.upfrontAmount || 0;
+    const upfrontAmount = parseFloat(bookingfind.billingDetail?.upfrontAmount || 0) || 0;
+    const serviceCharge = parseFloat(bookingfind.billingDetail?.serviceCharge || 0) || 0;
+    const initialChargeAmount = getPickupChargeAmount(upfrontAmount, serviceCharge);
 
-    if (!upfrontAmount || upfrontAmount <= 0) {
+    if (!initialChargeAmount || initialChargeAmount <= 0) {
         throw new ValidationError("Upfront amount not set for this booking");
     }
 
@@ -1318,6 +1321,8 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     console.log("💳 Creating payment intent for booking:", bookingId);
     console.log("💰 Upfront Amount:", upfrontAmount);
+    console.log("💰 Service Charge:", serviceCharge);
+    console.log("💰 Initial Charge (upfront + service):", initialChargeAmount);
     console.log("👤 Customer:", bookingfind.customer.stripeCustomerId);
     console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
     console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
@@ -1330,7 +1335,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     // Charge immediately using saved payment method with idempotency protection
     const paymentIntent = await chargeOffSession(
-        upfrontAmount,
+        initialChargeAmount,
         bookingfind.customer.stripeCustomerId,
         bookingfind.paymentMethodId,
         idempotencyKey  // Pass idempotency key to prevent duplicate charges
@@ -1380,7 +1385,9 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     return ResponseHelper.success(res, "Booking status updated and payment captured", {
         paymentIntentId: paymentIntent.id,
         paymentStatus: 'succeeded',
-        amountCharged: upfrontAmount
+        amountCharged: initialChargeAmount,
+        upfrontAmount,
+        serviceCharge,
     });
 }
 
@@ -2046,8 +2053,9 @@ exports.driverAddSerivces = async (req, res) => {
         servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
     console.log("Sub-Total (full order value):", subTotal);
 
-    // total = subTotal - zoneMinimumAmount (deduct already paid upfront)
-    let total = subTotal - parsedZoneMinimum;
+    // total = subTotal - upfront - serviceCharge (deduct amounts collected at pickup)
+    const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
+    let total = subTotal - prepaidDeduction;
     console.log("Total (remaining balance):", total);
 
     // Calculate zone admin commission
@@ -4810,8 +4818,9 @@ exports.updateInvoice = async (req, res) => {
         servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
     console.log("Sub-Total (full order value):", subTotal);
 
-    // total = subTotal - zoneMinimumAmount (deduct already paid upfront)
-    let total = subTotal - parsedZoneMinimum;
+    // total = subTotal - upfront - serviceCharge (deduct amounts collected at pickup)
+    const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
+    let total = subTotal - prepaidDeduction;
     console.log("Total (remaining balance):", total);
 
     // Calculate zone admin commission (same as driverAddServices)

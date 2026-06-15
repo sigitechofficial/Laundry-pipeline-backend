@@ -34,6 +34,7 @@ const {
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
+const { getPrepaidInvoiceDeduction } = require('../../utils/invoicePrepaidDeduction');
 const {
     ValidationError,
     NotFoundError,
@@ -1185,7 +1186,8 @@ class OrderService {
 
         let subTotal =
             servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-        let total = subTotal - parsedZoneMinimum;
+        const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
+        let total = subTotal - prepaidDeduction;
 
         const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
         const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
