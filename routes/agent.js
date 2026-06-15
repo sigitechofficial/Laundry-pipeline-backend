@@ -348,6 +348,13 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.getInvoiceDraft)
 );
+// Update existing invoice draft (sync by line id)
+router.patch(
+    "/invoice/update-draft",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.updateInvoiceDraft)
+);
 
 //Invoice Generate Status
 router.patch(

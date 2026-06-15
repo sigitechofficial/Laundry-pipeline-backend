@@ -9,6 +9,7 @@ const generateForgotPasswordTemplate = require('./templates/forgotPassword');
 const generateBookingConfirmationTemplate = require('./templates/bookingConfirmation');
 const generateDriverArrivedTemplate = require('./templates/driverArrived');
 const generateInvoiceReadyTemplate = require('./templates/invoiceReady');
+const generateAgentOrderInvoiceTemplate = require('./templates/agentOrderInvoice');
 const generateFooter = require('./partials/footer');
 
 module.exports = {
@@ -18,5 +19,6 @@ module.exports = {
   generateBookingConfirmationTemplate,
   generateDriverArrivedTemplate,
   generateInvoiceReadyTemplate,
+  generateAgentOrderInvoiceTemplate,
   generateFooter,
 };

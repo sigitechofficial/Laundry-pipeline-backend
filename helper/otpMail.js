@@ -42,7 +42,7 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
         address: fromEmail,
         name: fromName
       },
-      to: ['sigidevelopers@gmail.com'],
+      to: email,
       subject,
       html,
       inlineImages  // Pass inline images to ZeptoMail API

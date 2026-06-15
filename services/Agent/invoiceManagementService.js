@@ -230,6 +230,145 @@ class AgentInvoiceManagementService {
         ];
     }
 
+    async finalizeInvoiceDraftTotals({
+        bookingId,
+        serviceCharge,
+        zoneMinimumAmount,
+    }) {
+        const bookingWithZone = await booking.findByPk(bookingId, {
+            include: [
+                {
+                    model: zone,
+                    attributes: ["id", "name", "zoneAdminComission"],
+                },
+                {
+                    model: tip,
+                    as: "tips",
+                    attributes: ["id", "amount"],
+                    required: false,
+                },
+            ],
+        });
+
+        const totals = await this.calculateInvoiceTotals(
+            bookingWithZone,
+            bookingId,
+            serviceCharge,
+            zoneMinimumAmount
+        );
+
+        await billingDetails.update(
+            {
+                total: totals.total,
+                discount: totals.existingDiscount,
+                zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
+                serviceCharge: totals.parsedServiceCharge,
+            },
+            { where: { bookingId } }
+        );
+
+        const draftSavedAt = new Date();
+
+        await booking.update(
+            {
+                orderAmount: totals.total,
+                subTotal: totals.subTotal,
+                invoiceStatus: "draft",
+                invoiceDraftSavedAt: draftSavedAt,
+            },
+            { where: { id: bookingId } }
+        );
+
+        return { totals, draftSavedAt };
+    }
+
+    /**
+     * Sync draft lines by id — update existing, create new, deactivate removed.
+     */
+    async syncInvoiceDraftServiceLines({
+        bookingId,
+        services,
+        currentDate,
+        currentTime,
+    }) {
+        const keptActiveIds = [];
+
+        for (const serviceLine of services) {
+            const unitPrice = getUnitCategoryCharge(serviceLine.categoryCharge);
+            const qty = getLineQuantity(serviceLine.items);
+            const lineActive = serviceLine.status !== false;
+
+            let selectedServiceRow;
+
+            if (serviceLine.id) {
+                const existing = await customerSelectedService.findOne({
+                    where: {
+                        id: serviceLine.id,
+                        bookingId,
+                    },
+                });
+
+                if (!existing) {
+                    throw new ValidationError(
+                        `Service line ${serviceLine.id} not found for this booking`
+                    );
+                }
+
+                await existing.update({
+                    serviceId: serviceLine.serviceId,
+                    categoryId: serviceLine.categoryId,
+                    categoryPrice: unitPrice,
+                    subCategoryId: serviceLine.subCategoryId ?? null,
+                    items: qty,
+                    date: currentDate,
+                    time: currentTime,
+                    status: lineActive,
+                });
+                selectedServiceRow = existing;
+            } else {
+                selectedServiceRow = await customerSelectedService.create({
+                    date: currentDate,
+                    time: currentTime,
+                    bookingId,
+                    serviceId: serviceLine.serviceId,
+                    categoryId: serviceLine.categoryId,
+                    categoryPrice: unitPrice,
+                    subCategoryId: serviceLine.subCategoryId ?? null,
+                    items: qty,
+                    status: lineActive,
+                });
+            }
+
+            if (lineActive) {
+                keptActiveIds.push(selectedServiceRow.id);
+            }
+
+            if (serviceLineHasAddOnPayload(serviceLine)) {
+                await replaceAddOnsForServiceLine(
+                    selectedServiceRow.id,
+                    serviceLine,
+                    addOnServices
+                );
+            }
+        }
+
+        const deactivateWhere = {
+            bookingId,
+            status: true,
+        };
+
+        if (keptActiveIds.length > 0) {
+            deactivateWhere.id = { [Op.notIn]: keptActiveIds };
+        }
+
+        await customerSelectedService.update(
+            { status: false },
+            { where: deactivateWhere }
+        );
+
+        return keptActiveIds;
+    }
+
     async persistInvoiceServiceLines({
         bookingId,
         services,
@@ -369,25 +508,16 @@ class AgentInvoiceManagementService {
             throw new ValidationError("Invoice draft can only be saved while booking is at the laundry shop");
         }
 
+        if (bookingRow.invoiceStatus === "draft") {
+            throw new ValidationError(
+                "Draft already exists for this booking. Use PATCH /agent/invoice/update-draft to update it."
+            );
+        }
+
         const { date: currentDate, time: currentTime } = agentWallClockDateTime(
             timeZone,
             clientTimeZone
         );
-
-        const bookingWithZone = await booking.findByPk(bookingId, {
-            include: [
-                {
-                    model: zone,
-                    attributes: ["id", "name", "zoneAdminComission"],
-                },
-                {
-                    model: tip,
-                    as: "tips",
-                    attributes: ["id", "amount"],
-                    required: false,
-                },
-            ],
-        });
 
         await this.persistInvoiceServiceLines({
             bookingId,
@@ -396,40 +526,79 @@ class AgentInvoiceManagementService {
             currentTime,
         });
 
-        const totals = await this.calculateInvoiceTotals(
-            bookingWithZone,
+        const { totals, draftSavedAt } = await this.finalizeInvoiceDraftTotals({
             bookingId,
             serviceCharge,
-            zoneMinimumAmount
-        );
-
-        await billingDetails.update(
-            {
-                total: totals.total,
-                discount: totals.existingDiscount,
-                zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
-                serviceCharge: totals.parsedServiceCharge,
-            },
-            { where: { bookingId } }
-        );
-
-        const draftSavedAt = new Date();
-
-        await booking.update(
-            {
-                orderAmount: totals.total,
-                subTotal: totals.subTotal,
-                invoiceStatus: "draft",
-                invoiceDraftSavedAt: draftSavedAt,
-            },
-            { where: { id: bookingId } }
-        );
+            zoneMinimumAmount,
+        });
 
         return {
             bookingId,
             invoiceStatus: "draft",
             draftSavedAt,
             servicesCount: services.length,
+            servicesSubtotal: totals.servicesSubtotal,
+            subTotal: totals.subTotal,
+            total: totals.total,
+        };
+    }
+
+    /**
+     * Update existing invoice draft — sync lines by id, deactivate removed lines.
+     */
+    async updateInvoiceDraft(data) {
+        const {
+            agentId,
+            bookingId,
+            services = [],
+            serviceCharge,
+            zoneMinimumAmount,
+            timeZone,
+            clientTimeZone,
+        } = data;
+
+        if (!bookingId) {
+            throw new ValidationError("bookingId is required");
+        }
+
+        if (!Array.isArray(services)) {
+            throw new ValidationError("services must be an array");
+        }
+
+        const { bookingRow } = await this.assertAgentBookingAccess(agentId, bookingId);
+
+        if (bookingRow.bookingStatusId !== INVOICE_STAGE_STATUS_ID) {
+            throw new ValidationError("Invoice draft can only be updated while booking is at the laundry shop");
+        }
+
+        if (bookingRow.invoiceStatus !== "draft") {
+            throw new ValidationError("No draft found for this booking. Use POST /agent/invoice/save-draft first.");
+        }
+
+        const { date: currentDate, time: currentTime } = agentWallClockDateTime(
+            timeZone,
+            clientTimeZone
+        );
+
+        const keptActiveIds = await this.syncInvoiceDraftServiceLines({
+            bookingId,
+            services,
+            currentDate,
+            currentTime,
+        });
+
+        const { totals, draftSavedAt } = await this.finalizeInvoiceDraftTotals({
+            bookingId,
+            serviceCharge,
+            zoneMinimumAmount,
+        });
+
+        return {
+            bookingId,
+            invoiceStatus: "draft",
+            draftSavedAt,
+            activeLineIds: keptActiveIds,
+            servicesCount: keptActiveIds.length,
             servicesSubtotal: totals.servicesSubtotal,
             subTotal: totals.subTotal,
             total: totals.total,
@@ -465,8 +634,9 @@ class AgentInvoiceManagementService {
         const bookingData = draftBooking.toJSON();
         const seenServiceIds = new Set();
 
-        bookingData.customerSelectedServices = (bookingData.customerSelectedServices || []).map(
-            (item) => {
+        bookingData.customerSelectedServices = (bookingData.customerSelectedServices || [])
+            .filter((item) => item.status !== false)
+            .map((item) => {
                 if (!item.service) return item;
 
                 const serviceId = item.service.id;
@@ -482,8 +652,7 @@ class AgentInvoiceManagementService {
 
                 seenServiceIds.add(serviceId);
                 return item;
-            }
-        );
+            });
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
 

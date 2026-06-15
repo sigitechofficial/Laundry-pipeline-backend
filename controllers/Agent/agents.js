@@ -2113,25 +2113,61 @@ exports.driverAddSerivces = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    // Send invoice ready email (non-blocking)
+    // Send invoice ready email to customer + order invoice email to agent (non-blocking)
     try {
         const invoiceReadyMail = require('../../helper/invoiceReadyMail');
+        const agentInvoiceMail = require('../../helper/agentInvoiceMail');
         const customerData = await users.findOne({
             where: { id: customerId },
-            attributes: ['firstName', 'email']
+            attributes: ['firstName', 'lastName', 'email']
         });
+        const customerName = [customerData?.firstName, customerData?.lastName].filter(Boolean).join(' ') || 'Customer';
+
         if (customerData?.email) {
             await invoiceReadyMail({
                 email: customerData.email,
                 userName: customerData.firstName || 'Customer',
                 orderNumber: bookings.orderTrackId || bookingId,
-                finalAmount: total.toFixed(2),
+                finalAmount: discountedTotal.toFixed(2),
                 currency: '£'
             });
             console.log('✅ Invoice ready email sent to:', customerData.email);
         }
+
+        if (bookings.laundryShopId) {
+            const shopAddress = await addressDb.findOne({
+                where: { id: bookings.laundryShopId },
+                attributes: ['id', 'userId'],
+                include: [{
+                    model: bussinessInformation,
+                    attributes: ['shopName'],
+                    required: false
+                }]
+            });
+
+            if (shopAddress?.userId) {
+                const agentData = await users.findOne({
+                    where: { id: shopAddress.userId },
+                    attributes: ['firstName', 'email']
+                });
+
+                if (agentData?.email) {
+                    const shopName = shopAddress.bussinessInformations?.[0]?.shopName || 'Your shop';
+                    await agentInvoiceMail({
+                        email: agentData.email,
+                        agentName: agentData.firstName || 'Agent',
+                        shopName,
+                        orderNumber: bookings.orderTrackId || bookingId,
+                        customerName,
+                        finalAmount: discountedTotal.toFixed(2),
+                        currency: '£'
+                    });
+                    console.log('✅ Agent order invoice email sent to:', agentData.email);
+                }
+            }
+        }
     } catch (emailError) {
-        console.error('⚠️ Failed to send invoice ready email (non-blocking):', emailError.message);
+        console.error('⚠️ Failed to send invoice emails (non-blocking):', emailError.message);
     }
 
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
@@ -2279,6 +2315,18 @@ exports.getInvoiceDraft = async (req, res) => {
         bookingId: req.params.bookingId,
     });
     return ResponseHelper.success(res, "Invoice draft retrieved", result);
+};
+
+/*
+ * Update existing invoice draft (sync lines by id)
+ */
+exports.updateInvoiceDraft = async (req, res) => {
+    const agentId = req.user.id;
+    const result = await invoiceManagementService.updateInvoiceDraft({
+        agentId,
+        ...req.body,
+    });
+    return ResponseHelper.success(res, "Invoice draft updated", result);
 };
 
 /*
