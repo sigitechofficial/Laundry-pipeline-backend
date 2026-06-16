@@ -284,7 +284,46 @@ class AgentInvoiceManagementService {
     }
 
     /**
-     * Sync draft lines by id — update existing, create new, deactivate removed.
+     * Resolve an existing invoice line for sync (by id, or serviceId + category + subCategory).
+     */
+    async findExistingInvoiceLineForSync(bookingId, serviceLine) {
+        if (serviceLine.id) {
+            return customerSelectedService.findOne({
+                where: {
+                    id: serviceLine.id,
+                    bookingId,
+                },
+            });
+        }
+
+        if (!serviceLine.serviceId) {
+            return null;
+        }
+
+        const where = {
+            bookingId,
+            serviceId: serviceLine.serviceId,
+            status: true,
+        };
+
+        if (serviceLine.categoryId != null && serviceLine.categoryId !== "") {
+            where.categoryId = serviceLine.categoryId;
+        }
+
+        if (serviceLine.subCategoryId != null && serviceLine.subCategoryId !== "") {
+            where.subCategoryId = serviceLine.subCategoryId;
+        } else {
+            where.subCategoryId = { [Op.is]: null };
+        }
+
+        return customerSelectedService.findOne({
+            where,
+            order: [["id", "DESC"]],
+        });
+    }
+
+    /**
+     * Sync draft lines — update by id or natural key, create new, deactivate removed.
      */
     async syncInvoiceDraftServiceLines({
         bookingId,
@@ -299,23 +338,19 @@ class AgentInvoiceManagementService {
             const qty = getLineQuantity(serviceLine.items);
             const lineActive = serviceLine.status !== false;
 
-            let selectedServiceRow;
+            let selectedServiceRow = await this.findExistingInvoiceLineForSync(
+                bookingId,
+                serviceLine
+            );
 
-            if (serviceLine.id) {
-                const existing = await customerSelectedService.findOne({
-                    where: {
-                        id: serviceLine.id,
-                        bookingId,
-                    },
-                });
+            if (serviceLine.id && !selectedServiceRow) {
+                throw new ValidationError(
+                    `Service line ${serviceLine.id} not found for this booking`
+                );
+            }
 
-                if (!existing) {
-                    throw new ValidationError(
-                        `Service line ${serviceLine.id} not found for this booking`
-                    );
-                }
-
-                await existing.update({
+            if (selectedServiceRow) {
+                await selectedServiceRow.update({
                     serviceId: serviceLine.serviceId,
                     categoryId: serviceLine.categoryId,
                     categoryPrice: unitPrice,
@@ -325,7 +360,6 @@ class AgentInvoiceManagementService {
                     time: currentTime,
                     status: lineActive,
                 });
-                selectedServiceRow = existing;
             } else {
                 selectedServiceRow = await customerSelectedService.create({
                     date: currentDate,
@@ -368,73 +402,6 @@ class AgentInvoiceManagementService {
         );
 
         return keptActiveIds;
-    }
-
-    async persistInvoiceServiceLines({
-        bookingId,
-        services,
-        currentDate,
-        currentTime,
-    }) {
-        if (!Array.isArray(services) || services.length === 0) {
-            return;
-        }
-
-        for (const serviceLine of services) {
-            const unitPrice = getUnitCategoryCharge(serviceLine.categoryCharge);
-            const qty = getLineQuantity(serviceLine.items);
-
-            const existingRecords = await customerSelectedService.findAll({
-                where: {
-                    bookingId,
-                    serviceId: serviceLine.serviceId,
-                    subCategoryId: { [Op.is]: null },
-                    categoryId: { [Op.is]: null },
-                },
-            });
-
-            let matched = existingRecords.find(
-                (row) => row.subCategoryId === serviceLine.subCategoryId
-            );
-
-            if (!matched) {
-                matched = existingRecords.find((row) => row.subCategoryId === null);
-            }
-
-            let selectedServiceRow;
-            if (matched) {
-                await matched.update({
-                    categoryId: serviceLine.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: serviceLine.subCategoryId,
-                    items: qty,
-                    date: currentDate,
-                    time: currentTime,
-                    status: true,
-                });
-                selectedServiceRow = matched;
-            } else {
-                selectedServiceRow = await customerSelectedService.create({
-                    date: currentDate,
-                    time: currentTime,
-                    bookingId,
-                    serviceId: serviceLine.serviceId,
-                    categoryId: serviceLine.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: serviceLine.subCategoryId,
-                    items: qty,
-                    status: true,
-                });
-            }
-
-            if (serviceLineHasAddOnPayload(serviceLine)) {
-                await replaceAddOnsForServiceLine(
-                    selectedServiceRow.id,
-                    serviceLine,
-                    addOnServices
-                );
-            }
-        }
     }
 
     async calculateInvoiceTotals(bookingRow, bookingId, serviceCharge, zoneMinimumAmount) {
@@ -516,12 +483,18 @@ class AgentInvoiceManagementService {
             );
         }
 
+        if (bookingRow.invoiceStatus === "finalized") {
+            throw new ValidationError(
+                "Invoice is already finalized. Use PATCH /agent/updateInvoice to revise it."
+            );
+        }
+
         const { date: currentDate, time: currentTime } = agentWallClockDateTime(
             timeZone,
             clientTimeZone
         );
 
-        await this.persistInvoiceServiceLines({
+        const keptActiveIds = await this.syncInvoiceDraftServiceLines({
             bookingId,
             services,
             currentDate,
@@ -538,7 +511,8 @@ class AgentInvoiceManagementService {
             bookingId,
             invoiceStatus: "draft",
             draftSavedAt,
-            servicesCount: services.length,
+            activeLineIds: keptActiveIds,
+            servicesCount: keptActiveIds.length,
             servicesSubtotal: totals.servicesSubtotal,
             subTotal: totals.subTotal,
             total: totals.total,
