@@ -298,6 +298,13 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.agentBookingFilters)
 );
+// Agent past orders — active, completed, cancelled, on hold
+router.get(
+    "/order-history",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getAgentOrderHistory)
+);
 //Set Order To On Hold
 router.patch(
     "/onHoldConformation",

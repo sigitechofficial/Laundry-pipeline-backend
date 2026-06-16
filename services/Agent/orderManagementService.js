@@ -7,6 +7,9 @@ const {
     cities,
     bookingStatus,
     customerSelectedService,
+    customerSelectedServiceAddOn,
+    addOnServices,
+    billingDetails,
     categories,
     subCategories,
     service,
@@ -30,11 +33,268 @@ const {
     getActiveBookingCutoff,
 } = require('../../utils/bookingTimeZone');
 
+const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold'];
+const COMPLETED_STATUS_IDS = [17];
+const CANCELLED_STATUS_IDS = [19, 21];
+const ON_HOLD_STATUS_IDS = [18, 22, 24];
+const ACTIVE_EXCLUDED_STATUS_IDS = [17, 19, 21];
+
 /**
  * Agent Order Management Service
  * Handles all agent order related business logic
  */
 class AgentOrderManagementService {
+
+    _getOrderHistoryIncludes() {
+        return [
+            {
+                model: bookingStatus,
+                attributes: ['id', 'title', 'description'],
+            },
+            {
+                model: addressDb,
+                as: 'pickupAddress',
+                attributes: [
+                    'id',
+                    'title',
+                    'streetAddress',
+                    'district',
+                    'province',
+                    'addressType',
+                    'lat',
+                    'lng',
+                    'postalcode',
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName'],
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name'],
+                    },
+                ],
+            },
+            {
+                model: addressDb,
+                as: 'dropOffAddress',
+                attributes: [
+                    'id',
+                    'title',
+                    'streetAddress',
+                    'district',
+                    'province',
+                    'addressType',
+                    'lat',
+                    'lng',
+                    'postalcode',
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName'],
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name'],
+                    },
+                ],
+            },
+            {
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'image'],
+            },
+            {
+                model: billingDetails,
+                as: 'billingDetail',
+                required: false,
+                attributes: [
+                    'upfrontAmount',
+                    'serviceCharge',
+                    'discount',
+                    'total',
+                    'paymentStatus',
+                ],
+            },
+            {
+                model: customerSelectedService,
+                required: false,
+                where: { status: true },
+                attributes: [
+                    'id',
+                    'serviceId',
+                    'categoryId',
+                    'subCategoryId',
+                    'categoryPrice',
+                    'items',
+                    'status',
+                ],
+                include: [
+                    {
+                        model: service,
+                        required: false,
+                        attributes: ['id', 'name'],
+                    },
+                    {
+                        model: subCategories,
+                        required: false,
+                        attributes: ['id', 'name', 'price'],
+                    },
+                    {
+                        model: customerSelectedServiceAddOn,
+                        as: 'addOns',
+                        required: false,
+                        attributes: ['id', 'addOnServiceId', 'price', 'items'],
+                        include: [
+                            {
+                                model: addOnServices,
+                                as: 'addOnService',
+                                required: false,
+                                attributes: ['id', 'name', 'price'],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ];
+    }
+
+    _buildOrderHistoryStatusWhere(status) {
+        switch (status) {
+            case 'active':
+                return { bookingStatusId: { [Op.notIn]: ACTIVE_EXCLUDED_STATUS_IDS } };
+            case 'completed':
+                return { bookingStatusId: { [Op.in]: COMPLETED_STATUS_IDS } };
+            case 'cancelled':
+                return { bookingStatusId: { [Op.in]: CANCELLED_STATUS_IDS } };
+            case 'on_hold':
+                return { bookingStatusId: { [Op.in]: ON_HOLD_STATUS_IDS } };
+            case 'all':
+            default:
+                return { bookingStatusId: { [Op.ne]: 1 } };
+        }
+    }
+
+    /**
+     * Agent order history with tab filters and pagination
+     * @param {number} agentId
+     * @param {{ status?: string, page?: number, limit?: number }} options
+     */
+    async getOrderHistory(agentId, options = {}) {
+        const status = (options.status || 'all').toLowerCase();
+        const page = Math.max(parseInt(options.page, 10) || 1, 1);
+        const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
+        const offset = (page - 1) * limit;
+
+        if (!ORDER_HISTORY_STATUSES.includes(status)) {
+            throw new ValidationError(
+                'Invalid status. Allowed: all, active, completed, cancelled, on_hold'
+            );
+        }
+
+        const addressFound = await addressDb.findOne({
+            where: { userId: agentId },
+        });
+
+        if (!addressFound) {
+            throw new NotFoundError('Address not found for agent');
+        }
+
+        const shopBaseWhere = { laundryShopId: addressFound.id };
+        const statusWhere = this._buildOrderHistoryStatusWhere(status);
+        const listWhere = { ...shopBaseWhere, ...statusWhere };
+
+        const [total, orders, allCount, activeCount, completedCount, cancelledCount, onHoldCount] =
+            await Promise.all([
+                booking.count({ where: listWhere }),
+                booking.findAll({
+                    where: listWhere,
+                    order: [['id', 'DESC']],
+                    limit,
+                    offset,
+                    attributes: [
+                        'id',
+                        'orderTrackId',
+                        'bookingStatusId',
+                        'invoiceStatus',
+                        'invoiceDraftSavedAt',
+                        'orderAmount',
+                        'subTotal',
+                        'totalItems',
+                        'totalBags',
+                        'sameBagForAllServices',
+                        'noOfBags',
+                        'paymentConfirmed',
+                        'collectionDate',
+                        'collectionTimeFrom',
+                        'collectionTimeTo',
+                        'deliveryDate',
+                        'deliveryTimeFrom',
+                        'deliveryTimeTo',
+                        'driverInstructionOptions',
+                        'driverInstructionOptions1',
+                        'driverInstruction',
+                        'createdAt',
+                        'updatedAt',
+                    ],
+                    include: this._getOrderHistoryIncludes(),
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('all'),
+                    },
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('active'),
+                    },
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('completed'),
+                    },
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('cancelled'),
+                    },
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('on_hold'),
+                    },
+                }),
+            ]);
+
+        const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+
+        return {
+            filter: status,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1,
+            },
+            counts: {
+                all: allCount,
+                active: activeCount,
+                completed: completedCount,
+                cancelled: cancelledCount,
+                onHold: onHoldCount,
+            },
+            orders: orders.map((row) => row.toJSON()),
+        };
+    }
 
     /**
      * Get Booking Home - Get available bookings for agent

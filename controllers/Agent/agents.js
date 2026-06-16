@@ -148,6 +148,7 @@ const addOnServicesService = require('../../services/Admin/addOnServicesService'
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
 const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
+const agentOrderManagementService = require('../../services/Agent/orderManagementService');
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -1129,8 +1130,22 @@ exports.agentBookingFilters = async (req, res) => {
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 };
 
+exports.getAgentOrderHistory = async (req, res) => {
+    const agentId = req.user.id;
+    const { status, page, limit } = req.query;
 
+    const result = await agentOrderManagementService.getOrderHistory(agentId, {
+        status,
+        page,
+        limit,
+    });
 
+    return ResponseHelper.success(
+        res,
+        'Agent order history fetched successfully',
+        result
+    );
+};
 
 exports.invoiceDetailTab = async (req, res) => {
     const agentId = req.user.id;
