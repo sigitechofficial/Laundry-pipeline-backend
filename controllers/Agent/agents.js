@@ -1975,62 +1975,12 @@ exports.driverAddSerivces = async (req, res) => {
     }
 
     if (services.length > 0) {
-        for (let service of services) {
-            const unitPrice = getUnitCategoryCharge(service.categoryCharge);
-            const qty = getLineQuantity(service.items);
-
-            const existingRecords = await customerSelectedService.findAll({
-                where: {
-                    bookingId,
-                    serviceId: service.serviceId,
-                    subCategoryId: { [Op.is]: null },
-                    categoryId: { [Op.is]: null },
-                }
-            });
-
-            let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
-
-            // 👇 fallback: update the first one with null subCategoryId
-            if (!matched) {
-                matched = existingRecords.find(r => r.subCategoryId === null);
-            }
-
-            let selectedServiceRow;
-            if (matched) {
-                console.log(`✅ Updating existing record (id ${matched.id})`);
-                await matched.update({
-                    categoryId: service.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: service.subCategoryId,
-                    items: qty,
-                    date: currentDate,
-                    time: currentTime,
-                    status: true
-                });
-                selectedServiceRow = matched;
-            } else {
-                console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                selectedServiceRow = await customerSelectedService.create({
-                    date: currentDate,
-                    time: currentTime,
-                    bookingId: bookingId,
-                    serviceId: service.serviceId,
-                    categoryId: service.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: service.subCategoryId,
-                    items: qty,
-                    status: true
-                });
-            }
-
-            if (serviceLineHasAddOnPayload(service)) {
-                await replaceAddOnsForServiceLine(
-                    selectedServiceRow.id,
-                    service,
-                    addOnServices
-                );
-            }
-        }
+        await invoiceManagementService.syncInvoiceDraftServiceLines({
+            bookingId,
+            services,
+            currentDate,
+            currentTime,
+        });
     }
 
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
@@ -2381,6 +2331,7 @@ exports.invoiceCreation = async (req, res) => {
             {
                 model: customerSelectedService,
                 required: false,
+                where: { status: true },
                 include: [
                     {
                         model: service,
@@ -2452,7 +2403,7 @@ exports.invoiceCreation = async (req, res) => {
                 ],
                 attributes: [
                     "id", "date", "time", "categoryPrice", "bookingId",
-                    "categoryId", "serviceId", "subCategoryId", "items", "bags", "serviceInstruction"
+                    "categoryId", "serviceId", "subCategoryId", "items", "bags", "serviceInstruction", "status"
                 ]
             },
             {
@@ -2523,7 +2474,9 @@ exports.invoiceCreation = async (req, res) => {
     const bookingData = invoiceDetails[0]?.toJSON();
     const seenServiceIds = new Set();
 
-    bookingData.customerSelectedServices = bookingData.customerSelectedServices.map(item => {
+    bookingData.customerSelectedServices = (bookingData.customerSelectedServices || [])
+        .filter((item) => item.status !== false)
+        .map(item => {
         if (!item.service) return item;
 
         const serviceId = item.service.id;
@@ -4732,66 +4685,14 @@ exports.updateInvoice = async (req, res) => {
     );
     console.log("Update invoice timestamp (tz-aware):", currentDate, currentTime);
 
-    // Save / update each service from the request
+    // Save / update each service from the request (sync — no duplicate lines)
     if (services.length > 0) {
-        for (let service of services) {
-            const unitPrice = getUnitCategoryCharge(service.categoryCharge);
-            const qty = getLineQuantity(service.items);
-
-            const whereClause = {
-                bookingId,
-                id: service.id,
-                serviceId: service.serviceId,
-                categoryId: service.categoryId,
-                subCategoryId: service.subCategoryId !== undefined ? service.subCategoryId : null
-            };
-
-            const existingRecords = await customerSelectedService.findAll({
-                where: whereClause
-            });
-
-            let matched = existingRecords.find(r => r.subCategoryId === service.subCategoryId);
-
-            if (!matched) {
-                matched = existingRecords.find(r => r.subCategoryId === null);
-            }
-
-            let selectedServiceRow;
-            if (matched) {
-                console.log(`✅ Updating existing record (id ${matched.id})`);
-                await matched.update({
-                    categoryId: service.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: service.subCategoryId || null,
-                    items: qty,
-                    date: currentDate,
-                    time: currentTime,
-                    status: service.status
-                });
-                selectedServiceRow = matched;
-            } else {
-                console.log(`🆕 Creating new for subCategoryId: ${service.subCategoryId}`);
-                selectedServiceRow = await customerSelectedService.create({
-                    date: currentDate,
-                    time: currentTime,
-                    bookingId: bookingId,
-                    serviceId: service.serviceId,
-                    categoryId: service.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: service.subCategoryId || null,
-                    items: qty,
-                    status: service.status
-                });
-            }
-
-            if (serviceLineHasAddOnPayload(service)) {
-                await replaceAddOnsForServiceLine(
-                    selectedServiceRow.id,
-                    service,
-                    addOnServices
-                );
-            }
-        }
+        await invoiceManagementService.syncInvoiceDraftServiceLines({
+            bookingId,
+            services,
+            currentDate,
+            currentTime,
+        });
     }
 
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);

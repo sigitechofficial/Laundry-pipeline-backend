@@ -35,6 +35,7 @@ const {
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
 const { getPrepaidInvoiceDeduction } = require('../../utils/invoicePrepaidDeduction');
+const invoiceManagementService = require('../Agent/invoiceManagementService');
 const {
     ValidationError,
     NotFoundError,
@@ -1123,57 +1124,13 @@ class OrderService {
             throw new NotFoundError("Zone information not found for this booking");
         }
 
-        for (const serviceItem of services) {
-            const unitPrice = getUnitCategoryCharge(serviceItem.categoryCharge);
-            const qty = getLineQuantity(serviceItem.items);
-
-            const existingRecords = await customerSelectedService.findAll({
-                where: {
-                    bookingId,
-                    serviceId: serviceItem.serviceId,
-                    subCategoryId: { [Op.is]: null },
-                    categoryId: { [Op.is]: null },
-                }
+        if (Array.isArray(services) && services.length > 0) {
+            await invoiceManagementService.syncInvoiceDraftServiceLines({
+                bookingId,
+                services,
+                currentDate,
+                currentTime,
             });
-
-            let matched = existingRecords.find(r => r.subCategoryId === serviceItem.subCategoryId);
-            if (!matched) {
-                matched = existingRecords.find(r => r.subCategoryId === null);
-            }
-
-            let selectedServiceRow;
-            if (matched) {
-                await matched.update({
-                    categoryId: serviceItem.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: serviceItem.subCategoryId,
-                    items: qty,
-                    date: currentDate,
-                    time: currentTime,
-                    status: true
-                });
-                selectedServiceRow = matched;
-            } else {
-                selectedServiceRow = await customerSelectedService.create({
-                    date: currentDate,
-                    time: currentTime,
-                    bookingId,
-                    serviceId: serviceItem.serviceId,
-                    categoryId: serviceItem.categoryId,
-                    categoryPrice: unitPrice,
-                    subCategoryId: serviceItem.subCategoryId,
-                    items: qty,
-                    status: true
-                });
-            }
-
-            if (serviceLineHasAddOnPayload(serviceItem)) {
-                await replaceAddOnsForServiceLine(
-                    selectedServiceRow.id,
-                    serviceItem,
-                    addOnServices
-                );
-            }
         }
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
