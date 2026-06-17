@@ -47,6 +47,7 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
+const { buildPaymentSummary } = require('../../utils/invoicePaymentSummary');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
@@ -1895,9 +1896,41 @@ class CustomerOrderService {
             bookingPlain.id
         );
 
+        const billing = bookingPlain.billingDetail || {};
+        const tipAmount =
+            bookingPlain.tips && bookingPlain.tips.length > 0
+                ? bookingPlain.tips.reduce(
+                      (sum, t) => sum + parseFloat(t.amount || 0),
+                      0
+                  )
+                : 0;
+        const serviceFee =
+            parseFloat(billing.serviceCharge) ||
+            parseFloat(bookingPlain.zone?.serviceCharge) ||
+            0;
+        const minimumOrderPayment =
+            parseFloat(billing.upfrontAmount) ||
+            parseFloat(bookingPlain.zone?.zoneMinimumAmount) ||
+            0;
+        const currencySymbol =
+            bookingPlain.zone?.currencyUnitZ?.symbol || "£";
+        const currency =
+            bookingPlain.zone?.currencyUnitZ?.name || "GBP";
+
+        const paymentSummary = buildPaymentSummary({
+            laundrySubtotal: servicesSubtotal,
+            serviceFee,
+            minimumOrderPayment,
+            driverTip: tipAmount,
+            discount: parseFloat(billing.discount || 0),
+            currency,
+            currencySymbol,
+        });
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
+            paymentSummary,
             cardDetails,
             cancellationPolicy,
             noShowPolicy,

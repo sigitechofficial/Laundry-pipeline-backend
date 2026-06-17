@@ -1143,7 +1143,11 @@ class OrderService {
 
         let subTotal =
             servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-        const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
+        const prepaidDeduction = getPrepaidInvoiceDeduction(
+            parsedZoneMinimum,
+            parsedServiceCharge,
+            tipAmount
+        );
         let total = subTotal - prepaidDeduction;
 
         const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);

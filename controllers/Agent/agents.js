@@ -136,8 +136,8 @@ function normalizeProofDeliveryType(value) {
 
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
-const { confirmAndCapturePayment, createPaymentIntend, createPaymentIntentForAgent, chargeOffSession } = require("../stripe");
-const { getPickupChargeAmount, getPrepaidInvoiceDeduction } = require("../../utils/invoicePrepaidDeduction");
+const { confirmAndCapturePayment, chargeOffSession } = require("../stripe");
+const { getPickupChargeAmount } = require("../../utils/invoicePrepaidDeduction");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const { sendNotification } = require("../../utils/notification");
@@ -1267,6 +1267,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 required: false,
                 attributes: ['upfrontAmount', 'serviceCharge', 'total', 'paymentStatus'],
             },
+            {
+                model: tip,
+                as: 'tips',
+                attributes: ['id', 'amount'],
+                required: false,
+            },
         ],
     });
 
@@ -1289,9 +1295,21 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     const upfrontAmount = parseFloat(bookingfind.billingDetail?.upfrontAmount || 0) || 0;
     const serviceCharge = parseFloat(bookingfind.billingDetail?.serviceCharge || 0) || 0;
-    const initialChargeAmount = getPickupChargeAmount(upfrontAmount, serviceCharge);
+    const driverTip =
+        bookingfind.tips && bookingfind.tips.length > 0
+            ? bookingfind.tips.reduce(
+                  (sum, t) => sum + (parseFloat(t.amount) || 0),
+                  0
+              )
+            : 0;
+    const basePickupCharge = getPickupChargeAmount(upfrontAmount, serviceCharge, 0);
+    const initialChargeAmount = getPickupChargeAmount(
+        upfrontAmount,
+        serviceCharge,
+        driverTip
+    );
 
-    if (!initialChargeAmount || initialChargeAmount <= 0) {
+    if (!basePickupCharge || basePickupCharge <= 0) {
         throw new ValidationError("Upfront amount not set for this booking");
     }
 
@@ -1337,7 +1355,8 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     console.log("💳 Creating payment intent for booking:", bookingId);
     console.log("💰 Upfront Amount:", upfrontAmount);
     console.log("💰 Service Charge:", serviceCharge);
-    console.log("💰 Initial Charge (upfront + service):", initialChargeAmount);
+    console.log("💰 Driver Tip:", driverTip);
+    console.log("💰 Initial Charge (upfront + service + tip):", initialChargeAmount);
     console.log("👤 Customer:", bookingfind.customer.stripeCustomerId);
     console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
     console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
@@ -1403,6 +1422,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         amountCharged: initialChargeAmount,
         upfrontAmount,
         serviceCharge,
+        driverTip,
     });
 }
 
@@ -1651,20 +1671,122 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
 
 
 /*
- *  Create Intent Using Stripe
+ *  Create balance payment intent — amount is always server-calculated (amountDueNow).
  */
 exports.createIntentUsingStripeForAgent = async (req, res) => {
-    const { amount, customerId, savedPaymentMethodId } = req.body;
-    console.log("Amount ------------------------>", amount)
-    const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
-    console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
-    let intentData = {
-        intentId: intent.id,
-        amount: intent.amount,
-        customerId: customerId,
+    const { bookingId, customerId, savedPaymentMethodId, amount: clientAmount } =
+        req.body;
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
     }
-    return ResponseHelper.success(res, "Intent Created", {});
-}
+
+    const bookingRow = await booking.findOne({
+        where: { id: bookingId },
+        include: [
+            {
+                model: users,
+                as: "customer",
+                attributes: ["id", "stripeCustomerId"],
+            },
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["total", "paymentStatus"],
+            },
+        ],
+    });
+
+    if (!bookingRow) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const chargeAmount = paymentSummary.amountDueNow;
+
+    if (bookingRow.billingDetail?.paymentStatus === "Paid" && chargeAmount <= 0) {
+        return ResponseHelper.success(res, "Balance already paid", {
+            bookingId,
+            paymentSummary,
+            chargeAmount: 0,
+            alreadyPaid: true,
+        });
+    }
+
+    if (chargeAmount <= 0) {
+        return ResponseHelper.success(res, "No balance due for this booking", {
+            bookingId,
+            paymentSummary,
+            chargeAmount: 0,
+        });
+    }
+
+    if (clientAmount != null && clientAmount !== "") {
+        const parsedClientAmount = parseFloat(clientAmount);
+        if (
+            Number.isFinite(parsedClientAmount) &&
+            Math.abs(parsedClientAmount - chargeAmount) > 0.02
+        ) {
+            throw new ValidationError(
+                `Amount mismatch. Balance due is ${chargeAmount.toFixed(2)}, received ${parsedClientAmount.toFixed(2)}`
+            );
+        }
+    }
+
+    const stripeCustomerId =
+        customerId || bookingRow.customer?.stripeCustomerId;
+    const paymentMethodId =
+        savedPaymentMethodId || bookingRow.paymentMethodId;
+
+    if (!stripeCustomerId) {
+        throw new ValidationError("Stripe customer ID not found for this booking");
+    }
+
+    if (!paymentMethodId) {
+        throw new ValidationError(
+            "Payment method not found. Customer must complete card setup first."
+        );
+    }
+
+    const idempotencyKey = `booking_${bookingId}_balance_${Date.now()}`;
+    const paymentIntent = await chargeOffSession(
+        chargeAmount,
+        stripeCustomerId,
+        paymentMethodId,
+        idempotencyKey
+    );
+
+    if (paymentIntent.status !== "succeeded") {
+        throw new ValidationError(
+            `Payment failed. Status: ${paymentIntent.status}`
+        );
+    }
+
+    await billingDetails.update(
+        {
+            total: chargeAmount,
+            paymentStatus: "Paid",
+        },
+        { where: { bookingId } }
+    );
+
+    await booking.update(
+        {
+            orderAmount: chargeAmount,
+            paymentIntentId: paymentIntent.id,
+        },
+        { where: { id: bookingId } }
+    );
+
+    return ResponseHelper.success(res, "Balance payment charged successfully", {
+        bookingId,
+        paymentIntentId: paymentIntent.id,
+        chargeAmount,
+        paymentSummary,
+    });
+};
 
 
 
@@ -2004,47 +2126,24 @@ exports.driverAddSerivces = async (req, res) => {
         servicesSubtotal
     );
 
-    const parsedServiceCharge = parseFloat(serviceCharge) || 0;
-    const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+    const totals = await invoiceManagementService.calculateInvoiceTotals(
+        bookings,
+        bookingId,
+        serviceCharge,
+        zoneMinimumAmount
+    );
 
-    // Get tip amount from booking
-    const tipAmount = bookings.tips && bookings.tips.length > 0
-        ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-        : 0;
-    console.log("Tip Amount:", tipAmount);
+    const {
+        subTotal,
+        total: discountedTotal,
+        paymentSummary,
+        existingDiscount,
+        finalZoneAdminCommissionAmount,
+    } = totals;
 
-    // subTotal = all active lines (unit×qty + add-ons) + serviceCharge + zoneMinimumAmount + tipAmount
-    let subTotal =
-        servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-    console.log("Sub-Total (full order value):", subTotal);
-
-    // total = subTotal - upfront - serviceCharge (deduct amounts collected at pickup)
-    const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
-    let total = subTotal - prepaidDeduction;
-    console.log("Total (remaining balance):", total);
-
-    // Calculate zone admin commission
-    const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-    const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
-
-    console.log("Zone Admin Commission %%%%%%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommission);
-    console.log("Zone Admin Commission Amount%%%%%%%%%%%%%%%%%%%%%:", zoneAdminCommissionAmount);
-
-    // Read existing discount from billingDetails (set at booking creation via coupon)
-    const existingBilling = await billingDetails.findOne({ where: { bookingId: bookingId } });
-    const existingDiscount = parseFloat(existingBilling?.discount || 0);
-
-    // Round to 2 decimal places
-    total = parseFloat(total.toFixed(2));
-    subTotal = parseFloat(subTotal.toFixed(2));
-    const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
-
-    // Apply existing coupon discount so it is not lost after invoice step
-    const discountedTotal = parseFloat(Math.max(0, total - existingDiscount).toFixed(2));
-
+    console.log("Payment summary amountDueNow:", paymentSummary.amountDueNow);
+    console.log("Total order amount:", subTotal);
     console.log("Existing Discount:", existingDiscount);
-    console.log("Final Total After Zone Deduction:", total);
-    console.log("Final Total After Discount:", discountedTotal);
 
     if (isNaN(discountedTotal)) {
         throw new Error("Calculated total is NaN. Please check your input values.");
@@ -2144,9 +2243,13 @@ exports.driverAddSerivces = async (req, res) => {
     }
 
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
+        bookingId,
+        invoiceStatus: "finalized",
+        paymentSummary,
         servicesSubtotal,
         subTotal,
         total: discountedTotal,
+        orderAmount: discountedTotal,
     });
 }
 
@@ -2526,11 +2629,15 @@ exports.invoiceCreation = async (req, res) => {
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
     bookingData.servicesSubtotal = servicesSubtotal;
 
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         servicesSubtotal,
+        paymentSummary,
         remainingTime,
-        customerHasResponded
+        customerHasResponded,
     });
 }
 
@@ -4720,48 +4827,21 @@ exports.updateInvoice = async (req, res) => {
         parseFloat(serviceCharge ?? bookings.billingDetail?.serviceCharge ?? 0) || 0;
     const parsedZoneMinimum =
         parseFloat(zoneMinimumAmount ?? bookings.billingDetail?.upfrontAmount ?? 0) || 0;
-    console.log("Service Charge:", parsedServiceCharge);
-    console.log("Zone Minimum / upfrontAmount:", parsedZoneMinimum);
 
-    // Get tip amount from booking (same as driverAddServices)
-    const tipAmount = bookings.tips && bookings.tips.length > 0
-        ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-        : 0;
-    console.log("Tip Amount:", tipAmount);
-
-    // subTotal = all active lines (unit×qty + add-ons) + serviceCharge + zoneMinimumAmount + tipAmount
-    let subTotal =
-        servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-    console.log("Sub-Total (full order value):", subTotal);
-
-    // total = subTotal - upfront - serviceCharge (deduct amounts collected at pickup)
-    const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
-    let total = subTotal - prepaidDeduction;
-    console.log("Total (remaining balance):", total);
-
-    // Calculate zone admin commission (same as driverAddServices)
-    const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-    const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
-    console.log("Zone Admin Commission Amount:", zoneAdminCommissionAmount);
-
-    // Read existing discount from billingDetails (set at booking creation via coupon)
-    const existingDiscount = parseFloat(
-        bookings.billingDetail?.discount ??
-        (await billingDetails.findOne({ where: { bookingId } }))?.discount ??
-        0
+    const totals = await invoiceManagementService.calculateInvoiceTotals(
+        bookings,
+        bookingId,
+        parsedServiceCharge,
+        parsedZoneMinimum
     );
 
-    // Round to 2 decimal places
-    total = parseFloat(total.toFixed(2));
-    subTotal = parseFloat(subTotal.toFixed(2));
-    const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
-
-    // Apply existing coupon discount so it is not lost after invoice update
-    const discountedTotal = parseFloat(Math.max(0, total - existingDiscount).toFixed(2));
-
-    console.log("Existing Discount:", existingDiscount);
-    console.log("Final Total After Zone Deduction:", total);
-    console.log("Final Total After Discount:", discountedTotal);
+    const {
+        subTotal,
+        total: discountedTotal,
+        paymentSummary,
+        existingDiscount,
+        finalZoneAdminCommissionAmount,
+    } = totals;
 
     if (isNaN(discountedTotal)) {
         throw new Error("Calculated total is NaN. Please check your input values.");
@@ -4794,9 +4874,12 @@ exports.updateInvoice = async (req, res) => {
     });
 
     return ResponseHelper.success(res, "Invoice Updated", {
+        bookingId,
+        paymentSummary,
         servicesSubtotal,
         subTotal,
         total: discountedTotal,
+        orderAmount: discountedTotal,
     });
 }
 

@@ -35,7 +35,7 @@ const {
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
-const { getPrepaidInvoiceDeduction } = require("../../utils/invoicePrepaidDeduction");
+const { buildPaymentSummary } = require("../../utils/invoicePaymentSummary");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -419,34 +419,95 @@ class AgentInvoiceManagementService {
                 ? bookingRow.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
                 : 0;
 
-        let subTotal = servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-        const prepaidDeduction = getPrepaidInvoiceDeduction(parsedZoneMinimum, parsedServiceCharge);
-        let total = subTotal - prepaidDeduction;
-
-        const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-        const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
-
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
         const existingDiscount = parseFloat(existingBilling?.discount || 0);
 
-        total = parseFloat(total.toFixed(2));
-        subTotal = parseFloat(subTotal.toFixed(2));
-        const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
-        const discountedTotal = parseFloat(Math.max(0, total - existingDiscount).toFixed(2));
+        const paymentSummary = buildPaymentSummary({
+            laundrySubtotal: servicesSubtotal,
+            serviceFee: parsedServiceCharge,
+            minimumOrderPayment: parsedZoneMinimum,
+            driverTip: tipAmount,
+            discount: existingDiscount,
+        });
 
-        if (Number.isNaN(discountedTotal)) {
+        const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
+        const amountDueNow = paymentSummary.amountDueNow;
+
+        const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
+        const zoneAdminCommissionAmount = (totalOrderAmount * zoneAdminCommission) / 100;
+        const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
+
+        if (Number.isNaN(amountDueNow)) {
             throw new ValidationError("Calculated total is invalid. Please check your input values.");
         }
 
         return {
             servicesSubtotal,
-            subTotal,
-            total: discountedTotal,
+            subTotal: totalOrderAmount,
+            total: amountDueNow,
+            paymentSummary,
             existingDiscount,
             finalZoneAdminCommissionAmount,
             parsedServiceCharge,
             parsedZoneMinimum,
         };
+    }
+
+    /**
+     * Build paymentSummary for a booking (customer/agent invoice screens).
+     * @param {number} bookingId
+     * @returns {Promise<object>} paymentSummary
+     */
+    async getPaymentSummaryForBooking(bookingId) {
+        const bookingRow = await booking.findByPk(bookingId, {
+            include: [
+                {
+                    model: zone,
+                    attributes: ["id", "name", "zoneAdminComission", "zoneMinimumAmount", "serviceCharge"],
+                },
+                {
+                    model: tip,
+                    as: "tips",
+                    attributes: ["id", "amount"],
+                    required: false,
+                },
+                {
+                    model: billingDetails,
+                    as: "billingDetail",
+                    required: false,
+                    attributes: [
+                        "upfrontAmount",
+                        "serviceCharge",
+                        "discount",
+                        "total",
+                        "paymentStatus",
+                    ],
+                },
+            ],
+        });
+
+        if (!bookingRow) {
+            throw new NotFoundError("Booking not found");
+        }
+
+        const billing = bookingRow.billingDetail || {};
+        const serviceCharge =
+            parseFloat(billing.serviceCharge) ||
+            parseFloat(bookingRow.zone?.serviceCharge) ||
+            0;
+        const zoneMinimum =
+            parseFloat(billing.upfrontAmount) ||
+            parseFloat(bookingRow.zone?.zoneMinimumAmount) ||
+            0;
+
+        const totals = await this.calculateInvoiceTotals(
+            bookingRow,
+            bookingId,
+            serviceCharge,
+            zoneMinimum
+        );
+
+        return totals.paymentSummary;
     }
 
     /**
@@ -516,6 +577,7 @@ class AgentInvoiceManagementService {
             servicesSubtotal: totals.servicesSubtotal,
             subTotal: totals.subTotal,
             total: totals.total,
+            paymentSummary: totals.paymentSummary,
         };
     }
 
@@ -578,6 +640,7 @@ class AgentInvoiceManagementService {
             servicesSubtotal: totals.servicesSubtotal,
             subTotal: totals.subTotal,
             total: totals.total,
+            paymentSummary: totals.paymentSummary,
         };
     }
 
@@ -631,6 +694,19 @@ class AgentInvoiceManagementService {
             });
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
+        const billing = bookingData.billingDetail || {};
+        const tipAmount =
+            bookingData.tips && bookingData.tips.length > 0
+                ? bookingData.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
+                : 0;
+
+        const paymentSummary = buildPaymentSummary({
+            laundrySubtotal: servicesSubtotal,
+            serviceFee: parseFloat(billing.serviceCharge || 0),
+            minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
+            driverTip: tipAmount,
+            discount: parseFloat(billing.discount || 0),
+        });
 
         return {
             bookingId,
@@ -640,6 +716,7 @@ class AgentInvoiceManagementService {
             servicesSubtotal,
             subTotal: bookingData.subTotal,
             total: bookingData.orderAmount,
+            paymentSummary,
         };
     }
 
