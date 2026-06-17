@@ -656,6 +656,23 @@ async function bookingEventSentCheckTheShops(
     return { notifiedCount: 0, availableShopCount: 0 };
 }
 
+function normalizeSelectedServiceAddOn(addOn) {
+    const plain = addOn?.toJSON ? addOn.toJSON() : addOn || {};
+    const unitPrice =
+        parseFloat(plain.price ?? plain.addOnService?.price) || 0;
+    const items =
+        parseInt(plain.items, 10) > 0 ? parseInt(plain.items, 10) : 1;
+
+    return {
+        id: plain.id,
+        addOnServiceId: plain.addOnServiceId,
+        price: plain.price,
+        items,
+        lineTotal: parseFloat((unitPrice * items).toFixed(2)),
+        addOnService: plain.addOnService || null,
+    };
+}
+
 function mapCancellationPolicyResponse(cancellationPolicyRaw) {
     if (!cancellationPolicyRaw?.cancellationConfig) return null;
     const config = cancellationPolicyRaw.cancellationConfig;
@@ -1609,6 +1626,7 @@ class CustomerOrderService {
                     },
                     required: false,
                     attributes: [
+                        "id",
                         "date",
                         "time",
                         "categoryprice",
@@ -1642,7 +1660,7 @@ class CustomerOrderService {
                             model: customerSelectedServiceAddOn,
                             as: 'addOns',
                             required: false,
-                            attributes: ['id', 'addOnServiceId', 'price'],
+                            attributes: ['id', 'addOnServiceId', 'price', 'items'],
                             include: [
                                 {
                                     model: addOnServices,
@@ -1849,22 +1867,39 @@ class CustomerOrderService {
                 if (!addOnsByServiceId[key]) {
                     addOnsByServiceId[key] = [];
                 }
-                const unitPrice = parseFloat(plain.price) || 0;
-                const items = parseInt(plain.items, 10) > 0 ? parseInt(plain.items, 10) : 1;
-                addOnsByServiceId[key].push({
-                    id: plain.id,
-                    addOnServiceId: plain.addOnServiceId,
-                    price: plain.price,
-                    items,
-                    lineTotal: parseFloat((unitPrice * items).toFixed(2)),
-                    addOnService: plain.addOnService || null
-                });
+                addOnsByServiceId[key].push(normalizeSelectedServiceAddOn(plain));
             }
 
-            bookingPlain.customerSelectedServices = selectedServices.map(serviceItem => ({
-                ...serviceItem,
-                addOns: addOnsByServiceId[serviceItem.id] || []
-            }));
+            bookingPlain.customerSelectedServices = selectedServices.map(
+                (serviceItem) => {
+                    const serviceId = serviceItem.id;
+                    const hydratedAddOns =
+                        serviceId != null
+                            ? addOnsByServiceId[serviceId]
+                            : null;
+                    const addOnsSource =
+                        hydratedAddOns && hydratedAddOns.length > 0
+                            ? hydratedAddOns
+                            : Array.isArray(serviceItem.addOns)
+                              ? serviceItem.addOns
+                              : [];
+
+                    return {
+                        ...serviceItem,
+                        addOns: addOnsSource.map(normalizeSelectedServiceAddOn),
+                    };
+                }
+            );
+        } else if (selectedServices.length > 0) {
+            bookingPlain.customerSelectedServices = selectedServices.map(
+                (serviceItem) => ({
+                    ...serviceItem,
+                    addOns: (Array.isArray(serviceItem.addOns)
+                        ? serviceItem.addOns
+                        : []
+                    ).map(normalizeSelectedServiceAddOn),
+                })
+            );
         }
 
         const cancellationPolicy = mapCancellationPolicyResponse(
