@@ -1927,6 +1927,11 @@ class CustomerOrderService {
             currencySymbol,
         });
 
+        const hasInvoiceTotals =
+            bookingPlain.invoiceStatus === "finalized" ||
+            bookingPlain.invoiceStatus === "draft" ||
+            servicesSubtotal > 0;
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
@@ -1935,6 +1940,18 @@ class CustomerOrderService {
             cancellationPolicy,
             noShowPolicy,
         };
+
+        if (hasInvoiceTotals) {
+            resultData.subTotal = paymentSummary.orderSummary.totalOrderAmount;
+            resultData.orderAmount = paymentSummary.amountDueNow;
+            if (resultData.billingDetail) {
+                resultData.billingDetail = {
+                    ...resultData.billingDetail,
+                    total: paymentSummary.amountDueNow,
+                };
+            }
+        }
+
         delete resultData.cancellationPolicyBookings;
         delete resultData.noShowPolicyBookings;
 
