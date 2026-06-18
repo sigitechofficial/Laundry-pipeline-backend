@@ -673,6 +673,95 @@ function normalizeSelectedServiceAddOn(addOn) {
     };
 }
 
+function buildSelectedServiceLineKey(serviceItem) {
+    return `${serviceItem?.serviceId ?? ""}:${serviceItem?.categoryId ?? ""}:${serviceItem?.subCategoryId ?? ""}`;
+}
+
+async function hydrateBookingSelectedServiceAddOns(bookingId, selectedServices) {
+    if (!Array.isArray(selectedServices) || selectedServices.length === 0) {
+        return selectedServices;
+    }
+
+    const normalizedBookingId = parseInt(bookingId, 10);
+    const activeServiceRows = await customerSelectedService.findAll({
+        where: {
+            bookingId: normalizedBookingId,
+            status: { [Op.in]: [true, 1] },
+        },
+        attributes: ["id", "serviceId", "categoryId", "subCategoryId"],
+        raw: true,
+    });
+
+    const lineIdByCompositeKey = {};
+    const allServiceLineIds = [];
+
+    for (const row of activeServiceRows) {
+        allServiceLineIds.push(row.id);
+        lineIdByCompositeKey[buildSelectedServiceLineKey(row)] = row.id;
+    }
+
+    const addOnsByServiceId = {};
+
+    if (allServiceLineIds.length > 0) {
+        const addOnRows = await customerSelectedServiceAddOn.findAll({
+            where: {
+                customerSelectedServiceId: { [Op.in]: allServiceLineIds },
+            },
+            attributes: [
+                "id",
+                "customerSelectedServiceId",
+                "addOnServiceId",
+                "price",
+                "items",
+            ],
+            include: [
+                {
+                    model: addOnServices,
+                    as: "addOnService",
+                    attributes: ["id", "name", "price"],
+                    required: false,
+                },
+            ],
+            order: [["id", "ASC"]],
+        });
+
+        for (const row of addOnRows) {
+            const plain = row.toJSON ? row.toJSON() : row;
+            const key = Number(plain.customerSelectedServiceId);
+            if (!addOnsByServiceId[key]) {
+                addOnsByServiceId[key] = [];
+            }
+            addOnsByServiceId[key].push(normalizeSelectedServiceAddOn(plain));
+        }
+    }
+
+    return selectedServices.map((serviceItem) => {
+        const resolvedLineId =
+            serviceItem.id ??
+            lineIdByCompositeKey[buildSelectedServiceLineKey(serviceItem)] ??
+            null;
+        const resolvedLineIdNum =
+            resolvedLineId != null ? Number(resolvedLineId) : null;
+
+        const hydratedAddOns =
+            resolvedLineIdNum != null
+                ? addOnsByServiceId[resolvedLineIdNum]
+                : null;
+        const addOnsSource =
+            hydratedAddOns && hydratedAddOns.length > 0
+                ? hydratedAddOns
+                : Array.isArray(serviceItem.addOns)
+                  ? serviceItem.addOns
+                  : [];
+
+        return {
+            ...serviceItem,
+            ...(resolvedLineIdNum != null ? { id: resolvedLineIdNum } : {}),
+            addOns: addOnsSource.map(normalizeSelectedServiceAddOn),
+        };
+    });
+}
+
 function mapCancellationPolicyResponse(cancellationPolicyRaw) {
     if (!cancellationPolicyRaw?.cancellationConfig) return null;
     const config = cancellationPolicyRaw.cancellationConfig;
@@ -1843,64 +1932,12 @@ class CustomerOrderService {
         const selectedServices = Array.isArray(bookingPlain.customerSelectedServices)
             ? bookingPlain.customerSelectedServices
             : [];
-        const selectedServiceIds = selectedServices.map(s => s.id).filter(Boolean);
 
-        if (selectedServiceIds.length > 0) {
-            const addOnRows = await customerSelectedServiceAddOn.findAll({
-                where: { customerSelectedServiceId: { [Op.in]: selectedServiceIds } },
-                attributes: ['id', 'customerSelectedServiceId', 'addOnServiceId', 'price', 'items'],
-                include: [
-                    {
-                        model: addOnServices,
-                        as: 'addOnService',
-                        attributes: ['id', 'name', 'price'],
-                        required: false,
-                    },
-                ],
-                order: [['id', 'ASC']]
-            });
-
-            const addOnsByServiceId = {};
-            for (const row of addOnRows) {
-                const plain = row.toJSON ? row.toJSON() : row;
-                const key = plain.customerSelectedServiceId;
-                if (!addOnsByServiceId[key]) {
-                    addOnsByServiceId[key] = [];
-                }
-                addOnsByServiceId[key].push(normalizeSelectedServiceAddOn(plain));
-            }
-
-            bookingPlain.customerSelectedServices = selectedServices.map(
-                (serviceItem) => {
-                    const serviceId = serviceItem.id;
-                    const hydratedAddOns =
-                        serviceId != null
-                            ? addOnsByServiceId[serviceId]
-                            : null;
-                    const addOnsSource =
-                        hydratedAddOns && hydratedAddOns.length > 0
-                            ? hydratedAddOns
-                            : Array.isArray(serviceItem.addOns)
-                              ? serviceItem.addOns
-                              : [];
-
-                    return {
-                        ...serviceItem,
-                        addOns: addOnsSource.map(normalizeSelectedServiceAddOn),
-                    };
-                }
+        bookingPlain.customerSelectedServices =
+            await hydrateBookingSelectedServiceAddOns(
+                bookingPlain.id,
+                selectedServices
             );
-        } else if (selectedServices.length > 0) {
-            bookingPlain.customerSelectedServices = selectedServices.map(
-                (serviceItem) => ({
-                    ...serviceItem,
-                    addOns: (Array.isArray(serviceItem.addOns)
-                        ? serviceItem.addOns
-                        : []
-                    ).map(normalizeSelectedServiceAddOn),
-                })
-            );
-        }
 
         const cancellationPolicy = mapCancellationPolicyResponse(
             bookingPlain.cancellationPolicyBookings
