@@ -39,6 +39,7 @@ const { buildPaymentSummary, buildPaymentSummaryForBooking } = require("../../ut
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
+const INVOICE_EDITABLE_STATUS_IDS = [8, 9];
 
 function agentWallClockDateTime(timeZone, clientTimeZone) {
     const candidate = timeZone || clientTimeZone;
@@ -78,6 +79,14 @@ class AgentInvoiceManagementService {
         }
 
         return { agentShop, bookingRow };
+    }
+
+    assertInvoiceEditableBookingStatus(bookingRow) {
+        if (!INVOICE_EDITABLE_STATUS_IDS.includes(bookingRow.bookingStatusId)) {
+            throw new ValidationError(
+                "Invoice can only be edited while booking is at the laundry shop or invoice stage"
+            );
+        }
     }
 
     buildInvoiceDraftIncludes(bookingId) {
@@ -235,6 +244,7 @@ class AgentInvoiceManagementService {
         bookingId,
         serviceCharge,
         zoneMinimumAmount,
+        preserveInvoiceStatus = false,
     }) {
         const bookingWithZone = await booking.findByPk(bookingId, {
             include: [
@@ -269,18 +279,25 @@ class AgentInvoiceManagementService {
         );
 
         const draftSavedAt = new Date();
+        const bookingUpdate = {
+            orderAmount: totals.total,
+            subTotal: totals.subTotal,
+        };
 
-        await booking.update(
-            {
-                orderAmount: totals.total,
-                subTotal: totals.subTotal,
-                invoiceStatus: "draft",
-                invoiceDraftSavedAt: draftSavedAt,
-            },
-            { where: { id: bookingId } }
-        );
+        if (!preserveInvoiceStatus) {
+            bookingUpdate.invoiceStatus = "draft";
+            bookingUpdate.invoiceDraftSavedAt = draftSavedAt;
+        }
 
-        return { totals, draftSavedAt };
+        await booking.update(bookingUpdate, { where: { id: bookingId } });
+
+        return {
+            totals,
+            draftSavedAt: preserveInvoiceStatus ? null : draftSavedAt,
+            invoiceStatus: preserveInvoiceStatus
+                ? bookingWithZone.invoiceStatus || "finalized"
+                : "draft",
+        };
     }
 
     /**
@@ -538,19 +555,13 @@ class AgentInvoiceManagementService {
 
         const { bookingRow } = await this.assertAgentBookingAccess(agentId, bookingId);
 
-        if (bookingRow.bookingStatusId !== INVOICE_STAGE_STATUS_ID) {
-            throw new ValidationError("Invoice draft can only be saved while booking is at the laundry shop");
-        }
+        this.assertInvoiceEditableBookingStatus(bookingRow);
+
+        const isFinalized = bookingRow.invoiceStatus === "finalized";
 
         if (bookingRow.invoiceStatus === "draft") {
             throw new ValidationError(
                 "Draft already exists for this booking. Use PATCH /agent/invoice/update-draft to update it."
-            );
-        }
-
-        if (bookingRow.invoiceStatus === "finalized") {
-            throw new ValidationError(
-                "Invoice is already finalized. Use PATCH /agent/updateInvoice to revise it."
             );
         }
 
@@ -566,15 +577,16 @@ class AgentInvoiceManagementService {
             currentTime,
         });
 
-        const { totals, draftSavedAt } = await this.finalizeInvoiceDraftTotals({
+        const { totals, draftSavedAt, invoiceStatus } = await this.finalizeInvoiceDraftTotals({
             bookingId,
             serviceCharge,
             zoneMinimumAmount,
+            preserveInvoiceStatus: isFinalized,
         });
 
         return {
             bookingId,
-            invoiceStatus: "draft",
+            invoiceStatus,
             draftSavedAt,
             activeLineIds: keptActiveIds,
             servicesCount: keptActiveIds.length,
@@ -609,13 +621,18 @@ class AgentInvoiceManagementService {
 
         const { bookingRow } = await this.assertAgentBookingAccess(agentId, bookingId);
 
-        if (bookingRow.bookingStatusId !== INVOICE_STAGE_STATUS_ID) {
-            throw new ValidationError("Invoice draft can only be updated while booking is at the laundry shop");
+        this.assertInvoiceEditableBookingStatus(bookingRow);
+
+        if (
+            bookingRow.invoiceStatus !== "draft" &&
+            bookingRow.invoiceStatus !== "finalized"
+        ) {
+            throw new ValidationError(
+                "No draft found for this booking. Use POST /agent/invoice/save-draft first."
+            );
         }
 
-        if (bookingRow.invoiceStatus !== "draft") {
-            throw new ValidationError("No draft found for this booking. Use POST /agent/invoice/save-draft first.");
-        }
+        const isFinalized = bookingRow.invoiceStatus === "finalized";
 
         const { date: currentDate, time: currentTime } = agentWallClockDateTime(
             timeZone,
@@ -629,15 +646,16 @@ class AgentInvoiceManagementService {
             currentTime,
         });
 
-        const { totals, draftSavedAt } = await this.finalizeInvoiceDraftTotals({
+        const { totals, draftSavedAt, invoiceStatus } = await this.finalizeInvoiceDraftTotals({
             bookingId,
             serviceCharge,
             zoneMinimumAmount,
+            preserveInvoiceStatus: isFinalized,
         });
 
         return {
             bookingId,
-            invoiceStatus: "draft",
+            invoiceStatus,
             draftSavedAt,
             activeLineIds: keptActiveIds,
             servicesCount: keptActiveIds.length,
