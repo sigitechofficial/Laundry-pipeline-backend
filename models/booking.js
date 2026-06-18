@@ -210,6 +210,11 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  paymentType: {
+    type: DataTypes.ENUM('card', 'cash'),
+    allowNull: false,
+    defaultValue: 'card',
+  },
   }, {
     sequelize,
     modelName: 'booking',

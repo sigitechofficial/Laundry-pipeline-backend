@@ -1284,7 +1284,40 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new NotFoundError("No driver is assigned to this booking yet");
     }
 
-    // Validate required payment data
+    const paymentType = bookingfind.paymentType || "card";
+
+    if (paymentType === "cash") {
+        if (bookingfind.bookingStatusId !== 4) {
+            await booking.update(
+                { bookingStatusId: 4 },
+                { where: { id: bookingId } }
+            );
+
+            await bookingHistory.create({
+                bookingId,
+                date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
+                time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+                bookingStatusId: 4,
+            });
+        }
+
+        const customerId = bookingfind.customerId;
+        sendNotification(
+            customerId,
+            "Driver On The Way",
+            "Your driver is on the way to the pickup location",
+            { bookingId, driverId: bookingfind.driverId }
+        );
+
+        return ResponseHelper.success(res, "Booking status updated (cash — no pickup charge)", {
+            bookingId,
+            paymentType: "cash",
+            paymentStatus: "cash_pending",
+            amountCharged: 0,
+        });
+    }
+
+    // Validate required payment data (card bookings)
     if (!bookingfind.customer.stripeCustomerId) {
         throw new ValidationError("Stripe customer ID not found for this booking");
     }
@@ -1702,6 +1735,12 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
+    if ((bookingRow.paymentType || "card") === "cash") {
+        throw new ValidationError(
+            "This is a cash booking. Use POST /agent/recordCashPayment instead of Stripe."
+        );
+    }
+
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
     const chargeAmount = paymentSummary.amountDueNow;
@@ -1784,6 +1823,97 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         bookingId,
         paymentIntentId: paymentIntent.id,
         chargeAmount,
+        paymentSummary,
+    });
+};
+
+/*
+ * Record cash collected at delivery for a cash booking.
+ */
+exports.recordCashPayment = async (req, res) => {
+    const { bookingId, amountCollected } = req.body;
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const bookingRow = await booking.findOne({
+        where: { id: bookingId },
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["total", "paymentStatus"],
+            },
+        ],
+    });
+
+    if (!bookingRow) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    if ((bookingRow.paymentType || "card") !== "cash") {
+        throw new ValidationError(
+            "Cash payment recording is only allowed for cash bookings"
+        );
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = paymentSummary.amountDueNow;
+
+    if (bookingRow.billingDetail?.paymentStatus === "Paid" && amountDue <= 0) {
+        return ResponseHelper.success(res, "Cash already recorded for this booking", {
+            bookingId,
+            paymentSummary,
+            amountCollected: 0,
+            alreadyPaid: true,
+        });
+    }
+
+    if (amountDue <= 0) {
+        return ResponseHelper.success(res, "No balance due for this booking", {
+            bookingId,
+            paymentSummary,
+            amountCollected: 0,
+        });
+    }
+
+    if (amountCollected != null && amountCollected !== "") {
+        const parsedCollected = parseFloat(amountCollected);
+        if (
+            Number.isFinite(parsedCollected) &&
+            Math.abs(parsedCollected - amountDue) > 0.02
+        ) {
+            throw new ValidationError(
+                `Amount mismatch. Balance due is ${amountDue.toFixed(2)}, received ${parsedCollected.toFixed(2)}`
+            );
+        }
+    }
+
+    const collectedAmount = amountDue;
+
+    await billingDetails.update(
+        {
+            total: collectedAmount,
+            paymentStatus: "Paid",
+        },
+        { where: { bookingId } }
+    );
+
+    await booking.update(
+        {
+            orderAmount: collectedAmount,
+            paymentConfirmed: true,
+        },
+        { where: { id: bookingId } }
+    );
+
+    return ResponseHelper.success(res, "Cash payment recorded successfully", {
+        bookingId,
+        paymentType: "cash",
+        amountCollected: collectedAmount,
         paymentSummary,
     });
 };

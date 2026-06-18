@@ -98,14 +98,13 @@ async function createBooking(req, res) {
         tipAmount,
         couponCode,
         timeZone,
-        clientTimeZone
+        clientTimeZone,
+        paymentType,
     } = req.body;
 
     const userId = req.user.id;
 
     // Call service to handle business logic
-    // NOTE: Both setupIntentId and paymentMethodId are saved.
-    // Payment will be charged at Status 4 using paymentMethodId.
     const result = await customerOrderService.createBooking({
         collectionDate,
         collectionTimeFrom,
@@ -137,6 +136,7 @@ async function createBooking(req, res) {
         couponCode,
         timeZone,
         clientTimeZone,
+        paymentType,
     }, userId);
 
     // Return response using ResponseHelper success method

@@ -47,7 +47,7 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
-const { buildPaymentSummary } = require('../../utils/invoicePaymentSummary');
+const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
@@ -958,11 +958,21 @@ class CustomerOrderService {
             tipAmount,
             timeZone,
             clientTimeZone,
-            couponCode
+            couponCode,
+            paymentType: rawPaymentType,
         } = data;
 
+        const paymentType = normalizePaymentType(rawPaymentType);
+
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
+        console.log("paymentType==============>>>", paymentType);
         console.log("🚀 ~ createBooking ~ req.body:", data);
+
+        if (paymentType === "card" && !paymentMethodId) {
+            throw new ValidationError(
+                "Payment method is required for card bookings"
+            );
+        }
 
         // IDEMPOTENCY CHECK: Prevent duplicate bookings with same setupIntentId
         if (setupIntentId) {
@@ -1100,8 +1110,9 @@ class CustomerOrderService {
             driverInstructionOptions,
             driverInstructionOptions1,
             subTotal: 0,
-            setupIntentId: setupIntentId,
-            paymentMethodId: paymentMethodId,
+            setupIntentId: paymentType === "card" ? setupIntentId : null,
+            paymentMethodId: paymentType === "card" ? paymentMethodId : null,
+            paymentType,
             operationalTimeZone,
             customerLocalTimeZone,
             // paymentIntentId will be set at Status 4 when payment is captured
@@ -1327,14 +1338,14 @@ class CustomerOrderService {
                 orderAmount: total || 0,
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: fixTimeKey,
-                partialPayment: true,
+                partialPayment: paymentType !== "cash",
                 subTotal: discountedTotal,
                 tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }
         );
 
-        if (paymentMethodId && stripeCustomerId) {
+        if (paymentType === "card" && paymentMethodId && stripeCustomerId) {
             await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
         }
 
@@ -1989,15 +2000,18 @@ class CustomerOrderService {
         const currency =
             bookingPlain.zone?.currencyUnitZ?.name || "GBP";
 
-        const paymentSummary = buildPaymentSummary({
-            laundrySubtotal: servicesSubtotal,
-            serviceFee,
-            minimumOrderPayment,
-            driverTip: tipAmount,
-            discount: parseFloat(billing.discount || 0),
-            currency,
-            currencySymbol,
-        });
+        const paymentSummary = buildPaymentSummaryForBooking(
+            bookingPlain.paymentType,
+            {
+                laundrySubtotal: servicesSubtotal,
+                serviceFee,
+                minimumOrderPayment,
+                driverTip: tipAmount,
+                discount: parseFloat(billing.discount || 0),
+                currency,
+                currencySymbol,
+            }
+        );
 
         const hasInvoiceTotals =
             bookingPlain.invoiceStatus === "finalized" ||

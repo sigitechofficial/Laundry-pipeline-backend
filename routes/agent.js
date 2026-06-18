@@ -596,6 +596,11 @@ router.post(
     validateAccessToken,
     asyncMiddleware(agentController.createIntentUsingStripeForAgent)
 );
+router.post(
+    "/recordCashPayment",
+    validateAccessToken,
+    asyncMiddleware(agentController.recordCashPayment)
+);
 //!----------------------------------------------------------Performance Dashboard----------------------------------------------------------//
 router.get(
     "/getPerformanceDashboard",
