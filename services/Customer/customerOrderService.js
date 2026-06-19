@@ -47,7 +47,7 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
-const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
+const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType, enrichPaymentSummary } = require('../../utils/invoicePaymentSummary');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
@@ -2000,9 +2000,8 @@ class CustomerOrderService {
         const currency =
             bookingPlain.zone?.currencyUnitZ?.name || "GBP";
 
-        const paymentSummary = buildPaymentSummaryForBooking(
-            bookingPlain.paymentType,
-            {
+        const paymentSummary = enrichPaymentSummary(
+            buildPaymentSummaryForBooking(bookingPlain.paymentType, {
                 laundrySubtotal: servicesSubtotal,
                 serviceFee,
                 minimumOrderPayment,
@@ -2010,6 +2009,12 @@ class CustomerOrderService {
                 discount: parseFloat(billing.discount || 0),
                 currency,
                 currencySymbol,
+            }),
+            {
+                paymentType: bookingPlain.paymentType,
+                balancePaymentMethod: bookingPlain.balancePaymentMethod,
+                balanceCollectedVia: bookingPlain.balanceCollectedVia,
+                billingPaymentStatus: billing.paymentStatus,
             }
         );
 

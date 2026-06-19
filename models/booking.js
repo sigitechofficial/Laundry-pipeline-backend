@@ -215,6 +215,14 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: false,
     defaultValue: 'card',
   },
+  balancePaymentMethod: {
+    type: DataTypes.ENUM('card', 'cash'),
+    allowNull: true,
+  },
+  balanceCollectedVia: {
+    type: DataTypes.ENUM('card', 'cash'),
+    allowNull: true,
+  },
   }, {
     sequelize,
     modelName: 'booking',

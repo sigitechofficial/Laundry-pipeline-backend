@@ -139,6 +139,10 @@ const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, chargeOffSession } = require("../stripe");
 const { getPickupChargeAmount } = require("../../utils/invoicePrepaidDeduction");
 const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
+const {
+    resolveBalancePaymentMethod,
+    normalizePaymentType,
+} = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const { sendNotification } = require("../../utils/notification");
@@ -1767,6 +1771,13 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         );
     }
 
+    const balanceMethod = resolveBalancePaymentMethod(bookingRow);
+    if (balanceMethod === "cash") {
+        throw new ValidationError(
+            "Balance collection is set to cash. Use POST /agent/recordCashPayment instead of Stripe."
+        );
+    }
+
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
     const chargeAmount = paymentSummary.amountDueNow;
@@ -1862,20 +1873,85 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         {
             orderAmount: chargeAmount,
             paymentIntentId: paymentIntent.id,
+            balanceCollectedVia: "card",
         },
         { where: { id: bookingId } }
     );
+
+    const updatedPaymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
 
     return ResponseHelper.success(res, "Balance payment charged successfully", {
         bookingId,
         paymentIntentId: paymentIntent.id,
         chargeAmount,
-        paymentSummary,
+        paymentSummary: updatedPaymentSummary,
     });
 };
 
 /*
- * Record cash collected at delivery for a cash booking.
+ * Set how the delivery balance will be collected (card or cash).
+ */
+exports.setBalancePaymentMethod = async (req, res) => {
+    const bookingId = req.params.id;
+    const { balancePaymentMethod } = req.body;
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const normalized = normalizePaymentType(balancePaymentMethod);
+    if (!balancePaymentMethod || (normalized !== "card" && normalized !== "cash")) {
+        throw new ValidationError("balancePaymentMethod must be 'card' or 'cash'");
+    }
+
+    const bookingRow = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus"],
+            },
+        ],
+    });
+
+    if (!bookingRow) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    if ((bookingRow.paymentType || "card") === "cash" && normalized === "card") {
+        throw new ValidationError(
+            "Cash bookings must be collected in cash at delivery"
+        );
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+
+    if (
+        paymentSummary.amountDueNow <= 0 &&
+        bookingRow.billingDetail?.paymentStatus === "Paid"
+    ) {
+        throw new ValidationError(
+            "No balance due — payment collection method cannot be changed"
+        );
+    }
+
+    await booking.update({ balancePaymentMethod: normalized });
+
+    const updatedPaymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+
+    return ResponseHelper.success(res, "Balance payment method updated", {
+        bookingId: Number(bookingId),
+        balancePaymentMethod: normalized,
+        paymentSummary: updatedPaymentSummary,
+    });
+};
+
+/*
+ * Record cash collected at delivery (cash bookings or card upfront + cash balance).
  */
 exports.recordCashPayment = async (req, res) => {
     const { bookingId, amountCollected } = req.body;
@@ -1900,9 +1976,13 @@ exports.recordCashPayment = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
-    if ((bookingRow.paymentType || "card") !== "cash") {
+    const balanceMethod = resolveBalancePaymentMethod(bookingRow);
+    const isCashBooking = (bookingRow.paymentType || "card") === "cash";
+
+    if (!isCashBooking && balanceMethod !== "cash") {
         throw new ValidationError(
-            "Cash payment recording is only allowed for cash bookings"
+            "Cash recording is only allowed when balance collection is set to cash. " +
+                "Use PATCH /agent/booking/:id/balance-payment-method or charge by card."
         );
     }
 
@@ -1953,15 +2033,20 @@ exports.recordCashPayment = async (req, res) => {
         {
             orderAmount: collectedAmount,
             paymentConfirmed: true,
+            balanceCollectedVia: "cash",
         },
         { where: { id: bookingId } }
     );
 
+    const updatedPaymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+
     return ResponseHelper.success(res, "Cash payment recorded successfully", {
         bookingId,
-        paymentType: "cash",
+        paymentType: bookingRow.paymentType || "cash",
+        balancePaymentMethod: balanceMethod,
         amountCollected: collectedAmount,
-        paymentSummary,
+        paymentSummary: updatedPaymentSummary,
     });
 };
 

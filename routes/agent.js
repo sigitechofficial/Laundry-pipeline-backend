@@ -591,6 +591,11 @@ router.get(
     asyncMiddleware(agentController.rejectedServiceItems)
 );
 //!----------------------------------------------------------Stripe Intent Api----------------------------------------------------------//
+router.patch(
+    "/booking/:id/balance-payment-method",
+    validateAccessToken,
+    asyncMiddleware(agentController.setBalancePaymentMethod)
+);
 router.post(
     "/createIntentUsingStripeForAgent",
     validateAccessToken,

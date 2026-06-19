@@ -120,10 +120,130 @@ function buildPaymentSummaryForBooking(paymentType, params) {
     return buildPaymentSummary(params);
 }
 
+/**
+ * Resolve how the delivery balance should be collected.
+ * Cash bookings always cash; card bookings use stored choice or default to card.
+ */
+function resolveBalancePaymentMethod(booking = {}) {
+    const bookingPaymentType = normalizePaymentType(booking.paymentType);
+    if (bookingPaymentType === "cash") {
+        return "cash";
+    }
+    const stored = booking.balancePaymentMethod;
+    if (stored === "cash" || stored === "card") {
+        return stored;
+    }
+    return "card";
+}
+
+/**
+ * Add agent/customer-facing payment state labels for invoice & order history.
+ */
+function enrichPaymentSummary(paymentSummary, options = {}) {
+    const paymentType = normalizePaymentType(options.paymentType);
+    const balancePaymentMethod = resolveBalancePaymentMethod({
+        paymentType,
+        balancePaymentMethod: options.balancePaymentMethod,
+    });
+    const billingPaymentStatus = options.billingPaymentStatus || "Pending";
+    const balanceCollectedVia = options.balanceCollectedVia || null;
+
+    const amountDueNow = roundMoney(paymentSummary.amountDueNow);
+    const totalOrderAmount = roundMoney(
+        paymentSummary.orderSummary?.totalOrderAmount || 0
+    );
+    const upfrontPaid = roundMoney(paymentSummary.paidAtBooking?.totalPaid || 0);
+    const discount = roundMoney(paymentSummary.orderSummary?.discount || 0);
+
+    const isFullyPaid =
+        billingPaymentStatus === "Paid" && amountDueNow <= 0;
+
+    let laterPaid = 0;
+    if (isFullyPaid && upfrontPaid > 0) {
+        laterPaid = roundMoney(
+            Math.max(0, totalOrderAmount - upfrontPaid - discount)
+        );
+    } else if (isFullyPaid && paymentType === "cash") {
+        laterPaid = roundMoney(totalOrderAmount - discount);
+    }
+
+    let paymentState = "balance_due";
+    let paymentStateLabel = `Balance due — collect by ${balancePaymentMethod}`;
+
+    if (isFullyPaid) {
+        paymentState = "fully_paid";
+        paymentStateLabel = "Paid";
+    } else if (
+        paymentType === "cash" &&
+        upfrontPaid <= 0 &&
+        amountDueNow > 0
+    ) {
+        paymentState = "cash_not_collected";
+        paymentStateLabel = "Cash selected — not yet collected";
+    } else if (
+        paymentType === "card" &&
+        upfrontPaid > 0 &&
+        amountDueNow > 0
+    ) {
+        paymentState = "card_upfront_balance_due";
+        paymentStateLabel =
+            balancePaymentMethod === "cash"
+                ? "Card paid upfront — balance due in cash"
+                : "Card paid upfront — balance due by card";
+    }
+
+    const paidAtBooking = {
+        ...paymentSummary.paidAtBooking,
+        method:
+            paymentType === "card" && upfrontPaid > 0 ? "card" : null,
+        label:
+            paymentType === "card" && upfrontPaid > 0
+                ? "Paid by card"
+                : null,
+    };
+
+    const paidLater = {
+        totalPaid: laterPaid,
+        method:
+            laterPaid > 0
+                ? balanceCollectedVia || balancePaymentMethod
+                : null,
+        label:
+            laterPaid > 0
+                ? balanceCollectedVia === "cash" ||
+                  (balanceCollectedVia === null &&
+                      balancePaymentMethod === "cash")
+                    ? "Paid in cash"
+                    : "Paid by card"
+                : null,
+    };
+
+    return {
+        ...paymentSummary,
+        balancePaymentMethod,
+        balanceCollectedVia,
+        billingPaymentStatus,
+        paymentState,
+        paymentStateLabel,
+        paidAtBooking,
+        paidLater,
+        cashRemaining:
+            !isFullyPaid &&
+            (balancePaymentMethod === "cash" || paymentType === "cash"),
+        balanceCollectionLabel: isFullyPaid
+            ? null
+            : balancePaymentMethod === "cash"
+              ? "Collect balance in cash"
+              : "Collect balance by card",
+    };
+}
+
 module.exports = {
     buildPaymentSummary,
     buildCashPaymentSummary,
     buildPaymentSummaryForBooking,
     normalizePaymentType,
+    resolveBalancePaymentMethod,
+    enrichPaymentSummary,
     roundMoney,
 };

@@ -35,7 +35,7 @@ const {
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
-const { buildPaymentSummary, buildPaymentSummaryForBooking } = require("../../utils/invoicePaymentSummary");
+const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -439,14 +439,19 @@ class AgentInvoiceManagementService {
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
         const existingDiscount = parseFloat(existingBilling?.discount || 0);
 
-        const paymentSummary = buildPaymentSummaryForBooking(
-            bookingRow.paymentType,
-            {
+        const paymentSummary = enrichPaymentSummary(
+            buildPaymentSummaryForBooking(bookingRow.paymentType, {
                 laundrySubtotal: servicesSubtotal,
                 serviceFee: parsedServiceCharge,
                 minimumOrderPayment: parsedZoneMinimum,
                 driverTip: tipAmount,
                 discount: existingDiscount,
+            }),
+            {
+                paymentType: bookingRow.paymentType,
+                balancePaymentMethod: bookingRow.balancePaymentMethod,
+                balanceCollectedVia: bookingRow.balanceCollectedVia,
+                billingPaymentStatus: existingBilling?.paymentStatus,
             }
         );
 
@@ -480,7 +485,12 @@ class AgentInvoiceManagementService {
      */
     async getPaymentSummaryForBooking(bookingId) {
         const bookingRow = await booking.findByPk(bookingId, {
-            attributes: ["id", "paymentType"],
+            attributes: [
+                "id",
+                "paymentType",
+                "balancePaymentMethod",
+                "balanceCollectedVia",
+            ],
             include: [
                 {
                     model: zone,
