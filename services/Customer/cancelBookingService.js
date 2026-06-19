@@ -58,6 +58,7 @@ class CancelBookingService {
                 'orderAmount',
                 'paymentConfirmed',
                 'paymentMethodId',
+                'orderTrackId',
                 'createdAt'
             ]
         });
@@ -107,11 +108,26 @@ class CancelBookingService {
                 if (customerData?.stripeCustomerId) {
                     try {
                         const idempotencyKey = `cancel-booking-${bookingId}-customer-${customerId}`;
+                        const orderLabel =
+                            bookingData.orderTrackId || String(bookingId);
                         stripeChargeResult = await chargeOffSession(
                             cancellationDetails.cancellationCharge,
                             customerData.stripeCustomerId,
                             savedPaymentMethodId,
-                            idempotencyKey
+                            idempotencyKey,
+                            {
+                                description: `Cancellation fee - Order ${orderLabel}`,
+                                metadata: {
+                                    bookingId: String(bookingId),
+                                    orderTrackId: bookingData.orderTrackId || "",
+                                    chargeType: "cancellation_fee",
+                                    customerId: String(customerId),
+                                    amount: String(
+                                        cancellationDetails.cancellationCharge
+                                    ),
+                                },
+                                statementDescriptorSuffix: "CANCEL",
+                            }
                         );
                         console.log(`✅ Cancellation charge of ${cancellationDetails.cancellationCharge} ${cancellationDetails.currency} charged to customer ${customerId} for booking ${bookingId}`);
                     } catch (chargeErr) {

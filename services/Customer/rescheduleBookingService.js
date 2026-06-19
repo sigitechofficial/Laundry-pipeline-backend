@@ -522,11 +522,27 @@ class RescheduleBookingService {
                 if (customerData?.stripeCustomerId) {
                     try {
                         const idempotencyKey = `reschedule-booking-${bookingId}-customer-${customerId}-n${bookingData.rescheduledCount + 1}`;
+                        const orderLabel =
+                            bookingData.orderTrackId || String(bookingId);
                         stripeChargeResult = await chargeOffSession(
                             chargeAmount,
                             customerData.stripeCustomerId,
                             savedPaymentMethodId,
-                            idempotencyKey
+                            idempotencyKey,
+                            {
+                                description: `Reschedule fee - Order ${orderLabel}`,
+                                metadata: {
+                                    bookingId: String(bookingId),
+                                    orderTrackId: bookingData.orderTrackId || "",
+                                    chargeType: "reschedule_fee",
+                                    customerId: String(customerId),
+                                    amount: String(chargeAmount),
+                                    rescheduledCount: String(
+                                        bookingData.rescheduledCount + 1
+                                    ),
+                                },
+                                statementDescriptorSuffix: "RESCHED",
+                            }
                         );
                         console.log(
                             `✅ Reschedule charge of ${chargeAmount} ${feeDetails.currency} charged for booking ${bookingId}`

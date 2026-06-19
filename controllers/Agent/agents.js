@@ -1400,12 +1400,26 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     const idempotencyKey = `booking_${bookingId}_ontheway_${Date.now()}`;
     console.log(`🔒 Idempotency Key: ${idempotencyKey}`);
 
+    const orderLabel = bookingfind.orderTrackId || String(bookingId);
+
     // Charge immediately using saved payment method with idempotency protection
     const paymentIntent = await chargeOffSession(
         initialChargeAmount,
         bookingfind.customer.stripeCustomerId,
         bookingfind.paymentMethodId,
-        idempotencyKey  // Pass idempotency key to prevent duplicate charges
+        idempotencyKey,
+        {
+            description: `Pickup charge - Order ${orderLabel}`,
+            metadata: {
+                bookingId: String(bookingId),
+                orderTrackId: bookingfind.orderTrackId || "",
+                chargeType: "pickup",
+                paymentType: paymentType,
+                customerId: String(bookingfind.customerId || ""),
+                agentId: String(req.user?.id || ""),
+            },
+            statementDescriptorSuffix: "PICKUP",
+        }
     );
 
     console.log("✅ Payment charged successfully:", paymentIntent.id, "Status:", paymentIntent.status);
@@ -1790,11 +1804,25 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
     }
 
     const idempotencyKey = `booking_${bookingId}_balance_${Date.now()}`;
+    const orderLabel = bookingRow.orderTrackId || String(bookingId);
     const paymentIntent = await chargeOffSession(
         chargeAmount,
         stripeCustomerId,
         paymentMethodId,
-        idempotencyKey
+        idempotencyKey,
+        {
+            description: `Delivery balance - Order ${orderLabel}`,
+            metadata: {
+                bookingId: String(bookingId),
+                orderTrackId: bookingRow.orderTrackId || "",
+                chargeType: "delivery_balance",
+                paymentType: bookingRow.paymentType || "card",
+                customerId: String(bookingRow.customerId || ""),
+                amountDue: String(chargeAmount),
+                agentId: String(req.user?.id || ""),
+            },
+            statementDescriptorSuffix: "LAUNDRY",
+        }
     );
 
     if (paymentIntent.status !== "succeeded") {

@@ -9,6 +9,45 @@ function convertToCents(amount) {
     return Math.round(amount * 100);
 }
 
+function sanitizeStripeMetadata(metadata) {
+    if (!metadata || typeof metadata !== "object") {
+        return undefined;
+    }
+
+    const normalized = {};
+    for (const [key, value] of Object.entries(metadata)) {
+        if (value === null || value === undefined || value === "") {
+            continue;
+        }
+        normalized[String(key).slice(0, 40)] = String(value).slice(0, 500);
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function applyStripePresentationFields(params, stripeOptions = {}) {
+    if (!stripeOptions || typeof stripeOptions !== "object") {
+        return;
+    }
+
+    if (stripeOptions.description) {
+        params.description = String(stripeOptions.description).slice(0, 1000);
+    }
+
+    const metadata = sanitizeStripeMetadata(stripeOptions.metadata);
+    if (metadata) {
+        params.metadata = metadata;
+    }
+
+    if (stripeOptions.statementDescriptorSuffix) {
+        params.statement_descriptor_suffix = String(
+            stripeOptions.statementDescriptorSuffix
+        )
+            .slice(0, 22)
+            .replace(/[<>'"\\*]/g, "");
+    }
+}
+
 
 /*
  *   Create Customer
@@ -95,7 +134,13 @@ async function createPaymentIntend(amount, customerId, paymentMethodId = null) {
  *   @param {string} idempotencyKey - Optional idempotency key for preventing duplicate charges
  *   @returns {Object} Stripe PaymentIntent object
  */
-async function chargeOffSession(amount, customerId, paymentMethodId, idempotencyKey = null) {
+async function chargeOffSession(
+    amount,
+    customerId,
+    paymentMethodId,
+    idempotencyKey = null,
+    stripeOptions = {}
+) {
     try {
         const params = {
             amount: convertToCents(amount),
@@ -106,6 +151,8 @@ async function chargeOffSession(amount, customerId, paymentMethodId, idempotency
             confirm: true,  // Confirm immediately
             // No capture_method means it auto-captures (charges immediately)
         };
+
+        applyStripePresentationFields(params, stripeOptions);
 
         // Add idempotency key if provided (CRITICAL for preventing duplicate charges)
         const options = {};
@@ -223,16 +270,25 @@ async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, custom
 /*
  *    Create PaymentIntent for Agent
  */
-async function createPaymentIntentForAgent(newAmount, customerId, savedPaymentMethodId) {
+async function createPaymentIntentForAgent(
+    newAmount,
+    customerId,
+    savedPaymentMethodId,
+    stripeOptions = {}
+) {
     try {
-        const paymentIntent = await stripe.paymentIntents.create({
+        const params = {
             amount: convertToCents(newAmount),
             currency: 'gbp',
             customer: customerId,
             payment_method: savedPaymentMethodId,
             off_session: true,
             confirm: true,
-        });
+        };
+
+        applyStripePresentationFields(params, stripeOptions);
+
+        const paymentIntent = await stripe.paymentIntents.create(params);
         return paymentIntent
     } catch (error) {
         throw new customError(`${error.message} `, 200)
