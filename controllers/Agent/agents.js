@@ -1938,7 +1938,7 @@ exports.setBalancePaymentMethod = async (req, res) => {
         );
     }
 
-    await booking.update({ balancePaymentMethod: normalized });
+    await bookingRow.update({ balancePaymentMethod: normalized });
 
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
