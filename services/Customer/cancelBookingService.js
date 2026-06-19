@@ -2,6 +2,7 @@ const { booking, cancelBooking, users, policy, cancellationPolicyConfig, booking
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
 const { chargeOffSession } = require('../../controllers/stripe');
+const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const activePoliciesService = require('../Admin/activePoliciesService');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
@@ -59,6 +60,8 @@ class CancelBookingService {
                 'paymentConfirmed',
                 'paymentMethodId',
                 'orderTrackId',
+                'paymentType',
+                'laundryShopId',
                 'createdAt'
             ]
         });
@@ -102,32 +105,36 @@ class CancelBookingService {
             if (savedPaymentMethodId) {
                 const customerData = await users.findOne({
                     where: { id: customerId },
-                    attributes: ['stripeCustomerId']
+                    attributes: [
+                        'id',
+                        'firstName',
+                        'lastName',
+                        'email',
+                        'stripeCustomerId',
+                    ],
                 });
 
                 if (customerData?.stripeCustomerId) {
                     try {
                         const idempotencyKey = `cancel-booking-${bookingId}-customer-${customerId}`;
-                        const orderLabel =
-                            bookingData.orderTrackId || String(bookingId);
+                        const stripePresentation = buildStripeChargePresentation({
+                            chargeType: "cancellation_fee",
+                            bookingId,
+                            orderTrackId: bookingData.orderTrackId,
+                            amount: cancellationDetails.cancellationCharge,
+                            currency: cancellationDetails.currency || "GBP",
+                            paymentType: bookingData.paymentType || "card",
+                            customer: customerData,
+                            agent: {},
+                            zoneId: bookingData.zoneId,
+                            laundryShopId: bookingData.laundryShopId,
+                        });
                         stripeChargeResult = await chargeOffSession(
                             cancellationDetails.cancellationCharge,
                             customerData.stripeCustomerId,
                             savedPaymentMethodId,
                             idempotencyKey,
-                            {
-                                description: `Cancellation fee - Order ${orderLabel}`,
-                                metadata: {
-                                    bookingId: String(bookingId),
-                                    orderTrackId: bookingData.orderTrackId || "",
-                                    chargeType: "cancellation_fee",
-                                    customerId: String(customerId),
-                                    amount: String(
-                                        cancellationDetails.cancellationCharge
-                                    ),
-                                },
-                                statementDescriptorSuffix: "CANCEL",
-                            }
+                            stripePresentation
                         );
                         console.log(`✅ Cancellation charge of ${cancellationDetails.cancellationCharge} ${cancellationDetails.currency} charged to customer ${customerId} for booking ${bookingId}`);
                     } catch (chargeErr) {

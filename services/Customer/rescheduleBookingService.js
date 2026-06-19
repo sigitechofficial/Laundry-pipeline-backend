@@ -28,6 +28,7 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { sendEvent } = require('../../socket_io');
 const { chargeOffSession } = require('../../controllers/stripe');
+const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { isShopOpenNow, isAnyShopOpenInZone } = require('../../utils/shopWorkingHours');
 const {
     getOrderExpireTime,
@@ -326,8 +327,8 @@ class RescheduleBookingService {
                 'orderAmount', 'paymentConfirmed', 'rescheduledCount',
                 'laundryShopId', 'orderTrackId', 'frequency',
                 'driverInstructionOptions', 'driverInstructionOptions1',
-                'driverInstruction', 'totalItems', 'pickupAddresId', 'dropOffAddressId',
-                'paymentMethodId'
+                'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
+                'paymentMethodId', 'paymentType'
             ]
         });
 
@@ -516,33 +517,39 @@ class RescheduleBookingService {
             if (savedPaymentMethodId) {
                 const customerData = await users.findOne({
                     where: { id: customerId },
-                    attributes: ['stripeCustomerId']
+                    attributes: [
+                        'id',
+                        'firstName',
+                        'lastName',
+                        'email',
+                        'stripeCustomerId',
+                    ],
                 });
 
                 if (customerData?.stripeCustomerId) {
                     try {
                         const idempotencyKey = `reschedule-booking-${bookingId}-customer-${customerId}-n${bookingData.rescheduledCount + 1}`;
-                        const orderLabel =
-                            bookingData.orderTrackId || String(bookingId);
+                        const stripePresentation = buildStripeChargePresentation({
+                            chargeType: "reschedule_fee",
+                            bookingId,
+                            orderTrackId: bookingData.orderTrackId,
+                            amount: chargeAmount,
+                            currency: feeDetails.currency || "GBP",
+                            paymentType: bookingData.paymentType || "card",
+                            customer: customerData,
+                            agent: {},
+                            zoneId: bookingData.zoneId,
+                            laundryShopId: bookingData.laundryShopId,
+                            extra: {
+                                rescheduledCount: bookingData.rescheduledCount + 1,
+                            },
+                        });
                         stripeChargeResult = await chargeOffSession(
                             chargeAmount,
                             customerData.stripeCustomerId,
                             savedPaymentMethodId,
                             idempotencyKey,
-                            {
-                                description: `Reschedule fee - Order ${orderLabel}`,
-                                metadata: {
-                                    bookingId: String(bookingId),
-                                    orderTrackId: bookingData.orderTrackId || "",
-                                    chargeType: "reschedule_fee",
-                                    customerId: String(customerId),
-                                    amount: String(chargeAmount),
-                                    rescheduledCount: String(
-                                        bookingData.rescheduledCount + 1
-                                    ),
-                                },
-                                statementDescriptorSuffix: "RESCHED",
-                            }
+                            stripePresentation
                         );
                         console.log(
                             `✅ Reschedule charge of ${chargeAmount} ${feeDetails.currency} charged for booking ${bookingId}`

@@ -138,6 +138,7 @@ const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, chargeOffSession } = require("../stripe");
 const { getPickupChargeAmount } = require("../../utils/invoicePrepaidDeduction");
+const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const { sendNotification } = require("../../utils/notification");
@@ -1259,7 +1260,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             {
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'stripeCustomerId'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
             },
             {
                 model: billingDetails,
@@ -1402,24 +1403,35 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     const orderLabel = bookingfind.orderTrackId || String(bookingId);
 
+    const agentUser = await users.findByPk(req.user.id, {
+        attributes: ["id", "firstName", "lastName", "email"],
+    });
+
+    const stripePresentation = buildStripeChargePresentation({
+        chargeType: "pickup",
+        bookingId,
+        orderTrackId: bookingfind.orderTrackId,
+        amount: initialChargeAmount,
+        currency: "GBP",
+        paymentType,
+        customer: bookingfind.customer || { id: bookingfind.customerId },
+        agent: agentUser || { id: req.user?.id },
+        billing: {
+            upfrontAmount,
+            serviceFee: serviceCharge,
+            driverTip,
+        },
+        zoneId: bookingfind.zoneId,
+        laundryShopId: bookingfind.laundryShopId,
+    });
+
     // Charge immediately using saved payment method with idempotency protection
     const paymentIntent = await chargeOffSession(
         initialChargeAmount,
         bookingfind.customer.stripeCustomerId,
         bookingfind.paymentMethodId,
         idempotencyKey,
-        {
-            description: `Pickup charge - Order ${orderLabel}`,
-            metadata: {
-                bookingId: String(bookingId),
-                orderTrackId: bookingfind.orderTrackId || "",
-                chargeType: "pickup",
-                paymentType: paymentType,
-                customerId: String(bookingfind.customerId || ""),
-                agentId: String(req.user?.id || ""),
-            },
-            statementDescriptorSuffix: "PICKUP",
-        }
+        stripePresentation
     );
 
     console.log("✅ Payment charged successfully:", paymentIntent.id, "Status:", paymentIntent.status);
@@ -1734,7 +1746,7 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
             {
                 model: users,
                 as: "customer",
-                attributes: ["id", "stripeCustomerId"],
+                attributes: ["id", "firstName", "lastName", "email", "stripeCustomerId"],
             },
             {
                 model: billingDetails,
@@ -1804,25 +1816,32 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
     }
 
     const idempotencyKey = `booking_${bookingId}_balance_${Date.now()}`;
-    const orderLabel = bookingRow.orderTrackId || String(bookingId);
+    const agentUser = await users.findByPk(req.user.id, {
+        attributes: ["id", "firstName", "lastName", "email"],
+    });
+
+    const stripePresentation = buildStripeChargePresentation({
+        chargeType: "delivery_balance",
+        bookingId,
+        orderTrackId: bookingRow.orderTrackId,
+        amount: chargeAmount,
+        currency: "GBP",
+        paymentType: bookingRow.paymentType || "card",
+        customer: bookingRow.customer || { id: bookingRow.customerId },
+        agent: agentUser || { id: req.user?.id },
+        billing: {
+            totalOrderAmount: paymentSummary?.orderSummary?.totalOrderAmount,
+        },
+        zoneId: bookingRow.zoneId,
+        laundryShopId: bookingRow.laundryShopId,
+    });
+
     const paymentIntent = await chargeOffSession(
         chargeAmount,
         stripeCustomerId,
         paymentMethodId,
         idempotencyKey,
-        {
-            description: `Delivery balance - Order ${orderLabel}`,
-            metadata: {
-                bookingId: String(bookingId),
-                orderTrackId: bookingRow.orderTrackId || "",
-                chargeType: "delivery_balance",
-                paymentType: bookingRow.paymentType || "card",
-                customerId: String(bookingRow.customerId || ""),
-                amountDue: String(chargeAmount),
-                agentId: String(req.user?.id || ""),
-            },
-            statementDescriptorSuffix: "LAUNDRY",
-        }
+        stripePresentation
     );
 
     if (paymentIntent.status !== "succeeded") {
