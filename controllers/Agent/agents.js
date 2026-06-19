@@ -3626,7 +3626,6 @@ exports.getAgentServices = async (req, res) => {
     const findServices = await agentSelectServices.findAll({
         where: {
             agentServiceId: agentId,
-            status: true
         },
         include: [
             {
@@ -3671,7 +3670,10 @@ exports.editServiceStatus = async (req, res) => {
         throw new NotFoundError("Service Not Found");
     }
 
-    await agentSelectServices.update({ status: status }, { where: { serviceId: serviceId } });
+    await agentSelectServices.update(
+        { status: status },
+        { where: { serviceId: serviceId, agentServiceId: agentId } }
+    );
 
     return ResponseHelper.success(res, "Service Status Updated", {});
 }

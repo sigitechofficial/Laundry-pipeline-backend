@@ -33,7 +33,6 @@ class AgentServiceManagementService {
         const findServices = await agentSelectServices.findAll({
             where: {
                 agentServiceId: agentId,
-                status: true
             },
             include: [
                 {
@@ -85,8 +84,8 @@ class AgentServiceManagementService {
         }
 
         await agentSelectServices.update(
-            { status: status }, 
-            { where: { serviceId: serviceId } }
+            { status: status },
+            { where: { serviceId: serviceId, agentServiceId: agentId } }
         );
 
         return {
