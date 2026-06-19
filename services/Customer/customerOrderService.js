@@ -2033,12 +2033,14 @@ class CustomerOrderService {
         };
 
         if (hasInvoiceTotals) {
-            resultData.subTotal = paymentSummary.orderSummary.totalOrderAmount;
-            resultData.orderAmount = paymentSummary.amountDueNow;
+            const fullOrderTotal = paymentSummary.orderSummary.totalOrderAmount;
+            resultData.subTotal = fullOrderTotal;
+            resultData.orderAmount = fullOrderTotal;
             if (resultData.billingDetail) {
                 resultData.billingDetail = {
                     ...resultData.billingDetail,
-                    total: paymentSummary.amountDueNow,
+                    total: fullOrderTotal,
+                    balanceDue: paymentSummary.amountDueNow,
                 };
             }
         }

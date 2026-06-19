@@ -148,23 +148,26 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
     const billingPaymentStatus = options.billingPaymentStatus || "Pending";
     const balanceCollectedVia = options.balanceCollectedVia || null;
 
-    const amountDueNow = roundMoney(paymentSummary.amountDueNow);
+    const calculatedDue = roundMoney(paymentSummary.amountDueNow);
     const totalOrderAmount = roundMoney(
         paymentSummary.orderSummary?.totalOrderAmount || 0
     );
     const upfrontPaid = roundMoney(paymentSummary.paidAtBooking?.totalPaid || 0);
     const discount = roundMoney(paymentSummary.orderSummary?.discount || 0);
 
-    const isFullyPaid =
-        billingPaymentStatus === "Paid" && amountDueNow <= 0;
+    const isBillingPaid = billingPaymentStatus === "Paid";
+    const displayAmountDueNow = isBillingPaid ? 0 : calculatedDue;
+    const isFullyPaid = isBillingPaid;
 
     let laterPaid = 0;
-    if (isFullyPaid && upfrontPaid > 0) {
-        laterPaid = roundMoney(
-            Math.max(0, totalOrderAmount - upfrontPaid - discount)
-        );
-    } else if (isFullyPaid && paymentType === "cash") {
-        laterPaid = roundMoney(totalOrderAmount - discount);
+    if (isBillingPaid) {
+        if (paymentType === "cash") {
+            laterPaid = roundMoney(Math.max(0, totalOrderAmount - discount));
+        } else if (upfrontPaid > 0) {
+            laterPaid = roundMoney(
+                Math.max(0, totalOrderAmount - upfrontPaid - discount)
+            );
+        }
     }
 
     let paymentState = "balance_due";
@@ -176,14 +179,14 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
     } else if (
         paymentType === "cash" &&
         upfrontPaid <= 0 &&
-        amountDueNow > 0
+        calculatedDue > 0
     ) {
         paymentState = "cash_not_collected";
         paymentStateLabel = "Cash selected — not yet collected";
     } else if (
         paymentType === "card" &&
         upfrontPaid > 0 &&
-        amountDueNow > 0
+        calculatedDue > 0
     ) {
         paymentState = "card_upfront_balance_due";
         paymentStateLabel =
@@ -202,24 +205,26 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
                 : null,
     };
 
+    const laterMethod =
+        laterPaid > 0
+            ? balanceCollectedVia || balancePaymentMethod
+            : null;
+    const laterLabel =
+        laterPaid > 0
+            ? laterMethod === "cash"
+                ? "Paid in cash"
+                : "Paid by card"
+            : null;
+
     const paidLater = {
         totalPaid: laterPaid,
-        method:
-            laterPaid > 0
-                ? balanceCollectedVia || balancePaymentMethod
-                : null,
-        label:
-            laterPaid > 0
-                ? balanceCollectedVia === "cash" ||
-                  (balanceCollectedVia === null &&
-                      balancePaymentMethod === "cash")
-                    ? "Paid in cash"
-                    : "Paid by card"
-                : null,
+        method: laterMethod,
+        label: laterLabel,
     };
 
     return {
         ...paymentSummary,
+        amountDueNow: displayAmountDueNow,
         balancePaymentMethod,
         balanceCollectedVia,
         billingPaymentStatus,

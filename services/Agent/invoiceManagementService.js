@@ -280,7 +280,7 @@ class AgentInvoiceManagementService {
 
         const draftSavedAt = new Date();
         const bookingUpdate = {
-            orderAmount: totals.total,
+            orderAmount: totals.subTotal,
             subTotal: totals.subTotal,
         };
 

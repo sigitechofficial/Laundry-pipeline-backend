@@ -1861,9 +1861,12 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         );
     }
 
+    const fullOrderTotal =
+        paymentSummary?.orderSummary?.totalOrderAmount ?? chargeAmount;
+
     await billingDetails.update(
         {
-            total: chargeAmount,
+            total: fullOrderTotal,
             paymentStatus: "Paid",
         },
         { where: { bookingId } }
@@ -1871,7 +1874,7 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
 
     await booking.update(
         {
-            orderAmount: chargeAmount,
+            orderAmount: fullOrderTotal,
             paymentIntentId: paymentIntent.id,
             balanceCollectedVia: "card",
         },
@@ -2000,6 +2003,37 @@ exports.recordCashPayment = async (req, res) => {
     }
 
     if (amountDue <= 0) {
+        const fullOrderTotal =
+            paymentSummary?.orderSummary?.totalOrderAmount ?? 0;
+        if (
+            bookingRow.billingDetail?.paymentStatus !== "Paid" &&
+            fullOrderTotal > 0
+        ) {
+            await billingDetails.update(
+                {
+                    total: fullOrderTotal,
+                    paymentStatus: "Paid",
+                },
+                { where: { bookingId } }
+            );
+            await booking.update(
+                { orderAmount: fullOrderTotal },
+                { where: { id: bookingId } }
+            );
+            const updatedPaymentSummary =
+                await invoiceManagementService.getPaymentSummaryForBooking(
+                    bookingId
+                );
+            return ResponseHelper.success(
+                res,
+                "No balance due — order fully covered by upfront payment",
+                {
+                    bookingId,
+                    paymentSummary: updatedPaymentSummary,
+                    amountCollected: 0,
+                }
+            );
+        }
         return ResponseHelper.success(res, "No balance due for this booking", {
             bookingId,
             paymentSummary,
@@ -2020,10 +2054,12 @@ exports.recordCashPayment = async (req, res) => {
     }
 
     const collectedAmount = amountDue;
+    const fullOrderTotal =
+        paymentSummary?.orderSummary?.totalOrderAmount ?? collectedAmount;
 
     await billingDetails.update(
         {
-            total: collectedAmount,
+            total: fullOrderTotal,
             paymentStatus: "Paid",
         },
         { where: { bookingId } }
@@ -2031,7 +2067,7 @@ exports.recordCashPayment = async (req, res) => {
 
     await booking.update(
         {
-            orderAmount: collectedAmount,
+            orderAmount: fullOrderTotal,
             paymentConfirmed: true,
             balanceCollectedVia: "cash",
         },
