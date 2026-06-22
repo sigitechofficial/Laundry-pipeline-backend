@@ -32,6 +32,7 @@ const {
     resolveBookingTimeZone,
     getActiveBookingCutoff,
 } = require('../../utils/bookingTimeZone');
+const invoiceManagementService = require('./invoiceManagementService');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold'];
 const COMPLETED_STATUS_IDS = [17];
@@ -177,6 +178,41 @@ class AgentOrderManagementService {
         }
     }
 
+    async _enrichOrderHistoryItem(orderPlain) {
+        const paymentSummary =
+            await invoiceManagementService.getPaymentSummaryForBooking(orderPlain.id);
+        const servicesSubtotal =
+            paymentSummary.laundrySubtotal ??
+            paymentSummary.orderSummary?.laundrySubtotal ??
+            0;
+
+        const enriched = {
+            ...orderPlain,
+            servicesSubtotal,
+            paymentSummary,
+        };
+
+        const hasInvoiceTotals =
+            orderPlain.invoiceStatus === 'finalized' ||
+            orderPlain.invoiceStatus === 'draft' ||
+            servicesSubtotal > 0;
+
+        if (hasInvoiceTotals) {
+            const fullOrderTotal = paymentSummary.orderSummary.totalOrderAmount;
+            enriched.subTotal = fullOrderTotal;
+            enriched.orderAmount = fullOrderTotal;
+            if (enriched.billingDetail) {
+                enriched.billingDetail = {
+                    ...enriched.billingDetail,
+                    total: fullOrderTotal,
+                    balanceDue: paymentSummary.amountDueNow,
+                };
+            }
+        }
+
+        return enriched;
+    }
+
     /**
      * Agent order history with tab filters and pagination
      * @param {number} agentId
@@ -226,7 +262,10 @@ class AgentOrderManagementService {
                         'totalBags',
                         'sameBagForAllServices',
                         'noOfBags',
+                        'paymentType',
                         'paymentConfirmed',
+                        'balancePaymentMethod',
+                        'balanceCollectedVia',
                         'collectionDate',
                         'collectionTimeFrom',
                         'collectionTimeTo',
@@ -292,7 +331,9 @@ class AgentOrderManagementService {
                 cancelled: cancelledCount,
                 onHold: onHoldCount,
             },
-            orders: orders.map((row) => row.toJSON()),
+            orders: await Promise.all(
+                orders.map((row) => this._enrichOrderHistoryItem(row.toJSON()))
+            ),
         };
     }
 
