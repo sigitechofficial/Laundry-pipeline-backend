@@ -148,6 +148,27 @@ async function sumWalletAmount(userId, type) {
     return rows.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
 }
 
+/**
+ * Lifetime agent commission from billing (independent of wallet credit).
+ */
+async function sumTotalAgentEarning(laundryShopId) {
+    const total = await billingDetails.sum("agentEarning", {
+        where: {
+            agentEarning: { [Op.gt]: 0 },
+        },
+        include: [
+            {
+                model: booking,
+                as: "booking",
+                attributes: [],
+                required: true,
+                where: { laundryShopId },
+            },
+        ],
+    });
+    return parseFloat((total || 0).toFixed(2));
+}
+
 async function getWalletSummary(agentUserId) {
     const shop = await addressDb.findOne({
         where: {
@@ -196,9 +217,12 @@ async function getWalletSummary(agentUserId) {
         },
     });
 
+    const totalEarning = await sumTotalAgentEarning(shop.id);
+
     return {
         balance,
         currency,
+        totalEarning,
         totalCredited: parseFloat(totalCredited.toFixed(2)),
         totalDebited: parseFloat(totalDebited.toFixed(2)),
         commissionCreditCount: commissionCredits,
@@ -243,6 +267,9 @@ async function getWalletTransactions(agentUserId, options = {}) {
     return {
         balance: summary.balance,
         currency: summary.currency,
+        totalEarning: summary.totalEarning,
+        totalCredited: summary.totalCredited,
+        totalDebited: summary.totalDebited,
         transactions: rows.map((row) => {
             const plain = row.get({ plain: true });
             return {
