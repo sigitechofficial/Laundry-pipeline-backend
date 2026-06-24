@@ -35,9 +35,8 @@ module.exports = (sequelize, DataTypes) => {
       users.hasMany(models.tip,{as:'driverTip',foreignKey:'driverId'})
       models.tip.belongsTo(users,{as:'driverTip',foreignKey:'driverId'})
 
-      //realtion with wallet model
-      users.hasMany(models.wallet)
-      models.wallet.belongsTo(users)
+      // Relation with wallet model (belongsTo defined on wallet model)
+      users.hasMany(models.wallet, { foreignKey: 'userId', as: 'walletEntries' })
 
       //realtion with model otp verification
       users.hasOne(models.otpVerification)

@@ -231,6 +231,7 @@ async function getWalletTransactions(agentUserId, options = {}) {
         include: [
             {
                 model: booking,
+                as: "booking",
                 attributes: ["id", "orderTrackId"],
                 required: false,
             },
