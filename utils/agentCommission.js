@@ -1,7 +1,45 @@
 /**
- * Zone agent commission: admin sets what % of order total the shop/agent earns.
- * Platform cut (zoneAdminCommission amount) = remainder.
+ * Commission % applies to effective laundry + driver tip (service fee excluded).
  */
+
+function normalizePaymentType(value) {
+    const normalized = String(value || "card").toLowerCase().trim();
+    return normalized === "cash" ? "cash" : "card";
+}
+
+/**
+ * Cash: max(laundry, zone minimum). Card: laundry subtotal only.
+ */
+function resolveEffectiveLaundrySubtotal(
+    laundrySubtotal,
+    zoneMinimumAmount,
+    paymentType
+) {
+    const laundry = Number(laundrySubtotal) || 0;
+    const minimum = Number(zoneMinimumAmount) || 0;
+    if (normalizePaymentType(paymentType) === "cash") {
+        return parseFloat(Math.max(laundry, minimum).toFixed(2));
+    }
+    return parseFloat(laundry.toFixed(2));
+}
+
+/**
+ * Base amount for agent commission: effective laundry + tip (no service fee).
+ */
+function resolveAgentCommissionBase(
+    laundrySubtotal,
+    driverTip,
+    zoneMinimumAmount,
+    paymentType
+) {
+    const effectiveLaundry = resolveEffectiveLaundrySubtotal(
+        laundrySubtotal,
+        zoneMinimumAmount,
+        paymentType
+    );
+    const tip = Number(driverTip) || 0;
+    return parseFloat((effectiveLaundry + tip).toFixed(2));
+}
 
 const DEFAULT_PLATFORM_COMMISSION_PERCENT = 20;
 
@@ -37,11 +75,11 @@ function resolveAgentCommissionPercent(zone) {
 }
 
 /**
- * @param {number} totalOrderAmount
+ * @param {number} commissionBaseAmount - effective laundry + tip (service fee excluded)
  * @param {number} agentCommissionPercent
  */
-function calculateAgentCommissionAmounts(totalOrderAmount, agentCommissionPercent) {
-    const total = Number(totalOrderAmount) || 0;
+function calculateAgentCommissionAmounts(commissionBaseAmount, agentCommissionPercent) {
+    const total = Number(commissionBaseAmount) || 0;
     const agentPct = clampPercent(agentCommissionPercent) ?? 0;
     const agentEarning = parseFloat(((total * agentPct) / 100).toFixed(2));
     const platformCommissionAmount = parseFloat((total - agentEarning).toFixed(2));
@@ -93,6 +131,9 @@ function applyAgentCommissionToZonePayload(data) {
 module.exports = {
     DEFAULT_PLATFORM_COMMISSION_PERCENT,
     clampPercent,
+    normalizePaymentType,
+    resolveEffectiveLaundrySubtotal,
+    resolveAgentCommissionBase,
     resolveAgentCommissionPercent,
     calculateAgentCommissionAmounts,
     applyAgentCommissionToZonePayload,

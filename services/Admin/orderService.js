@@ -27,6 +27,7 @@ const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
 const {
     resolveAgentCommissionPercent,
+    resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require('../../utils/agentCommission');
 const sequelize = require('sequelize');
@@ -1168,8 +1169,14 @@ class OrderService {
         total = parseFloat(total.toFixed(2));
 
         const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
+        const commissionBase = resolveAgentCommissionBase(
+            servicesSubtotal,
+            tipAmount,
+            parsedZoneMinimum,
+            bookings.paymentType
+        );
         const commissionAmounts = calculateAgentCommissionAmounts(
-            subTotal,
+            commissionBase,
             agentCommissionPercent
         );
         const finalZoneAdminCommissionAmount = commissionAmounts.platformCommissionAmount;

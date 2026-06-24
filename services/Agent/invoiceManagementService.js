@@ -38,6 +38,7 @@ const {
 const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 const {
     resolveAgentCommissionPercent,
+    resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
 
@@ -465,8 +466,14 @@ class AgentInvoiceManagementService {
         const amountDueNow = paymentSummary.amountDueNow;
 
         const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
+        const commissionBase = resolveAgentCommissionBase(
+            servicesSubtotal,
+            tipAmount,
+            parsedZoneMinimum,
+            bookingRow.paymentType
+        );
         const commissionAmounts = calculateAgentCommissionAmounts(
-            totalOrderAmount,
+            commissionBase,
             agentCommissionPercent
         );
 
