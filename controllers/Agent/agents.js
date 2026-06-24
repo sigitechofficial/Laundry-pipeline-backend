@@ -526,12 +526,18 @@ exports.getBookingHome = async (req, res) => {
     const declinedBookingIds =
         await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
 
+    const agentShopId = userData.addressDb.id;
+
     const bookingWhere = {
-        laundryShopId: null,
         bookingStatusId: 1,
         zoneId: agentZone,
+        laundryShopId: null,
         agentBroadcastHeld: { [Op.not]: true },
         createdAt: { [Op.gte]: twentyFourHoursAgo },
+        [Op.or]: [
+            { adminAssignedShopId: null },
+            { adminAssignedShopId: agentShopId },
+        ],
     };
 
     if (declinedBookingIds.length > 0) {
@@ -590,14 +596,20 @@ exports.getBookingHome = async (req, res) => {
             "customerId",
             "createdAt",
             "orderExpireTime",
+            "adminAssignedShopId",
+            "agentVisibleAt",
         ],
     });
 
     const bookingDataForResponse = bookingData
         .filter((row) => {
             const plain = row.get({ plain: true });
+            const acceptWindowStart =
+                plain.adminAssignedShopId != null
+                    ? plain.agentVisibleAt || plain.createdAt
+                    : plain.createdAt;
             return isBookingAcceptWindowOpen(
-                plain.createdAt,
+                acceptWindowStart,
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
@@ -605,8 +617,12 @@ exports.getBookingHome = async (req, res) => {
         })
         .map((row) => {
             const plain = row.get({ plain: true });
+            const acceptWindowStart =
+                plain.adminAssignedShopId != null
+                    ? plain.agentVisibleAt || plain.createdAt
+                    : plain.createdAt;
             const minutesLeft = getAcceptWindowMinutesRemaining(
-                plain.createdAt,
+                acceptWindowStart,
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
@@ -643,6 +659,23 @@ exports.agentRejectOrder = async (req, res) => {
         : 'Booking declined successfully';
 
     return ResponseHelper.success(res, message, result);
+};
+
+exports.agentAcceptOrder = async (req, res) => {
+    const agentId = req.user.id;
+    const { bookingId } = req.body;
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const { acceptOrderForAgent } = require("../../services/Agent/agentAcceptOrderService");
+    const result = await acceptOrderForAgent(agentId, bookingId, {
+        timeZone: req.body?.timeZone,
+        clientTimeZone: req.body?.clientTimeZone,
+    });
+
+    return ResponseHelper.success(res, "Order accepted successfully", result);
 };
 
 /*

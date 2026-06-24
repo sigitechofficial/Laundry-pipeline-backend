@@ -52,8 +52,10 @@ class AgentBookingDeclineService {
                 'id',
                 'bookingStatusId',
                 'laundryShopId',
+                'adminAssignedShopId',
                 'zoneId',
                 'createdAt',
+                'agentVisibleAt',
                 'orderExpireTime',
             ],
         });
@@ -86,10 +88,24 @@ class AgentBookingDeclineService {
             throw new ValidationError('This booking is not in your zone');
         }
 
+        if (
+            bookingRow.adminAssignedShopId != null &&
+            Number(bookingRow.adminAssignedShopId) !== Number(agentShop.id)
+        ) {
+            throw new ValidationError(
+                'This booking is assigned to another shop by admin'
+            );
+        }
+
+        const acceptWindowStart =
+            bookingRow.adminAssignedShopId != null
+                ? bookingRow.agentVisibleAt || bookingRow.createdAt
+                : bookingRow.createdAt;
+
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         if (
             !isBookingAcceptWindowOpen(
-                bookingRow.createdAt,
+                acceptWindowStart,
                 bookingRow.orderExpireTime,
                 countryCtx.ianaTimeZone
             )

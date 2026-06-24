@@ -223,6 +223,11 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.ENUM('card', 'cash'),
     allowNull: true,
   },
+  adminAssignedShopId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: 'Admin-target shop; pending accept by that laundry shop only',
+  },
   }, {
     sequelize,
     modelName: 'booking',

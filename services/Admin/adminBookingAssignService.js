@@ -2,7 +2,7 @@ const {
     booking,
     addressDb,
     bussinessInformation,
-    bookingHistory,
+    proofOfDeliveries,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
@@ -10,15 +10,18 @@ const {
     isPlatformOpenNow,
 } = require("../../utils/shopWorkingHours");
 const {
-    canAdminAssignBooking,
+    canAdminAssignOrReassignBooking,
     isAgentAcceptExpired,
 } = require("../../utils/bookingAgentWindow");
-const { notifyBookingTakenByAgent } = require("../../utils/bookingTakenNotify");
 const {
     getCountryContextFromZoneId,
 } = require("../../utils/countryTimeZone");
-const { BUSINESS_TIME_ZONE } = require("../../utils/bookingTimeZone");
+const {
+    BUSINESS_TIME_ZONE,
+    getOrderExpireTime,
+} = require("../../utils/bookingTimeZone");
 const agentBookingDeclineService = require("../Agent/agentBookingDeclineService");
+const { notifyAdminBookingAssignment } = require("../../utils/bookingAdminAssignNotify");
 
 class AdminBookingAssignService {
     async getAssignableShops(bookingId) {
@@ -28,11 +31,14 @@ class AdminBookingAssignService {
                 "zoneId",
                 "bookingStatusId",
                 "laundryShopId",
+                "adminAssignedShopId",
+                "invoiceStatus",
                 "agentBroadcastHeld",
                 "agentVisibleAt",
                 "createdAt",
                 "orderExpireTime",
                 "orderTrackId",
+                "customerId",
             ],
         });
 
@@ -41,10 +47,9 @@ class AdminBookingAssignService {
         }
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
-        const hasAgentDecline = await agentBookingDeclineService.hasAnyDecline(bookingId);
-        if (!canAdminAssignBooking(bookingRow, countryCtx.ianaTimeZone, { hasAgentDecline })) {
+        if (!canAdminAssignOrReassignBooking(bookingRow)) {
             throw new ValidationError(
-                "This order is not eligible for manual assign. It must be unassigned and past the agent accept window or declined by an agent."
+                "This order cannot be assigned. Invoice may be finalized or the order is completed/cancelled."
             );
         }
 
@@ -74,19 +79,28 @@ class AdminBookingAssignService {
                 where: { shopAddressId: shop.id },
                 attributes: ["shopName"],
             });
+            const isCurrentShop =
+                bookingRow.laundryShopId != null &&
+                Number(bookingRow.laundryShopId) === Number(shop.id);
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
-                canAssign: openNow,
+                canAssign: openNow && !isCurrentShop,
+                isCurrentShop,
             });
         }
+
+        const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 
         return {
             bookingId: bookingRow.id,
             orderTrackId: bookingRow.orderTrackId,
-            agentAcceptExpired: true,
+            invoiceStatus: bookingRow.invoiceStatus,
+            currentLaundryShopId: bookingRow.laundryShopId,
+            adminAssignedShopId: bookingRow.adminAssignedShopId,
+            agentAcceptExpired: expired,
             platformOpenNow: platformOpen,
             shops: shopList,
         };
@@ -101,10 +115,10 @@ class AdminBookingAssignService {
         const assignCountryCtx = await getCountryContextFromZoneId(
             bookingRow.zoneId
         );
-        const hasAgentDecline = await agentBookingDeclineService.hasAnyDecline(bookingId);
-        if (!canAdminAssignBooking(bookingRow, assignCountryCtx.ianaTimeZone, { hasAgentDecline })) {
+
+        if (!canAdminAssignOrReassignBooking(bookingRow)) {
             throw new ValidationError(
-                "Order cannot be assigned: not expired, not declined by an agent, or already assigned."
+                "Order cannot be assigned: invoice finalized or order completed/cancelled."
             );
         }
 
@@ -129,6 +143,16 @@ class AdminBookingAssignService {
             );
         }
 
+        if (
+            bookingRow.laundryShopId != null &&
+            Number(bookingRow.laundryShopId) === Number(shop.id) &&
+            Number(bookingRow.bookingStatusId) !== 1
+        ) {
+            throw new ValidationError(
+                "This order is already assigned to the selected shop."
+            );
+        }
+
         const ownerId = shop.userId;
         if (
             !(await isShopOpenNow(ownerId, assignCountryCtx.countryId))
@@ -138,28 +162,34 @@ class AdminBookingAssignService {
             );
         }
 
-        const now = new Date();
-        const dateStr = now.toISOString().split("T")[0];
-        const timeStr = now.toTimeString().slice(0, 8);
+        let previousOwnerUserId = null;
+        if (bookingRow.laundryShopId) {
+            const previousShop = await addressDb.findByPk(
+                bookingRow.laundryShopId,
+                { attributes: ["id", "userId"] }
+            );
+            previousOwnerUserId = previousShop?.userId || null;
+        }
+
+        const isReassign =
+            bookingRow.laundryShopId != null &&
+            Number(bookingRow.bookingStatusId) !== 1;
+
+        await proofOfDeliveries.destroy({ where: { bookingId } });
+
+        const visibleAt = new Date();
 
         await booking.update(
             {
-                laundryShopId: shop.id,
-                bookingStatusId: 3,
-                driverId: ownerId || null,
+                laundryShopId: null,
+                adminAssignedShopId: shop.id,
+                bookingStatusId: 1,
+                driverId: null,
                 agentBroadcastHeld: false,
-                agentVisibleAt: null,
+                agentVisibleAt: visibleAt,
+                orderExpireTime: getOrderExpireTime(assignCountryCtx.ianaTimeZone),
             },
             { where: { id: bookingId } }
-        );
-
-        await bookingHistory.bulkCreate(
-            [2, 3].map((statusId) => ({
-                bookingId,
-                bookingStatusId: statusId,
-                date: dateStr,
-                time: timeStr,
-            }))
         );
 
         const biz = await bussinessInformation.findOne({
@@ -169,20 +199,24 @@ class AdminBookingAssignService {
 
         await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
 
-        if (ownerId) {
-            await notifyBookingTakenByAgent({
-                bookingId,
-                zoneId: bookingRow.zoneId,
-                assignedUserId: ownerId,
-                source: 'admin',
-            });
-        }
+        await notifyAdminBookingAssignment({
+            bookingId,
+            orderTrackId: bookingRow.orderTrackId,
+            customerId: bookingRow.customerId,
+            previousOwnerUserId,
+            newOwnerUserId: ownerId,
+            isReassign,
+        });
 
         return {
             bookingId,
-            laundryShopId: shop.id,
-            bookingStatusId: 3,
+            laundryShopId: null,
+            adminAssignedShopId: shop.id,
+            bookingStatusId: 1,
             shopName: biz?.shopName || null,
+            pendingAgentAccept: true,
+            isReassign,
+            paymentRetained: Boolean(bookingRow.paymentConfirmed),
         };
     }
 
@@ -192,12 +226,11 @@ class AdminBookingAssignService {
             : bookingInstance;
         const tz = timeZone || BUSINESS_TIME_ZONE;
         const expired = isAgentAcceptExpired(plain, tz);
-        const hasAgentDecline = agentDeclineCount > 0;
         return {
             ...plain,
             agentAcceptExpired: expired,
             agentDeclineCount,
-            canAdminAssign: canAdminAssignBooking(plain, tz, { hasAgentDecline }),
+            canAdminAssign: canAdminAssignOrReassignBooking(plain),
             agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
         };
     }

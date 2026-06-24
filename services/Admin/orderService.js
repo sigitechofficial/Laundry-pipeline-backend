@@ -355,7 +355,17 @@ class OrderService {
             throw new Error("Order not found");
         }
 
-        return orderDetails;
+        const plain = orderDetails.get
+            ? orderDetails.get({ plain: true })
+            : orderDetails;
+        const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
+        const enriched = adminBookingAssignService.enrichBookingForAdmin(
+            plain,
+            countryCtx.ianaTimeZone,
+            0
+        );
+
+        return enriched;
     }
 
     /**

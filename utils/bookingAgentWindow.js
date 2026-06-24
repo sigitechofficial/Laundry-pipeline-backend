@@ -67,10 +67,39 @@ function isUnassignedPendingBooking(booking) {
     return true;
 }
 
+const TERMINAL_BOOKING_STATUS_IDS = [17, 19, 21];
+
+function isTerminalBookingStatus(booking) {
+    if (!booking) return false;
+    return TERMINAL_BOOKING_STATUS_IDS.includes(Number(booking.bookingStatusId));
+}
+
+function isInvoiceFinalized(booking) {
+    if (!booking) return false;
+    return booking.invoiceStatus === "finalized";
+}
+
+/**
+ * Admin may assign or reassign until invoice is finalized (draft allowed).
+ * Completed / cancelled orders are excluded.
+ */
+function canAdminAssignOrReassignBooking(booking) {
+    if (!booking) return false;
+    if (isInvoiceFinalized(booking)) return false;
+    if (isTerminalBookingStatus(booking)) return false;
+    return true;
+}
+
+/** @deprecated Use canAdminAssignOrReassignBooking — kept for legacy callers */
 function canAdminAssignBooking(booking, timeZone, options = {}) {
-    if (!isUnassignedPendingBooking(booking)) return false;
-    if (options.hasAgentDecline) return true;
-    return isAgentAcceptExpired(booking, timeZone);
+    if (canAdminAssignOrReassignBooking(booking)) {
+        if (!isUnassignedPendingBooking(booking)) {
+            return true;
+        }
+        if (options.hasAgentDecline) return true;
+        return isAgentAcceptExpired(booking, timeZone);
+    }
+    return false;
 }
 
 module.exports = {
@@ -79,5 +108,8 @@ module.exports = {
     resolveTimeZoneForBooking,
     isAgentAcceptExpired,
     isUnassignedPendingBooking,
+    isTerminalBookingStatus,
+    isInvoiceFinalized,
+    canAdminAssignOrReassignBooking,
     canAdminAssignBooking,
 };
