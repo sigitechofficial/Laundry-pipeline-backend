@@ -12,6 +12,7 @@ const {
 } = require("../../utils/shopWorkingHours");
 const {
     canAdminAssignOrReassignBooking,
+    getAdminAssignBlockedReason,
     isAgentAcceptExpired,
 } = require("../../utils/bookingAgentWindow");
 const {
@@ -48,9 +49,10 @@ class AdminBookingAssignService {
         }
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
-        if (!canAdminAssignOrReassignBooking(bookingRow)) {
+        const assignBlockedReason = getAdminAssignBlockedReason(bookingRow);
+        if (assignBlockedReason) {
             throw new ValidationError(
-                "This order cannot be assigned. Invoice may be finalized or the order is completed/cancelled."
+                `This order cannot be assigned. ${assignBlockedReason}`
             );
         }
 
@@ -117,9 +119,10 @@ class AdminBookingAssignService {
             bookingRow.zoneId
         );
 
-        if (!canAdminAssignOrReassignBooking(bookingRow)) {
+        const assignBlockedReason = getAdminAssignBlockedReason(bookingRow);
+        if (assignBlockedReason) {
             throw new ValidationError(
-                "Order cannot be assigned: invoice finalized or order completed/cancelled."
+                `Order cannot be assigned: ${assignBlockedReason}`
             );
         }
 

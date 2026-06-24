@@ -79,15 +79,37 @@ function isInvoiceFinalized(booking) {
     return booking.invoiceStatus === "finalized";
 }
 
+/** Status 4 = Driver Out for PickUp — assign/reassign blocked at and after this. */
+const DRIVER_OUT_FOR_PICKUP_STATUS_ID = 4;
+
+function isBeforeDriverOutForPickup(booking) {
+    if (!booking) return false;
+    return Number(booking.bookingStatusId) < DRIVER_OUT_FOR_PICKUP_STATUS_ID;
+}
+
 /**
- * Admin may assign or reassign until invoice is finalized (draft allowed).
- * Completed / cancelled orders are excluded.
+ * Human-readable reason when admin assign/reassign is blocked, or null if allowed.
+ */
+function getAdminAssignBlockedReason(booking) {
+    if (!booking) return "Booking not found";
+    if (isInvoiceFinalized(booking)) {
+        return "Invoice is finalized.";
+    }
+    if (isTerminalBookingStatus(booking)) {
+        return "Order is completed or cancelled.";
+    }
+    if (!isBeforeDriverOutForPickup(booking)) {
+        return "Cannot assign or reassign after driver is out for pickup.";
+    }
+    return null;
+}
+
+/**
+ * Admin may assign or reassign only before driver goes out for pickup (status < 4).
+ * Also blocked when invoice is finalized or order is completed/cancelled.
  */
 function canAdminAssignOrReassignBooking(booking) {
-    if (!booking) return false;
-    if (isInvoiceFinalized(booking)) return false;
-    if (isTerminalBookingStatus(booking)) return false;
-    return true;
+    return getAdminAssignBlockedReason(booking) === null;
 }
 
 /** @deprecated Use canAdminAssignOrReassignBooking — kept for legacy callers */
@@ -110,6 +132,9 @@ module.exports = {
     isUnassignedPendingBooking,
     isTerminalBookingStatus,
     isInvoiceFinalized,
+    DRIVER_OUT_FOR_PICKUP_STATUS_ID,
+    isBeforeDriverOutForPickup,
+    getAdminAssignBlockedReason,
     canAdminAssignOrReassignBooking,
     canAdminAssignBooking,
 };

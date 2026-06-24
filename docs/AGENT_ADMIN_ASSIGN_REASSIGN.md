@@ -155,25 +155,40 @@ Admin assign **bypasses** steps 1–2 entirely.
 
 ## Reassign — business rules
 
-When admin **reassigns** an already-assigned order (invoice not finalized):
+When admin **reassigns** an already-assigned order:
 
 | Aspect | Backend behavior | Agent app implication |
 |--------|------------------|------------------------|
-| Pickup proofs | All `proofOfDeliveries` for the booking are **deleted** | New agent must complete pickup proof flow again if pickup not done |
+| Eligibility | Only while `bookingStatusId < 4` (before Driver Out for PickUp) | After status 4, reassign will not happen — no `orderReassignedFromYou` |
+| Pickup proofs | Cleared on reassign (if any existed) | Unlikely before status 4 |
 | Card payment at pickup | `paymentConfirmed` and Stripe fields **retained** if already charged | UI should still show prior payment state |
 | Cash payment | Unchanged | Full bill at delivery per cash rules |
-| Invoice | Assign blocked if `invoiceStatus = finalized` | N/A |
+| Invoice | Assign also blocked if `invoiceStatus = finalized` | N/A |
 
 ---
 
 ## Admin assign eligibility (for context)
 
-Admin can assign or reassign until:
+Admin can assign or reassign only when **all** of the following are true:
 
-- Invoice is **not** finalized (`invoiceStatus !== 'finalized'`; `draft` is allowed)
-- Order is **not** completed or cancelled
+| Rule | Allowed |
+|------|---------|
+| `bookingStatusId < 4` (before **Driver Out for PickUp**) | ✅ Status 1, 2, or 3 |
+| `bookingStatusId >= 4` | ❌ Blocked |
+| Invoice **not** finalized | ✅ `draft` allowed |
+| Order **not** completed / cancelled | ❌ Status 17, 19, 21 blocked |
 
-The agent app does not call admin APIs; this only explains when admin actions can occur.
+### Status reference
+
+| ID | Title | Assign / Reassign |
+|----|--------|-------------------|
+| 1 | Order Created | ✅ Assign |
+| 2 | Confirmed | ✅ |
+| 3 | Awaiting Collection | ✅ Reassign |
+| **4** | **Driver Out for PickUp** | ❌ **Blocked from here** |
+| 5+ | Reached pickup, in transit, delivery… | ❌ |
+
+The agent app does not call admin APIs; this explains when admin actions can occur.
 
 ---
 
@@ -211,8 +226,8 @@ Do not rely on: getBookingHome for admin-assigned orders
 | 3 | Admin reassigns from shop A → shop B | Shop A gets `orderReassignedFromYou`; order removed from A |
 | 4 | Shop B gets `AcceptedOrder` | Order in B's active list |
 | 5 | Normal zone order (no admin) | Still on `getBookingHome`; Accept still required |
-| 6 | Reassign after pickup proofs uploaded | Proofs cleared; new agent sees empty pickup proof state |
-| 7 | Reassign after card charged at pickup | Payment state still shown as confirmed |
+| 6 | Reassign at status 3 (before driver out) | Allowed; shop B gets `AcceptedOrder` |
+| 7 | Reassign at status 4+ (driver out for pickup) | **Blocked** by admin API |
 
 ---
 
@@ -235,6 +250,7 @@ If something looks wrong, report to backend with:
 | `services/Admin/adminBookingAssignService.js` | Admin assign / reassign logic |
 | `utils/bookingTakenNotify.js` | `AcceptedOrder` + `orderTakenByOtherAgent` |
 | `utils/bookingAdminAssignNotify.js` | `orderReassignedFromYou` + customer push |
+| `utils/bookingAgentWindow.js` | `canAdminAssignOrReassignBooking` — status `< 4` gate |
 | `services/Agent/agentAcceptOrderService.js` | Normal zone accept only |
 
 ---
@@ -243,4 +259,5 @@ If something looks wrong, report to backend with:
 
 | Date | Change |
 |------|--------|
+| May 2026 | Assign/reassign blocked at status 4 (Driver Out for PickUp) and later. |
 | May 2026 | Admin assign reverted to direct accept (`status 3`). No pending accept step. `orderReassignedFromYou` added for previous agent on reassign. |
