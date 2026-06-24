@@ -68,7 +68,7 @@ async function getWallClockContextForCountry(countryId, timeZone, clientTimeZone
 }
 
 /**
- * Resolve today's hours row for a shop owner (userId or bussinessInformation link).
+ * Resolve today's hours row for a shop owner (userId on hours, or shopAddressId → business).
  */
 async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
     let hoursRow = await bussinessWorkingHours.findOne({
@@ -77,15 +77,25 @@ async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
     });
 
     if (!hoursRow) {
-        const biz = await bussinessInformation.findOne({
-            where: { userId: shopUserId },
+        const shopAddress = await addressDb.findOne({
+            where: {
+                userId: shopUserId,
+                addressType: "LaundaryShopAddress",
+            },
             attributes: ["id"],
         });
-        if (biz?.id) {
-            hoursRow = await bussinessWorkingHours.findOne({
-                where: { bussinessInformationId: biz.id, dayOfWeek },
-                attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+
+        if (shopAddress?.id) {
+            const biz = await bussinessInformation.findOne({
+                where: { shopAddressId: shopAddress.id },
+                attributes: ["id"],
             });
+            if (biz?.id) {
+                hoursRow = await bussinessWorkingHours.findOne({
+                    where: { bussinessInformationId: biz.id, dayOfWeek },
+                    attributes: ["openTime", "closeTime", "status", "dayOfWeek"],
+                });
+            }
         }
     }
 

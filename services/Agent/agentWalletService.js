@@ -9,6 +9,7 @@ const {
 const { Op } = require("sequelize");
 const { NotFoundError } = require("../../middlewares/universalErrorHandler");
 const invoiceManagementService = require("./invoiceManagementService");
+const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
 
 const COMMISSION_REFERENCE = "booking_commission";
 const DEFAULT_CURRENCY = "GBP";
@@ -149,24 +150,77 @@ async function sumWalletAmount(userId, type) {
 }
 
 /**
- * Lifetime agent commission from billing (independent of wallet credit).
+ * Cash bucket: full cash bookings + card upfront with balance collected in cash.
+ * Card bucket: remaining card bookings.
  */
-async function sumTotalAgentEarning(laundryShopId) {
-    const total = await billingDetails.sum("agentEarning", {
+function classifyAgentEarningChannel(bookingRow) {
+    if (!bookingRow) return "card";
+
+    const paymentType = normalizePaymentType(bookingRow.paymentType);
+    if (paymentType === "cash") {
+        return "cash";
+    }
+
+    const collectedVia = bookingRow.balanceCollectedVia;
+    if (collectedVia === "cash") {
+        return "cash";
+    }
+    if (collectedVia === "card") {
+        return "card";
+    }
+
+    if (bookingRow.balancePaymentMethod === "cash") {
+        return "cash";
+    }
+
+    return "card";
+}
+
+/**
+ * Lifetime agent commission from billing, split by collection channel.
+ */
+async function sumAgentEarningsBreakdown(laundryShopId) {
+    const rows = await billingDetails.findAll({
         where: {
             agentEarning: { [Op.gt]: 0 },
         },
+        attributes: ["agentEarning"],
         include: [
             {
                 model: booking,
                 as: "booking",
-                attributes: [],
                 required: true,
+                attributes: [
+                    "paymentType",
+                    "balancePaymentMethod",
+                    "balanceCollectedVia",
+                ],
                 where: { laundryShopId },
             },
         ],
     });
-    return parseFloat((total || 0).toFixed(2));
+
+    let total = 0;
+    let cash = 0;
+    let card = 0;
+
+    for (const row of rows) {
+        const amount = parseFloat(row.agentEarning || 0);
+        if (!amount) continue;
+
+        total += amount;
+        if (classifyAgentEarningChannel(row.booking) === "cash") {
+            cash += amount;
+        } else {
+            card += amount;
+        }
+    }
+
+    return {
+        totalEarning: parseFloat(total.toFixed(2)),
+        totalEarningCash: parseFloat(cash.toFixed(2)),
+        totalEarningCard: parseFloat(card.toFixed(2)),
+    };
 }
 
 async function getWalletSummary(agentUserId) {
@@ -217,12 +271,14 @@ async function getWalletSummary(agentUserId) {
         },
     });
 
-    const totalEarning = await sumTotalAgentEarning(shop.id);
+    const earnings = await sumAgentEarningsBreakdown(shop.id);
 
     return {
         balance,
         currency,
-        totalEarning,
+        totalEarning: earnings.totalEarning,
+        totalEarningCash: earnings.totalEarningCash,
+        totalEarningCard: earnings.totalEarningCard,
         totalCredited: parseFloat(totalCredited.toFixed(2)),
         totalDebited: parseFloat(totalDebited.toFixed(2)),
         commissionCreditCount: commissionCredits,
@@ -268,6 +324,8 @@ async function getWalletTransactions(agentUserId, options = {}) {
         balance: summary.balance,
         currency: summary.currency,
         totalEarning: summary.totalEarning,
+        totalEarningCash: summary.totalEarningCash,
+        totalEarningCard: summary.totalEarningCard,
         totalCredited: summary.totalCredited,
         totalDebited: summary.totalDebited,
         transactions: rows.map((row) => {
