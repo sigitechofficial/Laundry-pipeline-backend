@@ -2421,7 +2421,7 @@ exports.driverAddSerivces = async (req, res) => {
         include: [
             {
                 model: zone,
-                attributes: ['id', 'name', 'zoneAdminComission']
+                attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
             },
             {
                 model: tip,
@@ -2470,6 +2470,7 @@ exports.driverAddSerivces = async (req, res) => {
         paymentSummary,
         existingDiscount,
         finalZoneAdminCommissionAmount,
+        finalAgentEarningAmount,
     } = totals;
 
     console.log("Payment summary amountDueNow:", paymentSummary.amountDueNow);
@@ -2486,6 +2487,7 @@ exports.driverAddSerivces = async (req, res) => {
             discount: existingDiscount,
             paymentStatus: "Pending",
             zoneAdminCommission: finalZoneAdminCommissionAmount,
+            agentEarning: finalAgentEarningAmount,
         },
         { where: { bookingId: bookingId } }
     );
@@ -2864,7 +2866,7 @@ exports.invoiceCreation = async (req, res) => {
                 model: billingDetails,
                 as: 'billingDetail',
                 required: false,
-                attributes: ["upfrontAmount", "discount", "total", "zoneAdminCommission", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus"]
+                attributes: ["upfrontAmount", "discount", "total", "zoneAdminCommission", "agentEarning", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus"]
             },
             {
                 model: tip,
@@ -4948,7 +4950,7 @@ exports.getEarningReportDashboard = async (req, res) => {
                 {
                     model: billingDetails,
                     as: "billingDetail",
-                    attributes: ["total", "paymentStatus"],
+                    attributes: ["total", "paymentStatus", "agentEarning"],
                     required: false
                 },
                 {
@@ -4965,12 +4967,22 @@ exports.getEarningReportDashboard = async (req, res) => {
     const previousOrders = await fetchOrders(previousStart, previousEnd);
 
     const getOrderEarning = (order) => {
+        const storedAgentEarning = Number(order.billingDetail?.agentEarning || 0);
+        if (storedAgentEarning > 0) {
+            return storedAgentEarning;
+        }
+
         const billingTotal = Number(order.billingDetail?.total || 0);
         const fallbackAmount = Number(order.orderAmount || 0);
         const isPaid = order.billingDetail?.paymentStatus === "Paid";
+        const gross =
+            isPaid && billingTotal > 0
+                ? billingTotal
+                : fallbackAmount > 0
+                  ? fallbackAmount
+                  : billingTotal;
 
-        if (isPaid && billingTotal > 0) return billingTotal;
-        return fallbackAmount > 0 ? fallbackAmount : billingTotal;
+        return gross;
     };
 
     const currentEarnings = currentOrders.reduce(
@@ -5108,7 +5120,7 @@ exports.updateInvoice = async (req, res) => {
         include: [
             {
                 model: zone,
-                attributes: ['id', 'name', 'zoneAdminComission']
+                attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
             },
             {
                 model: tip,
@@ -5174,6 +5186,7 @@ exports.updateInvoice = async (req, res) => {
         paymentSummary,
         existingDiscount,
         finalZoneAdminCommissionAmount,
+        finalAgentEarningAmount,
     } = totals;
 
     if (isNaN(discountedTotal)) {
@@ -5186,6 +5199,7 @@ exports.updateInvoice = async (req, res) => {
             discount: existingDiscount,
             paymentStatus: "Pending",
             zoneAdminCommission: finalZoneAdminCommissionAmount,
+            agentEarning: finalAgentEarningAmount,
         },
         { where: { bookingId: bookingId } }
     );
@@ -5213,6 +5227,8 @@ exports.updateInvoice = async (req, res) => {
         subTotal,
         total: discountedTotal,
         orderAmount: discountedTotal,
+        agentEarning: finalAgentEarningAmount,
+        agentCommissionPercent: totals.agentCommissionPercent,
     });
 }
 

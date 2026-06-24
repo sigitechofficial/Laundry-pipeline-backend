@@ -116,6 +116,7 @@ class AgentOrderManagementService {
                     'serviceCharge',
                     'discount',
                     'total',
+                    'agentEarning',
                     'paymentStatus',
                 ],
             },
@@ -190,6 +191,10 @@ class AgentOrderManagementService {
             ...orderPlain,
             servicesSubtotal,
             paymentSummary,
+            agentEarning:
+                orderPlain.billingDetail?.agentEarning != null
+                    ? parseFloat(orderPlain.billingDetail.agentEarning)
+                    : null,
         };
 
         const hasInvoiceTotals =

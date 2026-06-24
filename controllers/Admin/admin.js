@@ -106,6 +106,7 @@ const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
+const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
 
@@ -1509,9 +1510,12 @@ async function addZones(req, res) {
         };
     }
 
-    if (!data.zoneAdminComission) {
+    if (!data.zoneAdminComission && !data.agentCommissionPercent) {
+        data.agentCommissionPercent = 80;
         data.zoneAdminComission = 20;
     }
+
+    applyAgentCommissionToZonePayload(data);
 
     if(!data.status){
         data.status=true
@@ -1606,9 +1610,15 @@ async function updateZone(req, res) {
         };
     }
 
-    if (data.zoneAdminComission === undefined || data.zoneAdminComission === null) {
+    if (
+        (data.zoneAdminComission === undefined || data.zoneAdminComission === null) &&
+        (data.agentCommissionPercent === undefined || data.agentCommissionPercent === null)
+    ) {
+        data.agentCommissionPercent = 80;
         data.zoneAdminComission = 20;
     }
+
+    applyAgentCommissionToZonePayload(data);
 
     const updateZone = await zoneManagementService.updateZone(zoneId, data);
     return ResponseHelper.success(res, "Zone Updated Successfully", updateZone);

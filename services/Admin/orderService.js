@@ -25,6 +25,10 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
+const {
+    resolveAgentCommissionPercent,
+    calculateAgentCommissionAmounts,
+} = require('../../utils/agentCommission');
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
 const {
@@ -1114,7 +1118,7 @@ class OrderService {
             include: [
                 {
                     model: zone,
-                    attributes: ['id', 'name', 'zoneAdminComission']
+                    attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
                 },
                 {
                     model: tip,
@@ -1160,12 +1164,16 @@ class OrderService {
         );
         let total = subTotal - prepaidDeduction;
 
-        const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-        const zoneAdminCommissionAmount = (subTotal * zoneAdminCommission) / 100;
-
-        total = parseFloat(total.toFixed(2));
         subTotal = parseFloat(subTotal.toFixed(2));
-        const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
+        total = parseFloat(total.toFixed(2));
+
+        const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
+        const commissionAmounts = calculateAgentCommissionAmounts(
+            subTotal,
+            agentCommissionPercent
+        );
+        const finalZoneAdminCommissionAmount = commissionAmounts.platformCommissionAmount;
+        const finalAgentEarningAmount = commissionAmounts.agentEarning;
 
         if (isNaN(total)) {
             throw new Error("Calculated total is NaN. Please check your input values.");
@@ -1177,6 +1185,7 @@ class OrderService {
                 discount: 0,
                 paymentStatus: "Pending",
                 zoneAdminCommission: finalZoneAdminCommissionAmount,
+                agentEarning: finalAgentEarningAmount,
             },
             { where: { bookingId } }
         );
@@ -1202,7 +1211,9 @@ class OrderService {
             servicesSubtotal,
             total,
             subTotal,
-            zoneAdminCommission: finalZoneAdminCommissionAmount
+            agentCommissionPercent,
+            agentEarning: finalAgentEarningAmount,
+            zoneAdminCommission: finalZoneAdminCommissionAmount,
         };
     }
 }

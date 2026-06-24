@@ -36,6 +36,10 @@ const {
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
+const {
+    resolveAgentCommissionPercent,
+    calculateAgentCommissionAmounts,
+} = require("../../utils/agentCommission");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -222,6 +226,7 @@ class AgentInvoiceManagementService {
                     "discount",
                     "total",
                     "zoneAdminCommission",
+                    "agentEarning",
                     "serviceCharge",
                     "categoryCharge",
                     "paymentStatus",
@@ -250,7 +255,7 @@ class AgentInvoiceManagementService {
             include: [
                 {
                     model: zone,
-                    attributes: ["id", "name", "zoneAdminComission"],
+                    attributes: ["id", "name", "zoneAdminComission", "agentCommissionPercent"],
                 },
                 {
                     model: tip,
@@ -273,6 +278,7 @@ class AgentInvoiceManagementService {
                 total: totals.total,
                 discount: totals.existingDiscount,
                 zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
+                agentEarning: totals.finalAgentEarningAmount,
                 serviceCharge: totals.parsedServiceCharge,
             },
             { where: { bookingId } }
@@ -458,9 +464,11 @@ class AgentInvoiceManagementService {
         const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
         const amountDueNow = paymentSummary.amountDueNow;
 
-        const zoneAdminCommission = parseFloat(zoneData.zoneAdminComission || 20);
-        const zoneAdminCommissionAmount = (totalOrderAmount * zoneAdminCommission) / 100;
-        const finalZoneAdminCommissionAmount = parseFloat(zoneAdminCommissionAmount.toFixed(2));
+        const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
+        const commissionAmounts = calculateAgentCommissionAmounts(
+            totalOrderAmount,
+            agentCommissionPercent
+        );
 
         if (Number.isNaN(amountDueNow)) {
             throw new ValidationError("Calculated total is invalid. Please check your input values.");
@@ -472,7 +480,9 @@ class AgentInvoiceManagementService {
             total: amountDueNow,
             paymentSummary,
             existingDiscount,
-            finalZoneAdminCommissionAmount,
+            agentCommissionPercent,
+            finalAgentEarningAmount: commissionAmounts.agentEarning,
+            finalZoneAdminCommissionAmount: commissionAmounts.platformCommissionAmount,
             parsedServiceCharge,
             parsedZoneMinimum,
         };
@@ -494,7 +504,7 @@ class AgentInvoiceManagementService {
             include: [
                 {
                     model: zone,
-                    attributes: ["id", "name", "zoneAdminComission", "zoneMinimumAmount", "serviceCharge"],
+                    attributes: ["id", "name", "zoneAdminComission", "agentCommissionPercent", "zoneMinimumAmount", "serviceCharge"],
                 },
                 {
                     model: tip,
@@ -603,6 +613,8 @@ class AgentInvoiceManagementService {
             servicesSubtotal: totals.servicesSubtotal,
             subTotal: totals.subTotal,
             total: totals.total,
+            agentEarning: totals.finalAgentEarningAmount,
+            agentCommissionPercent: totals.agentCommissionPercent,
             paymentSummary: totals.paymentSummary,
         };
     }

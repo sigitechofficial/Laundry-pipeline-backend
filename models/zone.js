@@ -45,6 +45,11 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.INTEGER,
     allowNull:true
   },
+  agentCommissionPercent:{
+    type:DataTypes.INTEGER,
+    allowNull:true,
+    comment:'Percent of order total paid to agent/shop',
+  },
   serviceCharge:{
     type:DataTypes.FLOAT,
     allowNull:true

@@ -4,6 +4,7 @@ const turf = require('@turf/turf');
 const { Op } = require('sequelize');
 const { zone, cities, units, users } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
+const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 
 class PostcodeZoneService {
     constructor() {
@@ -571,9 +572,17 @@ class PostcodeZoneService {
                 coordinates: polygonCoordinates
             },
             postcodes: normalizedPostcodes,
-            zoneAdminComission: zoneData.zoneAdminComission || 20,
             status: zoneData.status !== undefined ? zoneData.status : true
         };
+
+        applyAgentCommissionToZonePayload(data);
+        if (
+            data.agentCommissionPercent == null &&
+            data.zoneAdminComission == null
+        ) {
+            data.agentCommissionPercent = 80;
+            data.zoneAdminComission = 20;
+        }
 
         console.log('📦 Final zone data to be saved:', {
             name: data.name,
@@ -639,6 +648,7 @@ class PostcodeZoneService {
         }
 
         const updatePayload = { ...otherZoneData };
+        applyAgentCommissionToZonePayload(updatePayload);
         await this.validateZoneData(updatePayload);
 
         const [affectedRows] = await zone.update(updatePayload, { where: { id: zoneId } });
