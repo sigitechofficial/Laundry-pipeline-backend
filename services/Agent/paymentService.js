@@ -77,6 +77,16 @@ class AgentPaymentService {
             { where: { bookingId: bookingId } }
         );
 
+        const agentWalletService = require('./agentWalletService');
+        try {
+            await agentWalletService.creditAgentForPaidBooking(bookingId);
+        } catch (walletErr) {
+            console.error(
+                `[agentWallet] credit failed for booking ${bookingId}:`,
+                walletErr.message
+            );
+        }
+
         const currentTime = new Date().toLocaleTimeString("en-US", {
             hour: "2-digit",
             minute: "2-digit",

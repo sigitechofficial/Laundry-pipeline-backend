@@ -154,6 +154,25 @@ const agentRolePermissionService = require('../../services/Agent/rolePermissionS
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
 const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
 const agentOrderManagementService = require('../../services/Agent/orderManagementService');
+const agentWalletService = require('../../services/Agent/agentWalletService');
+
+async function tryCreditAgentWallet(bookingId) {
+    try {
+        const result = await agentWalletService.creditAgentForPaidBooking(bookingId);
+        if (result.credited) {
+            console.log(
+                `[agentWallet] Credited booking ${bookingId}: ${result.amount}`
+            );
+        }
+        return result;
+    } catch (err) {
+        console.error(
+            `[agentWallet] Credit failed for booking ${bookingId}:`,
+            err.message
+        );
+        return { credited: false, reason: err.message };
+    }
+}
 //!----------------------------------Agent Shop Address Add-----------------------------//
 exports.agentAddressAdd = async (req, res) => {
     const {
@@ -1914,6 +1933,8 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         { where: { id: bookingId } }
     );
 
+    await tryCreditAgentWallet(bookingId);
+
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
 
@@ -2053,6 +2074,7 @@ exports.recordCashPayment = async (req, res) => {
                 { orderAmount: fullOrderTotal },
                 { where: { id: bookingId } }
             );
+            await tryCreditAgentWallet(bookingId);
             const updatedPaymentSummary =
                 await invoiceManagementService.getPaymentSummaryForBooking(
                     bookingId
@@ -2107,6 +2129,8 @@ exports.recordCashPayment = async (req, res) => {
         { where: { id: bookingId } }
     );
 
+    await tryCreditAgentWallet(bookingId);
+
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
 
@@ -2151,6 +2175,8 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         },
         { where: { bookingId: bookingId } }
     );
+
+    await tryCreditAgentWallet(bookingId);
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",
@@ -5092,6 +5118,22 @@ exports.getEarningReportDashboard = async (req, res) => {
 
     return ResponseHelper.success(res, "Earning report dashboard data", response);
 }
+
+exports.getAgentWallet = async (req, res) => {
+    const agentId = req.user.id;
+    const data = await agentWalletService.getWalletSummary(agentId);
+    return ResponseHelper.success(res, "Agent wallet summary", data);
+};
+
+exports.getAgentWalletTransactions = async (req, res) => {
+    const agentId = req.user.id;
+    const { page, limit } = req.query;
+    const data = await agentWalletService.getWalletTransactions(agentId, {
+        page,
+        limit,
+    });
+    return ResponseHelper.success(res, "Agent wallet transactions", data);
+};
 
 
 /*

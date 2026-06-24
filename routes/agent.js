@@ -627,6 +627,16 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getEarningReportDashboard)
 );
+router.get(
+    "/wallet",
+    validateAccessToken,
+    asyncMiddleware(agentController.getAgentWallet)
+);
+router.get(
+    "/wallet/transactions",
+    validateAccessToken,
+    asyncMiddleware(agentController.getAgentWalletTransactions)
+);
 
 //!----------------------------Agent Postcode Lookup---------------------//
 router.get(

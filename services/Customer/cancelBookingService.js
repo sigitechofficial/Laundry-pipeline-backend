@@ -506,6 +506,7 @@ class CancelBookingService {
         const walletEntry = await wallet.create({
             userId: customerId,
             bookingId: bookingId,
+            referenceType: 'customer_refund',
             amount: refundAmount,
             type: 'credit',
             description: `Refund for cancelled booking #${bookingId}`,
