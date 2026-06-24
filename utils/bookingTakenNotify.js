@@ -37,9 +37,14 @@ async function notifyBookingTakenByAgent({
     zoneId,
     assignedUserId,
     source = 'agent',
+    excludeUserIds = [],
 }) {
     const ownerIds = await getZoneShopOwnerIds(zoneId);
     if (!ownerIds.length) return;
+
+    const excluded = new Set(
+        excludeUserIds.map((id) => Number(id)).filter((id) => !Number.isNaN(id))
+    );
 
     const assignedMessage =
         source === 'admin'
@@ -58,6 +63,10 @@ async function notifyBookingTakenByAgent({
 
     await Promise.all(
         ownerIds.map((userId) => {
+            if (excluded.has(Number(userId))) {
+                return Promise.resolve();
+            }
+
             if (Number(userId) === numericAssignedId) {
                 return sendEvent(userId, {
                     type: 'AcceptedOrder',

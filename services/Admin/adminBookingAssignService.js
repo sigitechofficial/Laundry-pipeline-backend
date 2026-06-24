@@ -2,6 +2,7 @@ const {
     booking,
     addressDb,
     bussinessInformation,
+    bookingHistory,
     proofOfDeliveries,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
@@ -18,10 +19,10 @@ const {
 } = require("../../utils/countryTimeZone");
 const {
     BUSINESS_TIME_ZONE,
-    getOrderExpireTime,
 } = require("../../utils/bookingTimeZone");
 const agentBookingDeclineService = require("../Agent/agentBookingDeclineService");
 const { notifyAdminBookingAssignment } = require("../../utils/bookingAdminAssignNotify");
+const { notifyBookingTakenByAgent } = require("../../utils/bookingTakenNotify");
 
 class AdminBookingAssignService {
     async getAssignableShops(bookingId) {
@@ -145,8 +146,7 @@ class AdminBookingAssignService {
 
         if (
             bookingRow.laundryShopId != null &&
-            Number(bookingRow.laundryShopId) === Number(shop.id) &&
-            Number(bookingRow.bookingStatusId) !== 1
+            Number(bookingRow.laundryShopId) === Number(shop.id)
         ) {
             throw new ValidationError(
                 "This order is already assigned to the selected shop."
@@ -169,28 +169,48 @@ class AdminBookingAssignService {
                 { attributes: ["id", "userId"] }
             );
             previousOwnerUserId = previousShop?.userId || null;
+        } else if (bookingRow.adminAssignedShopId) {
+            const pendingShop = await addressDb.findByPk(
+                bookingRow.adminAssignedShopId,
+                { attributes: ["id", "userId"] }
+            );
+            previousOwnerUserId = pendingShop?.userId || null;
         }
 
         const isReassign =
             bookingRow.laundryShopId != null &&
             Number(bookingRow.bookingStatusId) !== 1;
 
-        await proofOfDeliveries.destroy({ where: { bookingId } });
+        if (isReassign) {
+            await proofOfDeliveries.destroy({ where: { bookingId } });
+        }
 
-        const visibleAt = new Date();
+        const now = new Date();
+        const dateStr = now.toISOString().split("T")[0];
+        const timeStr = now.toTimeString().slice(0, 8);
 
         await booking.update(
             {
-                laundryShopId: null,
-                adminAssignedShopId: shop.id,
-                bookingStatusId: 1,
-                driverId: null,
+                laundryShopId: shop.id,
+                bookingStatusId: 3,
+                driverId: ownerId || null,
+                adminAssignedShopId: null,
                 agentBroadcastHeld: false,
-                agentVisibleAt: visibleAt,
-                orderExpireTime: getOrderExpireTime(assignCountryCtx.ianaTimeZone),
+                agentVisibleAt: null,
             },
             { where: { id: bookingId } }
         );
+
+        if (Number(bookingRow.bookingStatusId) === 1) {
+            await bookingHistory.bulkCreate(
+                [2, 3].map((statusId) => ({
+                    bookingId,
+                    bookingStatusId: statusId,
+                    date: dateStr,
+                    time: timeStr,
+                }))
+            );
+        }
 
         const biz = await bussinessInformation.findOne({
             where: { shopAddressId: shop.id },
@@ -199,22 +219,27 @@ class AdminBookingAssignService {
 
         await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
 
+        await notifyBookingTakenByAgent({
+            bookingId,
+            zoneId: bookingRow.zoneId,
+            assignedUserId: ownerId,
+            source: "admin",
+            excludeUserIds: previousOwnerUserId ? [previousOwnerUserId] : [],
+        });
+
         await notifyAdminBookingAssignment({
             bookingId,
             orderTrackId: bookingRow.orderTrackId,
             customerId: bookingRow.customerId,
             previousOwnerUserId,
-            newOwnerUserId: ownerId,
             isReassign,
         });
 
         return {
             bookingId,
-            laundryShopId: null,
-            adminAssignedShopId: shop.id,
-            bookingStatusId: 1,
+            laundryShopId: shop.id,
+            bookingStatusId: 3,
             shopName: biz?.shopName || null,
-            pendingAgentAccept: true,
             isReassign,
             paymentRetained: Boolean(bookingRow.paymentConfirmed),
         };

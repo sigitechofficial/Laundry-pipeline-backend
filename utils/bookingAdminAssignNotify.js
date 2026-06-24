@@ -2,20 +2,20 @@ const { sendEvent } = require("../socket_io");
 const { sendNotification } = require("./notification");
 
 /**
- * Push + socket when admin assigns or reassigns a booking (pending target accept).
+ * Push + socket for previous shop owner and customer on admin assign/reassign.
+ * New shop owner is notified via notifyBookingTakenByAgent (AcceptedOrder).
  */
 async function notifyAdminBookingAssignment({
     bookingId,
     orderTrackId,
     customerId,
     previousOwnerUserId,
-    newOwnerUserId,
     isReassign,
 }) {
     const numericBookingId = Number(bookingId);
     const orderLabel = orderTrackId || String(bookingId);
 
-    if (previousOwnerUserId && Number(previousOwnerUserId) !== Number(newOwnerUserId)) {
+    if (previousOwnerUserId) {
         const removedTitle = isReassign
             ? "Order reassigned"
             : "Order update";
@@ -36,28 +36,6 @@ async function notifyAdminBookingAssignment({
             removedTitle,
             removedBody,
             { bookingId: numericBookingId, type: "orderReassignedFromYou" }
-        );
-    }
-
-    if (newOwnerUserId) {
-        const assignedTitle = "New order to accept";
-        const assignedBody = isReassign
-            ? `Admin assigned order #${orderLabel} to your shop. Please accept to continue.`
-            : `Admin assigned order #${orderLabel} to your shop. Please accept to continue.`;
-
-        await sendEvent(newOwnerUserId, {
-            type: "adminOrderPendingAccept",
-            data: {
-                bookingId: numericBookingId,
-                message: assignedBody,
-            },
-        });
-
-        await sendNotification(
-            newOwnerUserId,
-            assignedTitle,
-            assignedBody,
-            { bookingId: numericBookingId, type: "adminOrderPendingAccept" }
         );
     }
 
