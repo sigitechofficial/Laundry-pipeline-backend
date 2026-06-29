@@ -25,6 +25,13 @@ module.exports = (sequelize, DataTypes) => {
       //Relation with Model on Hold Conformations
       subCategories.hasMany(models.OnHoldConfirmation)
       models.OnHoldConfirmation.belongsTo(subCategories)
+
+      // A sub-category (e.g. "Trouser") can be linked to an add-on/repair
+      // category (e.g. "Repair Trouser") to surface its add-on services.
+      subCategories.belongsTo(models.addOnCategory, {
+        foreignKey: 'addOnCategoryId',
+        as: 'addOnCategory'
+      })
     }
   }
   subCategories.init({
@@ -58,6 +65,15 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: null,
       comment: 'Units count for item-based subcategories'
+    },
+    addOnCategoryId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'addOnCategories',
+        key: 'id'
+      },
+      comment: 'Linked add-on/repair category (e.g. "Repair Trouser")'
     }
   }, {
     sequelize,
