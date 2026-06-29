@@ -14,6 +14,12 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'addOnServiceId',
         as: 'selectedServiceAddOns'
       });
+
+      // Each add-on service may belong to a category (e.g. "Blouse")
+      addOnServices.belongsTo(models.addOnCategory, {
+        foreignKey: 'addOnCategoryId',
+        as: 'category'
+      });
     }
   }
   addOnServices.init({
@@ -24,6 +30,14 @@ module.exports = (sequelize, DataTypes) => {
     price: {
       type: DataTypes.DECIMAL,
       allowNull: false
+    },
+    addOnCategoryId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'addOnCategories',
+        key: 'id'
+      }
     }
   }, {
     sequelize,

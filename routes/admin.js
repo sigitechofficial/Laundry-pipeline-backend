@@ -285,6 +285,13 @@ router.post('/createAccountDeletionReason', asyncMiddleware(adminController.crea
 router.patch('/updateAccountDeletionReason/:id', asyncMiddleware(adminController.updateAccountDeletionReason))
 router.delete('/deleteAccountDeletionReason/:id', asyncMiddleware(adminController.deleteAccountDeletionReason))
 
+//!-------------------------Add-On Categories------------------------------------------------------------------//
+router.post('/createAddOnCategory', asyncMiddleware(adminController.createAddOnCategory))
+router.get('/getAllAddOnCategories', asyncMiddleware(adminController.getAllAddOnCategories))
+router.get('/getAddOnCategoryById/:addOnCategoryId', asyncMiddleware(adminController.getAddOnCategoryById))
+router.patch('/updateAddOnCategory/:addOnCategoryId', asyncMiddleware(adminController.updateAddOnCategory))
+router.delete('/deleteAddOnCategory/:addOnCategoryId', asyncMiddleware(adminController.deleteAddOnCategory))
+
 //!-------------------------Add-On Services------------------------------------------------------------------//
 router.post('/createAddOnService', asyncMiddleware(adminController.createAddOnService))
 router.get('/getAllAddOnServices', asyncMiddleware(adminController.getAllAddOnServices))

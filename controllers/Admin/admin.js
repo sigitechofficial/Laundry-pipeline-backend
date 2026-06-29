@@ -97,7 +97,8 @@ const {
     agentRegistrationService,
     agentApprovalService,
     reasonService,
-    addOnServicesService
+    addOnServicesService,
+    addOnCategoryService
 } = require('../../services/Admin');
 
 // Import FAQ and Blog services
@@ -2066,7 +2067,9 @@ async function createAddOnService(req, res) {
 }
 
 async function getAllAddOnServices(req, res) {
-    const rows = await addOnServicesService.getAllAddOnServices();
+    const rows = await addOnServicesService.getAllAddOnServices({
+        addOnCategoryId: req.query.addOnCategoryId
+    });
     return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 }
 
@@ -2086,6 +2089,36 @@ async function deleteAddOnService(req, res) {
     const { addOnServiceId } = req.params;
     await addOnServicesService.deleteAddOnService(addOnServiceId);
     return ResponseHelper.success(res, "Add-on service deleted successfully", null);
+}
+
+//!--------------------------------------------Add-On Categories Management-----------------------------------------------//
+async function createAddOnCategory(req, res) {
+    const created = await addOnCategoryService.createCategory(req.body);
+    return ResponseHelper.success(res, "Add-on category created successfully", created);
+}
+
+async function getAllAddOnCategories(req, res) {
+    const includeServices = req.query.includeServices !== 'false';
+    const rows = await addOnCategoryService.getAllCategories({ includeServices });
+    return ResponseHelper.success(res, "Add-on categories retrieved successfully", rows);
+}
+
+async function getAddOnCategoryById(req, res) {
+    const { addOnCategoryId } = req.params;
+    const row = await addOnCategoryService.getCategoryById(addOnCategoryId);
+    return ResponseHelper.success(res, "Add-on category retrieved successfully", row);
+}
+
+async function updateAddOnCategory(req, res) {
+    const { addOnCategoryId } = req.params;
+    const updated = await addOnCategoryService.updateCategory(addOnCategoryId, req.body);
+    return ResponseHelper.success(res, "Add-on category updated successfully", updated);
+}
+
+async function deleteAddOnCategory(req, res) {
+    const { addOnCategoryId } = req.params;
+    await addOnCategoryService.deleteCategory(addOnCategoryId);
+    return ResponseHelper.success(res, "Add-on category deleted successfully", null);
 }
 
 
@@ -2772,6 +2805,11 @@ module.exports = {
     getAddOnServiceById,
     updateAddOnService,
     deleteAddOnService,
+    createAddOnCategory,
+    getAllAddOnCategories,
+    getAddOnCategoryById,
+    updateAddOnCategory,
+    deleteAddOnCategory,
     //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,
