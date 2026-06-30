@@ -957,7 +957,7 @@ exports.agentBookingFilters = async (req, res) => {
         where: {
             laundryShopId: addressFound.id,
             bookingStatusId: {
-                [Op.notIn]: [1, 13, 17]
+                [Op.notIn]: [1, 13, 17, 19]
             }
         },
         order: [["id", "DESC"]],
