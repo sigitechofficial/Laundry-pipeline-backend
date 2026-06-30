@@ -104,7 +104,18 @@ class AddOnServicesService {
             include: [CATEGORY_INCLUDE_WITH_LINKS],
             order: [['createdAt', 'DESC']]
         });
-        return rows;
+
+        // Flatten the linked items so the frontend can filter add-on services
+        // by sub-category id (e.g. show "Repair Trouser" services under Trouser).
+        return rows.map((row) => {
+            const plain = row.toJSON();
+            const linked = plain.category?.subCategories || [];
+            plain.subCategoryIds = linked.map((sc) => sc.id);
+            if (plain.category) {
+                delete plain.category.subCategories;
+            }
+            return plain;
+        });
     }
 
     async getAddOnServiceById(addOnServiceId) {
