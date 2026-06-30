@@ -1,4 +1,4 @@
-const { addOnServices, addOnCategory } = require('../../models');
+const { addOnServices, addOnCategory, subCategories } = require('../../models');
 const { Op } = require('sequelize');
 
 const {
@@ -12,6 +12,21 @@ const CATEGORY_INCLUDE = {
     as: 'category',
     required: false,
     attributes: ['id', 'name', 'status']
+};
+
+// Same as CATEGORY_INCLUDE but also carries the sub-categories (items) the
+// category is linked to, so clients can map each item -> its add-on services.
+const CATEGORY_INCLUDE_WITH_LINKS = {
+    model: addOnCategory,
+    as: 'category',
+    required: false,
+    attributes: ['id', 'name', 'status'],
+    include: [{
+        model: subCategories,
+        as: 'subCategories',
+        attributes: ['id'],
+        through: { attributes: [] }
+    }]
 };
 
 async function assertCategoryExists(addOnCategoryId) {
@@ -86,7 +101,7 @@ class AddOnServicesService {
 
         const rows = await addOnServices.findAll({
             where,
-            include: [CATEGORY_INCLUDE],
+            include: [CATEGORY_INCLUDE_WITH_LINKS],
             order: [['createdAt', 'DESC']]
         });
         return rows;
