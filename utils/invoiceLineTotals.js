@@ -3,6 +3,7 @@
 const {
     customerSelectedService,
     customerSelectedServiceAddOn,
+    customerSelectedServiceLine,
 } = require('../models');
 
 /**
@@ -166,6 +167,152 @@ async function replaceAddOnsForServiceLine(
 }
 
 /**
+ * Normalize the add-ons of a single line. Unlike the flat normalizer this keeps
+ * each entry's instructions and does NOT merge across lines.
+ * @param {Array} rawAddOns
+ * @returns {Array<{ addOnServiceId: number, items: number, instructions: string|null }>}
+ */
+function normalizeLineAddOns(rawAddOns) {
+    const result = [];
+    if (!Array.isArray(rawAddOns)) return result;
+
+    for (const a of rawAddOns) {
+        if (a == null) continue;
+
+        let id;
+        let items;
+        let instructions;
+
+        if (typeof a === 'number' || typeof a === 'string') {
+            id = Number(a);
+            items = 1;
+            instructions = null;
+        } else {
+            id = Number(a.addOnServiceId ?? a.id ?? a.addOnId);
+            items = getLineQuantity(a.items ?? a.qty ?? a.quantity ?? 1);
+            const note = a.instructions ?? a.note ?? '';
+            instructions = note === '' ? null : note;
+        }
+
+        if (!Number.isFinite(id) || id <= 0) continue;
+        result.push({ addOnServiceId: id, items, instructions });
+    }
+
+    return result;
+}
+
+/**
+ * Resolve the line-split for a service payload.
+ * - Prefers explicit serviceLines[] (line-split UI).
+ * - Falls back to flat addOns -> a single line carrying the full quantity (legacy).
+ * @param {object} service
+ * @returns {Array<{ lineNum: number, items: number, addOns: Array }>}
+ */
+function resolveServiceLinesFromPayload(service) {
+    const totalItems = getLineQuantity(service.items);
+
+    if (Array.isArray(service?.serviceLines) && service.serviceLines.length > 0) {
+        return service.serviceLines.map((line, idx) => ({
+            lineNum:
+                Number(line?.lineNum) > 0 ? Number(line.lineNum) : idx + 1,
+            items: getLineQuantity(line?.items),
+            addOns: normalizeLineAddOns(line?.addOns),
+        }));
+    }
+
+    // Legacy flat payload -> single line with full quantity.
+    const flat = normalizeAddOnEntriesFromService(service).map((e) => ({
+        addOnServiceId: e.addOnServiceId,
+        items: e.items,
+        instructions: null,
+    }));
+
+    return [{ lineNum: 1, items: totalItems, addOns: flat }];
+}
+
+/**
+ * Replace all lines (and their add-ons) for a selected-service row.
+ * Stores both customerSelectedServiceId (for subtotal queries) and the line id.
+ * @param {import('sequelize').Model} selectedServiceRow
+ * @param {object} service - request line with serviceLines[] or flat addOns
+ * @param {import('sequelize').Model} addOnServicesModel
+ * @returns {Promise<number>} add-on subtotal across all lines of this service
+ */
+async function replaceServiceLinesForSelectedService(
+    selectedServiceRow,
+    service,
+    addOnServicesModel
+) {
+    const customerSelectedServiceId = selectedServiceRow.id;
+
+    // Wipe existing lines (cascade removes their add-ons) and any legacy flat add-ons.
+    await customerSelectedServiceLine.destroy({
+        where: { customerSelectedServiceId },
+    });
+    await customerSelectedServiceAddOn.destroy({
+        where: { customerSelectedServiceId },
+    });
+
+    const lines = resolveServiceLinesFromPayload(service);
+
+    const allIds = [
+        ...new Set(
+            lines.flatMap((l) => l.addOns.map((a) => a.addOnServiceId))
+        ),
+    ];
+    const priceById = new Map();
+    if (allIds.length > 0) {
+        const catalog = await addOnServicesModel.findAll({
+            where: { id: allIds },
+        });
+        catalog.forEach((row) =>
+            priceById.set(row.id, getUnitCategoryCharge(row.price))
+        );
+    }
+
+    let addOnSubtotal = 0;
+    for (const line of lines) {
+        const lineRow = await customerSelectedServiceLine.create({
+            customerSelectedServiceId,
+            lineNum: line.lineNum,
+            items: line.items,
+        });
+
+        for (const addOn of line.addOns) {
+            const unitPrice = priceById.get(addOn.addOnServiceId) ?? 0;
+            await customerSelectedServiceAddOn.create({
+                customerSelectedServiceId,
+                customerSelectedServiceLineId: lineRow.id,
+                addOnServiceId: addOn.addOnServiceId,
+                price: unitPrice,
+                items: addOn.items,
+                instructions: addOn.instructions,
+            });
+            addOnSubtotal += getLineSubtotal(unitPrice, addOn.items);
+        }
+    }
+
+    return parseFloat(addOnSubtotal.toFixed(2));
+}
+
+/**
+ * Validate that the sum of line items equals the service quantity (when lines given).
+ * @param {object} service
+ * @returns {{ valid: boolean, expected: number, actual: number }}
+ */
+function validateServiceLineItems(service) {
+    const expected = getLineQuantity(service?.items);
+    if (!Array.isArray(service?.serviceLines) || service.serviceLines.length === 0) {
+        return { valid: true, expected, actual: expected };
+    }
+    const actual = service.serviceLines.reduce(
+        (sum, line) => sum + getLineQuantity(line?.items),
+        0
+    );
+    return { valid: actual === expected, expected, actual };
+}
+
+/**
  * Sum categoryPrice×items for all active lines on a booking, optionally including add-ons.
  * @param {number|string} bookingId
  * @param {{ includeAddOns?: boolean }} [options]
@@ -208,5 +355,9 @@ module.exports = {
     normalizeAddOnEntriesFromService,
     serviceLineHasAddOnPayload,
     replaceAddOnsForServiceLine,
+    normalizeLineAddOns,
+    resolveServiceLinesFromPayload,
+    replaceServiceLinesForSelectedService,
+    validateServiceLineItems,
     sumActiveBookingServicesSubtotal,
 };

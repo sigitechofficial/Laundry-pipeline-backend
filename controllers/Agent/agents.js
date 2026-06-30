@@ -34,6 +34,7 @@ const {
     preferencesServiceName,
     tip,
     customerSelectedServiceAddOn,
+    customerSelectedServiceLine,
     addOnServices,
     bookingPreference,
     preferenceTypes,
@@ -2845,12 +2846,35 @@ exports.invoiceCreation = async (req, res) => {
                         model: customerSelectedServiceAddOn,
                         as: 'addOns',
                         required: false,
-                        attributes: ['id', 'addOnServiceId', 'price', 'items'],
+                        attributes: ['id', 'addOnServiceId', 'price', 'items', 'instructions'],
                         include: [
                             {
                                 model: addOnServices,
                                 as: 'addOnService',
                                 attributes: ['id', 'name', 'price']
+                            }
+                        ]
+                    },
+                    {
+                        model: customerSelectedServiceLine,
+                        as: 'serviceLines',
+                        required: false,
+                        separate: true,
+                        order: [['lineNum', 'ASC']],
+                        attributes: ['id', 'lineNum', 'items'],
+                        include: [
+                            {
+                                model: customerSelectedServiceAddOn,
+                                as: 'addOns',
+                                required: false,
+                                attributes: ['id', 'addOnServiceId', 'price', 'items', 'instructions'],
+                                include: [
+                                    {
+                                        model: addOnServices,
+                                        as: 'addOnService',
+                                        attributes: ['id', 'name', 'price']
+                                    }
+                                ]
                             }
                         ]
                     },
@@ -2987,6 +3011,14 @@ exports.invoiceCreation = async (req, res) => {
 
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
     bookingData.servicesSubtotal = servicesSubtotal;
+
+    // Invoice-level item count = Σ(service.items × subCategory.unitCount).
+    bookingData.totalItems = (bookingData.customerSelectedServices || []).reduce((sum, s) => {
+        const qty = Number(s.items) || 0;
+        const rawUnit = Number(s.subCategory?.unitCount);
+        const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? Math.floor(rawUnit) : 1;
+        return sum + qty * unit;
+    }, 0);
 
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
@@ -4326,6 +4358,34 @@ exports.printLabelData = async (req, res) => {
                     {
                         model: subCategories,
                         attributes: ['id', 'name', 'price', 'unitCount', 'barCode']
+                    },
+                    {
+                        model: customerSelectedServiceAddOn,
+                        as: 'addOns',
+                        required: false,
+                        attributes: ['id', 'addOnServiceId', 'items', 'instructions'],
+                        include: [
+                            { model: addOnServices, as: 'addOnService', attributes: ['id', 'name'] }
+                        ]
+                    },
+                    {
+                        model: customerSelectedServiceLine,
+                        as: 'serviceLines',
+                        required: false,
+                        separate: true,
+                        order: [['lineNum', 'ASC']],
+                        attributes: ['id', 'lineNum', 'items'],
+                        include: [
+                            {
+                                model: customerSelectedServiceAddOn,
+                                as: 'addOns',
+                                required: false,
+                                attributes: ['id', 'addOnServiceId', 'items', 'instructions'],
+                                include: [
+                                    { model: addOnServices, as: 'addOnService', attributes: ['id', 'name'] }
+                                ]
+                            }
+                        ]
                     }
                 ]
             }
@@ -4338,17 +4398,25 @@ exports.printLabelData = async (req, res) => {
 
     const selectedServices = bookingData.customerSelectedServices || [];
 
-    // Tags per line = order quantity (items) × catalog unitCount (min 1 each).
+    const buildAddOnsForTag = (lineAddOns) => {
+        const list = (lineAddOns || []).map((a) => ({
+            addOnServiceId: a.addOnServiceId,
+            name: a.addOnService?.name || null,
+            qty: Number(a.items) || 1,
+            instructions: a.instructions || null,
+        }));
+        const display = list.length
+            ? list.map((a) => `${a.name || 'Add-on'} x${a.qty}`).join(', ')
+            : 'No add-ons';
+        return { list, display };
+    };
+
+    // Tags per line = line quantity × catalog unitCount (min 1 each).
+    // Each tag carries the add-ons of the line/split it belongs to.
     const rawTags = [];
     selectedServices.forEach((selectedService, serviceIndex) => {
         const subCategory = selectedService.subCategory;
         if (!subCategory) return;
-
-        const parsedQuantity = Number(selectedService.items);
-        const orderQuantity =
-            Number.isFinite(parsedQuantity) && parsedQuantity > 0
-                ? Math.floor(parsedQuantity)
-                : 1;
 
         const parsedUnitCount = Number(subCategory.unitCount);
         const unitsPerItem =
@@ -4356,40 +4424,73 @@ exports.printLabelData = async (req, res) => {
                 ? Math.floor(parsedUnitCount)
                 : 1;
 
-        const repeatCount = orderQuantity * unitsPerItem;
-
-        for (let i = 0; i < repeatCount; i += 1) {
-            rawTags.push({
-                bookingId: bookingData.id,
-                orderTrackId: bookingData.orderTrackId,
-                customerId: bookingData.customer?.id || null,
-                customerName: `${bookingData.customer?.firstName || ''} ${bookingData.customer?.lastName || ''}`.trim(),
-                serviceId: selectedService.serviceId,
-                serviceName: selectedService.service?.name || null,
-                categoryId: selectedService.categoryId,
-                categoryName: selectedService.category?.name || null,
-                subCategoryId: selectedService.subCategoryId,
-                subCategoryName: subCategory.name,
-                subCategoryBarCode: subCategory.barCode || null,
-                subCategoryPrice: subCategory.price,
-                orderQuantity,
-                unitsPerItem,
-                unitCount: subCategory.unitCount,
-                tagsForLine: repeatCount,
-                serviceOrder: serviceIndex + 1,
-                copyIndexWithinLine: i + 1,
-                copyIndexWithinSubCategory: i + 1,
-            });
+        // Use stored line-split when present; else a single line for the whole qty.
+        let lines = selectedService.serviceLines || [];
+        if (!lines.length) {
+            const parsedQuantity = Number(selectedService.items);
+            const orderQuantity =
+                Number.isFinite(parsedQuantity) && parsedQuantity > 0
+                    ? Math.floor(parsedQuantity)
+                    : 1;
+            lines = [
+                {
+                    lineNum: 1,
+                    items: orderQuantity,
+                    addOns: selectedService.addOns || [],
+                },
+            ];
         }
+
+        let copyIndexWithinSubCategory = 0;
+        lines.forEach((line) => {
+            const parsedLineQty = Number(line.items);
+            const lineQuantity =
+                Number.isFinite(parsedLineQty) && parsedLineQty > 0
+                    ? Math.floor(parsedLineQty)
+                    : 1;
+            const piecesInLine = lineQuantity * unitsPerItem;
+            const { list: addOns, display: addOnsDisplay } = buildAddOnsForTag(line.addOns);
+
+            for (let i = 0; i < piecesInLine; i += 1) {
+                copyIndexWithinSubCategory += 1;
+                rawTags.push({
+                    bookingId: bookingData.id,
+                    orderTrackId: bookingData.orderTrackId,
+                    customerId: bookingData.customer?.id || null,
+                    customerName: `${bookingData.customer?.firstName || ''} ${bookingData.customer?.lastName || ''}`.trim(),
+                    serviceId: selectedService.serviceId,
+                    serviceName: selectedService.service?.name || null,
+                    categoryId: selectedService.categoryId,
+                    categoryName: selectedService.category?.name || null,
+                    subCategoryId: selectedService.subCategoryId,
+                    subCategoryName: subCategory.name,
+                    subCategoryBarCode: subCategory.barCode || null,
+                    subCategoryPrice: subCategory.price,
+                    unitsPerItem,
+                    unitCount: subCategory.unitCount,
+                    serviceOrder: serviceIndex + 1,
+                    serviceLineNum: line.lineNum,
+                    copyIndexWithinLine: i + 1,
+                    copyIndexWithinSubCategory,
+                    addOns,
+                    addOnsDisplay,
+                });
+            }
+        });
     });
 
     const totalTags = rawTags.length;
-    const tags = rawTags.map((tag, index) => ({
-        ...tag,
-        printIndex: index + 1,
-        printDisplay: `${index + 1} of ${totalTags}`,
-        printDisplayCompact: `${index + 1}/${totalTags}`
-    }));
+    const tags = rawTags.map((tag, index) => {
+        const serviceLabel = [tag.serviceName, tag.subCategoryName]
+            .filter(Boolean)
+            .join(' - ');
+        return {
+            ...tag,
+            printIndex: index + 1,
+            printDisplay: serviceLabel || `${index + 1} of ${totalTags}`,
+            printDisplayCompact: tag.subCategoryName || `${index + 1}/${totalTags}`,
+        };
+    });
 
     return ResponseHelper.success(res, "Print Label Data", {
         bookingId: bookingData.id,

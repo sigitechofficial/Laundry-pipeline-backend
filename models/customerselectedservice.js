@@ -14,6 +14,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'customerSelectedServiceId',
         as: 'addOns'
       });
+      customerSelectedService.hasMany(models.customerSelectedServiceLine, {
+        foreignKey: 'customerSelectedServiceId',
+        as: 'serviceLines'
+      });
       customerSelectedService.hasMany(models.bookingPreference, {
         foreignKey: 'customerSelectedServiceId',
         as: 'selectedServicePreferences'

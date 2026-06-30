@@ -16,6 +16,7 @@ const {
     billingDetails,
     tip,
     customerSelectedServiceAddOn,
+    customerSelectedServiceLine,
     addOnServices,
     bookingPreference,
     preferenceTypes,
@@ -31,8 +32,8 @@ const {
 const {
     getLineQuantity,
     getUnitCategoryCharge,
-    serviceLineHasAddOnPayload,
-    replaceAddOnsForServiceLine,
+    replaceServiceLinesForSelectedService,
+    validateServiceLineItems,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
@@ -176,12 +177,35 @@ class AgentInvoiceManagementService {
                         model: customerSelectedServiceAddOn,
                         as: "addOns",
                         required: false,
-                        attributes: ["id", "addOnServiceId", "price", "items"],
+                        attributes: ["id", "addOnServiceId", "price", "items", "instructions"],
                         include: [
                             {
                                 model: addOnServices,
                                 as: "addOnService",
                                 attributes: ["id", "name", "price"],
+                            },
+                        ],
+                    },
+                    {
+                        model: customerSelectedServiceLine,
+                        as: "serviceLines",
+                        required: false,
+                        separate: true,
+                        order: [["lineNum", "ASC"]],
+                        attributes: ["id", "lineNum", "items"],
+                        include: [
+                            {
+                                model: customerSelectedServiceAddOn,
+                                as: "addOns",
+                                required: false,
+                                attributes: ["id", "addOnServiceId", "price", "items", "instructions"],
+                                include: [
+                                    {
+                                        model: addOnServices,
+                                        as: "addOnService",
+                                        attributes: ["id", "name", "price"],
+                                    },
+                                ],
                             },
                         ],
                     },
@@ -362,6 +386,14 @@ class AgentInvoiceManagementService {
             const qty = getLineQuantity(serviceLine.items);
             const lineActive = serviceLine.status !== false;
 
+            // Enforce: sum(serviceLines[].items) === service.items (when split given).
+            const lineCheck = validateServiceLineItems(serviceLine);
+            if (!lineCheck.valid) {
+                throw new ValidationError(
+                    `Service lines total (${lineCheck.actual}) must equal item quantity (${lineCheck.expected})`
+                );
+            }
+
             let selectedServiceRow = await this.findExistingInvoiceLineForSync(
                 bookingId,
                 serviceLine
@@ -402,13 +434,12 @@ class AgentInvoiceManagementService {
                 keptActiveIds.push(selectedServiceRow.id);
             }
 
-            if (serviceLineHasAddOnPayload(serviceLine)) {
-                await replaceAddOnsForServiceLine(
-                    selectedServiceRow.id,
-                    serviceLine,
-                    addOnServices
-                );
-            }
+            // Always rebuild lines (split or single) so add-ons/instructions persist.
+            await replaceServiceLinesForSelectedService(
+                selectedServiceRow,
+                serviceLine,
+                addOnServices
+            );
         }
 
         const deactivateWhere = {
@@ -425,7 +456,38 @@ class AgentInvoiceManagementService {
             { where: deactivateWhere }
         );
 
+        // Keep booking.totalItems in sync = Σ(items × subCategory.unitCount).
+        await this.updateBookingTotalItems(bookingId);
+
         return keptActiveIds;
+    }
+
+    /**
+     * Recompute booking.totalItems = Σ(active service items × subCategory.unitCount).
+     * @param {number|string} bookingId
+     */
+    async updateBookingTotalItems(bookingId) {
+        const rows = await customerSelectedService.findAll({
+            where: { bookingId, status: true },
+            attributes: ["id", "items"],
+            include: [
+                {
+                    model: subCategories,
+                    required: false,
+                    attributes: ["id", "unitCount"],
+                },
+            ],
+        });
+
+        const totalItems = rows.reduce((sum, row) => {
+            const qty = getLineQuantity(row.items);
+            const rawUnit = Number(row.subCategory?.unitCount);
+            const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? Math.floor(rawUnit) : 1;
+            return sum + qty * unit;
+        }, 0);
+
+        await booking.update({ totalItems }, { where: { id: bookingId } });
+        return totalItems;
     }
 
     async calculateInvoiceTotals(bookingRow, bookingId, serviceCharge, zoneMinimumAmount) {

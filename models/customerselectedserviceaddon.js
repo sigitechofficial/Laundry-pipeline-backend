@@ -12,6 +12,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'addOnServiceId',
         as: 'addOnService'
       });
+      // The line (split group) this add-on belongs to.
+      customerSelectedServiceAddOn.belongsTo(models.customerSelectedServiceLine, {
+        foreignKey: 'customerSelectedServiceLineId',
+        as: 'serviceLine'
+      });
     }
   }
 
@@ -19,6 +24,11 @@ module.exports = (sequelize, DataTypes) => {
     customerSelectedServiceId: {
       type: DataTypes.INTEGER,
       allowNull: false
+    },
+    customerSelectedServiceLineId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Line/group this add-on belongs to (null for legacy flat rows)'
     },
     addOnServiceId: {
       type: DataTypes.INTEGER,
@@ -34,6 +44,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 1,
       comment: 'Quantity of this add-on on the line'
+    },
+    instructions: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'Optional agent note for this add-on'
     }
   }, {
     sequelize,
