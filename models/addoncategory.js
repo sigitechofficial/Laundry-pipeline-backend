@@ -9,6 +9,14 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'addOnCategoryId',
         as: 'addOnServices'
       });
+
+      // A category can be linked to many sub-categories via a join table.
+      addOnCategory.belongsToMany(models.subCategories, {
+        through: models.subCategoryAddOnCategory,
+        foreignKey: 'addOnCategoryId',
+        otherKey: 'subCategoryId',
+        as: 'subCategories'
+      });
     }
   }
 

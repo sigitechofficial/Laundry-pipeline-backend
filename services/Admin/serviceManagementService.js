@@ -6,7 +6,8 @@ const {
     preferenceTypes,
     preferenceValues,
     serviceWithPreferences,
-    customerSelectedService } = require('../../models');
+    customerSelectedService,
+    addOnCategory } = require('../../models');
 const sequelize = require('sequelize');
 const { literal, fn, col, Op } = require("sequelize");
 
@@ -16,6 +17,15 @@ const {
     UnauthorizedError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
+
+function normalizeAddOnCategoryIds(value) {
+    if (value == null) return [];
+    const arr = Array.isArray(value) ? value : [value];
+    const ids = arr
+        .map((v) => Number(v))
+        .filter((v) => Number.isInteger(v) && v > 0);
+    return [...new Set(ids)];
+}
 
 function parseServiceBoolean(value) {
     if (value === undefined || value === null || value === '') return undefined;
@@ -186,9 +196,17 @@ class ServiceManagementService {
      * @returns {Object} Edited subcategory data
      */
     async editSubcategories(subCategoryId, subCategoryData) {
-        const editSubcategory = await subCategories.update(subCategoryData, { where: { id: subCategoryId } });
+        const { addOnCategoryIds, ...rest } = subCategoryData;
+        const editSubcategory = await subCategories.update(rest, { where: { id: subCategoryId } });
         if (!editSubcategory) {
             throw new NotFoundError('Subcategory Not Found')
+        }
+        // Sync linked add-on categories only when the field was provided.
+        if (addOnCategoryIds !== undefined) {
+            const row = await subCategories.findByPk(subCategoryId);
+            if (row) {
+                await row.setAddOnCategories(normalizeAddOnCategoryIds(addOnCategoryIds));
+            }
         }
         return editSubcategory;
     }
@@ -376,7 +394,14 @@ class ServiceManagementService {
      * @returns {Array} List of all subcategories
      */
     async getSubcategories() {
-            const getSubcategories = await subCategories.findAll();
+            const getSubcategories = await subCategories.findAll({
+                include: [{
+                    model: addOnCategory,
+                    as: 'addOnCategories',
+                    attributes: ['id', 'name'],
+                    through: { attributes: [] }
+                }]
+            });
             return getSubcategories;
     }
 
@@ -714,8 +739,10 @@ class ServiceManagementService {
                 const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
                 const barcodePath = generateBarcodeFunction(cat.name, cat.price, fileName);
 
+                // eslint-disable-next-line no-unused-vars
+                const { addOnCategoryIds, ...rest } = cat;
                 return {
-                    ...cat,
+                    ...rest,
                     status: true,
                     barCode: barcodePath
                 };
@@ -726,6 +753,14 @@ class ServiceManagementService {
             if (!createSubCategories) {
                 throw new Error('There is error in the request');
             }
+
+            // Link each created sub-category to its selected add-on categories.
+            await Promise.all(createSubCategories.map(async (row, idx) => {
+                const ids = normalizeAddOnCategoryIds(subCategoryData[idx]?.addOnCategoryIds);
+                if (ids.length) {
+                    await row.setAddOnCategories(ids);
+                }
+            }));
 
             return createSubCategories;
     }
