@@ -3026,6 +3026,7 @@ exports.invoiceCreation = async (req, res) => {
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         servicesSubtotal,
+        totalItems: bookingData.totalItems,
         paymentSummary,
         remainingTime,
         customerHasResponded,
