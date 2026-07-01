@@ -146,6 +146,7 @@ const {
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
+const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
 const { sendNotification } = require("../../utils/notification");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
@@ -3884,33 +3885,7 @@ exports.getAllEmployees = async (req, res) => {
 
 exports.getAgentServices = async (req, res) => {
     const agentId = req.user.id;
-
-    const findServices = await agentSelectServices.findAll({
-        where: {
-            agentServiceId: agentId,
-        },
-        include: [
-            {
-                model: service,
-                attributes: [
-                    'id',
-                    'name',
-                    'image',
-                    'description',
-                    'timeRequired',
-                    'pricingBasis',
-                    'numberOfBags',
-                    'numberOfItems',
-                ],
-            },
-            {
-                model: users,
-                as: "agentServices",
-                attributes: ["firstName", "lastName", "email"],
-            },
-        ],
-    });
-
+    const { findServices } = await agentServiceManagementService.getAgentServices(agentId);
     return ResponseHelper.success(res, "Services Found", { findServices });
 }
 
@@ -3921,20 +3896,9 @@ exports.editServiceStatus = async (req, res) => {
     const { serviceId, status } = req.body;
     const agentId = req.user.id;
 
-    const serviceFind = await agentSelectServices.findOne({
-        where: {
-            serviceId: serviceId,
-            agentServiceId: agentId
-        }
-    });
-
-    if (!serviceFind) {
-        throw new NotFoundError("Service Not Found");
-    }
-
-    await agentSelectServices.update(
-        { status: status },
-        { where: { serviceId: serviceId, agentServiceId: agentId } }
+    await agentServiceManagementService.editServiceStatus(
+        { serviceId, status },
+        agentId
     );
 
     return ResponseHelper.success(res, "Service Status Updated", {});

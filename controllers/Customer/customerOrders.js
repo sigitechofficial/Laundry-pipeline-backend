@@ -789,7 +789,8 @@ async function bookingEventSentCheckTheShops(
                         where: {
                             serviceId: {
                                 [Op.in]: services.map(service => service.serviceId)
-                            }
+                            },
+                            status: true,
                         },
                         attributes: ['id']
                     }

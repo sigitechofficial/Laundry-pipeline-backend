@@ -18,6 +18,21 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
 
+const SERVICE_LIST_ATTRIBUTES = [
+    'id',
+    'name',
+    'image',
+    'description',
+    'timeRequired',
+    'pricingBasis',
+    'numberOfBags',
+    'numberOfItems',
+];
+
+function normalizeAgentServiceStatus(value) {
+    return value === true || value === 1 || value === '1' || value === 'true';
+}
+
 /**
  * Agent Service Management Service
  * Handles all agent service related business logic
@@ -25,44 +40,63 @@ const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTot
 class AgentServiceManagementService {
 
     /**
-     * Get Agent Services
+     * Get Agent Services — all platform services; unselected / new ones return status false.
      * @param {number} agentId - Agent ID
      * @returns {Object} Agent services data
      */
     async getAgentServices(agentId) {
-        const findServices = await agentSelectServices.findAll({
-            where: {
+        const [platformServices, agentRows, agentUser] = await Promise.all([
+            service.findAll({
+                where: { status: true },
+                attributes: [...SERVICE_LIST_ATTRIBUTES, 'sortOrder'],
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                ],
+            }),
+            agentSelectServices.findAll({
+                where: { agentServiceId: agentId },
+            }),
+            users.findByPk(agentId, {
+                attributes: ['firstName', 'lastName', 'email'],
+            }),
+        ]);
+
+        const agentByServiceId = new Map();
+        for (const row of agentRows) {
+            const plain = row.toJSON ? row.toJSON() : row;
+            agentByServiceId.set(plain.serviceId, plain);
+        }
+
+        const agentUserPlain = agentUser
+            ? agentUser.toJSON
+                ? agentUser.toJSON()
+                : agentUser
+            : null;
+
+        const findServices = platformServices.map((svc) => {
+            const svcPlain = svc.toJSON ? svc.toJSON() : svc;
+            const agentRow = agentByServiceId.get(svcPlain.id);
+
+            return {
+                id: agentRow?.id ?? null,
+                status: agentRow ? Boolean(agentRow.status) : false,
+                serviceTimeRequired: agentRow?.serviceTimeRequired ?? 'N/A',
+                serviceId: svcPlain.id,
                 agentServiceId: agentId,
-            },
-            include: [
-                {
-                    model: service,
-                    attributes: [
-                        'id',
-                        'name',
-                        'image',
-                        'description',
-                        'timeRequired',
-                        'pricingBasis',
-                        'numberOfBags',
-                        'numberOfItems',
-                    ],
-                },
-                {
-                    model: users,
-                    as: "agentServices",
-                    attributes: ["firstName", "lastName", "email"],
-                },
-            ],
+                createdAt: agentRow?.createdAt ?? null,
+                updatedAt: agentRow?.updatedAt ?? null,
+                deletedAt: agentRow?.deletedAt ?? null,
+                service: svcPlain,
+                agentServices: agentUserPlain,
+            };
         });
 
-        return {
-            findServices,
-        };
+        return { findServices };
     }
 
     /**
-     * Edit Service Status
+     * Edit Service Status — update existing row or create when agent activates a new service.
      * @param {Object} data - Service status data
      * @param {number} data.serviceId - Service ID
      * @param {boolean} data.status - Service status
@@ -72,24 +106,44 @@ class AgentServiceManagementService {
     async editServiceStatus(data, agentId) {
         const { serviceId, status } = data;
 
-        const serviceFind = await agentSelectServices.findOne({
-            where: {
-                serviceId: serviceId,
-                agentServiceId: agentId
-            }
-        });
-
-        if (!serviceFind) {
-            throw new NotFoundError("Service Not Found");
+        if (!serviceId) {
+            throw new ValidationError('serviceId is required');
         }
 
-        await agentSelectServices.update(
-            { status: status },
-            { where: { serviceId: serviceId, agentServiceId: agentId } }
-        );
+        const platformSvc = await service.findOne({
+            where: { id: serviceId, status: true },
+        });
 
-        return {
-        };
+        if (!platformSvc) {
+            throw new NotFoundError('Service not found');
+        }
+
+        const normalizedStatus = normalizeAgentServiceStatus(status);
+
+        const existing = await agentSelectServices.findOne({
+            where: {
+                serviceId,
+                agentServiceId: agentId,
+            },
+        });
+
+        if (existing) {
+            await existing.update({ status: normalizedStatus });
+            return {};
+        }
+
+        if (!normalizedStatus) {
+            return {};
+        }
+
+        await agentSelectServices.create({
+            serviceId,
+            agentServiceId: agentId,
+            status: true,
+            serviceTimeRequired: 'N/A',
+        });
+
+        return {};
     }
 
     /**
