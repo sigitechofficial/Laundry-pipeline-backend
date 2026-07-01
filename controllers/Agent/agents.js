@@ -544,6 +544,10 @@ exports.getBookingHome = async (req, res) => {
         });
     }
 
+    // Shop just opened — release any held bookings for this zone and notify agents immediately.
+    const { releaseHeldBookingsForZone } = require("../../services/bookingHeldReleaseService");
+    await releaseHeldBookingsForZone(agentZone);
+
     const declinedBookingIds =
         await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
 

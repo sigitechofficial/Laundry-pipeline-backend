@@ -12,6 +12,67 @@ const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
 
+async function releaseSingleHeldBooking(row) {
+    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
+    const zoneOpen = await isAnyShopOpenInZone(
+        row.zoneId,
+        countryCtx.ianaTimeZone
+    );
+    if (!zoneOpen) return false;
+
+    const services = await customerSelectedService.findAll({
+        where: { bookingId: row.id },
+        attributes: ["serviceId"],
+    });
+    const servicePayload = services.map((s) => ({
+        serviceId: s.serviceId,
+    }));
+
+    const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
+    const { notifiedCount } = await bookingEventSentCheckTheShops(
+        row.id,
+        row.zoneId,
+        row.collectionDate,
+        row.collectionTimeTo,
+        row.collectionTimeFrom,
+        row.deliveryDate,
+        row.deliveryTimeTo,
+        row.deliveryTimeFrom,
+        servicePayload,
+        countryCtx.ianaTimeZone
+    );
+
+    if (notifiedCount === 0) {
+        return false;
+    }
+
+    const visibleAt = new Date();
+    await booking.update(
+        {
+            agentBroadcastHeld: false,
+            agentVisibleAt: visibleAt,
+            orderExpireTime: getOrderExpireTime(countryCtx.ianaTimeZone),
+        },
+        { where: { id: row.id } }
+    );
+
+    console.log(
+        `[releaseHeldBookings] booking ${row.id} released to agents at ${visibleAt.toISOString()}`
+    );
+    return true;
+}
+
+const HELD_BOOKING_ATTRIBUTES = [
+    "id",
+    "zoneId",
+    "collectionDate",
+    "collectionTimeFrom",
+    "collectionTimeTo",
+    "deliveryDate",
+    "deliveryTimeFrom",
+    "deliveryTimeTo",
+];
+
 /**
  * Notify agents for bookings queued overnight (agentBroadcastHeld).
  */
@@ -22,69 +83,48 @@ async function releaseHeldBookings() {
             bookingStatusId: 1,
             laundryShopId: null,
         },
-        attributes: [
-            "id",
-            "zoneId",
-            "collectionDate",
-            "collectionTimeFrom",
-            "collectionTimeTo",
-            "deliveryDate",
-            "deliveryTimeFrom",
-            "deliveryTimeTo",
-        ],
+        attributes: HELD_BOOKING_ATTRIBUTES,
     });
 
     if (!heldBookings.length) return { released: 0 };
 
-    const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
     let released = 0;
-
     for (const row of heldBookings) {
-        const countryCtx = await getCountryContextFromZoneId(row.zoneId);
-        const zoneOpen = await isAnyShopOpenInZone(
-            row.zoneId,
-            countryCtx.ianaTimeZone
-        );
-        if (!zoneOpen) continue;
+        const ok = await releaseSingleHeldBooking(row);
+        if (ok) released += 1;
+    }
 
-        const services = await customerSelectedService.findAll({
-            where: { bookingId: row.id },
-            attributes: ["serviceId"],
-        });
-        const servicePayload = services.map((s) => ({
-            serviceId: s.serviceId,
-        }));
+    return { released };
+}
 
-        const { notifiedCount } = await bookingEventSentCheckTheShops(
-            row.id,
-            row.zoneId,
-            row.collectionDate,
-            row.collectionTimeTo,
-            row.collectionTimeFrom,
-            row.deliveryDate,
-            row.deliveryTimeTo,
-            row.deliveryTimeFrom,
-            servicePayload,
-            countryCtx.ianaTimeZone
-        );
+/**
+ * Release held bookings for one zone immediately (e.g. when an agent shop opens).
+ * @param {number|string} zoneId
+ */
+async function releaseHeldBookingsForZone(zoneId) {
+    if (zoneId == null || zoneId === "") return { released: 0 };
 
-        if (notifiedCount === 0) {
-            continue;
-        }
+    const heldBookings = await booking.findAll({
+        where: {
+            agentBroadcastHeld: true,
+            bookingStatusId: 1,
+            laundryShopId: null,
+            zoneId,
+        },
+        attributes: HELD_BOOKING_ATTRIBUTES,
+    });
 
-        const visibleAt = new Date();
-        await booking.update(
-            {
-                agentBroadcastHeld: false,
-                agentVisibleAt: visibleAt,
-                orderExpireTime: getOrderExpireTime(countryCtx.ianaTimeZone),
-            },
-            { where: { id: row.id } }
-        );
+    if (!heldBookings.length) return { released: 0 };
 
-        released += 1;
+    let released = 0;
+    for (const row of heldBookings) {
+        const ok = await releaseSingleHeldBooking(row);
+        if (ok) released += 1;
+    }
+
+    if (released > 0) {
         console.log(
-            `[releaseHeldBookings] booking ${row.id} released to agents at ${visibleAt.toISOString()}`
+            `[releaseHeldBookingsForZone] zone ${zoneId}: released ${released} held booking(s)`
         );
     }
 
@@ -109,5 +149,6 @@ function startHeldBookingReleaseJob() {
 
 module.exports = {
     releaseHeldBookings,
+    releaseHeldBookingsForZone,
     startHeldBookingReleaseJob,
 };

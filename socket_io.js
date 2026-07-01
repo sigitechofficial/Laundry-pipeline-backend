@@ -2,6 +2,7 @@ require('dotenv').config()
 const { Server } = require('socket.io')
 const agentBookingDeclineService = require('./services/Agent/agentBookingDeclineService');
 const { notifyBookingTakenByAgent } = require('./utils/bookingTakenNotify');
+const { triggerHeldReleaseForAgent } = require('./utils/triggerHeldReleaseForAgent');
 const { users,
     userType,
     booking,
@@ -20,6 +21,61 @@ const { users,
 
 let socket_Instance;
 
+const ACK_TIMEOUT_MS = 4000;
+
+function resolveStoredEventType(row) {
+    const plain = row?.toJSON ? row.toJSON() : row;
+    return plain?.event || plain?.type || null;
+}
+
+async function persistUnacknowledgedEvent(userId, eventData) {
+    const bookingId =
+        eventData?.data?.id ??
+        eventData?.data?.bookingId ??
+        null;
+
+    await unAcknowledgedEvents.create({
+        to: userId.toString(),
+        event: eventData.type,
+        data: JSON.stringify(eventData.data),
+        bookingId: bookingId != null ? Number(bookingId) : null,
+    });
+}
+
+async function replayUnacknowledgedEvents(userId) {
+    const rows = await unAcknowledgedEvents.findAll({
+        where: { to: userId.toString() },
+    });
+
+    for (const row of rows) {
+        const eventType = resolveStoredEventType(row);
+        if (!eventType || !row.data) {
+            console.warn(`⚠️ Skipping malformed unAcknowledgedEvent id=${row.id}`);
+            continue;
+        }
+
+        let payload;
+        try {
+            payload = JSON.parse(row.data);
+        } catch (parseErr) {
+            console.warn(`⚠️ Invalid unAcknowledgedEvent data id=${row.id}:`, parseErr.message);
+            continue;
+        }
+
+        socket_Instance
+            .to(row.to)
+            .emit(eventType, payload, async (ack) => {
+                if (ack) {
+                    console.log(`✅ Event acknowledged by ${row.to}`);
+                    await unAcknowledgedEvents.destroy({ where: { id: row.id } });
+                } else {
+                    console.log(`⚠️ Event not acknowledged by ${row.to}`);
+                }
+            });
+    }
+
+    return rows.length;
+}
 
 const intilizeSocketFunc = (server) => {
     const io = new Server(server,{
@@ -30,7 +86,7 @@ const intilizeSocketFunc = (server) => {
     io.on("connection", (socket) => {
         console.log(`User Connected ${socket.id}`);
         //Event when User Connects
-        socket.on("joinRoom", (message) => {
+        socket.on("joinRoom", async (message) => {
             try {
                 let data = JSON.parse(message);
                 console.log("🚀 ~ socket.on ~ data:", data)
@@ -49,6 +105,11 @@ const intilizeSocketFunc = (server) => {
                 
                 socket.join(userId.toString())
                 console.log(`✅ Socket ${socket.id} joined room ${userId}`);
+
+                // Agent shop open → release held bookings + deliver pending socket events.
+                triggerHeldReleaseForAgent(userId).catch((err) => {
+                    console.error('[joinRoom] held release error:', err.message);
+                });
                 
                 // Confirm to client
                 socket.emit('roomJoined', { 
@@ -82,32 +143,15 @@ const intilizeSocketFunc = (server) => {
                 
                 socket.join(userId.toString())
                 console.log(`✅ Socket ${socket.id} reconnected to room ${userId}`);
-                
-                const rows = await unAcknowledgedEvents.findAll({ 
-                    where: { to: userId.toString() } 
-                })
-                
-                rows.forEach((event) => {
-                    //console.log(`🚀🚀🚀Even a`, event)
 
-                    socket_Instance
-                        .to(event.to)
-                        .emit(event.type, JSON.parse(event.data), async (ack) => {
-                            if (ack) {
-                                console.log(`✅ Event acknowledged by ${event.to}`)
-                                await unAcknowledgedEvents.destroy({ where: { id: event.id } })
-                                // Event was acknowledged, no further action needed
-                            } else {
-                                console.log(`⚠️ Event not acknowledged by ${event.to}`)
-                            }
-                        })
-                })
+                await triggerHeldReleaseForAgent(userId);
+                const pendingEvents = await replayUnacknowledgedEvents(userId);
                 
                 // Confirm reconnection to client
                 socket.emit('reconnected', {
                     userId: userId,
                     message: 'Successfully reconnected',
-                    pendingEvents: rows.length
+                    pendingEvents,
                 });
             } catch (error) {
                 console.error("❌ Error in re-connect:", error);
@@ -176,26 +220,50 @@ const intilizeSocketFunc = (server) => {
 
 const sendEvent = async (userId, eventData) => {
     try {
-        //console.log(`Event data being sent:`, eventData);
-        //console.log(`Event data being sent to:`, userId.toString());
+        if (!socket_Instance) {
+            await persistUnacknowledgedEvent(userId, eventData);
+            return;
+        }
+
+        const room = userId.toString();
+        const sockets = await socket_Instance.in(room).fetchSockets();
+
+        if (!sockets.length) {
+            console.log(`${eventData.type} — no socket in room ${room}, persisting event`);
+            await persistUnacknowledgedEvent(userId, eventData);
+            return;
+        }
+
+        let settled = false;
+        const timer = setTimeout(async () => {
+            if (settled) return;
+            settled = true;
+            console.log(`${eventData.type} ack timeout for ${room}, persisting event`);
+            await persistUnacknowledgedEvent(userId, eventData);
+        }, ACK_TIMEOUT_MS);
 
         socket_Instance
-            .to(userId.toString())
+            .to(room)
             .emit(eventData.type, eventData.data, async (ack) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+
                 console.log(`Acknowledgement received: ${ack}`);
                 if (ack) {
                     console.log(`${eventData.type} acknowledged by ${userId}`);
                 } else {
                     console.log(`${eventData.type} not acknowledged by ${userId}`);
-                    await unAcknowledgedEvents.create({
-                        to: userId,
-                        type: eventData.type,
-                        data: JSON.stringify(eventData.data), // Store as string in DB
-                    });
+                    await persistUnacknowledgedEvent(userId, eventData);
                 }
             });
     } catch (error) {
         console.log(`Error while sending event: ${error}`);
+        try {
+            await persistUnacknowledgedEvent(userId, eventData);
+        } catch (persistErr) {
+            console.log(`Error persisting unacknowledged event: ${persistErr.message}`);
+        }
     }
 };
 
