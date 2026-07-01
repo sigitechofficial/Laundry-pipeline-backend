@@ -615,6 +615,17 @@ class RescheduleBookingService {
                 console.log(
                     '🔄 Booking status is 1 — re-triggering agent notification with new schedule'
                 );
+                const visibleAt = new Date();
+                const expireTime = getOrderExpireTime(resolvedTz);
+                await booking.update(
+                    {
+                        agentBroadcastHeld: false,
+                        agentVisibleAt: visibleAt,
+                        orderExpireTime: expireTime,
+                    },
+                    { where: { id: bookingId } }
+                );
+
                 const notifyResult = await findAvailableShopsAndNotify(bookingId, {
                     zoneId: bookingData.zoneId,
                     collectionDate: normalizedCollectionDate,
@@ -628,25 +639,24 @@ class RescheduleBookingService {
 
                 if (notifiedCount === 0) {
                     await booking.update(
-                        { agentBroadcastHeld: true, agentVisibleAt: null },
+                        {
+                            agentBroadcastHeld: true,
+                            agentVisibleAt: null,
+                            orderExpireTime: null,
+                        },
                         { where: { id: bookingId } }
                     );
                     console.log(
                         `[reschedule] booking ${bookingId} held — no agent notified`
                     );
-                } else {
-                    await booking.update(
-                        {
-                            agentBroadcastHeld: false,
-                            agentVisibleAt: new Date(),
-                            orderExpireTime: getOrderExpireTime(resolvedTz),
-                        },
-                        { where: { id: bookingId } }
-                    );
                 }
             } else {
                 await booking.update(
-                    { agentBroadcastHeld: true, agentVisibleAt: null },
+                    {
+                        agentBroadcastHeld: true,
+                        agentVisibleAt: null,
+                        orderExpireTime: null,
+                    },
                     { where: { id: bookingId } }
                 );
                 console.log(

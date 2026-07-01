@@ -28,6 +28,18 @@ async function releaseSingleHeldBooking(row) {
         serviceId: s.serviceId,
     }));
 
+    const visibleAt = new Date();
+    const orderExpireTime = getOrderExpireTime(countryCtx.ianaTimeZone);
+
+    await booking.update(
+        {
+            agentBroadcastHeld: false,
+            agentVisibleAt: visibleAt,
+            orderExpireTime,
+        },
+        { where: { id: row.id } }
+    );
+
     const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
     const { notifiedCount } = await bookingEventSentCheckTheShops(
         row.id,
@@ -43,18 +55,16 @@ async function releaseSingleHeldBooking(row) {
     );
 
     if (notifiedCount === 0) {
+        await booking.update(
+            {
+                agentBroadcastHeld: true,
+                agentVisibleAt: null,
+                orderExpireTime: null,
+            },
+            { where: { id: row.id } }
+        );
         return false;
     }
-
-    const visibleAt = new Date();
-    await booking.update(
-        {
-            agentBroadcastHeld: false,
-            agentVisibleAt: visibleAt,
-            orderExpireTime: getOrderExpireTime(countryCtx.ianaTimeZone),
-        },
-        { where: { id: row.id } }
-    );
 
     console.log(
         `[releaseHeldBookings] booking ${row.id} released to agents at ${visibleAt.toISOString()}`

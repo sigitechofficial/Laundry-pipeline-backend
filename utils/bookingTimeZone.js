@@ -83,40 +83,40 @@ function normalizeTimeString(timeValue) {
 }
 
 /**
- * Expiry instant from booking.createdAt date + bookings.orderExpireTime (TIME).
+ * Expiry instant from window-start date (agentVisibleAt or createdAt) + orderExpireTime (TIME).
  */
 function getBookingExpireMoment(
-    createdAt,
+    windowStartAt,
     orderExpireTime,
     timeZone,
     clientTimeZone
 ) {
     const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
-    if (!createdAt) return null;
+    if (!windowStartAt) return null;
     const timeStr = normalizeTimeString(orderExpireTime);
     if (!timeStr) return null;
 
-    const created = moment.tz(createdAt, tz);
+    const start = moment.tz(windowStartAt, tz);
     let expire = moment.tz(
-        `${created.format('YYYY-MM-DD')} ${timeStr}`,
+        `${start.format('YYYY-MM-DD')} ${timeStr}`,
         'YYYY-MM-DD HH:mm:ss',
         tz
     );
-    if (expire.isBefore(created)) {
+    if (expire.isBefore(start)) {
         expire = expire.add(1, 'day');
     }
     return expire;
 }
 
-/** Whether agents can still accept (now < DB orderExpireTime on booking day). */
+/** Whether agents can still accept (now < DB orderExpireTime on window-start day). */
 function isBookingAcceptWindowOpen(
-    createdAt,
+    windowStartAt,
     orderExpireTime,
     timeZone,
     clientTimeZone
 ) {
     const expire = getBookingExpireMoment(
-        createdAt,
+        windowStartAt,
         orderExpireTime,
         timeZone,
         clientTimeZone
@@ -128,19 +128,19 @@ function isBookingAcceptWindowOpen(
 
 /** Minutes left until orderExpireTime; used for agent countdown. */
 function getAcceptWindowMinutesRemaining(
-    createdAt,
+    windowStartAt,
     orderExpireTime,
     timeZone,
     clientTimeZone
 ) {
     const expire = getBookingExpireMoment(
-        createdAt,
+        windowStartAt,
         orderExpireTime,
         timeZone,
         clientTimeZone
     );
     const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
-    if (!expire) return BOOKING_ACCEPT_WINDOW_MINUTES;
+    if (!expire) return null;
     return Math.max(0, Math.ceil(expire.diff(moment.tz(tz), 'minutes', true)));
 }
 

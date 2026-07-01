@@ -86,6 +86,7 @@ const {
     getAcceptWindowMinutesRemaining,
     formatOrderExpireTimeForApi,
 } = require("../../utils/bookingTimeZone");
+const { getBookingVisibleAt } = require("../../utils/bookingAgentWindow");
 const {
     isShopOpenNow,
     findTodayWorkingHoursRow,
@@ -629,12 +630,9 @@ exports.getBookingHome = async (req, res) => {
     const bookingDataForResponse = bookingData
         .filter((row) => {
             const plain = row.get({ plain: true });
-            const acceptWindowStart =
-                plain.adminAssignedShopId != null
-                    ? plain.agentVisibleAt || plain.createdAt
-                    : plain.createdAt;
+            if (!plain.orderExpireTime) return false;
             return isBookingAcceptWindowOpen(
-                acceptWindowStart,
+                getBookingVisibleAt(plain),
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
@@ -642,12 +640,8 @@ exports.getBookingHome = async (req, res) => {
         })
         .map((row) => {
             const plain = row.get({ plain: true });
-            const acceptWindowStart =
-                plain.adminAssignedShopId != null
-                    ? plain.agentVisibleAt || plain.createdAt
-                    : plain.createdAt;
             const minutesLeft = getAcceptWindowMinutesRemaining(
-                acceptWindowStart,
+                getBookingVisibleAt(plain),
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone

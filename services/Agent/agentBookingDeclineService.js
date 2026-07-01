@@ -8,6 +8,7 @@ const {
 const {
     isBookingAcceptWindowOpen,
 } = require('../../utils/bookingTimeZone');
+const { getBookingVisibleAt } = require('../../utils/bookingAgentWindow');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 
 class AgentBookingDeclineService {
@@ -97,13 +98,11 @@ class AgentBookingDeclineService {
             );
         }
 
-        const acceptWindowStart =
-            bookingRow.adminAssignedShopId != null
-                ? bookingRow.agentVisibleAt || bookingRow.createdAt
-                : bookingRow.createdAt;
+        const acceptWindowStart = getBookingVisibleAt(bookingRow);
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         if (
+            !bookingRow.orderExpireTime ||
             !isBookingAcceptWindowOpen(
                 acceptWindowStart,
                 bookingRow.orderExpireTime,

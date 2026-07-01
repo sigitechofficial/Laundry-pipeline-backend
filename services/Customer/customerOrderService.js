@@ -62,6 +62,7 @@ const {
     isPlatformOpenNow,
     isShopOpenNow,
 } = require('../../utils/shopWorkingHours');
+const { getBookingVisibleAt } = require('../../utils/bookingAgentWindow');
 
 
 // Import stripe functions
@@ -618,7 +619,7 @@ async function bookingEventSentCheckTheShops(
                     bookingDetails.orderExpireTime
                 ),
                 acceptWindowMinutes: getAcceptWindowMinutesRemaining(
-                    bookingDetails.createdAt,
+                    getBookingVisibleAt(bookingDetails),
                     bookingDetails.orderExpireTime,
                     timeZone
                 ),
@@ -1296,11 +1297,6 @@ class CustomerOrderService {
         const upfrontAmount = zoneUpfrontAmount;
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-        const fixTimeKey = getOrderExpireTime(timeZone);
-        console.log(
-            `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${fixTimeKey} tz=${timeZone || "default"}`
-        );
-
         // Create the billing details
         const parsedUpfront = parseFloat(upfrontAmount) || 0;
         const parsedServiceCharge = parseFloat(zoneSeviceCharge) || 0;
@@ -1338,7 +1334,7 @@ class CustomerOrderService {
             {
                 orderAmount: total || 0,
                 orderTrackId: ordertrackingNumber,
-                orderExpireTime: fixTimeKey,
+                orderExpireTime: null,
                 partialPayment: paymentType !== "cash",
                 subTotal: discountedTotal,
                 tipId: tipCreate.id,
@@ -1366,7 +1362,11 @@ class CustomerOrderService {
         if (!platformOpenNow) {
             agentBroadcastHeld = true;
             await booking.update(
-                { agentBroadcastHeld: true, agentVisibleAt: null },
+                {
+                    agentBroadcastHeld: true,
+                    agentVisibleAt: null,
+                    orderExpireTime: null,
+                },
                 { where: { id: bookingId } }
             );
             console.log(
@@ -1375,13 +1375,31 @@ class CustomerOrderService {
         } else if (!zoneOpenNow) {
             agentBroadcastHeld = true;
             await booking.update(
-                { agentBroadcastHeld: true, agentVisibleAt: null },
+                {
+                    agentBroadcastHeld: true,
+                    agentVisibleAt: null,
+                    orderExpireTime: null,
+                },
                 { where: { id: bookingId } }
             );
             console.log(
                 `[createBooking] booking ${bookingId} held — no shop open in zone ${zoneId} (tz=${resolvedTz})`
             );
         } else {
+            const visibleAt = new Date();
+            const expireTime = getOrderExpireTime(resolvedTz);
+            await booking.update(
+                {
+                    agentBroadcastHeld: false,
+                    agentVisibleAt: visibleAt,
+                    orderExpireTime: expireTime,
+                },
+                { where: { id: bookingId } }
+            );
+            console.log(
+                `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
+            );
+
             const { notifiedCount } = await bookingEventSentCheckTheShops(
                 bookingId,
                 zoneId,
@@ -1398,19 +1416,15 @@ class CustomerOrderService {
             if (notifiedCount === 0) {
                 agentBroadcastHeld = true;
                 await booking.update(
-                    { agentBroadcastHeld: true, agentVisibleAt: null },
+                    {
+                        agentBroadcastHeld: true,
+                        agentVisibleAt: null,
+                        orderExpireTime: null,
+                    },
                     { where: { id: bookingId } }
                 );
                 console.log(
                     `[createBooking] booking ${bookingId} held — zone open but no agent notified`
-                );
-            } else {
-                await booking.update(
-                    {
-                        agentBroadcastHeld: false,
-                        agentVisibleAt: new Date(),
-                    },
-                    { where: { id: bookingId } }
                 );
             }
         }
