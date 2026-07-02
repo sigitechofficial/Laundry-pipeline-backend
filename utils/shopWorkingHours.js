@@ -171,9 +171,9 @@ function resolvePickupDayContext(collectionDate, timeZone, clientTimeZone) {
 }
 
 /**
- * Whether the booking pickup window fits inside the shop's configured hours
- * for the collection day (openTime–closeTime). Day-off (status: false) does
- * not block — only the time window matters for scheduled pickups.
+ * Whether the booking pickup window fits inside the shop's working hours
+ * on the pickup day (collectionDate — not the day the customer booked).
+ * Day off on pickup day (status: false) → agent does not receive the booking.
  */
 async function isPickupWithinShopWorkingHours(
     shopUserId,
@@ -195,7 +195,7 @@ async function isPickupWithinShopWorkingHours(
     );
 
     const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
-    if (!hoursRow) {
+    if (!hoursRow || !hoursRow.status) {
         return false;
     }
 
@@ -312,8 +312,8 @@ async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTime
 
 /**
  * Shop can receive a booking broadcast.
- * When pickup is provided, it must fall within the shop's configured hours
- * for that day (day-off status ignored for scheduled pickups).
+ * When pickup is provided, it must fall within working hours on the pickup day
+ * (collectionDate). Day off on that day blocks the booking for that agent.
  */
 async function isShopEligibleForBroadcast(
     shopUserId,
