@@ -89,7 +89,7 @@ const {
 const { getAcceptWindowAnchor } = require("../../utils/bookingAgentWindow");
 const {
     markAgentOnline,
-    isAnyAgentOnlineInZone,
+    isAgentOnline,
 } = require("../../utils/agentOnlineStatus");
 const {
     isShopOpenNow,
@@ -518,22 +518,24 @@ exports.getBookingHome = async (req, res) => {
     );
     const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
     const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
+    const resolvedAgentTz =
+        queryTimeZone || agentCountryCtx.ianaTimeZone;
     const scheduleShopOpen = platformOpenNow
         ? await isShopOpenNow(
             agentId,
             agentCountryCtx.countryId,
-            queryTimeZone || agentCountryCtx.ianaTimeZone,
+            resolvedAgentTz,
             queryClientTimeZone
         )
         : false;
-    const agentShopOpen = platformOpenNow ? scheduleShopOpen : true;
-    const zoneShopsOpen = platformOpenNow
-        ? await isAnyShopOpenInZone(
-            agentZone,
-            queryTimeZone || agentCountryCtx.ianaTimeZone,
-            queryClientTimeZone
-        )
-        : await isAnyAgentOnlineInZone(agentZone);
+    const agentOnlineNow = await isAgentOnline(agentId);
+    const agentShopOpen =
+        agentOnlineNow || scheduleShopOpen || !platformOpenNow;
+    const zoneShopsOpen = await isAnyShopOpenInZone(
+        agentZone,
+        resolvedAgentTz,
+        queryClientTimeZone
+    );
 
     console.log(
         "[getBookingHome] agent:",
@@ -556,6 +558,8 @@ exports.getBookingHome = async (req, res) => {
         platformOpenNow,
         "scheduleShopOpen:",
         scheduleShopOpen,
+        "agentOnlineNow:",
+        agentOnlineNow,
         "agentShopOpen:",
         agentShopOpen,
         "zoneShopsOpen:",

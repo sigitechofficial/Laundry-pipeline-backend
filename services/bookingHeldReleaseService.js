@@ -3,29 +3,16 @@ const {
     booking,
     customerSelectedService,
 } = require("../models");
-const { isAnyShopOpenInZone, isPlatformOpenNow } = require("../utils/shopWorkingHours");
+const { isAnyShopOpenInZone } = require("../utils/shopWorkingHours");
 const {
     getOrderExpireTime,
 } = require("../utils/bookingTimeZone");
 const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
-const { isAnyAgentOnlineInZone } = require("../utils/agentOnlineStatus");
 
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
 
 async function canReleaseHeldBooking(row, countryCtx) {
-    if (row.placedOutsidePlatformHours) {
-        return isAnyAgentOnlineInZone(row.zoneId);
-    }
-
-    const platformOpen = await isPlatformOpenNow(
-        countryCtx.countryId,
-        countryCtx.ianaTimeZone
-    );
-    if (!platformOpen) {
-        return isAnyAgentOnlineInZone(row.zoneId);
-    }
-
     return isAnyShopOpenInZone(row.zoneId, countryCtx.ianaTimeZone);
 }
 
