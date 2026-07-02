@@ -123,6 +123,93 @@ function isNowWithinHoursWindow(now, date, tz, openTime, closeTime) {
 }
 
 /**
+ * Pickup slot must fit entirely inside shop open/close on collection day.
+ */
+function isTimeSlotWithinHoursWindow(
+    dateStr,
+    timeFrom,
+    timeTo,
+    tz,
+    openTime,
+    closeTime
+) {
+    const fromStr = normalizeTimeString(timeFrom);
+    const toStr = normalizeTimeString(timeTo);
+    const openStr = normalizeTimeString(openTime);
+    const closeStr = normalizeTimeString(closeTime);
+    if (!fromStr || !toStr || !openStr || !closeStr) return false;
+
+    const slotFrom = moment.tz(
+        `${dateStr} ${fromStr}`,
+        "YYYY-MM-DD HH:mm:ss",
+        tz
+    );
+    const slotTo = moment.tz(`${dateStr} ${toStr}`, "YYYY-MM-DD HH:mm:ss", tz);
+    const openAt = moment.tz(`${dateStr} ${openStr}`, "YYYY-MM-DD HH:mm:ss", tz);
+    const closeAt = moment.tz(
+        `${dateStr} ${closeStr}`,
+        "YYYY-MM-DD HH:mm:ss",
+        tz
+    );
+
+    if (!slotFrom.isValid() || !slotTo.isValid() || !openAt.isValid() || !closeAt.isValid()) {
+        return false;
+    }
+    if (!slotTo.isAfter(slotFrom)) return false;
+
+    return slotFrom.isSameOrAfter(openAt) && slotTo.isSameOrBefore(closeAt);
+}
+
+function resolvePickupDayContext(collectionDate, timeZone, clientTimeZone) {
+    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+    const pickupDay = moment.tz(collectionDate, tz);
+    return {
+        tz,
+        dateStr: pickupDay.format("YYYY-MM-DD"),
+        dayOfWeek: DAY_NAMES[pickupDay.day()],
+    };
+}
+
+/**
+ * Whether the booking pickup window fits inside the shop's configured hours
+ * for the collection day (openTime–closeTime). Day-off (status: false) does
+ * not block — only the time window matters for scheduled pickups.
+ */
+async function isPickupWithinShopWorkingHours(
+    shopUserId,
+    collectionDate,
+    collectionTimeFrom,
+    collectionTimeTo,
+    timeZone,
+    clientTimeZone,
+    countryId
+) {
+    if (!shopUserId || collectionDate == null || !collectionTimeFrom || !collectionTimeTo) {
+        return false;
+    }
+
+    const { tz, dateStr, dayOfWeek } = resolvePickupDayContext(
+        collectionDate,
+        timeZone,
+        clientTimeZone
+    );
+
+    const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
+    if (!hoursRow) {
+        return false;
+    }
+
+    return isTimeSlotWithinHoursWindow(
+        dateStr,
+        collectionTimeFrom,
+        collectionTimeTo,
+        tz,
+        hoursRow.openTime,
+        hoursRow.closeTime
+    );
+}
+
+/**
  * Platform open now for the current day in the given country.
  * @param {number} countryId
  */
@@ -225,14 +312,35 @@ async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTime
 
 /**
  * Shop can receive a booking broadcast.
- * Agent app online overrides day-off / closed schedule; otherwise schedule must be open.
+ * When pickup is provided, it must fall within the shop's configured hours
+ * for that day (day-off status ignored for scheduled pickups).
  */
 async function isShopEligibleForBroadcast(
     shopUserId,
     countryId,
     timeZone,
-    clientTimeZone
+    clientTimeZone,
+    pickup = null
 ) {
+    if (
+        pickup?.collectionDate != null &&
+        pickup?.collectionTimeFrom &&
+        pickup?.collectionTimeTo
+    ) {
+        const pickupOk = await isPickupWithinShopWorkingHours(
+            shopUserId,
+            pickup.collectionDate,
+            pickup.collectionTimeFrom,
+            pickup.collectionTimeTo,
+            timeZone,
+            clientTimeZone,
+            countryId
+        );
+        if (!pickupOk) {
+            return false;
+        }
+    }
+
     if (await isAgentOnline(shopUserId)) {
         return true;
     }
@@ -324,6 +432,7 @@ module.exports = {
     isShopOpenNow,
     isShopScheduleOpenNow,
     isShopEligibleForBroadcast,
+    isPickupWithinShopWorkingHours,
     isPlatformOpenNow,
     isAnyShopOpenInZone,
     getOpenShopUserIdsInZone,

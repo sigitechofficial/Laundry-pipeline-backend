@@ -115,7 +115,13 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
                 await isShopEligibleForBroadcast(
                     ownerId,
                     countryCtx.countryId,
-                    countryCtx.ianaTimeZone
+                    countryCtx.ianaTimeZone,
+                    null,
+                    {
+                        collectionDate,
+                        collectionTimeFrom,
+                        collectionTimeTo,
+                    }
                 )
             ) {
                 availableShops.push(shop);

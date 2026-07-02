@@ -97,6 +97,7 @@ const {
     isAnyShopOpenInZone,
     findTodayWorkingHoursRow,
     getWallClockContext,
+    isPickupWithinShopWorkingHours,
 } = require("../../utils/shopWorkingHours");
 
 /** Same default as customer booking / reschedule services (IANA). */
@@ -663,32 +664,47 @@ exports.getBookingHome = async (req, res) => {
         ],
     });
 
-    const bookingDataForResponse = bookingData
-        .filter((row) => {
-            const plain = row.get({ plain: true });
-            if (!plain.orderExpireTime) return false;
-            return isBookingAcceptWindowOpen(
+    const bookingDataForResponse = [];
+
+    for (const row of bookingData) {
+        const plain = row.get({ plain: true });
+        if (!plain.orderExpireTime) continue;
+        if (
+            !isBookingAcceptWindowOpen(
                 getAcceptWindowAnchor(plain),
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
-            );
-        })
-        .map((row) => {
-            const plain = row.get({ plain: true });
-            const minutesLeft = getAcceptWindowMinutesRemaining(
-                getAcceptWindowAnchor(plain),
-                plain.orderExpireTime,
-                queryTimeZone,
-                queryClientTimeZone
-            );
-            return {
-                ...plain,
-                createdAt: plain.createdAt,
-                orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
-                acceptWindowMinutes: minutesLeft,
-            };
+            )
+        ) {
+            continue;
+        }
+
+        const pickupOk = await isPickupWithinShopWorkingHours(
+            agentId,
+            plain.collectionDate,
+            plain.collectionTimeFrom,
+            plain.collectionTimeTo,
+            resolvedAgentTz,
+            queryClientTimeZone,
+            agentCountryCtx.countryId
+        );
+        if (!pickupOk) continue;
+
+        const minutesLeft = getAcceptWindowMinutesRemaining(
+            getAcceptWindowAnchor(plain),
+            plain.orderExpireTime,
+            queryTimeZone,
+            queryClientTimeZone
+        );
+
+        bookingDataForResponse.push({
+            ...plain,
+            createdAt: plain.createdAt,
+            orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
+            acceptWindowMinutes: minutesLeft,
         });
+    }
 
     return ResponseHelper.success(res, "Agent Orders fetched", {
         bookingData: bookingDataForResponse,

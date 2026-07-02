@@ -484,7 +484,12 @@ async function bookingEventSentCheckTheShops(
                 ownerId,
                 countryCtx.countryId,
                 resolvedTz,
-                clientTimeZone
+                clientTimeZone,
+                {
+                    collectionDate,
+                    collectionTimeFrom,
+                    collectionTimeTo,
+                }
             );
             if (shopEligible) {
                 availableShops.push(shop);
