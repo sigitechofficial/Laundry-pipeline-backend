@@ -3,22 +3,36 @@ const {
     booking,
     customerSelectedService,
 } = require("../models");
-const { isAnyShopOpenInZone } = require("../utils/shopWorkingHours");
+const { isAnyShopOpenInZone, isPlatformOpenNow } = require("../utils/shopWorkingHours");
 const {
     getOrderExpireTime,
 } = require("../utils/bookingTimeZone");
 const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
+const { isAnyAgentOnlineInZone } = require("../utils/agentOnlineStatus");
 
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
 
-async function releaseSingleHeldBooking(row) {
-    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
-    const zoneOpen = await isAnyShopOpenInZone(
-        row.zoneId,
+async function canReleaseHeldBooking(row, countryCtx) {
+    if (row.placedOutsidePlatformHours) {
+        return isAnyAgentOnlineInZone(row.zoneId);
+    }
+
+    const platformOpen = await isPlatformOpenNow(
+        countryCtx.countryId,
         countryCtx.ianaTimeZone
     );
-    if (!zoneOpen) return false;
+    if (!platformOpen) {
+        return isAnyAgentOnlineInZone(row.zoneId);
+    }
+
+    return isAnyShopOpenInZone(row.zoneId, countryCtx.ianaTimeZone);
+}
+
+async function releaseSingleHeldBooking(row) {
+    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
+    const canRelease = await canReleaseHeldBooking(row, countryCtx);
+    if (!canRelease) return false;
 
     const services = await customerSelectedService.findAll({
         where: { bookingId: row.id },
@@ -29,16 +43,18 @@ async function releaseSingleHeldBooking(row) {
     }));
 
     const visibleAt = new Date();
-    const orderExpireTime = getOrderExpireTime(countryCtx.ianaTimeZone);
+    const updatePayload = {
+        agentBroadcastHeld: false,
+        agentVisibleAt: visibleAt,
+    };
 
-    await booking.update(
-        {
-            agentBroadcastHeld: false,
-            agentVisibleAt: visibleAt,
-            orderExpireTime,
-        },
-        { where: { id: row.id } }
-    );
+    if (!row.placedOutsidePlatformHours) {
+        updatePayload.orderExpireTime = getOrderExpireTime(
+            countryCtx.ianaTimeZone
+        );
+    }
+
+    await booking.update(updatePayload, { where: { id: row.id } });
 
     const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
     const { notifiedCount } = await bookingEventSentCheckTheShops(
@@ -55,14 +71,14 @@ async function releaseSingleHeldBooking(row) {
     );
 
     if (notifiedCount === 0) {
-        await booking.update(
-            {
-                agentBroadcastHeld: true,
-                agentVisibleAt: null,
-                orderExpireTime: null,
-            },
-            { where: { id: row.id } }
-        );
+        const rollbackPayload = {
+            agentBroadcastHeld: true,
+            agentVisibleAt: null,
+        };
+        if (!row.placedOutsidePlatformHours) {
+            rollbackPayload.orderExpireTime = null;
+        }
+        await booking.update(rollbackPayload, { where: { id: row.id } });
         return false;
     }
 
@@ -81,6 +97,7 @@ const HELD_BOOKING_ATTRIBUTES = [
     "deliveryDate",
     "deliveryTimeFrom",
     "deliveryTimeTo",
+    "placedOutsidePlatformHours",
 ];
 
 /**

@@ -60,9 +60,10 @@ const {
 const {
     isAnyShopOpenInZone,
     isPlatformOpenNow,
-    isShopOpenNow,
+    isShopEligibleForBroadcast,
 } = require('../../utils/shopWorkingHours');
-const { getBookingVisibleAt } = require('../../utils/bookingAgentWindow');
+const { getAcceptWindowAnchor } = require('../../utils/bookingAgentWindow');
+const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 
 
 // Import stripe functions
@@ -479,13 +480,13 @@ async function bookingEventSentCheckTheShops(
         console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
         if (!checkSlots || checkSlots.length === 0) {
             const ownerId = shop.user?.id || shop.userId;
-            const shopOpen = await isShopOpenNow(
+            const shopEligible = await isShopEligibleForBroadcast(
                 ownerId,
                 countryCtx.countryId,
                 resolvedTz,
                 clientTimeZone
             );
-            if (shopOpen) {
+            if (shopEligible) {
                 availableShops.push(shop);
             }
         }
@@ -619,7 +620,7 @@ async function bookingEventSentCheckTheShops(
                     bookingDetails.orderExpireTime
                 ),
                 acceptWindowMinutes: getAcceptWindowMinutesRemaining(
-                    getBookingVisibleAt(bookingDetails),
+                    getAcceptWindowAnchor(bookingDetails),
                     bookingDetails.orderExpireTime,
                     timeZone
                 ),
@@ -1360,18 +1361,27 @@ class CustomerOrderService {
         let agentBroadcastHeld = false;
 
         if (!platformOpenNow) {
+            const afterHoursExpiry = await getAfterHoursOrderExpireTime(
+                countryCtx.countryId,
+                resolvedTz,
+                null,
+                new Date()
+            );
             agentBroadcastHeld = true;
             await booking.update(
                 {
                     agentBroadcastHeld: true,
                     agentVisibleAt: null,
-                    orderExpireTime: null,
+                    orderExpireTime: afterHoursExpiry.orderExpireTime,
+                    placedOutsidePlatformHours: true,
                 },
                 { where: { id: bookingId } }
             );
             console.log(
-                `[createBooking] booking ${bookingId} held — outside platform hours (tz=${resolvedTz})`
+                `[createBooking] booking ${bookingId} held (after-hours) — expires ${afterHoursExpiry.platformOpenDay} ${afterHoursExpiry.orderExpireTime} tz=${resolvedTz}`
             );
+            const { releaseHeldBookingsForZone } = require("../bookingHeldReleaseService");
+            await releaseHeldBookingsForZone(zoneId);
         } else if (!zoneOpenNow) {
             agentBroadcastHeld = true;
             await booking.update(
@@ -1393,6 +1403,7 @@ class CustomerOrderService {
                     agentBroadcastHeld: false,
                     agentVisibleAt: visibleAt,
                     orderExpireTime: expireTime,
+                    placedOutsidePlatformHours: false,
                 },
                 { where: { id: bookingId } }
             );

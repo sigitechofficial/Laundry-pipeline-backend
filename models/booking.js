@@ -192,6 +192,11 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  placedOutsidePlatformHours: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   operationalTimeZone: {
     type: DataTypes.STRING(64),
     allowNull: true,

@@ -8,7 +8,7 @@ const {
 const {
     isBookingAcceptWindowOpen,
 } = require('../../utils/bookingTimeZone');
-const { getBookingVisibleAt } = require('../../utils/bookingAgentWindow');
+const { getBookingVisibleAt, getAcceptWindowAnchor } = require('../../utils/bookingAgentWindow');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 
 class AgentBookingDeclineService {
@@ -58,6 +58,7 @@ class AgentBookingDeclineService {
                 'createdAt',
                 'agentVisibleAt',
                 'orderExpireTime',
+                'placedOutsidePlatformHours',
             ],
         });
 
@@ -98,7 +99,7 @@ class AgentBookingDeclineService {
             );
         }
 
-        const acceptWindowStart = getBookingVisibleAt(bookingRow);
+        const acceptWindowStart = getAcceptWindowAnchor(bookingRow);
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         if (

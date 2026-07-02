@@ -86,9 +86,15 @@ const {
     getAcceptWindowMinutesRemaining,
     formatOrderExpireTimeForApi,
 } = require("../../utils/bookingTimeZone");
-const { getBookingVisibleAt } = require("../../utils/bookingAgentWindow");
+const { getAcceptWindowAnchor } = require("../../utils/bookingAgentWindow");
+const {
+    markAgentOnline,
+    isAnyAgentOnlineInZone,
+} = require("../../utils/agentOnlineStatus");
 const {
     isShopOpenNow,
+    isPlatformOpenNow,
+    isAnyShopOpenInZone,
     findTodayWorkingHoursRow,
     getWallClockContext,
 } = require("../../utils/shopWorkingHours");
@@ -501,16 +507,33 @@ exports.getBookingHome = async (req, res) => {
     const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    await markAgentOnline(agentId, agentZone);
+
     const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
     const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
-    const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
-    const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
-    const agentShopOpen = await isShopOpenNow(
-        agentId,
+    const platformOpenNow = await isPlatformOpenNow(
         agentCountryCtx.countryId,
         queryTimeZone || agentCountryCtx.ianaTimeZone,
         queryClientTimeZone
     );
+    const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
+    const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
+    const scheduleShopOpen = platformOpenNow
+        ? await isShopOpenNow(
+            agentId,
+            agentCountryCtx.countryId,
+            queryTimeZone || agentCountryCtx.ianaTimeZone,
+            queryClientTimeZone
+        )
+        : false;
+    const agentShopOpen = platformOpenNow ? scheduleShopOpen : true;
+    const zoneShopsOpen = platformOpenNow
+        ? await isAnyShopOpenInZone(
+            agentZone,
+            queryTimeZone || agentCountryCtx.ianaTimeZone,
+            queryClientTimeZone
+        )
+        : await isAnyAgentOnlineInZone(agentZone);
 
     console.log(
         "[getBookingHome] agent:",
@@ -529,8 +552,14 @@ exports.getBookingHome = async (req, res) => {
         todayHours?.closeTime,
         "now:",
         currentTimeString,
+        "platformOpenNow:",
+        platformOpenNow,
+        "scheduleShopOpen:",
+        scheduleShopOpen,
         "agentShopOpen:",
         agentShopOpen,
+        "zoneShopsOpen:",
+        zoneShopsOpen,
         "createdAt >=",
         twentyFourHoursAgo.toISOString()
     );
@@ -542,6 +571,8 @@ exports.getBookingHome = async (req, res) => {
             connectAccountId,
             agentShopOpen: false,
             zoneShopsOpen: false,
+            platformOpenNow,
+            afterHoursMode: !platformOpenNow,
         });
     }
 
@@ -624,6 +655,7 @@ exports.getBookingHome = async (req, res) => {
             "orderExpireTime",
             "adminAssignedShopId",
             "agentVisibleAt",
+            "placedOutsidePlatformHours",
         ],
     });
 
@@ -632,7 +664,7 @@ exports.getBookingHome = async (req, res) => {
             const plain = row.get({ plain: true });
             if (!plain.orderExpireTime) return false;
             return isBookingAcceptWindowOpen(
-                getBookingVisibleAt(plain),
+                getAcceptWindowAnchor(plain),
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
@@ -641,7 +673,7 @@ exports.getBookingHome = async (req, res) => {
         .map((row) => {
             const plain = row.get({ plain: true });
             const minutesLeft = getAcceptWindowMinutesRemaining(
-                getBookingVisibleAt(plain),
+                getAcceptWindowAnchor(plain),
                 plain.orderExpireTime,
                 queryTimeZone,
                 queryClientTimeZone
@@ -659,7 +691,9 @@ exports.getBookingHome = async (req, res) => {
         isConnectAccountConnected,
         connectAccountId,
         agentShopOpen: true,
-        zoneShopsOpen: true,
+        zoneShopsOpen,
+        platformOpenNow,
+        afterHoursMode: !platformOpenNow,
     });
 }
 

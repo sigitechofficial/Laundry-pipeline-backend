@@ -9,6 +9,15 @@ function getBookingVisibleAt(booking) {
     return booking.agentVisibleAt || booking.createdAt;
 }
 
+/** Accept window anchor: after-hours bookings count from place time, others from agent visibility. */
+function getAcceptWindowAnchor(booking) {
+    if (!booking) return null;
+    if (booking.placedOutsidePlatformHours) {
+        return booking.createdAt;
+    }
+    return getBookingVisibleAt(booking);
+}
+
 /**
  * Resolve IANA timezone for admin/agent window checks.
  * @param {object} booking
@@ -37,7 +46,7 @@ function isAgentAcceptExpired(booking, timeZone) {
         return false;
     }
 
-    const windowStart = getBookingVisibleAt(booking);
+    const windowStart = getAcceptWindowAnchor(booking);
     const orderExpireTime = booking.orderExpireTime;
     const tz = resolveTimeZoneForBooking(booking, timeZone);
 
@@ -125,6 +134,7 @@ function canAdminAssignBooking(booking, timeZone, options = {}) {
 module.exports = {
     BOOKING_ACCEPT_WINDOW_MINUTES,
     getBookingVisibleAt,
+    getAcceptWindowAnchor,
     resolveTimeZoneForBooking,
     isAgentAcceptExpired,
     isUnassignedPendingBooking,

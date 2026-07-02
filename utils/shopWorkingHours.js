@@ -11,6 +11,7 @@ const {
     getCountryContextFromZoneId,
     getCountryContextFromShopUserId,
 } = require("./countryTimeZone");
+const { isAgentOnline } = require("./agentOnlineStatus");
 
 const DAY_NAMES = [
     "Sunday",
@@ -193,6 +194,56 @@ async function isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
 }
 
 /**
+ * Shop schedule open now (shop working hours only — no platform gate).
+ */
+async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
+    if (!shopUserId) return false;
+
+    let resolvedCountryId = countryId;
+    if (!resolvedCountryId) {
+        const ctx = await getCountryContextFromShopUserId(shopUserId);
+        resolvedCountryId = ctx.countryId;
+    }
+
+    const { tz, now, dayOfWeek, date } = await getWallClockContextForCountry(
+        resolvedCountryId,
+        timeZone,
+        clientTimeZone
+    );
+
+    const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
+    if (!hoursRow || !hoursRow.status) return false;
+
+    return isNowWithinHoursWindow(
+        now,
+        date,
+        tz,
+        hoursRow.openTime,
+        hoursRow.closeTime
+    );
+}
+
+/**
+ * Shop can receive a booking broadcast (schedule open, or agent app online after hours).
+ */
+async function isShopEligibleForBroadcast(
+    shopUserId,
+    countryId,
+    timeZone,
+    clientTimeZone
+) {
+    const platformOpen = await isPlatformOpenNow(
+        countryId,
+        timeZone,
+        clientTimeZone
+    );
+    if (platformOpen) {
+        return isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone);
+    }
+    return isAgentOnline(shopUserId);
+}
+
+/**
  * At least one laundry shop in zone is open right now.
  */
 async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
@@ -206,15 +257,25 @@ async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
         attributes: ["userId"],
     });
 
+    const platformOpen = await isPlatformOpenNow(
+        countryCtx.countryId,
+        timeZone || countryCtx.ianaTimeZone,
+        clientTimeZone
+    );
+
     for (const shop of shops) {
-        if (
-            await isShopOpenNow(
-                shop.userId,
-                countryCtx.countryId,
-                timeZone,
-                clientTimeZone
-            )
-        ) {
+        if (platformOpen) {
+            if (
+                await isShopOpenNow(
+                    shop.userId,
+                    countryCtx.countryId,
+                    timeZone,
+                    clientTimeZone
+                )
+            ) {
+                return true;
+            }
+        } else if (await isAgentOnline(shop.userId)) {
             return true;
         }
     }
@@ -235,16 +296,26 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
         attributes: ["userId"],
     });
 
+    const platformOpen = await isPlatformOpenNow(
+        countryCtx.countryId,
+        timeZone || countryCtx.ianaTimeZone,
+        clientTimeZone
+    );
+
     const openIds = new Set();
     for (const shop of shops) {
-        if (
-            await isShopOpenNow(
-                shop.userId,
-                countryCtx.countryId,
-                timeZone,
-                clientTimeZone
-            )
-        ) {
+        if (platformOpen) {
+            if (
+                await isShopOpenNow(
+                    shop.userId,
+                    countryCtx.countryId,
+                    timeZone,
+                    clientTimeZone
+                )
+            ) {
+                openIds.add(shop.userId);
+            }
+        } else if (await isAgentOnline(shop.userId)) {
             openIds.add(shop.userId);
         }
     }
@@ -252,7 +323,10 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
 }
 
 module.exports = {
+    DAY_NAMES,
     isShopOpenNow,
+    isShopScheduleOpenNow,
+    isShopEligibleForBroadcast,
     isPlatformOpenNow,
     isAnyShopOpenInZone,
     getOpenShopUserIdsInZone,

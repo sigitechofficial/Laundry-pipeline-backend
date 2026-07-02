@@ -39,6 +39,7 @@ class AdminBookingAssignService {
                 "agentVisibleAt",
                 "createdAt",
                 "orderExpireTime",
+                "placedOutsidePlatformHours",
                 "orderTrackId",
                 "customerId",
             ],

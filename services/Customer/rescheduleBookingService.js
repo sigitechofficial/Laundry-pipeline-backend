@@ -29,12 +29,13 @@ const {
 const { sendEvent } = require('../../socket_io');
 const { chargeOffSession } = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
-const { isShopOpenNow, isAnyShopOpenInZone } = require('../../utils/shopWorkingHours');
+const { isShopOpenNow, isAnyShopOpenInZone, isPlatformOpenNow, isShopEligibleForBroadcast } = require('../../utils/shopWorkingHours');
 const {
     getOrderExpireTime,
     BUSINESS_TIME_ZONE,
 } = require('../../utils/bookingTimeZone');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 
 /**
  * Helper: find shops in zone available for a given time slot
@@ -111,7 +112,7 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
         if (!conflictingBookings || conflictingBookings.length === 0) {
             const ownerId = shop.user?.id || shop.userId;
             if (
-                await isShopOpenNow(
+                await isShopEligibleForBroadcast(
                     ownerId,
                     countryCtx.countryId,
                     countryCtx.ianaTimeZone
@@ -607,11 +608,38 @@ class RescheduleBookingService {
         // Step 10: If status is 1 (created, no agent accepted yet) re-fire the booking event
         // so agents are notified of the updated schedule and services
         if (statusId === 1) {
+            const countryCtx = await getCountryContextFromZoneId(bookingData.zoneId);
+            const platformOpenNow = await isPlatformOpenNow(
+                countryCtx.countryId,
+                resolvedTz
+            );
             const zoneOpenNow = await isAnyShopOpenInZone(
                 bookingData.zoneId,
                 resolvedTz
             );
-            if (zoneOpenNow) {
+
+            if (!platformOpenNow) {
+                const afterHoursExpiry = await getAfterHoursOrderExpireTime(
+                    countryCtx.countryId,
+                    resolvedTz,
+                    null,
+                    new Date()
+                );
+                await booking.update(
+                    {
+                        agentBroadcastHeld: true,
+                        agentVisibleAt: null,
+                        orderExpireTime: afterHoursExpiry.orderExpireTime,
+                        placedOutsidePlatformHours: true,
+                    },
+                    { where: { id: bookingId } }
+                );
+                console.log(
+                    `[reschedule] booking ${bookingId} held (after-hours) — expires ${afterHoursExpiry.platformOpenDay} ${afterHoursExpiry.orderExpireTime}`
+                );
+                const { releaseHeldBookingsForZone } = require('../bookingHeldReleaseService');
+                await releaseHeldBookingsForZone(bookingData.zoneId);
+            } else if (zoneOpenNow) {
                 console.log(
                     '🔄 Booking status is 1 — re-triggering agent notification with new schedule'
                 );
@@ -622,6 +650,7 @@ class RescheduleBookingService {
                         agentBroadcastHeld: false,
                         agentVisibleAt: visibleAt,
                         orderExpireTime: expireTime,
+                        placedOutsidePlatformHours: false,
                     },
                     { where: { id: bookingId } }
                 );
@@ -643,6 +672,7 @@ class RescheduleBookingService {
                             agentBroadcastHeld: true,
                             agentVisibleAt: null,
                             orderExpireTime: null,
+                            placedOutsidePlatformHours: false,
                         },
                         { where: { id: bookingId } }
                     );
@@ -656,6 +686,7 @@ class RescheduleBookingService {
                         agentBroadcastHeld: true,
                         agentVisibleAt: null,
                         orderExpireTime: null,
+                        placedOutsidePlatformHours: false,
                     },
                     { where: { id: bookingId } }
                 );

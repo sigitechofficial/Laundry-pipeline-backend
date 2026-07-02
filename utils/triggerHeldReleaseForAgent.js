@@ -1,4 +1,5 @@
 const { addressDb } = require('../models');
+const { markAgentOnline } = require('./agentOnlineStatus');
 
 /**
  * Release queued held bookings for the agent's zone when their shop opens / app connects.
@@ -16,6 +17,8 @@ async function triggerHeldReleaseForAgent(agentUserId) {
     });
 
     if (!shop?.zoneId) return { released: 0 };
+
+    await markAgentOnline(agentUserId, shop.zoneId);
 
     const { releaseHeldBookingsForZone } = require('../services/bookingHeldReleaseService');
     return releaseHeldBookingsForZone(shop.zoneId);
