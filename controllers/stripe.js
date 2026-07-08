@@ -160,8 +160,9 @@ async function createAuthorizationHold(
             capture_method: "manual",
             confirm: true,
             off_session: true,
-            // Needed so the same card can be used for any later cancel-fee charge
-            setup_future_usage: "off_session",
+            // Do NOT set setup_future_usage here: Stripe rejects
+            // off_session=true + setup_future_usage on confirm.
+            // Card is already saved via SetupIntent at checkout.
         };
 
         applyStripePresentationFields(params, stripeOptions);
