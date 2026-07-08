@@ -78,7 +78,8 @@ module.exports = (sequelize, DataTypes) => {
     unprocessedPercentage: {
       type: DataTypes.DECIMAL(5, 2),
       allowNull: true,
-      comment: 'Percentage to charge for unprocessed cancellation'
+      comment:
+        'Legacy duplicate of unprocessedOrderValuePercentage; cancel fee prefers unprocessedOrderValuePercentage and falls back to this',
     },
     unprocessedAfterPickupMinutes: {
       type: DataTypes.INTEGER,
@@ -90,7 +91,8 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(5, 2),
       allowNull: true,
       defaultValue: 15.00,
-      comment: 'Percentage of order value to charge'
+      comment:
+        'Canonical % of prepaid (upfront + service fee + tip) charged for unprocessed cancellation',
     },
     allowCancelUnprocessed: {
       type: DataTypes.BOOLEAN,

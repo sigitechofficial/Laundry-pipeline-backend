@@ -31,9 +31,9 @@ Configuration table for cancellation policies:
 **Unprocessed Section:**
 - `unprocessedAbsoluteCurrency`: Currency for unprocessed charges
 - `unprocessedAbsoluteAmount`: Absolute amount to charge
-- `unprocessedPercentage`: Percentage to charge
-- `unprocessedAfterPickupMinutes`: Time window after pickup (default: 30)
-- `unprocessedOrderValuePercentage`: Percentage of order value (default: 15.00)
+- `unprocessedPercentage`: **Legacy** — kept in DB; prefer `unprocessedOrderValuePercentage`. On save, admin mirrors the same value into both columns.
+- `unprocessedAfterPickupMinutes`: Time window after pickup (default: 30) — **not used** by current cancel fee engine
+- `unprocessedOrderValuePercentage`: **Canonical** % of **prepaid** (upfront + service fee + tip) for unprocessed cancel fee (default: 15.00)
 - `allowCancelUnprocessed`: Allow cancellation for unprocessed orders (default: true)
 
 **Customer Leniency Section:**

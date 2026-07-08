@@ -797,7 +797,12 @@ function mapCancellationPolicyResponse(cancellationPolicyRaw) {
         prePickupChargePercentage: config.prePickupPercentage ?? null,
         unprocessedChargeAmount: config.unprocessedAbsoluteAmount ?? null,
         unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency ?? null,
-        unprocessedChargePercentage: config.unprocessedPercentage ?? null,
+        // Canonical unprocessed % (of prepaid). Legacy unprocessedPercentage mapped only as fallback display.
+        unprocessedChargePercentage:
+            (config.unprocessedOrderValuePercentage != null &&
+            Number(config.unprocessedOrderValuePercentage) > 0
+                ? config.unprocessedOrderValuePercentage
+                : config.unprocessedPercentage) ?? null,
         unprocessedAfterPickupMinutes: config.unprocessedAfterPickupMinutes ?? null,
         unprocessedOrderValuePercentage: config.unprocessedOrderValuePercentage ?? null,
         allowCancelUnprocessed: config.allowCancelUnprocessed ?? true,

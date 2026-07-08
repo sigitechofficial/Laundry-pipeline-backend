@@ -616,11 +616,18 @@ class CancelBookingService {
             charge = parseFloat(config.unprocessedAbsoluteAmount);
         }
 
-        // % of prepaid bill (upfront + service fee + tip), not laundry orderAmount
+        // Single canonical % field: unprocessedOrderValuePercentage (% of prepaid).
+        // Legacy fallback: older policies may only have unprocessedPercentage set.
+        const configuredPercent =
+            config.unprocessedOrderValuePercentage != null &&
+            config.unprocessedOrderValuePercentage !== "" &&
+            Number(config.unprocessedOrderValuePercentage) > 0
+                ? parseFloat(config.unprocessedOrderValuePercentage)
+                : parseFloat(config.unprocessedPercentage) || 0;
+
         const base = parseFloat(percentageBase) || 0;
-        if (config.unprocessedOrderValuePercentage && base > 0) {
-            const percentageCharge =
-                (base * parseFloat(config.unprocessedOrderValuePercentage)) / 100;
+        if (configuredPercent > 0 && base > 0) {
+            const percentageCharge = (base * configuredPercent) / 100;
             charge = Math.max(charge, percentageCharge);
         }
 

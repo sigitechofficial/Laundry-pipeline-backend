@@ -131,10 +131,11 @@ Order of checks in `calculatePrePickupCharge`: free window → first-cancel leni
 | C1 | `allowCancelUnprocessed = false` | Cancel rejected | **Handled** | ValidationError |
 | C2 | `allowCancelUnprocessed = true` | Cancel allowed; fee calculated | **Handled** | |
 | C3 | `unprocessedAbsoluteAmount` set | Flat fee | **Handled** | `calculateUnprocessedCharge` |
-| C4 | `unprocessedOrderValuePercentage` + fee base > 0 | `% × prepaid`; `max` with absolute | **Handled** | |
+| C4 | `unprocessedOrderValuePercentage` + fee base > 0 | `% × prepaid`; `max` with absolute | **Handled** | Canonical field |
 | C5 | `unprocessedOrderValuePercentage` + prepaid bill **0** | No % fee | **Handled** | `base > 0` required |
 | C6 | Fee % on laundry / `orderAmount` | Old behaviour | **Not used** | % fees use prepaid bill now |
-| C7 | Admin field `unprocessedPercentage` | Should affect fee | **Not handled** | **Never read** in charge calc |
+| C7 | Admin field `unprocessedPercentage` only (legacy) | Same as order-value % when OV% empty | **Handled** | Fallback in `calculateUnprocessedCharge` |
+| C7b | Admin edits unprocessed % | Single form field → saves both columns equal | **Handled** | Admin payload sync |
 | C8 | Admin field `unprocessedAfterPickupMinutes` | Time gate after pickup | **Not handled** | **Never read** |
 | C9 | First-cancel / free-window on unprocessed | Same as pre-pickup | **Not handled** | Those checks are pre-pickup only (by design in code) |
 
@@ -201,9 +202,9 @@ Assumes fee already calculated as `cancellationCharge` and `refundAmount = max(0
 | `prePickupFirstCancellationLeniency` | Yes (pre-pickup only) | — | **Handled** |
 | `unprocessedAbsoluteCurrency` | Currency label | Response currency | **Partial** |
 | `unprocessedAbsoluteAmount` | Yes (unprocessed) | Indirect | **Handled** |
-| `unprocessedPercentage` | **No** | — | **Not handled** |
-| `unprocessedAfterPickupMinutes` | **No** | — | **Not handled** |
-| `unprocessedOrderValuePercentage` | Yes (`% × orderAmount`) | Indirect | **Handled** |
+| `unprocessedPercentage` | Legacy / mirrored | — | **Handled as fallback** (prefer OV%) |
+| `unprocessedAfterPickupMinutes` | **No** (legacy UI kept) | — | **Not handled** in fee calc |
+| `unprocessedOrderValuePercentage` | Yes (`% × prepaid`) | Indirect | **Handled** (canonical) |
 | `allowCancelUnprocessed` | Gate cancel | — | **Handled** |
 | `courtesyWindowDays` | Leniency lookback | — | **Partial** (uses booking.createdAt) |
 | `courtesyCapAmount` | Cap fee | Indirect | **Handled** |
@@ -231,8 +232,8 @@ Assume policy: pre-pickup 50% of `orderAmount`, unprocessed 50% of `orderAmount`
 
 ## 6. Gaps to fix later (follow-up — not part of this doc task)
 
-1. Wire or remove unused **`unprocessedPercentage`** and **`unprocessedAfterPickupMinutes`** (admin currently collects them).
-2. ~~Decide whether **% fees** should use **prepaid**~~ — **Done:** % fees now use upfront + service fee + tip.
+1. ~~Wire or remove unused **`unprocessedPercentage`**~~ — **Done:** single admin field (`unprocessedOrderValuePercentage`); save mirrors to legacy column; cancel calc prefers OV% then falls back to legacy %.
+2. `unprocessedAfterPickupMinutes` still unused in fee logic (admin labelled legacy).
 3. Revisit statuses **12–18** free-cancel branch — likely unintended.
 4. Fail-hard vs soft-fail when separate cancel fee charge, refund, or **hold release** fails (today cancel always proceeds).
 5. Align Stripe charge **currency** with policy currency fields.
