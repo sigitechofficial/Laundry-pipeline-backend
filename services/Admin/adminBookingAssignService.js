@@ -7,7 +7,7 @@ const {
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
-    isShopOpenNow,
+    isShopScheduleOpenNow,
 } = require("../../utils/shopWorkingHours");
 const {
     canAdminAssignOrReassignBooking,
@@ -67,7 +67,7 @@ class AdminBookingAssignService {
         const shopList = [];
         for (const shop of shops) {
             const ownerId = shop.userId;
-            const openNow = await isShopOpenNow(
+            const openNow = await isShopScheduleOpenNow(
                 ownerId,
                 countryCtx.countryId
             );
