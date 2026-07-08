@@ -30,6 +30,9 @@ const {
     ValidationError,
 } = require("../../middlewares/universalErrorHandler");
 const {
+    assertBookingNotCancelledForAgent,
+} = require("../../utils/assertBookingNotCancelledForAgent");
+const {
     getLineQuantity,
     getUnitCategoryCharge,
     replaceServiceLinesForSelectedService,
@@ -79,6 +82,8 @@ class AgentInvoiceManagementService {
         if (!bookingRow) {
             throw new NotFoundError("Booking not found");
         }
+
+        assertBookingNotCancelledForAgent(bookingRow);
 
         if (bookingRow.laundryShopId !== agentShop.id) {
             throw new UnauthorizedError("You do not have access to this booking");

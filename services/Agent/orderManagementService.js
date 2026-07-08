@@ -28,6 +28,9 @@ const {
 const { confirmAndCapturePayment } = require('../../controllers/stripe');
 const { sendEvent } = require('../../socket_io');
 const {
+    assertBookingNotCancelledForAgent,
+} = require('../../utils/assertBookingNotCancelledForAgent');
+const {
     wallClockNow,
     resolveBookingTimeZone,
     getActiveBookingCutoff,
@@ -864,6 +867,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         if (bookingfind.bookingStatusId !== 3) {
             throw new ValidationError("No driver is assigned to this booking yet");
         }
@@ -924,6 +929,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         if (bookingfind.bookingStatusId !== 4) {
             throw new ValidationError("Driver is not on the way yet");
         }
@@ -971,6 +978,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         // Create proof records for each image
         const proofRecords = [];
         for (const image of images) {
@@ -1004,6 +1013,8 @@ class AgentOrderManagementService {
         if (!bookingfind) {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
+
+        assertBookingNotCancelledForAgent(bookingfind);
 
         if (bookingfind.bookingStatusId !== 5) {
             throw new ValidationError("Driver has not arrived yet");
@@ -1050,6 +1061,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         if (bookingfind.bookingStatusId !== 6) {
             throw new ValidationError("Inspection not completed yet");
         }
@@ -1094,6 +1107,8 @@ class AgentOrderManagementService {
         if (!bookingfind) {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
+
+        assertBookingNotCancelledForAgent(bookingfind);
 
         if (bookingfind.bookingStatusId !== 7) {
             throw new ValidationError("Laundry not at delivery shop yet");
@@ -1140,6 +1155,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         if (bookingfind.bookingStatusId !== 8) {
             throw new ValidationError("Laundry wash not completed yet");
         }
@@ -1185,6 +1202,8 @@ class AgentOrderManagementService {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
 
+        assertBookingNotCancelledForAgent(bookingfind);
+
         if (bookingfind.bookingStatusId !== 9) {
             throw new ValidationError("Not out for delivery yet");
         }
@@ -1229,6 +1248,8 @@ class AgentOrderManagementService {
         if (!bookingfind) {
             throw new NotFoundError(`Booking with ID ${bookingId} not found`);
         }
+
+        assertBookingNotCancelledForAgent(bookingfind);
 
         if (bookingfind.bookingStatusId !== 10) {
             throw new ValidationError("Driver has not reached for delivery yet");

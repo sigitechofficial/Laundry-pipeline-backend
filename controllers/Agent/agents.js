@@ -156,6 +156,9 @@ const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
 const { sendNotification } = require("../../utils/notification");
+const {
+    assertBookingNotCancelledForAgent,
+} = require("../../utils/assertBookingNotCancelledForAgent");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
@@ -1391,6 +1394,8 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
+    assertBookingNotCancelledForAgent(bookingfind);
+
     if (bookingfind.bookingStatusId !== 3) {
         throw new NotFoundError("No driver is assigned to this booking yet");
     }
@@ -1611,6 +1616,8 @@ exports.driverStatusArrived = async (req, res) => {
         throw new NotFoundError(`Booking with this id: ${bookingId} not exists`);
     }
 
+    assertBookingNotCancelledForAgent(bookingfind);
+
     if (bookingfind.bookingStatusId !== 4) {
         throw new ValidationError("Your driver is still not out for pickup");
     }
@@ -1695,6 +1702,8 @@ exports.AddPickupDeliveryProof = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
+    assertBookingNotCancelledForAgent(bookingFind);
+
     const trimmedNote =
         note != null && String(note).trim() !== "" ? String(note).trim() : null;
 
@@ -1747,6 +1756,12 @@ exports.agentInspectionStatus = async (req, res) => {
         },
     });
 
+    if (!bookingFind) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingFind);
+
     if (bookingFind.bookingStatusId !== 5) {
         throw new ValidationError("Your driver is not reached yet");
     }
@@ -1798,6 +1813,12 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
             id: bookingId,
         },
     });
+
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingCheck);
 
     if (bookingCheck.bookingStatusId !== 7) {
         throw new ValidationError("Booking is still not In Transit to Facility");
@@ -1870,6 +1891,8 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
     if (!bookingRow) {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
+
+    assertBookingNotCancelledForAgent(bookingRow);
 
     if ((bookingRow.paymentType || "card") === "cash") {
         throw new ValidationError(
@@ -2031,6 +2054,8 @@ exports.setBalancePaymentMethod = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
 
+    assertBookingNotCancelledForAgent(bookingRow);
+
     if ((bookingRow.paymentType || "card") === "cash" && normalized === "card") {
         throw new ValidationError(
             "Cash bookings must be collected in cash at delivery"
@@ -2086,6 +2111,8 @@ exports.recordCashPayment = async (req, res) => {
     if (!bookingRow) {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
+
+    assertBookingNotCancelledForAgent(bookingRow);
 
     const balanceMethod = resolveBalancePaymentMethod(bookingRow);
     const isCashBooking = (bookingRow.paymentType || "card") === "cash";
@@ -2211,6 +2238,12 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         },
     });
 
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingCheck);
+
     if (bookingCheck.bookingStatusId !== 9) {
         throw new ValidationError("Booking is still not In Transit to Facility");
     }
@@ -2276,6 +2309,12 @@ exports.laundryWashCompleted = async (req, res) => {
         },
     });
 
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingCheck);
+
     if (bookingCheck.bookingStatusId !== 11) {
         throw new ValidationError("Booking is still not In Processing or Invoice Not Generated");
     }
@@ -2321,6 +2360,12 @@ exports.laundryDeliverToCustomer = async (req, res) => {
     const driverId = req.query.driverId;
 
     const agentId = req.user.id;
+
+    const bookingCheck = await booking.findOne({ where: { id: bookingId } });
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+    assertBookingNotCancelledForAgent(bookingCheck);
 
     if (driverId) {
         await booking.update(
@@ -2379,6 +2424,12 @@ exports.driverReachedForDelivery = async (req, res) => {
         },
     });
 
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingCheck);
+
     if (bookingCheck.bookingStatusId !== 13) {
         throw new ValidationError("Driver is not out to deliver your laundry");
     }
@@ -2428,6 +2479,12 @@ exports.bookingDeliverToCustomer = async (req, res) => {
             id: bookingId,
         },
     });
+
+    if (!bookingCheck) {
+        throw new NotFoundError(`Booking with ID ${bookingId} not found`);
+    }
+
+    assertBookingNotCancelledForAgent(bookingCheck);
 
     if (bookingCheck.bookingStatusId !== 14) {
         throw new ValidationError("Driver not reached yet at customer destination");
@@ -2515,6 +2572,8 @@ exports.driverAddSerivces = async (req, res) => {
     if (!bookings) {
         throw new NotFoundError("Booking not found");
     }
+
+    assertBookingNotCancelledForAgent(bookings);
 
     // Get zone information directly from booking
     const zoneData = bookings.zone;
@@ -5300,6 +5359,8 @@ exports.updateInvoice = async (req, res) => {
     if (!bookings) {
         throw new NotFoundError("Booking not found");
     }
+
+    assertBookingNotCancelledForAgent(bookings);
 
     const zoneData = bookings.zone;
     if (!zoneData) {
