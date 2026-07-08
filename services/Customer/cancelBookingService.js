@@ -1,8 +1,22 @@
-const { booking, cancelBooking, users, policy, cancellationPolicyConfig, bookingHistory, wallet } = require('../../models');
+const {
+    booking,
+    cancelBooking,
+    users,
+    policy,
+    cancellationPolicyConfig,
+    bookingHistory,
+    wallet,
+    billingDetails,
+    tip,
+} = require('../../models');
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
-const { chargeOffSession } = require('../../controllers/stripe');
+const {
+    chargeOffSession,
+    refundPaymentIntent,
+} = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
+const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 const activePoliciesService = require('../Admin/activePoliciesService');
 
 const BUSINESS_TIME_ZONE = 'Europe/London';
@@ -30,6 +44,28 @@ class CancelBookingService {
         }
 
         throw new ValidationError(`${fieldName} must be a valid date`);
+    }
+
+    /**
+     * Prepaid amount captured at pickup (upfront + service fee + tip).
+     */
+    resolvePrepaidChargedAmount(bookingData) {
+        const billing = bookingData.billingDetail || {};
+        const tips = Array.isArray(bookingData.tips) ? bookingData.tips : [];
+        const tipTotal = tips.reduce(
+            (sum, t) => sum + (parseFloat(t.amount) || 0),
+            0
+        );
+        const fromBilling = getPickupChargeAmount(
+            billing.upfrontAmount,
+            billing.serviceCharge,
+            tipTotal
+        );
+        if (fromBilling > 0) {
+            return fromBilling;
+        }
+        const orderAmount = parseFloat(bookingData.orderAmount) || 0;
+        return orderAmount > 0 ? orderAmount : 0;
     }
     
     /**
@@ -59,11 +95,26 @@ class CancelBookingService {
                 'orderAmount',
                 'paymentConfirmed',
                 'paymentMethodId',
+                'paymentIntentId',
                 'orderTrackId',
                 'paymentType',
                 'laundryShopId',
                 'createdAt'
-            ]
+            ],
+            include: [
+                {
+                    model: billingDetails,
+                    as: 'billingDetail',
+                    required: false,
+                    attributes: ['upfrontAmount', 'serviceCharge', 'total', 'paymentStatus'],
+                },
+                {
+                    model: tip,
+                    as: 'tips',
+                    required: false,
+                    attributes: ['id', 'amount'],
+                },
+            ],
         });
 
         if (!bookingData) {
@@ -89,17 +140,24 @@ class CancelBookingService {
         const activeCancellationPolicy = await this.resolveCancellationPolicy(bookingData);
 
         // Step 6: Calculate cancellation charges based on policy
+        const prepaidCharged = this.resolvePrepaidChargedAmount(bookingData);
         const cancellationDetails = await this.calculateCancellationCharge(
             bookingData,
             activeCancellationPolicy,
             customerId,
-            timeZone
+            timeZone,
+            prepaidCharged
         );
 
         // Step 7: Charge customer via Stripe if a cancellation fee applies
+        // Skip charging a new fee when prepaid was already taken — fee is kept via partial refund.
         let stripeChargeResult = null;
         let stripeChargeError = null;
-        if (cancellationDetails.cancellationCharge > 0) {
+        const shouldChargeCancelFeeSeparately =
+            cancellationDetails.cancellationCharge > 0 &&
+            !(bookingData.paymentConfirmed && bookingData.paymentIntentId);
+
+        if (shouldChargeCancelFeeSeparately) {
             const savedPaymentMethodId = bookingData.paymentMethodId;
 
             if (savedPaymentMethodId) {
@@ -177,15 +235,51 @@ class CancelBookingService {
             time: cancellationMoment.format('HH:mm:ss')
         });
 
-        // Step 11: Process refund if applicable
+        // Step 11: Stripe refund of prepaid (when card was charged at pickup) + wallet ledger
         let refundDetails = null;
-        if (bookingData.paymentConfirmed && cancellationDetails.refundAmount > 0) {
-            refundDetails = await this.processRefund(
-                customerId,
-                bookingId,
-                cancellationDetails.refundAmount,
-                cancellationDetails.currency
-            );
+        let stripeRefundError = null;
+        if (
+            bookingData.paymentConfirmed &&
+            bookingData.paymentIntentId &&
+            cancellationDetails.refundAmount > 0 &&
+            (bookingData.paymentType || 'card') !== 'cash'
+        ) {
+            try {
+                refundDetails = await this.processRefund(
+                    customerId,
+                    bookingId,
+                    cancellationDetails.refundAmount,
+                    cancellationDetails.currency,
+                    bookingData.paymentIntentId,
+                    bookingData.orderTrackId
+                );
+            } catch (refundErr) {
+                stripeRefundError = refundErr.message;
+                console.error(
+                    `❌ Failed to refund booking ${bookingId}:`,
+                    refundErr.message
+                );
+            }
+        } else if (
+            bookingData.paymentConfirmed &&
+            cancellationDetails.refundAmount > 0 &&
+            !bookingData.paymentIntentId
+        ) {
+            // No PaymentIntent — keep wallet credit ledger only
+            try {
+                refundDetails = await this.processWalletRefundOnly(
+                    customerId,
+                    bookingId,
+                    cancellationDetails.refundAmount,
+                    cancellationDetails.currency
+                );
+            } catch (walletErr) {
+                stripeRefundError = walletErr.message;
+                console.error(
+                    `❌ Failed wallet refund ledger for booking ${bookingId}:`,
+                    walletErr.message
+                );
+            }
         }
 
         return {
@@ -194,7 +288,8 @@ class CancelBookingService {
             cancellationCharge: cancellationDetails.cancellationCharge,
             currency: cancellationDetails.currency,
             refundAmount: cancellationDetails.refundAmount,
-            totalPaid: bookingData.orderAmount || 0,
+            prepaidCharged: prepaidCharged,
+            totalPaid: prepaidCharged || bookingData.orderAmount || 0,
             policyApplied: cancellationDetails.policyApplied,
             cancellationReason: cancellationDetails.reason,
             refundProcessed: refundDetails !== null,
@@ -203,6 +298,7 @@ class CancelBookingService {
             stripeChargeId: stripeChargeResult?.id || null,
             stripeChargeStatus: stripeChargeResult?.status || null,
             stripeChargeError: stripeChargeError,
+            stripeRefundError: stripeRefundError,
             message: cancellationDetails.message
         };
     }
@@ -261,9 +357,16 @@ class CancelBookingService {
      * @param {Object} cancellationPolicy - Cancellation policy
      * @param {number} customerId - Customer ID
      * @param {string} timeZone - IANA timezone for time comparison
+     * @param {number} [prepaidCharged] - Amount already captured at pickup
      * @returns {Object} Cancellation charge details
      */
-    async calculateCancellationCharge(bookingData, cancellationPolicy, customerId, timeZone = null) {
+    async calculateCancellationCharge(
+        bookingData,
+        cancellationPolicy,
+        customerId,
+        timeZone = null,
+        prepaidCharged = 0
+    ) {
         const config = cancellationPolicy.cancellationConfig;
         const bookingStatusId = bookingData.bookingStatusId;
         let cancellationCharge = 0;
@@ -313,8 +416,11 @@ class CancelBookingService {
             }
         }
 
-        // Calculate refund amount
-        const totalPaid = parseFloat(bookingData.orderAmount || 0);
+        // Refund = prepaid (or order total) minus cancellation fee
+        const totalPaid =
+            prepaidCharged > 0
+                ? prepaidCharged
+                : parseFloat(bookingData.orderAmount || 0);
         const refundAmount = Math.max(0, totalPaid - cancellationCharge);
 
         return {
@@ -494,31 +600,110 @@ class CancelBookingService {
     }
 
     /**
-     * Process refund to customer wallet
-     * @param {number} customerId - Customer ID
-     * @param {number} bookingId - Booking ID
-     * @param {number} refundAmount - Amount to refund
-     * @param {string} currency - Currency
-     * @returns {Object} Refund details
+     * Refund prepaid amount via Stripe PaymentIntent + wallet ledger.
      */
-    async processRefund(customerId, bookingId, refundAmount, currency) {
-        // Create wallet entry for refund
+    async processRefund(
+        customerId,
+        bookingId,
+        refundAmount,
+        currency,
+        paymentIntentId,
+        orderTrackId
+    ) {
+        const amount = parseFloat(refundAmount) || 0;
+        if (amount <= 0) {
+            return null;
+        }
+
+        const stripeRefund = await refundPaymentIntent(paymentIntentId, amount, {
+            reason: "requested_by_customer",
+            idempotencyKey: `cancel-refund-${bookingId}-${customerId}`,
+            metadata: {
+                bookingId: String(bookingId),
+                orderTrackId: orderTrackId || String(bookingId),
+                type: "cancellation_refund",
+            },
+        });
+
+        if (stripeRefund?.alreadyRefunded) {
+            console.log(
+                `ℹ️ PaymentIntent ${paymentIntentId} already fully refunded for booking ${bookingId}`
+            );
+            return {
+                stripeRefundId: null,
+                stripeRefundStatus: "already_refunded",
+                alreadyRefunded: true,
+                walletTransactionId: null,
+                refundAmount: 0,
+                currency: currency,
+                paymentIntentId,
+                processedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
+            };
+        }
+
+        const refundedMajor =
+            stripeRefund?.amount != null
+                ? Number(stripeRefund.amount) / 100
+                : amount;
+
+        let walletEntry = null;
+        try {
+            walletEntry = await wallet.create({
+                userId: customerId,
+                bookingId: bookingId,
+                referenceType: "customer_refund",
+                amount: refundedMajor,
+                type: "credit",
+                description: `Stripe refund for cancelled booking #${
+                    orderTrackId || bookingId
+                }`,
+                currency: currency || "GBP",
+                status: "completed",
+            });
+        } catch (walletErr) {
+            console.error(
+                `⚠️ Wallet ledger failed after Stripe refund for booking ${bookingId}:`,
+                walletErr.message
+            );
+        }
+
+        console.log(
+            `✅ Refunded ${refundedMajor} ${currency} for booking ${bookingId} (PI ${paymentIntentId})`
+        );
+
+        return {
+            stripeRefundId: stripeRefund?.id || null,
+            stripeRefundStatus: stripeRefund?.status || null,
+            alreadyRefunded: false,
+            walletTransactionId: walletEntry?.id || null,
+            refundAmount: refundedMajor,
+            currency: currency,
+            paymentIntentId,
+            processedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
+        };
+    }
+
+    /**
+     * Wallet-only credit when there is no PaymentIntent to refund.
+     */
+    async processWalletRefundOnly(customerId, bookingId, refundAmount, currency) {
         const walletEntry = await wallet.create({
             userId: customerId,
             bookingId: bookingId,
-            referenceType: 'customer_refund',
+            referenceType: "customer_refund",
             amount: refundAmount,
-            type: 'credit',
+            type: "credit",
             description: `Refund for cancelled booking #${bookingId}`,
             currency: currency,
-            status: 'completed'
+            status: "completed",
         });
 
         return {
+            stripeRefundId: null,
             walletTransactionId: walletEntry.id,
             refundAmount: refundAmount,
             currency: currency,
-            processedAt: moment().format('YYYY-MM-DD HH:mm:ss')
+            processedAt: moment().format("YYYY-MM-DD HH:mm:ss"),
         };
     }
 

@@ -267,6 +267,75 @@ async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, custom
     }
 }
 
+/**
+ * Refund a succeeded PaymentIntent (full or partial).
+ * @param {string} paymentIntentId
+ * @param {number} [amount] - major currency units (e.g. GBP). Omit for full refund.
+ * @param {{ reason?: string, idempotencyKey?: string, metadata?: object }} [options]
+ */
+async function refundPaymentIntent(paymentIntentId, amount, options = {}) {
+    if (!paymentIntentId) {
+        throw new customError("paymentIntentId is required for refund", 400);
+    }
+
+    try {
+        const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (!intent) {
+            throw new customError("PaymentIntent not found", 404);
+        }
+
+        if (intent.status !== "succeeded") {
+            throw new customError(
+                `Cannot refund PaymentIntent in status: ${intent.status}`,
+                400
+            );
+        }
+
+        const refundableCents = intent.amount_received
+            ? Number(intent.amount_received) - Number(intent.amount_refunded || 0)
+            : 0;
+
+        if (refundableCents <= 0) {
+            return {
+                id: null,
+                status: "already_refunded",
+                amount: 0,
+                payment_intent: paymentIntentId,
+                alreadyRefunded: true,
+            };
+        }
+
+        const params = {
+            payment_intent: paymentIntentId,
+            reason: options.reason || "requested_by_customer",
+        };
+
+        if (amount != null && Number.isFinite(Number(amount)) && Number(amount) > 0) {
+            const cents = convertToCents(Number(amount));
+            params.amount = Math.min(cents, refundableCents);
+        }
+
+        const metadata = sanitizeStripeMetadata(options.metadata);
+        if (metadata) {
+            params.metadata = metadata;
+        }
+
+        const requestOptions = {};
+        if (options.idempotencyKey) {
+            requestOptions.idempotencyKey = String(options.idempotencyKey).slice(
+                0,
+                255
+            );
+        }
+
+        const refund = await stripe.refunds.create(params, requestOptions);
+        return refund;
+    } catch (error) {
+        if (error instanceof customError) throw error;
+        throw new customError(`Stripe Refund Error: ${error.message}`, 400);
+    }
+}
+
 /*
  *    Create PaymentIntent for Agent
  */
@@ -504,6 +573,7 @@ module.exports = {
     confirmIntend,
     getIntent,
     confirmAndCapturePayment,
+    refundPaymentIntent,
     createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,
     chargeOffSession,
