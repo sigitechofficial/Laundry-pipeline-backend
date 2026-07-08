@@ -124,6 +124,189 @@ async function createPaymentIntend(amount, customerId, paymentMethodId = null) {
 }
 
 
+/**
+ * Authorize (hold) amount on a saved card without capturing.
+ * Status should become `requires_capture` on success.
+ *
+ * @param {number} amount - major currency units (e.g. GBP)
+ * @param {string} customerId - Stripe customer ID
+ * @param {string} paymentMethodId
+ * @param {string} [idempotencyKey]
+ * @param {object} [stripeOptions] - presentation / metadata fields
+ */
+async function createAuthorizationHold(
+    amount,
+    customerId,
+    paymentMethodId,
+    idempotencyKey = null,
+    stripeOptions = {}
+) {
+    if (!amount || Number(amount) <= 0) {
+        throw new customError("Authorization amount must be greater than 0", 400);
+    }
+    if (!customerId || !paymentMethodId) {
+        throw new customError(
+            "Stripe customer and payment method are required for authorization hold",
+            400
+        );
+    }
+
+    try {
+        const params = {
+            amount: convertToCents(amount),
+            currency: "gbp",
+            customer: customerId,
+            payment_method: paymentMethodId,
+            capture_method: "manual",
+            confirm: true,
+            off_session: true,
+            // Needed so the same card can be used for any later cancel-fee charge
+            setup_future_usage: "off_session",
+        };
+
+        applyStripePresentationFields(params, stripeOptions);
+
+        const options = {};
+        if (idempotencyKey) {
+            options.idempotencyKey = String(idempotencyKey).slice(0, 255);
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create(params, options);
+
+        if (
+            paymentIntent.status !== "requires_capture" &&
+            paymentIntent.status !== "succeeded"
+        ) {
+            throw new customError(
+                `Authorization hold failed with status: ${paymentIntent.status}`,
+                400
+            );
+        }
+
+        console.log(
+            `✅ Auth hold created: ${paymentIntent.id}, status=${paymentIntent.status}, amount=${amount}`
+        );
+        return paymentIntent;
+    } catch (error) {
+        if (error instanceof customError) throw error;
+        if (error.type === "idempotency_error") {
+            throw new customError(
+                `Authorization already processed with this idempotency key: ${error.message}`,
+                400
+            );
+        }
+        throw new customError(`Stripe Authorization Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Capture a previously authorized PaymentIntent (full amount by default).
+ */
+async function capturePaymentIntent(paymentIntentId, options = {}) {
+    if (!paymentIntentId) {
+        throw new customError("paymentIntentId is required for capture", 400);
+    }
+
+    try {
+        let intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (intent.status === "succeeded") {
+            return { ...intent, alreadyCaptured: true };
+        }
+
+        if (intent.status === "canceled") {
+            throw new customError("PaymentIntent was canceled; cannot capture", 400);
+        }
+
+        if (intent.status !== "requires_capture") {
+            throw new customError(
+                `Cannot capture PaymentIntent in status: ${intent.status}`,
+                400
+            );
+        }
+
+        const captureParams = {};
+        if (
+            options.amount != null &&
+            Number.isFinite(Number(options.amount)) &&
+            Number(options.amount) > 0
+        ) {
+            captureParams.amount_to_capture = convertToCents(Number(options.amount));
+        }
+
+        const requestOptions = {};
+        if (options.idempotencyKey) {
+            requestOptions.idempotencyKey = String(options.idempotencyKey).slice(
+                0,
+                255
+            );
+        }
+
+        intent = await stripe.paymentIntents.capture(
+            paymentIntentId,
+            captureParams,
+            requestOptions
+        );
+        return intent;
+    } catch (error) {
+        if (error instanceof customError) throw error;
+        throw new customError(`Stripe Capture Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Release an uncaptured authorization hold (cancel PaymentIntent).
+ * No-op-safe if already canceled; errors if already succeeded (use refund instead).
+ */
+async function cancelPaymentIntent(paymentIntentId, options = {}) {
+    if (!paymentIntentId) {
+        throw new customError("paymentIntentId is required to release hold", 400);
+    }
+
+    try {
+        const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (intent.status === "canceled") {
+            return { ...intent, alreadyCanceled: true };
+        }
+
+        if (intent.status === "succeeded") {
+            throw new customError(
+                "PaymentIntent already captured; cancel hold is not valid — use refund",
+                400
+            );
+        }
+
+        if (intent.status !== "requires_capture") {
+            throw new customError(
+                `Cannot cancel PaymentIntent in status: ${intent.status}`,
+                400
+            );
+        }
+
+        const requestOptions = {};
+        if (options.idempotencyKey) {
+            requestOptions.idempotencyKey = String(options.idempotencyKey).slice(
+                0,
+                255
+            );
+        }
+
+        const canceled = await stripe.paymentIntents.cancel(
+            paymentIntentId,
+            {
+                cancellation_reason:
+                    options.cancellation_reason || "requested_by_customer",
+            },
+            requestOptions
+        );
+        return canceled;
+    } catch (error) {
+        if (error instanceof customError) throw error;
+        throw new customError(`Stripe Cancel PI Error: ${error.message}`, 400);
+    }
+}
+
 /*
  *   Charge immediately using saved payment method (ONE STEP - no user interaction)
  *   With Idempotency Key support to prevent duplicate charges
@@ -573,6 +756,9 @@ module.exports = {
     confirmIntend,
     getIntent,
     confirmAndCapturePayment,
+    createAuthorizationHold,
+    capturePaymentIntent,
+    cancelPaymentIntent,
     refundPaymentIntent,
     createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,

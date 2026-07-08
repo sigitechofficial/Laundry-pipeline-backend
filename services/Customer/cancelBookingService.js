@@ -14,6 +14,8 @@ const moment = require('moment-timezone');
 const {
     chargeOffSession,
     refundPaymentIntent,
+    cancelPaymentIntent,
+    getIntent,
 } = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
@@ -139,23 +141,72 @@ class CancelBookingService {
         // Step 5: Use snapshotted policy when present, otherwise zone/global active policy
         const activeCancellationPolicy = await this.resolveCancellationPolicy(bookingData);
 
-        // Step 6: Calculate cancellation charges based on policy
-        const prepaidCharged = this.resolvePrepaidChargedAmount(bookingData);
+        // Fee % base = prepaid bill (upfront + service fee + tip), even before capture.
+        // Refund base = only amount actually captured (paymentConfirmed).
+        const feeBaseAmount = this.resolvePrepaidChargedAmount(bookingData);
+        const prepaidCharged = bookingData.paymentConfirmed ? feeBaseAmount : 0;
         const cancellationDetails = await this.calculateCancellationCharge(
             bookingData,
             activeCancellationPolicy,
             customerId,
             timeZone,
-            prepaidCharged
+            prepaidCharged,
+            feeBaseAmount
         );
 
-        // Step 7: Charge customer via Stripe if a cancellation fee applies
-        // Skip charging a new fee when prepaid was already taken — fee is kept via partial refund.
+        // Step 7a: Release uncaptured authorization hold (placed at booking)
+        // before any separate cancel-fee charge. Captured payments use refund instead.
+        let authHoldRelease = null;
+        let authHoldReleaseError = null;
+        if (
+            bookingData.paymentIntentId &&
+            !bookingData.paymentConfirmed &&
+            (bookingData.paymentType || 'card') !== 'cash'
+        ) {
+            try {
+                const intent = await getIntent(bookingData.paymentIntentId);
+                if (intent?.status === 'requires_capture') {
+                    authHoldRelease = await cancelPaymentIntent(
+                        bookingData.paymentIntentId,
+                        {
+                            cancellation_reason: 'requested_by_customer',
+                            idempotencyKey: `cancel-release-hold-${bookingId}`,
+                        }
+                    );
+                    console.log(
+                        `✅ Released auth hold ${bookingData.paymentIntentId} for cancelled booking ${bookingId}`
+                    );
+                } else if (intent?.status === 'canceled') {
+                    authHoldRelease = {
+                        id: bookingData.paymentIntentId,
+                        status: 'canceled',
+                        alreadyCanceled: true,
+                    };
+                } else if (intent?.status === 'succeeded') {
+                    // Unexpected for paymentConfirmed=false — leave for refund path if flags catch up
+                    console.warn(
+                        `⚠️ Booking ${bookingId} has succeeded PI but paymentConfirmed=false`
+                    );
+                }
+            } catch (holdErr) {
+                authHoldReleaseError = holdErr.message;
+                console.error(
+                    `❌ Failed to release auth hold for booking ${bookingId}:`,
+                    holdErr.message
+                );
+            }
+        }
+
+        // Step 7b: Charge customer via Stripe if a cancellation fee applies
+        // Skip charging a new fee when prepaid was already captured — fee is kept via partial refund.
         let stripeChargeResult = null;
         let stripeChargeError = null;
+        const prepaidAlreadyCaptured =
+            Boolean(bookingData.paymentConfirmed) &&
+            Boolean(bookingData.paymentIntentId);
         const shouldChargeCancelFeeSeparately =
             cancellationDetails.cancellationCharge > 0 &&
-            !(bookingData.paymentConfirmed && bookingData.paymentIntentId);
+            !prepaidAlreadyCaptured;
 
         if (shouldChargeCancelFeeSeparately) {
             const savedPaymentMethodId = bookingData.paymentMethodId;
@@ -288,8 +339,9 @@ class CancelBookingService {
             cancellationCharge: cancellationDetails.cancellationCharge,
             currency: cancellationDetails.currency,
             refundAmount: cancellationDetails.refundAmount,
+            feeBaseAmount: cancellationDetails.feeBaseAmount,
             prepaidCharged: prepaidCharged,
-            totalPaid: prepaidCharged || bookingData.orderAmount || 0,
+            totalPaid: prepaidCharged || 0,
             policyApplied: cancellationDetails.policyApplied,
             cancellationReason: cancellationDetails.reason,
             refundProcessed: refundDetails !== null,
@@ -299,6 +351,12 @@ class CancelBookingService {
             stripeChargeStatus: stripeChargeResult?.status || null,
             stripeChargeError: stripeChargeError,
             stripeRefundError: stripeRefundError,
+            authHoldReleased: Boolean(
+                authHoldRelease &&
+                    (authHoldRelease.status === 'canceled' ||
+                        authHoldRelease.alreadyCanceled)
+            ),
+            authHoldReleaseError: authHoldReleaseError,
             message: cancellationDetails.message
         };
     }
@@ -357,7 +415,8 @@ class CancelBookingService {
      * @param {Object} cancellationPolicy - Cancellation policy
      * @param {number} customerId - Customer ID
      * @param {string} timeZone - IANA timezone for time comparison
-     * @param {number} [prepaidCharged] - Amount already captured at pickup
+     * @param {number} [prepaidCharged] - Amount already captured (refund base)
+     * @param {number} [feeBaseAmount] - Prepaid bill for % fees: upfront + service fee + tip
      * @returns {Object} Cancellation charge details
      */
     async calculateCancellationCharge(
@@ -365,7 +424,8 @@ class CancelBookingService {
         cancellationPolicy,
         customerId,
         timeZone = null,
-        prepaidCharged = 0
+        prepaidCharged = 0,
+        feeBaseAmount = 0
     ) {
         const config = cancellationPolicy.cancellationConfig;
         const bookingStatusId = bookingData.bookingStatusId;
@@ -374,9 +434,21 @@ class CancelBookingService {
         let reason = '';
         let currency = config.prePickupAbsoluteCurrency || 'USD';
 
+        // Percentage fees use prepaid bill (upfront + service fee + tip), not laundry orderAmount.
+        const percentageBase =
+            feeBaseAmount > 0
+                ? feeBaseAmount
+                : this.resolvePrepaidChargedAmount(bookingData);
+
         // Pre-Pickup Phase (Status 1-3: Order Created, Confirmed, Awaiting Collection)
         if ([1, 2, 3].includes(bookingStatusId)) {
-            const result = await this.calculatePrePickupCharge(bookingData, config, customerId, timeZone);
+            const result = await this.calculatePrePickupCharge(
+                bookingData,
+                config,
+                customerId,
+                timeZone,
+                percentageBase
+            );
             cancellationCharge = result.charge;
             policyApplied = result.policyApplied;
             reason = result.reason;
@@ -388,7 +460,12 @@ class CancelBookingService {
                 throw new ValidationError("Cancellation is not allowed at this stage according to the policy");
             }
 
-            const result = await this.calculateUnprocessedCharge(bookingData, config, customerId);
+            const result = await this.calculateUnprocessedCharge(
+                bookingData,
+                config,
+                customerId,
+                percentageBase
+            );
             cancellationCharge = result.charge;
             policyApplied = result.policyApplied;
             reason = result.reason;
@@ -416,16 +493,17 @@ class CancelBookingService {
             }
         }
 
-        // Refund = prepaid (or order total) minus cancellation fee
+        // Refund = captured prepaid minus cancellation fee (uncaptured hold ⇒ prepaidCharged 0)
         const totalPaid =
             prepaidCharged > 0
                 ? prepaidCharged
-                : parseFloat(bookingData.orderAmount || 0);
+                : 0;
         const refundAmount = Math.max(0, totalPaid - cancellationCharge);
 
         return {
             cancellationCharge: parseFloat(cancellationCharge.toFixed(2)),
             refundAmount: parseFloat(refundAmount.toFixed(2)),
+            feeBaseAmount: parseFloat((percentageBase || 0).toFixed(2)),
             currency: currency,
             policyApplied: policyApplied,
             reason: reason,
@@ -451,9 +529,16 @@ class CancelBookingService {
      * @param {Object} config - Policy config
      * @param {number} customerId - Customer ID
      * @param {string} timeZone - IANA timezone from the frontend (e.g. "Asia/Karachi")
+     * @param {number} [percentageBase] - Prepaid bill (upfront + service fee + tip) for % fees
      * @returns {Object} Charge details
      */
-    async calculatePrePickupCharge(bookingData, config, customerId, timeZone = null) {
+    async calculatePrePickupCharge(
+        bookingData,
+        config,
+        customerId,
+        timeZone = null,
+        percentageBase = 0
+    ) {
         // Use the timezone sent by the frontend; fall back to business timezone if not provided.
         const tz = this._resolveTimeZone(timeZone);
 
@@ -490,14 +575,16 @@ class CancelBookingService {
             }
         }
 
-        // Calculate charge
+        // Calculate charge — % of prepaid bill (upfront + service fee + tip), not laundry orderAmount
         let charge = 0;
         if (config.prePickupAbsoluteAmount) {
             charge = parseFloat(config.prePickupAbsoluteAmount);
         }
 
-        if (config.prePickupPercentage && bookingData.orderAmount) {
-            const percentageCharge = (parseFloat(bookingData.orderAmount) * parseFloat(config.prePickupPercentage)) / 100;
+        const base = parseFloat(percentageBase) || 0;
+        if (config.prePickupPercentage && base > 0) {
+            const percentageCharge =
+                (base * parseFloat(config.prePickupPercentage)) / 100;
             charge = Math.max(charge, percentageCharge);
         }
 
@@ -513,9 +600,15 @@ class CancelBookingService {
      * @param {Object} bookingData - Booking data
      * @param {Object} config - Policy config
      * @param {number} customerId - Customer ID
+     * @param {number} [percentageBase] - Prepaid bill (upfront + service fee + tip) for % fees
      * @returns {Object} Charge details
      */
-    async calculateUnprocessedCharge(bookingData, config, customerId) {
+    async calculateUnprocessedCharge(
+        bookingData,
+        config,
+        customerId,
+        percentageBase = 0
+    ) {
         let charge = 0;
 
         // Apply absolute amount
@@ -523,9 +616,11 @@ class CancelBookingService {
             charge = parseFloat(config.unprocessedAbsoluteAmount);
         }
 
-        // Apply percentage of order value
-        if (config.unprocessedOrderValuePercentage && bookingData.orderAmount) {
-            const percentageCharge = (parseFloat(bookingData.orderAmount) * parseFloat(config.unprocessedOrderValuePercentage)) / 100;
+        // % of prepaid bill (upfront + service fee + tip), not laundry orderAmount
+        const base = parseFloat(percentageBase) || 0;
+        if (config.unprocessedOrderValuePercentage && base > 0) {
+            const percentageCharge =
+                (base * parseFloat(config.unprocessedOrderValuePercentage)) / 100;
             charge = Math.max(charge, percentageCharge);
         }
 

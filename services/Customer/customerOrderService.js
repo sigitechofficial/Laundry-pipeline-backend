@@ -67,7 +67,9 @@ const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking'
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
+const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
+const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 
 // Import coupon service
 const couponService = require('./couponService');
@@ -944,7 +946,8 @@ class CustomerOrderService {
      * @returns {Object} Booking creation result
      * 
      * NOTE: Both setupIntentId and paymentMethodId are saved.
-     * Payment will be charged at Status 4 using paymentMethodId.
+     * For card bookings an authorization hold (manual-capture PaymentIntent) is
+     * created at booking for upfront + service fee + tip. Capture happens at Status 4.
      */
     async createBooking(data, userId) {
         const {
@@ -1100,7 +1103,7 @@ class CustomerOrderService {
 
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
-        // paymentIntentId will be set at Status 4 when payment is captured.
+        // paymentIntentId is set at booking for card (auth hold); captured at Status 4.
         const { getCountryContextFromZoneId: resolveCountryFromZone } = require("../../utils/countryTimeZone");
         const bookingCountryCtx = await resolveCountryFromZone(zoneId);
         const operationalTimeZone =
@@ -1134,7 +1137,6 @@ class CustomerOrderService {
             paymentType,
             operationalTimeZone,
             customerLocalTimeZone,
-            // paymentIntentId will be set at Status 4 when payment is captured
         });
 
         // Validate booking preferences. We will create rows after selected services
@@ -1361,6 +1363,78 @@ class CustomerOrderService {
 
         if (paymentType === "card" && paymentMethodId && stripeCustomerId) {
             await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
+
+            const holdAmount = getPickupChargeAmount(
+                parsedUpfront,
+                parsedServiceCharge,
+                parsedTip
+            );
+            if (holdAmount <= 0) {
+                throw new ValidationError(
+                    "Cannot create authorization hold — prepaid amount is zero"
+                );
+            }
+
+            const customerRow = await users.findOne({
+                where: { id: userId },
+                attributes: ["id", "firstName", "lastName", "email"],
+            });
+
+            const stripePresentation = buildStripeChargePresentation({
+                chargeType: "booking_auth_hold",
+                bookingId: bookingData.id,
+                orderTrackId: ordertrackingNumber,
+                amount: holdAmount,
+                currency: "GBP",
+                paymentType: "card",
+                customer: customerRow || { id: userId },
+                agent: {},
+                billing: {
+                    upfrontAmount: parsedUpfront,
+                    serviceFee: parsedServiceCharge,
+                    driverTip: parsedTip,
+                },
+                zoneId,
+            });
+
+            try {
+                const authHold = await createAuthorizationHold(
+                    holdAmount,
+                    stripeCustomerId,
+                    paymentMethodId,
+                    `booking-${bookingData.id}-auth-hold`,
+                    stripePresentation
+                );
+
+                await booking.update(
+                    {
+                        paymentIntentId: authHold.id,
+                        // Captured later at On the Way — hold is not a capture
+                        paymentConfirmed: false,
+                    },
+                    { where: { id: bookingData.id } }
+                );
+
+                console.log(
+                    `✅ Auth hold ${authHold.id} placed for booking ${bookingData.id} amount=${holdAmount}`
+                );
+            } catch (holdErr) {
+                console.error(
+                    `❌ Auth hold failed for booking ${bookingData.id}:`,
+                    holdErr.message
+                );
+                await booking.update(
+                    { bookingStatusId: 19 },
+                    { where: { id: bookingData.id } }
+                );
+                throw new ValidationError(
+                    `Card authorization failed: ${holdErr.message || "unable to place hold"}`
+                );
+            }
+        } else if (paymentType === "card") {
+            throw new ValidationError(
+                "Stripe customer ID is required for card bookings"
+            );
         }
 
         let bookingId = bookingData.id;

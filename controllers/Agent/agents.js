@@ -145,7 +145,7 @@ function normalizeProofDeliveryType(value) {
 
 const { map } = require("../../routes/driver");
 const { resolveObjectURL } = require("buffer");
-const { confirmAndCapturePayment, chargeOffSession } = require("../stripe");
+const { confirmAndCapturePayment, chargeOffSession, capturePaymentIntent, getIntent } = require("../stripe");
 const { getPickupChargeAmount } = require("../../utils/invoicePrepaidDeduction");
 const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
 const {
@@ -1501,20 +1501,14 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         });
     }
 
-    console.log("💳 Creating payment intent for booking:", bookingId);
+    console.log("💳 Capturing / charging prepaid for booking:", bookingId);
     console.log("💰 Upfront Amount:", upfrontAmount);
     console.log("💰 Service Charge:", serviceCharge);
     console.log("💰 Driver Tip:", driverTip);
     console.log("💰 Initial Charge (upfront + service + tip):", initialChargeAmount);
     console.log("👤 Customer:", bookingfind.customer.stripeCustomerId);
-    console.log("💳 Payment Method (from Setup Intent):", bookingfind.paymentMethodId);
-    console.log("🔑 Setup Intent ID:", bookingfind.setupIntentId);
-
-    // Generate idempotency key (CRITICAL - ensures no duplicate charges)
-    // Format: booking_{bookingId}_ontheway_{timestamp}
-    // Stripe stores this for 24 hours - if same key is used, returns original result
-    const idempotencyKey = `booking_${bookingId}_ontheway_${Date.now()}`;
-    console.log(`🔒 Idempotency Key: ${idempotencyKey}`);
+    console.log("💳 Payment Method:", bookingfind.paymentMethodId);
+    console.log("🔑 Existing Payment Intent:", bookingfind.paymentIntentId);
 
     const orderLabel = bookingfind.orderTrackId || String(bookingId);
 
@@ -1540,39 +1534,73 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         laundryShopId: bookingfind.laundryShopId,
     });
 
-    // Charge immediately using saved payment method with idempotency protection
-    const paymentIntent = await chargeOffSession(
-        initialChargeAmount,
-        bookingfind.customer.stripeCustomerId,
-        bookingfind.paymentMethodId,
-        idempotencyKey,
-        stripePresentation
-    );
+    let paymentIntent = null;
+    let captureMode = "new_charge";
 
-    console.log("✅ Payment charged successfully:", paymentIntent.id, "Status:", paymentIntent.status);
+    // Prefer capturing the authorization hold created at booking
+    if (bookingfind.paymentIntentId) {
+        try {
+            const existingIntent = await getIntent(bookingfind.paymentIntentId);
+            if (existingIntent?.status === "requires_capture") {
+                captureMode = "auth_hold_capture";
+                paymentIntent = await capturePaymentIntent(
+                    bookingfind.paymentIntentId,
+                    { idempotencyKey: `booking_${bookingId}_capture_hold` }
+                );
+                console.log(
+                    `✅ Auth hold captured: ${paymentIntent.id}, status=${paymentIntent.status}`
+                );
+            } else if (existingIntent?.status === "succeeded") {
+                captureMode = "already_succeeded";
+                paymentIntent = existingIntent;
+                console.log(
+                    `⚠️ PaymentIntent ${existingIntent.id} already succeeded — marking confirmed`
+                );
+            } else {
+                console.warn(
+                    `⚠️ Existing PI ${bookingfind.paymentIntentId} status=${existingIntent?.status}; falling back to off-session charge`
+                );
+            }
+        } catch (holdErr) {
+            console.error(
+                `⚠️ Failed to capture auth hold for booking ${bookingId}:`,
+                holdErr.message
+            );
+        }
+    }
 
-    if (paymentIntent.status !== 'succeeded') {
+    // Legacy bookings (no hold) or hold unusable — charge off-session as before
+    if (!paymentIntent) {
+        const idempotencyKey = `booking_${bookingId}_ontheway_${Date.now()}`;
+        console.log(`🔒 Fallback charge idempotency key: ${idempotencyKey}`);
+        paymentIntent = await chargeOffSession(
+            initialChargeAmount,
+            bookingfind.customer.stripeCustomerId,
+            bookingfind.paymentMethodId,
+            idempotencyKey,
+            stripePresentation
+        );
+        captureMode = "new_charge";
+        console.log(
+            "✅ Payment charged successfully:",
+            paymentIntent.id,
+            "Status:",
+            paymentIntent.status
+        );
+    }
+
+    if (paymentIntent.status !== "succeeded" && !paymentIntent.alreadyCaptured) {
         throw new ValidationError(`Payment failed. Status: ${paymentIntent.status}`);
     }
 
-    // Update booking with payment intent ID and status
-    // paymentConfirmed flag prevents future retries at application level
     await booking.update(
         {
             bookingStatusId: 4,
             paymentIntentId: paymentIntent.id,
-            paymentConfirmed: true  // CRITICAL - marks as paid (prevents retries)
+            paymentConfirmed: true,
         },
         { where: { id: bookingId } }
     );
-
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
 
     await bookingHistory.create({
         bookingId,
@@ -1582,21 +1610,25 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
     });
 
     const customerId = bookingfind.customerId;
-    let title = "Driver On The Way";
-    let body = "Your driver is on the way to the pickup location";
-    let data = {
-        bookingId: bookingId,
-        driverId: bookingfind.driverId,
-    }
-    sendNotification(customerId, title, body, data);
+    sendNotification(
+        customerId,
+        "Driver On The Way",
+        "Your driver is on the way to the pickup location",
+        {
+            bookingId: bookingId,
+            driverId: bookingfind.driverId,
+        }
+    );
 
     return ResponseHelper.success(res, "Booking status updated and payment captured", {
         paymentIntentId: paymentIntent.id,
-        paymentStatus: 'succeeded',
+        paymentStatus: "succeeded",
         amountCharged: initialChargeAmount,
         upfrontAmount,
         serviceCharge,
         driverTip,
+        captureMode,
+        orderLabel,
     });
 }
 

@@ -4,6 +4,7 @@
 
 const CHARGE_TYPE_LABELS = {
     pickup: "Pickup upfront charge",
+    booking_auth_hold: "Booking authorization hold",
     delivery_balance: "Delivery balance",
     cancellation_fee: "Cancellation fee",
     reschedule_fee: "Reschedule fee",
@@ -11,6 +12,7 @@ const CHARGE_TYPE_LABELS = {
 
 const PAYMENT_STAGE = {
     pickup: "upfront_at_pickup",
+    booking_auth_hold: "auth_hold_at_booking",
     delivery_balance: "balance_at_delivery",
     cancellation_fee: "cancellation_penalty",
     reschedule_fee: "reschedule_penalty",
@@ -18,6 +20,7 @@ const PAYMENT_STAGE = {
 
 const STATEMENT_SUFFIX = {
     pickup: "PICKUP",
+    booking_auth_hold: "HOLD",
     delivery_balance: "LAUNDRY",
     cancellation_fee: "CANCEL",
     reschedule_fee: "RESCHED",
@@ -105,7 +108,7 @@ function buildStripeChargePresentation({
         metadata.laundryShopId = String(laundryShopId);
     }
 
-    if (chargeType === "pickup") {
+    if (chargeType === "pickup" || chargeType === "booking_auth_hold") {
         const upfront = roundMoneyString(billing.upfrontAmount);
         const serviceFee = roundMoneyString(billing.serviceFee);
         const driverTip = roundMoneyString(billing.driverTip);
@@ -114,9 +117,15 @@ function buildStripeChargePresentation({
         metadata.driverTip = driverTip;
         metadata.chargeBreakdown = `min_${upfront}_fee_${serviceFee}_tip_${driverTip}`;
         metadata.chargeIncludes =
-            "minimum_order_payment_service_fee_driver_tip";
+            chargeType === "booking_auth_hold"
+                ? "auth_hold_minimum_order_payment_service_fee_driver_tip"
+                : "minimum_order_payment_service_fee_driver_tip";
         metadata.upfrontPaymentLabel =
-            "Yes — minimum deposit + service fee + driver tip at pickup";
+            chargeType === "booking_auth_hold"
+                ? "Authorization hold at booking — capture at On the Way"
+                : "Yes — minimum deposit + service fee + driver tip at pickup";
+        metadata.isUpfrontPayment =
+            chargeType === "pickup" ? "yes" : "hold";
     }
 
     if (chargeType === "delivery_balance") {
