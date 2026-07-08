@@ -685,6 +685,17 @@ function buildSelectedServiceLineKey(serviceItem) {
     return `${serviceItem?.serviceId ?? ""}:${serviceItem?.categoryId ?? ""}:${serviceItem?.subCategoryId ?? ""}`;
 }
 
+function extractProofNote(proofs, deliveryType) {
+    if (!Array.isArray(proofs)) return null;
+    const match = proofs.find(
+        (proof) =>
+            proof?.deliveryType === deliveryType &&
+            proof?.note != null &&
+            String(proof.note).trim() !== ""
+    );
+    return match ? String(match.note).trim() : null;
+}
+
 async function hydrateBookingSelectedServiceAddOns(bookingId, selectedServices) {
     if (!Array.isArray(selectedServices) || selectedServices.length === 0) {
         return selectedServices;
@@ -2054,6 +2065,12 @@ class CustomerOrderService {
             bookingPlain.invoiceStatus === "draft" ||
             servicesSubtotal > 0;
 
+        const proofOfDeliveriesList = Array.isArray(bookingPlain.proofOfDeliveries)
+            ? bookingPlain.proofOfDeliveries
+            : [];
+        const pickupProofNote = extractProofNote(proofOfDeliveriesList, "pickUp");
+        const deliveryProofNote = extractProofNote(proofOfDeliveriesList, "dropOff");
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
@@ -2061,6 +2078,8 @@ class CustomerOrderService {
             cardDetails,
             cancellationPolicy,
             noShowPolicy,
+            pickupProofNote,
+            deliveryProofNote,
         };
 
         if (hasInvoiceTotals) {
