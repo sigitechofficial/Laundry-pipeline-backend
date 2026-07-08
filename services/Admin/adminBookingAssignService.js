@@ -8,7 +8,6 @@ const {
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
     isShopOpenNow,
-    isPlatformOpenNow,
 } = require("../../utils/shopWorkingHours");
 const {
     canAdminAssignOrReassignBooking,
@@ -57,13 +56,6 @@ class AdminBookingAssignService {
             );
         }
 
-        const platformOpen = await isPlatformOpenNow(countryCtx.countryId);
-        if (!platformOpen) {
-            throw new ValidationError(
-                "Platform is closed. Assign when platform operational hours are active."
-            );
-        }
-
         const shops = await addressDb.findAll({
             where: {
                 zoneId: bookingRow.zoneId,
@@ -91,7 +83,7 @@ class AdminBookingAssignService {
                 userId: ownerId,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
-                canAssign: openNow && !isCurrentShop,
+                canAssign: !isCurrentShop,
                 isCurrentShop,
             });
         }
@@ -105,7 +97,6 @@ class AdminBookingAssignService {
             currentLaundryShopId: bookingRow.laundryShopId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
-            platformOpenNow: platformOpen,
             shops: shopList,
         };
     }
@@ -116,20 +107,10 @@ class AdminBookingAssignService {
             throw new NotFoundError("Booking not found");
         }
 
-        const assignCountryCtx = await getCountryContextFromZoneId(
-            bookingRow.zoneId
-        );
-
         const assignBlockedReason = getAdminAssignBlockedReason(bookingRow);
         if (assignBlockedReason) {
             throw new ValidationError(
                 `Order cannot be assigned: ${assignBlockedReason}`
-            );
-        }
-
-        if (!await isPlatformOpenNow(assignCountryCtx.countryId)) {
-            throw new ValidationError(
-                "Platform is closed. Assign during platform operational hours."
             );
         }
 
@@ -158,13 +139,6 @@ class AdminBookingAssignService {
         }
 
         const ownerId = shop.userId;
-        if (
-            !(await isShopOpenNow(ownerId, assignCountryCtx.countryId))
-        ) {
-            throw new ValidationError(
-                "Shop is closed right now. Assign only when the shop is open."
-            );
-        }
 
         let previousOwnerUserId = null;
         if (bookingRow.laundryShopId) {
