@@ -25,12 +25,15 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             userId: agentUserId,
             addressType: "LaundaryShopAddress",
         },
-        attributes: ["id", "zoneId"],
+        attributes: ["id", "zoneId", "userId"],
     });
 
     if (!shopAddress) {
         throw new NotFoundError("Agent shop address not found");
     }
+
+    // Prefer shop owner id for socket room notifications (must match zone owner list).
+    const shopOwnerUserId = Number(shopAddress.userId) || Number(agentUserId);
 
     const bookingRow = await booking.findByPk(bookingId, {
         attributes: [
@@ -105,8 +108,10 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
     await notifyBookingTakenByAgent({
         bookingId,
         zoneId: bookingRow.zoneId,
-        assignedUserId: agentUserId,
+        assignedUserId: shopOwnerUserId,
         source: "agent",
+        // Hard-exclude acceptor so they never get "accepted by another agent".
+        excludeUserIds: [shopOwnerUserId, agentUserId],
     });
 
     return {
