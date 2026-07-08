@@ -8,6 +8,8 @@ const {
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
     isShopScheduleOpenNow,
+    getWallClockContextForCountry,
+    findTodayWorkingHoursRow,
 } = require("../../utils/shopWorkingHours");
 const {
     canAdminAssignOrReassignBooking,
@@ -41,6 +43,9 @@ class AdminBookingAssignService {
                 "placedOutsidePlatformHours",
                 "orderTrackId",
                 "customerId",
+                "collectionDate",
+                "collectionTimeFrom",
+                "collectionTimeTo",
             ],
         });
 
@@ -55,6 +60,11 @@ class AdminBookingAssignService {
                 `This order cannot be assigned. ${assignBlockedReason}`
             );
         }
+
+        const wallClock = await getWallClockContextForCountry(
+            countryCtx.countryId
+        );
+        const todayDayOfWeek = wallClock.dayOfWeek;
 
         const shops = await addressDb.findAll({
             where: {
@@ -71,6 +81,10 @@ class AdminBookingAssignService {
                 ownerId,
                 countryCtx.countryId
             );
+            const hoursRow = await findTodayWorkingHoursRow(
+                ownerId,
+                todayDayOfWeek
+            );
             const biz = await bussinessInformation.findOne({
                 where: { shopAddressId: shop.id },
                 attributes: ["shopName"],
@@ -85,6 +99,10 @@ class AdminBookingAssignService {
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
                 isCurrentShop,
+                todayDayOfWeek,
+                todayOpenTime: hoursRow?.openTime || null,
+                todayCloseTime: hoursRow?.closeTime || null,
+                todayScheduleActive: Boolean(hoursRow?.status),
             });
         }
 
@@ -97,6 +115,9 @@ class AdminBookingAssignService {
             currentLaundryShopId: bookingRow.laundryShopId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
+            collectionDate: bookingRow.collectionDate,
+            collectionTimeFrom: bookingRow.collectionTimeFrom,
+            collectionTimeTo: bookingRow.collectionTimeTo,
             shops: shopList,
         };
     }
