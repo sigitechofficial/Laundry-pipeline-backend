@@ -142,6 +142,16 @@ class CancelBookingService {
             throw new ValidationError("Cannot cancel completed bookings");
         }
 
+        // Step 4b: No customer cancel once invoice is generated (status 10+) or later workflow stages
+        if (bookingData.bookingStatusId >= 10) {
+            if (bookingData.bookingStatusId === 10) {
+                throw new ValidationError(
+                    "Cannot cancel booking. Invoice has already been generated"
+                );
+            }
+            throw new ValidationError("Cannot cancel booking at this stage");
+        }
+
         // Step 5: Use snapshotted policy when present, otherwise zone/global active policy
         const activeCancellationPolicy = await this.resolveCancellationPolicy(bookingData);
 
@@ -506,8 +516,8 @@ class CancelBookingService {
             reason = result.reason;
             currency = config.prePickupAbsoluteCurrency;
         }
-        // Unprocessed Phase (Status 4-10: Driver out, picked up, in transit, not yet processing)
-        else if ([4, 5, 6, 7, 8, 9, 10].includes(bookingStatusId)) {
+        // Unprocessed Phase (Status 4-9: through agent services added; before invoice)
+        else if ([4, 5, 6, 7, 8, 9].includes(bookingStatusId)) {
             if (!config.allowCancelUnprocessed) {
                 throw new ValidationError("Cancellation is not allowed at this stage according to the policy");
             }
