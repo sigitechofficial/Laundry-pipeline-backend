@@ -73,7 +73,109 @@ class CancelBookingService {
         const orderAmount = parseFloat(bookingData.orderAmount) || 0;
         return orderAmount > 0 ? orderAmount : 0;
     }
-    
+
+    /**
+     * Off-session cancel fee to charge on the saved card.
+     * Hold-only: full policy fee. Captured + fee > prepaid: remaining (fee − prepaid).
+     */
+    resolveSeparateCancelChargeAmount(
+        cancellationCharge,
+        prepaidAlreadyCaptured,
+        prepaidCharged
+    ) {
+        const fee = parseFloat(cancellationCharge) || 0;
+        const prepaid = parseFloat(prepaidCharged) || 0;
+        if (fee <= 0) {
+            return 0;
+        }
+        if (!prepaidAlreadyCaptured) {
+            return parseFloat(fee.toFixed(2));
+        }
+        if (prepaid > 0 && fee > prepaid) {
+            return parseFloat((fee - prepaid).toFixed(2));
+        }
+        return 0;
+    }
+
+    /**
+     * Charge cancellation fee (full or remaining) via Stripe off-session.
+     */
+    async attemptCancellationFeeCharge(
+        customerId,
+        bookingData,
+        chargeAmount,
+        currency,
+        totalCancellationFee,
+        extraPresentation = {}
+    ) {
+        if (!chargeAmount || chargeAmount <= 0) {
+            return { stripeChargeResult: null, stripeChargeError: null };
+        }
+
+        const savedPaymentMethodId = bookingData.paymentMethodId;
+        if (!savedPaymentMethodId) {
+            return {
+                stripeChargeResult: null,
+                stripeChargeError: 'No saved payment method found for this booking',
+            };
+        }
+
+        const customerData = await users.findOne({
+            where: { id: customerId },
+            attributes: [
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'stripeCustomerId',
+            ],
+        });
+
+        if (!customerData?.stripeCustomerId) {
+            return {
+                stripeChargeResult: null,
+                stripeChargeError: 'No Stripe customer ID found for this customer',
+            };
+        }
+
+        try {
+            const idempotencyKey = `cancel-booking-${bookingData.id}-customer-${customerId}-fee`;
+            const stripePresentation = buildStripeChargePresentation({
+                chargeType: 'cancellation_fee',
+                bookingId: bookingData.id,
+                orderTrackId: bookingData.orderTrackId,
+                amount: chargeAmount,
+                currency: currency || 'GBP',
+                paymentType: bookingData.paymentType || 'card',
+                customer: customerData,
+                agent: {},
+                zoneId: bookingData.zoneId,
+                laundryShopId: bookingData.laundryShopId,
+                extra: {
+                    totalCancellationFee: String(totalCancellationFee),
+                    ...extraPresentation,
+                },
+            });
+            const stripeChargeResult = await chargeOffSession(
+                chargeAmount,
+                customerData.stripeCustomerId,
+                savedPaymentMethodId,
+                idempotencyKey,
+                stripePresentation
+            );
+            console.log(
+                `✅ Cancellation charge of ${chargeAmount} ${currency} charged to customer ${customerId} for booking ${bookingData.id}`
+            );
+            return { stripeChargeResult, stripeChargeError: null };
+        } catch (chargeErr) {
+            console.error(
+                `❌ Failed to charge cancellation fee for booking ${bookingData.id}:`,
+                chargeErr.message
+            );
+            return { stripeChargeResult: null, stripeChargeError: chargeErr.message };
+        }
+    }
+
     /**
      * Cancel a booking with policy-based charge calculation
      * @param {number} bookingId - Booking ID to cancel
@@ -211,68 +313,45 @@ class CancelBookingService {
             }
         }
 
-        // Step 7b: Charge customer via Stripe if a cancellation fee applies
-        // Skip charging a new fee when prepaid was already captured — fee is kept via partial refund.
-        let stripeChargeResult = null;
-        let stripeChargeError = null;
+        // Step 7b: Off-session cancel fee — full fee (hold-only) or remaining (captured + fee > prepaid).
         const prepaidAlreadyCaptured =
             Boolean(bookingData.paymentConfirmed) &&
             Boolean(bookingData.paymentIntentId);
-        const shouldChargeCancelFeeSeparately =
-            cancellationDetails.cancellationCharge > 0 &&
-            !prepaidAlreadyCaptured;
+        const separateCancelChargeAmount = this.resolveSeparateCancelChargeAmount(
+            cancellationDetails.cancellationCharge,
+            prepaidAlreadyCaptured,
+            prepaidCharged
+        );
+        const prepaidRetainedAsFee =
+            prepaidAlreadyCaptured && cancellationDetails.cancellationCharge > 0
+                ? parseFloat(
+                      Math.min(
+                          prepaidCharged,
+                          cancellationDetails.cancellationCharge
+                      ).toFixed(2)
+                  )
+                : 0;
 
-        if (shouldChargeCancelFeeSeparately) {
-            const savedPaymentMethodId = bookingData.paymentMethodId;
+        let stripeChargeResult = null;
+        let stripeChargeError = null;
+        const isCardPayment = (bookingData.paymentType || 'card') !== 'cash';
 
-            if (savedPaymentMethodId) {
-                const customerData = await users.findOne({
-                    where: { id: customerId },
-                    attributes: [
-                        'id',
-                        'firstName',
-                        'lastName',
-                        'email',
-                        'stripeCustomerId',
-                    ],
-                });
-
-                if (customerData?.stripeCustomerId) {
-                    try {
-                        const idempotencyKey = `cancel-booking-${bookingId}-customer-${customerId}`;
-                        const stripePresentation = buildStripeChargePresentation({
-                            chargeType: "cancellation_fee",
-                            bookingId,
-                            orderTrackId: bookingData.orderTrackId,
-                            amount: cancellationDetails.cancellationCharge,
-                            currency: cancellationDetails.currency || "GBP",
-                            paymentType: bookingData.paymentType || "card",
-                            customer: customerData,
-                            agent: {},
-                            zoneId: bookingData.zoneId,
-                            laundryShopId: bookingData.laundryShopId,
-                        });
-                        stripeChargeResult = await chargeOffSession(
-                            cancellationDetails.cancellationCharge,
-                            customerData.stripeCustomerId,
-                            savedPaymentMethodId,
-                            idempotencyKey,
-                            stripePresentation
-                        );
-                        console.log(`✅ Cancellation charge of ${cancellationDetails.cancellationCharge} ${cancellationDetails.currency} charged to customer ${customerId} for booking ${bookingId}`);
-                    } catch (chargeErr) {
-                        // Log but don't block the cancellation — admin can follow up on failed charges
-                        stripeChargeError = chargeErr.message;
-                        console.error(`❌ Failed to charge cancellation fee for booking ${bookingId}:`, chargeErr.message);
-                    }
-                } else {
-                    stripeChargeError = 'No Stripe customer ID found for this customer';
-                    console.warn(`⚠️ Cannot charge cancellation fee — no stripeCustomerId for customer ${customerId}`);
-                }
-            } else {
-                stripeChargeError = 'No saved payment method found for this booking';
-                console.warn(`⚠️ Cannot charge cancellation fee — no paymentMethodId on booking ${bookingId}`);
-            }
+        if (separateCancelChargeAmount > 0 && isCardPayment) {
+            const chargeOutcome = await this.attemptCancellationFeeCharge(
+                customerId,
+                bookingData,
+                separateCancelChargeAmount,
+                cancellationDetails.currency,
+                cancellationDetails.cancellationCharge,
+                prepaidRetainedAsFee > 0
+                    ? {
+                          prepaidRetainedAsFee: String(prepaidRetainedAsFee),
+                          feeComponent: 'remaining_after_prepaid_retained',
+                      }
+                    : {}
+            );
+            stripeChargeResult = chargeOutcome.stripeChargeResult;
+            stripeChargeError = chargeOutcome.stripeChargeError;
         }
 
         // Step 8: Create cancellation record
@@ -408,6 +487,8 @@ class CancelBookingService {
             refundProcessed: refundDetails !== null,
             refundDetails: refundDetails,
             cancellationFeeCharged: stripeChargeResult !== null,
+            separateCancelFeeAmount: separateCancelChargeAmount,
+            prepaidRetainedAsFee,
             stripeChargeId: stripeChargeResult?.id || null,
             stripeChargeStatus: stripeChargeResult?.status || null,
             stripeChargeError: stripeChargeError,

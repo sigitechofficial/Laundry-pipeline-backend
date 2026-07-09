@@ -166,7 +166,8 @@ Assumes fee already calculated as `cancellationCharge` and `refundAmount = max(0
 | E4 | Unpaid + fee **> 0** + Stripe charge throws | Card decline etc. | Cancel still succeeds; error logged | **Partial** | catch does not block |
 | E5 | Paid (confirmed + PI) + fee **0** + `refundAmount = prepaid` | Card; not cash | **Full** Stripe refund of prepaid | **Handled** | `processRefund` → `refundPaymentIntent` |
 | E6 | Paid + fee **<** prepaid |  | **Partial** Stripe refund = prepaid − fee; no second fee charge | **Handled** | Skip separate charge; refund > 0 |
-| E7 | Paid + fee **≥** prepaid |  | `refundAmount = 0`; no Stripe refund; **no** separate fee charge | **Handled** | fee retained by not refunding |
+| E7 | Paid + fee **≥** prepaid | Fee > prepaid | `refundAmount = 0`; **remaining** fee charged off-session (`fee − prepaid`); prepaid retained on original PI | **Handled** | Separate charge for shortfall |
+| E7b | Paid + fee **≥** prepaid | Fee = prepaid | `refundAmount = 0`; no second charge | **Handled** | Fee retained by not refunding |
 | E8 | Paid confirmed + refundAmount > 0 + **no** `paymentIntentId` |  | Wallet ledger only (no Stripe refund) | **Handled** | `processWalletRefundOnly` |
 | E9 | `paymentType = cash` + refundAmount > 0 + PI exists |  | Stripe refund branch **skipped** | **Handled** | cash excluded from PI refund if |
 | E10 | Cash unpaid | Fee > 0 | Separate charge needs PM; usually soft-fail | **Partial** | Same as E3 |
