@@ -16,8 +16,12 @@ const {
     refundPaymentIntent,
     cancelPaymentIntent,
     getIntent,
+    updatePaymentIntentPresentation,
 } = require('../../controllers/stripe');
-const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
+const {
+    buildStripeChargePresentation,
+    buildStripeRefundPresentation,
+} = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 const activePoliciesService = require('../Admin/activePoliciesService');
 
@@ -289,6 +293,8 @@ class CancelBookingService {
         // Step 11: Stripe refund of prepaid (when card was charged at pickup) + wallet ledger
         let refundDetails = null;
         let stripeRefundError = null;
+        let stripeDescriptionError = null;
+
         if (
             bookingData.paymentConfirmed &&
             bookingData.paymentIntentId &&
@@ -296,19 +302,64 @@ class CancelBookingService {
             (bookingData.paymentType || 'card') !== 'cash'
         ) {
             try {
+                const customerForStripe = await users.findOne({
+                    where: { id: customerId },
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
+                });
+                const refundPresentation = buildStripeRefundPresentation({
+                    bookingId,
+                    orderTrackId: bookingData.orderTrackId,
+                    amountRefunded: cancellationDetails.refundAmount,
+                    feeRetained: cancellationDetails.cancellationCharge,
+                    currency: cancellationDetails.currency,
+                    customer: customerForStripe || { id: customerId },
+                });
                 refundDetails = await this.processRefund(
                     customerId,
                     bookingId,
                     cancellationDetails.refundAmount,
                     cancellationDetails.currency,
                     bookingData.paymentIntentId,
-                    bookingData.orderTrackId
+                    bookingData.orderTrackId,
+                    refundPresentation
                 );
             } catch (refundErr) {
                 stripeRefundError = refundErr.message;
                 console.error(
                     `❌ Failed to refund booking ${bookingId}:`,
                     refundErr.message
+                );
+            }
+        } else if (
+            bookingData.paymentConfirmed &&
+            bookingData.paymentIntentId &&
+            cancellationDetails.refundAmount <= 0 &&
+            cancellationDetails.cancellationCharge > 0 &&
+            (bookingData.paymentType || 'card') !== 'cash'
+        ) {
+            try {
+                const customerForStripe = await users.findOne({
+                    where: { id: customerId },
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
+                });
+                const retainedPresentation = buildStripeRefundPresentation({
+                    bookingId,
+                    orderTrackId: bookingData.orderTrackId,
+                    amountRefunded: 0,
+                    feeRetained: cancellationDetails.cancellationCharge,
+                    currency: cancellationDetails.currency,
+                    customer: customerForStripe || { id: customerId },
+                });
+                await updatePaymentIntentPresentation(
+                    bookingData.paymentIntentId,
+                    retainedPresentation,
+                    { mergeMetadata: true }
+                );
+            } catch (descErr) {
+                stripeDescriptionError = descErr.message;
+                console.warn(
+                    `⚠️ Failed to update Stripe description for booking ${bookingId}:`,
+                    descErr.message
                 );
             }
         } else if (
@@ -351,6 +402,7 @@ class CancelBookingService {
             stripeChargeStatus: stripeChargeResult?.status || null,
             stripeChargeError: stripeChargeError,
             stripeRefundError: stripeRefundError,
+            stripeDescriptionError: stripeDescriptionError,
             authHoldReleased: Boolean(
                 authHoldRelease &&
                     (authHoldRelease.status === 'canceled' ||
@@ -710,7 +762,8 @@ class CancelBookingService {
         refundAmount,
         currency,
         paymentIntentId,
-        orderTrackId
+        orderTrackId,
+        stripePresentation = null
     ) {
         const amount = parseFloat(refundAmount) || 0;
         if (amount <= 0) {
@@ -725,6 +778,7 @@ class CancelBookingService {
                 orderTrackId: orderTrackId || String(bookingId),
                 type: "cancellation_refund",
             },
+            stripeOptions: stripePresentation || undefined,
         });
 
         if (stripeRefund?.alreadyRefunded) {

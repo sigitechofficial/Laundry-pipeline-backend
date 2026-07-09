@@ -201,6 +201,62 @@ async function createAuthorizationHold(
 }
 
 /**
+ * Update PaymentIntent description / metadata (e.g. after capture or refund).
+ */
+async function updatePaymentIntentPresentation(
+    paymentIntentId,
+    stripeOptions = {},
+    { mergeMetadata = true } = {}
+) {
+    if (!paymentIntentId) {
+        throw new customError("paymentIntentId is required for update", 400);
+    }
+
+    try {
+        const params = {};
+        if (stripeOptions.description) {
+            params.description = String(stripeOptions.description).slice(0, 1000);
+        }
+
+        let metadata = sanitizeStripeMetadata(stripeOptions.metadata);
+        if (mergeMetadata && metadata) {
+            const existing = await stripe.paymentIntents.retrieve(paymentIntentId);
+            metadata = {
+                ...(existing.metadata || {}),
+                ...metadata,
+            };
+        }
+        if (metadata && Object.keys(metadata).length > 0) {
+            params.metadata = metadata;
+        }
+
+        if (stripeOptions.statementDescriptorSuffix) {
+            params.statement_descriptor_suffix = String(
+                stripeOptions.statementDescriptorSuffix
+            )
+                .slice(0, 22)
+                .replace(/[<>'"\\*]/g, "");
+        }
+
+        if (Object.keys(params).length === 0) {
+            return stripe.paymentIntents.retrieve(paymentIntentId);
+        }
+
+        const updated = await stripe.paymentIntents.update(paymentIntentId, params);
+        console.log(
+            `✅ Updated PaymentIntent presentation: ${paymentIntentId}`
+        );
+        return updated;
+    } catch (error) {
+        if (error instanceof customError) throw error;
+        throw new customError(
+            `Stripe PaymentIntent Update Error: ${error.message}`,
+            400
+        );
+    }
+}
+
+/**
  * Capture a previously authorized PaymentIntent (full amount by default).
  */
 async function capturePaymentIntent(paymentIntentId, options = {}) {
@@ -248,6 +304,22 @@ async function capturePaymentIntent(paymentIntentId, options = {}) {
             captureParams,
             requestOptions
         );
+
+        if (options.stripeOptions) {
+            try {
+                intent = await updatePaymentIntentPresentation(
+                    paymentIntentId,
+                    options.stripeOptions,
+                    { mergeMetadata: true }
+                );
+            } catch (updateErr) {
+                console.warn(
+                    `⚠️ Capture succeeded but description update failed for ${paymentIntentId}:`,
+                    updateErr.message
+                );
+            }
+        }
+
         return intent;
     } catch (error) {
         if (error instanceof customError) throw error;
@@ -513,6 +585,22 @@ async function refundPaymentIntent(paymentIntentId, amount, options = {}) {
         }
 
         const refund = await stripe.refunds.create(params, requestOptions);
+
+        if (options.stripeOptions) {
+            try {
+                await updatePaymentIntentPresentation(
+                    paymentIntentId,
+                    options.stripeOptions,
+                    { mergeMetadata: true }
+                );
+            } catch (updateErr) {
+                console.warn(
+                    `⚠️ Refund succeeded but description update failed for ${paymentIntentId}:`,
+                    updateErr.message
+                );
+            }
+        }
+
         return refund;
     } catch (error) {
         if (error instanceof customError) throw error;
@@ -760,6 +848,7 @@ module.exports = {
     createAuthorizationHold,
     capturePaymentIntent,
     cancelPaymentIntent,
+    updatePaymentIntentPresentation,
     refundPaymentIntent,
     createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,

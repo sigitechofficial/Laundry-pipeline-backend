@@ -1545,7 +1545,10 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 captureMode = "auth_hold_capture";
                 paymentIntent = await capturePaymentIntent(
                     bookingfind.paymentIntentId,
-                    { idempotencyKey: `booking_${bookingId}_capture_hold` }
+                    {
+                        idempotencyKey: `booking_${bookingId}_capture_hold`,
+                        stripeOptions: stripePresentation,
+                    }
                 );
                 console.log(
                     `✅ Auth hold captured: ${paymentIntent.id}, status=${paymentIntent.status}`

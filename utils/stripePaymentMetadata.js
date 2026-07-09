@@ -164,7 +164,61 @@ function buildStripeChargePresentation({
     };
 }
 
+/**
+ * Build Stripe presentation after a prepaid capture is refunded (full or partial).
+ */
+function buildStripeRefundPresentation({
+    bookingId,
+    orderTrackId,
+    amountRefunded = 0,
+    feeRetained = 0,
+    currency = "GBP",
+    customer = {},
+}) {
+    const orderLabel = orderTrackId || (bookingId != null ? String(bookingId) : "");
+    const customerName = formatPersonName(customer.firstName, customer.lastName);
+    const refundedStr = roundMoneyString(amountRefunded);
+    const feeStr = roundMoneyString(feeRetained);
+    const currencyLabel = String(currency || "GBP").toUpperCase();
+
+    let chargeLabel = "Prepaid retained as cancellation fee";
+    if (Number(amountRefunded) > 0 && Number(feeRetained) > 0) {
+        chargeLabel = "Prepaid partial refund after cancel";
+    } else if (Number(amountRefunded) > 0 && Number(feeRetained) <= 0) {
+        chargeLabel = "Prepaid full refund after cancel";
+    }
+
+    const descriptionParts = [chargeLabel, `Order ${orderLabel}`];
+    if (customerName) {
+        descriptionParts.push(customerName);
+    }
+    if (Number(amountRefunded) > 0) {
+        descriptionParts.push(`refunded ${currencyLabel} ${refundedStr}`);
+    }
+    if (Number(feeRetained) > 0) {
+        descriptionParts.push(`fee ${currencyLabel} ${feeStr}`);
+    }
+
+    return {
+        description: descriptionParts.join(" - "),
+        metadata: {
+            platform: "just_dry_cleaners",
+            chargeType: "cancellation_refund",
+            paymentStage: "post_cancel_refund",
+            bookingId: bookingId != null ? String(bookingId) : "",
+            orderTrackId: orderTrackId || "",
+            customerId: customer.id != null ? String(customer.id) : "",
+            customerName,
+            amountRefunded: refundedStr,
+            feeRetained: feeStr,
+            currency: currencyLabel,
+        },
+        statementDescriptorSuffix: "REFUND",
+    };
+}
+
 module.exports = {
     buildStripeChargePresentation,
+    buildStripeRefundPresentation,
     formatPersonName,
 };
