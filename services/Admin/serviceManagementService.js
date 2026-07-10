@@ -594,9 +594,26 @@ class ServiceManagementService {
         const serviceCategoriesData =
             await this.getServiceCategoriesDataForService(serviceId);
 
+        const serviceRow = await service.findByPk(serviceId, {
+            attributes: [
+                'id',
+                'name',
+                'washBleedDisclaimerEnabled',
+                'numberOfBags',
+                'numberOfItems',
+            ],
+        });
+
+        if (!serviceRow) {
+            throw new NotFoundError('Service Not Found');
+        }
+
         return {
             preferencesData: nestedPreferences,
-            serviceCategoriesData: serviceCategoriesData
+            serviceCategoriesData: serviceCategoriesData,
+            washBleedDisclaimerEnabled: Boolean(serviceRow.washBleedDisclaimerEnabled),
+            numberOfBags: Boolean(serviceRow.numberOfBags),
+            numberOfItems: Boolean(serviceRow.numberOfItems),
         };
     }
 
