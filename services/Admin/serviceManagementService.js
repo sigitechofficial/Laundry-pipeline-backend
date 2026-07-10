@@ -32,6 +32,29 @@ function parseServiceBoolean(value) {
     return value === true || value === 'true' || value === 1 || value === '1';
 }
 
+const SERVICE_WRITABLE_FIELDS = [
+    'name',
+    'description',
+    'image',
+    'timeRequired',
+    'pricingBasis',
+    'numberOfBags',
+    'numberOfItems',
+    'washBleedDisclaimerEnabled',
+    'sortOrder',
+    'status',
+];
+
+function pickServiceWritableFields(serviceData) {
+    const data = {};
+    for (const key of SERVICE_WRITABLE_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(serviceData, key)) {
+            data[key] = serviceData[key];
+        }
+    }
+    return normalizeServicePayload(data);
+}
+
 function normalizeServicePayload(serviceData) {
     const data = { ...serviceData };
     if (data.numberOfBags !== undefined) {
@@ -429,7 +452,7 @@ class ServiceManagementService {
      * @returns {Object} Created service data
      */
     async addService(serviceData) {
-            const serviceCreate = await service.create(normalizeServicePayload(serviceData));
+            const serviceCreate = await service.create(pickServiceWritableFields(serviceData));
             return serviceCreate;
     }
 
@@ -600,11 +623,16 @@ class ServiceManagementService {
      * @returns {Object} Edited service data
      */
     async editService(serviceId, serviceData) {
-        const editService = await service.update(normalizeServicePayload(serviceData), { where: { id: serviceId } });
-        if (!editService) {
-            throw new NotFoundError('Service Not Found')
+        const payload = pickServiceWritableFields(serviceData);
+        const [affected] = await service.update(payload, { where: { id: serviceId } });
+        if (!affected) {
+            throw new NotFoundError('Service Not Found');
         }
-        return editService;
+        const updated = await service.findByPk(serviceId);
+        if (!updated) {
+            throw new NotFoundError('Service Not Found');
+        }
+        return updated;
     }
 
     /**

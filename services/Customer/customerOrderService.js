@@ -2188,17 +2188,27 @@ class CustomerOrderService {
      * @returns {Object} - Result object with services data
      */
     async allServices() {
-        const serviceData = await service.findAll({
-            order: [['sortOrder', 'ASC']]
+        const rows = await service.findAll({
+            order: [['sortOrder', 'ASC']],
         });
 
-        if (!serviceData || serviceData.length === 0) {
+        if (!rows || rows.length === 0) {
             throw new NotFoundError("No Services Found");
         }
 
+        const serviceData = rows.map((row) => {
+            const plain = row.toJSON ? row.toJSON() : row;
+            return {
+                ...plain,
+                numberOfBags: Boolean(plain.numberOfBags),
+                numberOfItems: Boolean(plain.numberOfItems),
+                washBleedDisclaimerEnabled: Boolean(plain.washBleedDisclaimerEnabled),
+            };
+        });
+
         return {
             message: "All Services",
-            data: { serviceData }
+            data: { serviceData },
         };
     }
 
