@@ -391,6 +391,7 @@ class NoShowEnforcementService {
             driverLat: driverCoords.driverLat,
             driverLng: driverCoords.driverLng,
         });
+        const withinGeofence = geofence.withinGeofence === true;
 
         return {
             bookingId,
@@ -399,8 +400,12 @@ class NoShowEnforcementService {
             attemptNumber: openAttempt.attemptNumber,
             arrivedAt: openAttempt.arrivedAt,
             ...grace,
-            ...geofence,
-            canMarkFailed: grace.graceElapsed && geofence.withinGeofence !== false,
+            withinGeofence: geofence.withinGeofence,
+            distanceMeters: geofence.distanceMeters,
+            requiredRadiusMeters: geofence.requiredRadiusMeters,
+            gpsRequired: geofence.gpsRequired === true,
+            canMarkFailed: grace.graceElapsed && withinGeofence,
+            canMarkUnattended: withinGeofence,
             unattendedOptions: this._unattendedOptions(config, bookingData, normalizedType),
             requirePhoto: Boolean(config?.requirePhoto),
             maxPickupAttempts: bookingData.maxPickupAttempts || 2,

@@ -310,24 +310,38 @@ If 25 > policy `driverLateSLA` (e.g. 15), fee is waived (`feeWaived: true`).
 
 ## 6. API reference (new endpoints)
 
-### Geofence (100m radius)
+### Geofence (dynamic radius from no-show policy)
 
-For **Arrived**, **no-show (fail)**, and **unattended**, the agent app must send the driver's current GPS:
+For **Arrived**, **no-show (fail)**, and **unattended**, the agent app sends driver GPS. Backend is the **source of truth** for radius — app must **not** hardcode 100m.
 
-| Field | Required | Notes |
-|-------|----------|-------|
-| `driverLat` | Yes | Driver latitude |
-| `driverLng` | Yes | Driver longitude |
+| Field | Source |
+|-------|--------|
+| `requiredRadiusMeters` | `no_show_policy_configs.arrivalRadiusMeters` (default **100**) |
+| `distanceMeters` | Haversine: driver GPS vs customer address |
+| `withinGeofence` | `distanceMeters <= requiredRadiusMeters` |
 
-Backend compares driver position to:
-- **Pickup** → `pickupAddresId` address `lat` / `lng`
-- **Delivery** → `dropOffAddressId` address `lat` / `lng`
+**Pickup** compares to `pickupAddresId` lat/lng. **Delivery** compares to `dropOffAddressId` lat/lng.
 
-If distance **> 100m**, request is rejected with `distanceMeters` and `requiredRadiusMeters` in error details.
+If `driverLat`/`driverLng` missing on `GET attempt-options`:
+- `withinGeofence: false`, `gpsRequired: true`, `distanceMeters: null`
 
-`GET attempt-options` accepts optional `driverLat` / `driverLng` query params and returns `withinGeofence`, `distanceMeters`, `requiredRadiusMeters` for UI button states.
+If outside radius on POST (fail / unattended / arrived):
+```json
+{
+  "status": "0",
+  "message": "You must be within 100m of the customer address",
+  "error": "GEOFENCE_OUT_OF_RANGE",
+  "data": {
+    "distanceMeters": 6289427,
+    "requiredRadiusMeters": 100,
+    "withinGeofence": false
+  }
+}
+```
 
-**On the Way** does **not** require geofence.
+App UI uses `canMarkFailed` (= grace elapsed **and** `withinGeofence`) and `canMarkUnattended` (= `withinGeofence`).
+
+**On the Way** — no geofence.
 
 ### 6.1 Get attempt options
 

@@ -91,6 +91,12 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 30,
       comment: 'Driver late SLA in minutes - auto-waive if exceeded'
     },
+    arrivalRadiusMeters: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 100,
+      comment: 'Geofence radius in meters for Arrived / no-show / unattended'
+    },
     callsMinutes: {
       type: DataTypes.INTEGER,
       allowNull: true,

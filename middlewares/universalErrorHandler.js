@@ -101,7 +101,7 @@ const universalErrorHandler = (err, req, res, next) => {
             message: message,
             statusCode: statusCode,
             data: hasErrorDetails ? err.details : {},
-            error: message,
+            error: err.errorCode || message,
             timestamp: new Date().toISOString(),
             path: req.originalUrl
         };
