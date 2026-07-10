@@ -37,7 +37,10 @@ exports.getAttemptOptions = async (req, res) => {
         throw new ValidationError('Query param type is required (pickup or delivery)');
     }
 
-    const result = await noShowEnforcementService.getAttemptOptions(bookingId, type);
+    const result = await noShowEnforcementService.getAttemptOptions(bookingId, type, {
+        driverLat: req.query.driverLat,
+        driverLng: req.query.driverLng,
+    });
     return ResponseHelper.success(res, 'Attempt options fetched', result);
 };
 
@@ -46,7 +49,7 @@ exports.getAttemptOptions = async (req, res) => {
  */
 exports.markAttemptFailed = async (req, res) => {
     const { bookingId } = req.params;
-    const { type, reason, driverLateMinutes } = req.body;
+    const { type, reason, driverLateMinutes, driverLat, driverLng } = req.body;
 
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
@@ -57,6 +60,8 @@ exports.markAttemptFailed = async (req, res) => {
         attemptType: type,
         reason,
         driverLateMinutes: driverLateMinutes != null ? Number(driverLateMinutes) : 0,
+        driverLat,
+        driverLng,
         wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
     });
 
@@ -97,7 +102,7 @@ exports.rescheduleAfterFail = async (req, res) => {
  */
 exports.markAttemptUnattended = async (req, res) => {
     const { bookingId } = req.params;
-    const { type, method } = req.body;
+    const { type, method, driverLat, driverLng } = req.body;
 
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
@@ -111,6 +116,8 @@ exports.markAttemptUnattended = async (req, res) => {
         attemptType: type,
         method,
         driverUserId: req.user?.id,
+        driverLat,
+        driverLng,
         wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
     });
 

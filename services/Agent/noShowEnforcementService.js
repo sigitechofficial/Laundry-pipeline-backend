@@ -16,6 +16,7 @@ const {
     NotFoundError,
     ConflictError,
 } = require('../../middlewares/universalErrorHandler');
+const { assertDriverWithinCustomerRadius, getDriverGeofenceStatus } = require('../../utils/driverGeofence');
 
 const PICKUP_ARRIVED_STATUS = 5;
 const PICKUP_SUCCESS_STATUS = 7;
@@ -359,7 +360,7 @@ class NoShowEnforcementService {
         });
     }
 
-    async getAttemptOptions(bookingId, attemptType) {
+    async getAttemptOptions(bookingId, attemptType, driverCoords = {}) {
         const normalizedType = this._normalizeAttemptType(attemptType);
         const bookingData = await this._loadBooking(bookingId);
         const expectedStatus = this._expectedArrivedStatus(normalizedType);
@@ -384,6 +385,12 @@ class NoShowEnforcementService {
             driverLateMinutes: 0,
             policyRecord,
         });
+        const geofence = await getDriverGeofenceStatus({
+            bookingId,
+            leg: normalizedType,
+            driverLat: driverCoords.driverLat,
+            driverLng: driverCoords.driverLng,
+        });
 
         return {
             bookingId,
@@ -392,6 +399,8 @@ class NoShowEnforcementService {
             attemptNumber: openAttempt.attemptNumber,
             arrivedAt: openAttempt.arrivedAt,
             ...grace,
+            ...geofence,
+            canMarkFailed: grace.graceElapsed && geofence.withinGeofence !== false,
             unattendedOptions: this._unattendedOptions(config, bookingData, normalizedType),
             requirePhoto: Boolean(config?.requirePhoto),
             maxPickupAttempts: bookingData.maxPickupAttempts || 2,
@@ -423,9 +432,19 @@ class NoShowEnforcementService {
         attemptType,
         reason,
         driverLateMinutes = 0,
+        driverLat,
+        driverLng,
         wallClock,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
+
+        await assertDriverWithinCustomerRadius({
+            bookingId,
+            leg: normalizedType,
+            driverLat,
+            driverLng,
+        });
+
         const bookingData = await this._loadBooking(bookingId);
         const expectedStatus = this._expectedArrivedStatus(normalizedType);
 
@@ -581,9 +600,19 @@ class NoShowEnforcementService {
         attemptType,
         method,
         driverUserId,
+        driverLat,
+        driverLng,
         wallClock,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
+
+        await assertDriverWithinCustomerRadius({
+            bookingId,
+            leg: normalizedType,
+            driverLat,
+            driverLng,
+        });
+
         const bookingData = await this._loadBooking(bookingId);
         const expectedStatus = this._expectedArrivedStatus(normalizedType);
 

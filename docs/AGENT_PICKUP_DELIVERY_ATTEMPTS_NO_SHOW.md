@@ -310,10 +310,29 @@ If 25 > policy `driverLateSLA` (e.g. 15), fee is waived (`feeWaived: true`).
 
 ## 6. API reference (new endpoints)
 
+### Geofence (100m radius)
+
+For **Arrived**, **no-show (fail)**, and **unattended**, the agent app must send the driver's current GPS:
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `driverLat` | Yes | Driver latitude |
+| `driverLng` | Yes | Driver longitude |
+
+Backend compares driver position to:
+- **Pickup** → `pickupAddresId` address `lat` / `lng`
+- **Delivery** → `dropOffAddressId` address `lat` / `lng`
+
+If distance **> 100m**, request is rejected with `distanceMeters` and `requiredRadiusMeters` in error details.
+
+`GET attempt-options` accepts optional `driverLat` / `driverLng` query params and returns `withinGeofence`, `distanceMeters`, `requiredRadiusMeters` for UI button states.
+
+**On the Way** does **not** require geofence.
+
 ### 6.1 Get attempt options
 
 ```
-GET /agent/booking/:bookingId/attempt-options?type=pickup|delivery
+GET /agent/booking/:bookingId/attempt-options?type=pickup|delivery&driverLat=51.5&driverLng=-0.12
 ```
 
 **Example response (pickup, grace still running):**
@@ -444,7 +463,15 @@ These automatically create or close `booking_attempts` rows:
 | `PATCH /agent/agentInspectionStatus/:bookingId` | Closes pickup attempt as **completed** |
 | `PATCH /agent/bookingDeliverToCustomer/:bookingId` | Closes delivery attempt as **completed** |
 
-Always call **Arrived** before using attempt-options / fail / unattended.
+```
+PATCH /agent/driverStatusArrived/:bookingId
+Body: { "driverLat": 51.5074, "driverLng": -0.1278, "timeZone": "Europe/London" }
+
+PATCH /agent/driverReachedForDelivery/:bookingId
+Body: { "driverLat": 51.5074, "driverLng": -0.1278, "timeZone": "Europe/London" }
+```
+
+Always call **Arrived** (with GPS) before using attempt-options / fail / unattended.
 
 ---
 
