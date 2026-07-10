@@ -1,50 +1,23 @@
 /**
- * Geofence bypass for QA / staging only.
+ * Geofence bypass toggle for QA / testing.
  *
- * Enable in .env:
- *   GEOFENCE_BYPASS_ENABLED=true
- *   GEOFENCE_BYPASS_SECRET=your-staging-secret
+ * .env only:
+ *   GEOFENCE_BYPASS_ENABLED=true   → skip distance check
+ *   GEOFENCE_BYPASS_ENABLED=false  → normal geofence (default)
  *
- * Agent app sends matching token:
- *   GET  ?geofenceBypassToken=your-staging-secret
- *   POST/PATCH body: { geofenceBypassToken: "your-staging-secret" }
- *
- * Production: bypass is ignored unless both env flags are set AND token matches.
- * Never set GEOFENCE_BYPASS_ENABLED on production.
+ * Restart server after changing .env (pm2 restart ... --update-env).
+ * Turn OFF on production when not actively testing.
  */
 
 function isTruthyEnv(value) {
     return ['true', '1', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
-function isGeofenceBypassActive(bypassToken) {
+function isGeofenceBypassActive() {
     if (!isTruthyEnv(process.env.GEOFENCE_BYPASS_ENABLED)) {
         return false;
     }
-
-    const nodeEnv = (process.env.NODE_ENV || 'development').toLowerCase();
-    const secret = String(process.env.GEOFENCE_BYPASS_SECRET || '').trim();
-    const token = String(bypassToken || '').trim();
-
-    if (nodeEnv === 'production') {
-        console.warn(
-            '[geofenceBypass] GEOFENCE_BYPASS_ENABLED is set on production — bypass disabled'
-        );
-        return false;
-    }
-
-    if (!secret) {
-        console.warn(
-            '[geofenceBypass] GEOFENCE_BYPASS_ENABLED without GEOFENCE_BYPASS_SECRET — bypass open (non-production only)'
-        );
-        return true;
-    }
-
-    if (!token || token !== secret) {
-        return false;
-    }
-
-    console.warn('[geofenceBypass] Geofence bypass active for this request (QA)');
+    console.warn('[geofenceBypass] Geofence bypass active (GEOFENCE_BYPASS_ENABLED=true)');
     return true;
 }
 
