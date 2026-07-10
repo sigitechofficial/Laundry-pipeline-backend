@@ -7,20 +7,24 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ## 1. Database Layer
 
 ### Migration File
+
 - **File**: `migrations/20251114162000-create-cancellation-policy-config.js`
 - Creates `cancellation_policy_configs` table with all fields from your image
 
 ### Model File
+
 - **File**: `models/cancellationpolicyconfig.js`
 - Defines the CancellationPolicyConfig model with associations to Policy model
 
 ### Updated Policy Model
+
 - **File**: `models/policy.js`
 - Added association with `cancellationPolicyConfig`
 
 ## 2. Service Layer
 
 ### Cancellation Policy Service
+
 - **File**: `services/Admin/cancellationPolicyService.js`
 - Comprehensive service with methods for:
   - Creating cancellation policies
@@ -29,15 +33,17 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
   - Deleting policies
   - Setting default policies
   - Toggling policy status
-  - Getting statistics
+  - Getting statisticss
 
 ### Updated Services Index
+
 - **File**: `services/Admin/index.js`
 - Exports the new cancellationPolicyService
 
 ## 3. Controller Layer
 
 ### Admin Controller
+
 - **File**: `controllers/Admin/admin.js`
 - Added 9 controller functions:
   1. `createCancellationPolicyController` - Create new policy
@@ -53,6 +59,7 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ## 4. Routes
 
 ### Admin Routes
+
 - **File**: `routes/admin.js`
 - Added 9 routes for cancellation policy management:
   - `POST /admin/cancellation-policy` - Create
@@ -68,12 +75,14 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ## 5. Seeders
 
 ### Default Cancellation Policy Seeder
+
 - **File**: `seeders/20251114163000-default-cancellation-policy.js`
 - Creates a default cancellation policy with standard configuration
 
 ## 6. Documentation
 
 ### Comprehensive Documentation
+
 - **File**: `docs/CANCELLATION_POLICY.md`
 - Complete documentation including:
   - Database structure
@@ -86,12 +95,14 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ## Policy Configuration Structure (From Your Image)
 
 ### 1. Pre-Pickup / Driver En-Route
+
 ✅ Absolute Currency dropdown (USD, GBP, etc.)
 ✅ Percentage % field
 ✅ Free charges/cancel window (in minutes) - default 120 min
 ✅ First cancellation leniency toggle - "On first cancellation order no charges"
 
 ### 2. Unprocessed
+
 ✅ Absolute Currency dropdown
 ✅ Percentage % field
 ✅ Unprocessed (after pickup) time field - default 30 min
@@ -99,6 +110,7 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ✅ Allow cancel@unprocessed toggle
 
 ### 3. Customer Leniency
+
 ✅ Courtesy window (days) - default 30 min
 ✅ Courtesy cap amount - $ 15.00
 ✅ Courtesy Count - default 1
@@ -107,11 +119,13 @@ Based on your cancellation policy image, I've implemented a complete cancellatio
 ## How to Use
 
 ### 1. Run Database Migration
+
 ```bash
 npx sequelize-cli db:migrate
 ```
 
 ### 2. Seed Default Policy
+
 ```bash
 npx sequelize-cli db:seed --seed 20251114163000-default-cancellation-policy.js
 ```
@@ -119,6 +133,7 @@ npx sequelize-cli db:seed --seed 20251114163000-default-cancellation-policy.js
 ### 3. API Usage Examples
 
 #### Create a Cancellation Policy
+
 ```bash
 POST /admin/cancellation-policy
 Authorization: Bearer <token>
@@ -144,12 +159,14 @@ Authorization: Bearer <token>
 ```
 
 #### Get All Policies
+
 ```bash
 GET /admin/cancellation-policies?page=1&limit=10
 Authorization: Bearer <token>
 ```
 
 #### Update a Policy
+
 ```bash
 PUT /admin/cancellation-policy/1
 Authorization: Bearer <token>
@@ -161,6 +178,7 @@ Authorization: Bearer <token>
 ```
 
 #### Toggle Policy Status
+
 ```bash
 PATCH /admin/cancellation-policy/1/toggle-status
 Authorization: Bearer <token>
@@ -192,6 +210,7 @@ Authorization: Bearer <token>
 ## Files Created/Modified
 
 ### Created:
+
 - `migrations/20251114162000-create-cancellation-policy-config.js`
 - `models/cancellationpolicyconfig.js`
 - `services/Admin/cancellationPolicyService.js`
@@ -200,6 +219,7 @@ Authorization: Bearer <token>
 - `docs/CANCELLATION_POLICY_SUMMARY.md`
 
 ### Modified:
+
 - `models/policy.js` - Added cancellationConfig association
 - `services/Admin/index.js` - Exported cancellationPolicyService
 - `controllers/Admin/admin.js` - Added 9 controller functions
@@ -220,7 +240,7 @@ Authorization: Bearer <token>
 ## Support
 
 For detailed API documentation and integration examples, refer to:
+
 - `docs/CANCELLATION_POLICY.md`
 
 All endpoints require admin authentication via the `validateAccessToken` middleware.
-
