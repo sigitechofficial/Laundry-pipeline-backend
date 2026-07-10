@@ -359,6 +359,7 @@ class NoShowEnforcementService {
                 leg: normalizedType,
                 driverLat: driverCoords.driverLat,
                 driverLng: driverCoords.driverLng,
+                geofenceBypassToken: driverCoords.geofenceBypassToken,
             });
         } catch (geofenceErr) {
             console.warn(
@@ -386,6 +387,7 @@ class NoShowEnforcementService {
             distanceMeters: geofence.distanceMeters,
             requiredRadiusMeters: geofence.requiredRadiusMeters,
             gpsRequired: geofence.gpsRequired === true,
+            geofenceBypassed: geofence.geofenceBypassed === true,
             canMarkFailed: grace.graceElapsed && withinGeofence,
             canMarkUnattended: withinGeofence,
             unattendedOptions: this._unattendedOptions(config, bookingData, normalizedType),
@@ -421,6 +423,7 @@ class NoShowEnforcementService {
         driverLateMinutes = 0,
         driverLat,
         driverLng,
+        geofenceBypassToken,
         wallClock,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
@@ -430,6 +433,7 @@ class NoShowEnforcementService {
             leg: normalizedType,
             driverLat,
             driverLng,
+            geofenceBypassToken,
         });
 
         const bookingData = await this._loadBooking(bookingId);
@@ -589,6 +593,7 @@ class NoShowEnforcementService {
         driverUserId,
         driverLat,
         driverLng,
+        geofenceBypassToken,
         wallClock,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
@@ -598,6 +603,7 @@ class NoShowEnforcementService {
             leg: normalizedType,
             driverLat,
             driverLng,
+            geofenceBypassToken,
         });
 
         const bookingData = await this._loadBooking(bookingId);

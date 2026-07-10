@@ -1641,7 +1641,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
  */
 exports.driverStatusArrived = async (req, res) => {
     const { bookingId } = req.params;
-    const { driverLat, driverLng } = req.body;
+    const { driverLat, driverLng, geofenceBypassToken } = req.body;
 
     const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
     await assertDriverWithinCustomerRadius({
@@ -1649,6 +1649,7 @@ exports.driverStatusArrived = async (req, res) => {
         leg: "pickup",
         driverLat,
         driverLng,
+        geofenceBypassToken,
     });
 
     const bookingfind = await booking.findOne({
@@ -2472,7 +2473,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
  */
 exports.driverReachedForDelivery = async (req, res) => {
     const { bookingId } = req.params;
-    const { driverLat, driverLng } = req.body;
+    const { driverLat, driverLng, geofenceBypassToken } = req.body;
 
     const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
     await assertDriverWithinCustomerRadius({
@@ -2480,6 +2481,7 @@ exports.driverReachedForDelivery = async (req, res) => {
         leg: "delivery",
         driverLat,
         driverLng,
+        geofenceBypassToken,
     });
 
     const bookingCheck = await booking.findOne({

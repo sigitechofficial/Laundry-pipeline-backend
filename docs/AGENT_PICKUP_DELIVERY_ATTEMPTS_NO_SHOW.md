@@ -343,6 +343,45 @@ App UI uses `canMarkFailed` (= grace elapsed **and** `withinGeofence`) and `canM
 
 **On the Way** — no geofence.
 
+### QA bypass (staging / dev testing only)
+
+Pakistan device + London order jaisi testing ke liye geofence temporarily bypass karo — **production par kabhi enable mat karo**.
+
+**Backend `.env` (staging):**
+```env
+GEOFENCE_BYPASS_ENABLED=true
+GEOFENCE_BYPASS_SECRET=laundry-qa-geofence-2026
+```
+
+**Agent app har geofence request pe token bheje:**
+
+| Method | Token field |
+|--------|-------------|
+| GET `attempt-options` | Query: `geofenceBypassToken=laundry-qa-geofence-2026` |
+| POST `attempt/fail`, `attempt/unattended` | Body: `"geofenceBypassToken": "..."` |
+| PATCH `driverStatusArrived`, `driverReachedForDelivery` | Body: `"geofenceBypassToken": "..."` |
+
+**Rules:**
+- `NODE_ENV=production` → bypass **hamesha ignored** (chahe env set ho)
+- Token galat / missing → normal geofence apply
+- Bypass active ho to response mein `geofenceBypassed: true` + real `distanceMeters` still shown
+
+**Example `attempt-options` with bypass:**
+```
+GET .../attempt-options?type=pickup&driverLat=31.46&driverLng=74.24&geofenceBypassToken=laundry-qa-geofence-2026
+```
+```json
+{
+  "withinGeofence": true,
+  "distanceMeters": 6289426,
+  "requiredRadiusMeters": 100,
+  "geofenceBypassed": true,
+  "canMarkUnattended": true
+}
+```
+
+Grace timer (`canMarkFailed`) bypass se affect nahi hota — sirf distance check skip hoti hai.
+
 ### 6.1 Get attempt options
 
 ```

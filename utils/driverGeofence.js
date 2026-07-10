@@ -7,6 +7,7 @@ const {
     resolveArrivalRadiusForBookingId,
     loadBookingForAttempts,
 } = require('./safeNoShowPolicyQuery');
+const { isGeofenceBypassActive } = require('./geofenceBypass');
 
 class GeofenceOutOfRangeError extends UniversalHttpError {
     constructor(requiredRadiusMeters, distanceMeters) {
@@ -111,6 +112,7 @@ async function getDriverGeofenceStatus({
     driverLat,
     driverLng,
     radiusMeters,
+    geofenceBypassToken,
 }) {
     let requiredRadiusMeters = DEFAULT_ARRIVAL_RADIUS_METERS;
     try {
@@ -122,25 +124,29 @@ async function getDriverGeofenceStatus({
         console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
     }
 
+    const bypassed = isGeofenceBypassActive(geofenceBypassToken);
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: false });
 
     if (!driverPoint) {
         return {
             requiredRadiusMeters,
             distanceMeters: null,
-            withinGeofence: false,
-            gpsRequired: true,
+            withinGeofence: bypassed,
+            gpsRequired: !bypassed,
+            geofenceBypassed: bypassed,
         };
     }
 
     const customerPoint = await loadCustomerCoordinates(bookingId, leg);
     const distanceMeters = distanceMetersBetween(driverPoint, customerPoint);
+    const withinGeofence = bypassed || distanceMeters <= requiredRadiusMeters;
 
     return {
         requiredRadiusMeters,
         distanceMeters,
-        withinGeofence: distanceMeters <= requiredRadiusMeters,
+        withinGeofence,
         gpsRequired: false,
+        geofenceBypassed: bypassed,
         customerLat: customerPoint.latitude,
         customerLng: customerPoint.longitude,
     };
@@ -155,6 +161,7 @@ async function assertDriverWithinCustomerRadius({
     driverLat,
     driverLng,
     radiusMeters,
+    geofenceBypassToken,
 }) {
     let requiredRadiusMeters = DEFAULT_ARRIVAL_RADIUS_METERS;
     try {
@@ -166,11 +173,12 @@ async function assertDriverWithinCustomerRadius({
         console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
     }
 
+    const bypassed = isGeofenceBypassActive(geofenceBypassToken);
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: true });
     const customerPoint = await loadCustomerCoordinates(bookingId, leg);
     const distanceMeters = distanceMetersBetween(driverPoint, customerPoint);
 
-    if (distanceMeters > requiredRadiusMeters) {
+    if (!bypassed && distanceMeters > requiredRadiusMeters) {
         throw new GeofenceOutOfRangeError(requiredRadiusMeters, distanceMeters);
     }
 
@@ -179,6 +187,7 @@ async function assertDriverWithinCustomerRadius({
         distanceMeters,
         withinGeofence: true,
         gpsRequired: false,
+        geofenceBypassed: bypassed,
     };
 }
 

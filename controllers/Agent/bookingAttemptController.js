@@ -40,6 +40,7 @@ exports.getAttemptOptions = async (req, res) => {
     const result = await noShowEnforcementService.getAttemptOptions(bookingId, type, {
         driverLat: req.query.driverLat,
         driverLng: req.query.driverLng,
+        geofenceBypassToken: req.query.geofenceBypassToken,
     });
     return ResponseHelper.success(res, 'Attempt options fetched', result);
 };
@@ -49,7 +50,7 @@ exports.getAttemptOptions = async (req, res) => {
  */
 exports.markAttemptFailed = async (req, res) => {
     const { bookingId } = req.params;
-    const { type, reason, driverLateMinutes, driverLat, driverLng } = req.body;
+    const { type, reason, driverLateMinutes, driverLat, driverLng, geofenceBypassToken } = req.body;
 
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
@@ -62,6 +63,7 @@ exports.markAttemptFailed = async (req, res) => {
         driverLateMinutes: driverLateMinutes != null ? Number(driverLateMinutes) : 0,
         driverLat,
         driverLng,
+        geofenceBypassToken,
         wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
     });
 
@@ -102,7 +104,7 @@ exports.rescheduleAfterFail = async (req, res) => {
  */
 exports.markAttemptUnattended = async (req, res) => {
     const { bookingId } = req.params;
-    const { type, method, driverLat, driverLng } = req.body;
+    const { type, method, driverLat, driverLng, geofenceBypassToken } = req.body;
 
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
@@ -118,6 +120,7 @@ exports.markAttemptUnattended = async (req, res) => {
         driverUserId: req.user?.id,
         driverLat,
         driverLng,
+        geofenceBypassToken,
         wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
     });
 
