@@ -2220,6 +2220,7 @@ class CustomerOrderService {
                 'pricingBasis',
                 'numberOfBags',
                 'numberOfItems',
+                'washBleedDisclaimerEnabled',
             ],
             order: [['sortOrder', 'ASC']],
         });
@@ -2252,6 +2253,7 @@ class CustomerOrderService {
                     pricingBasis: svc.pricingBasis || null,
                     numberOfBags: Boolean(svc.numberOfBags),
                     numberOfItems: Boolean(svc.numberOfItems),
+                    washBleedDisclaimerEnabled: Boolean(svc.washBleedDisclaimerEnabled),
                 },
                 categories: serviceCategoriesData.map((row) => ({
                     categoryId: row.categoryId,

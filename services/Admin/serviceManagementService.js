@@ -40,6 +40,11 @@ function normalizeServicePayload(serviceData) {
     if (data.numberOfItems !== undefined) {
         data.numberOfItems = parseServiceBoolean(data.numberOfItems);
     }
+    if (data.washBleedDisclaimerEnabled !== undefined) {
+        data.washBleedDisclaimerEnabled = parseServiceBoolean(
+            data.washBleedDisclaimerEnabled
+        );
+    }
     return data;
 }
 

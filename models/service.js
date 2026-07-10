@@ -87,6 +87,13 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: false,
       comment: 'When true, customer/agent can collect number of items for this service'
+    },
+    washBleedDisclaimerEnabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment:
+        'When true, customer sees colour-bleed disclaimer for mixed wash on this service',
     }
   }, {
     sequelize,
