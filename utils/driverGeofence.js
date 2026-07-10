@@ -1,11 +1,12 @@
 const geolib = require('geolib');
-const { booking, addressDb, policy, noShowPolicyConfig } = require('../models');
-const activePoliciesService = require('../services/Admin/activePoliciesService');
+const { addressDb } = require('../models');
 const { ValidationError, NotFoundError, UniversalHttpError } = require('../middlewares/universalErrorHandler');
 const { StatusCodes } = require('http-status-codes');
-
-/** Fallback when policy has no arrivalRadiusMeters configured. */
-const DEFAULT_ARRIVAL_RADIUS_METERS = 100;
+const {
+    DEFAULT_ARRIVAL_RADIUS_METERS,
+    resolveArrivalRadiusForBookingId,
+    loadBookingForAttempts,
+} = require('./safeNoShowPolicyQuery');
 
 class GeofenceOutOfRangeError extends UniversalHttpError {
     constructor(requiredRadiusMeters, distanceMeters) {
@@ -56,48 +57,11 @@ function normalizeLeg(leg) {
     throw new ValidationError('leg must be pickup or delivery');
 }
 
-function normalizeRadiusMeters(value) {
-    const parsed = parseInt(value, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-        return DEFAULT_ARRIVAL_RADIUS_METERS;
-    }
-    return parsed;
-}
-
-async function resolveArrivalRadiusForBooking(bookingId) {
-    const bookingRow = await booking.findOne({
-        where: { id: bookingId },
-        attributes: ['id', 'zoneId', 'noShowPolicyId'],
-    });
-
-    if (!bookingRow) {
-        throw new NotFoundError(`Booking ${bookingId} not found`);
-    }
-
-    let policyRecord = null;
-    if (bookingRow.noShowPolicyId) {
-        policyRecord = await policy.findOne({
-            where: { id: bookingRow.noShowPolicyId },
-            include: [{ model: noShowPolicyConfig, as: 'noShowConfig', required: false }],
-        });
-    }
-
-    if (!policyRecord) {
-        policyRecord = await activePoliciesService.getActiveNoShowPolicy(bookingRow.zoneId);
-    }
-
-    return normalizeRadiusMeters(policyRecord?.noShowConfig?.arrivalRadiusMeters);
-}
-
 async function loadCustomerCoordinates(bookingId, leg) {
     const normalizedLeg = normalizeLeg(leg);
     const addressField = normalizedLeg === 'pickup' ? 'pickupAddresId' : 'dropOffAddressId';
 
-    const bookingRow = await booking.findOne({
-        where: { id: bookingId },
-        attributes: ['id', 'pickupAddresId', 'dropOffAddressId'],
-    });
-
+    const bookingRow = await loadBookingForAttempts(bookingId, ['pickupAddresId', 'dropOffAddressId']);
     if (!bookingRow) {
         throw new NotFoundError(`Booking ${bookingId} not found`);
     }
@@ -148,10 +112,15 @@ async function getDriverGeofenceStatus({
     driverLng,
     radiusMeters,
 }) {
-    const requiredRadiusMeters =
-        radiusMeters != null
-            ? normalizeRadiusMeters(radiusMeters)
-            : await resolveArrivalRadiusForBooking(bookingId);
+    let requiredRadiusMeters = DEFAULT_ARRIVAL_RADIUS_METERS;
+    try {
+        requiredRadiusMeters =
+            radiusMeters != null
+                ? Math.max(1, parseInt(radiusMeters, 10) || DEFAULT_ARRIVAL_RADIUS_METERS)
+                : await resolveArrivalRadiusForBookingId(bookingId);
+    } catch (err) {
+        console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
+    }
 
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: false });
 
@@ -187,10 +156,15 @@ async function assertDriverWithinCustomerRadius({
     driverLng,
     radiusMeters,
 }) {
-    const requiredRadiusMeters =
-        radiusMeters != null
-            ? normalizeRadiusMeters(radiusMeters)
-            : await resolveArrivalRadiusForBooking(bookingId);
+    let requiredRadiusMeters = DEFAULT_ARRIVAL_RADIUS_METERS;
+    try {
+        requiredRadiusMeters =
+            radiusMeters != null
+                ? Math.max(1, parseInt(radiusMeters, 10) || DEFAULT_ARRIVAL_RADIUS_METERS)
+                : await resolveArrivalRadiusForBookingId(bookingId);
+    } catch (err) {
+        console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
+    }
 
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: true });
     const customerPoint = await loadCustomerCoordinates(bookingId, leg);
@@ -212,9 +186,7 @@ module.exports = {
     DEFAULT_ARRIVAL_RADIUS_METERS,
     GeofenceOutOfRangeError,
     parseDriverCoordinates,
-    resolveArrivalRadiusForBooking,
     getDriverGeofenceStatus,
     assertDriverWithinCustomerRadius,
-    // Back-compat alias
     ARRIVAL_RADIUS_METERS: DEFAULT_ARRIVAL_RADIUS_METERS,
 };

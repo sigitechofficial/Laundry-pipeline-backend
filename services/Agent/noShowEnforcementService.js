@@ -4,11 +4,12 @@ const {
     booking,
     bookingAttempt,
     bookingHistory,
-    policy,
-    noShowPolicyConfig,
     proofOfDeliveries,
 } = require('../../models');
-const activePoliciesService = require('../Admin/activePoliciesService');
+const {
+    resolveNoShowPolicyForBooking,
+    loadBookingForAttempts,
+} = require('../../utils/safeNoShowPolicyQuery');
 const { attachNoShowPolicyOnBooking } = require('../../utils/bookingPolicyAttach');
 const { sendNotification } = require('../../utils/notification');
 const {
@@ -53,51 +54,16 @@ class NoShowEnforcementService {
     }
 
     async _loadBooking(bookingId) {
-        const row = await booking.findOne({
-            where: { id: bookingId },
-            attributes: [
-                'id',
-                'customerId',
-                'driverId',
-                'bookingStatusId',
-                'zoneId',
-                'noShowPolicyId',
-                'orderAmount',
-                'subTotal',
-                'pickupAttemptCount',
-                'deliveryAttemptCount',
-                'maxPickupAttempts',
-                'noShowFeeAccrued',
-                'driverInstructionOptions',
-                'driverInstructionOptions1',
-                'collectionDate',
-                'collectionTimeFrom',
-                'collectionTimeTo',
-                'deliveryDate',
-                'deliveryTimeFrom',
-                'deliveryTimeTo',
-            ],
-        });
+        const row = await loadBookingForAttempts(bookingId);
         if (!row) throw new NotFoundError(`Booking ${bookingId} not found`);
         return row;
     }
 
     async resolveNoShowPolicy(bookingData) {
-        if (bookingData.noShowPolicyId) {
-            const snapshotted = await policy.findOne({
-                where: { id: bookingData.noShowPolicyId },
-                include: [
-                    {
-                        model: noShowPolicyConfig,
-                        as: 'noShowConfig',
-                        required: false,
-                    },
-                ],
-            });
-            if (snapshotted) return snapshotted;
-        }
-
-        return activePoliciesService.getActiveNoShowPolicy(bookingData.zoneId);
+        return resolveNoShowPolicyForBooking({
+            noShowPolicyId: bookingData.noShowPolicyId,
+            zoneId: bookingData.zoneId,
+        });
     }
 
     _resolveOrderValue(bookingData) {
@@ -385,12 +351,28 @@ class NoShowEnforcementService {
             driverLateMinutes: 0,
             policyRecord,
         });
-        const geofence = await getDriverGeofenceStatus({
-            bookingId,
-            leg: normalizedType,
-            driverLat: driverCoords.driverLat,
-            driverLng: driverCoords.driverLng,
-        });
+
+        let geofence;
+        try {
+            geofence = await getDriverGeofenceStatus({
+                bookingId,
+                leg: normalizedType,
+                driverLat: driverCoords.driverLat,
+                driverLng: driverCoords.driverLng,
+            });
+        } catch (geofenceErr) {
+            console.warn(
+                `[noShowEnforcement] geofence calc failed for booking ${bookingId}:`,
+                geofenceErr.message
+            );
+            geofence = {
+                requiredRadiusMeters: 100,
+                distanceMeters: null,
+                withinGeofence: false,
+                gpsRequired: false,
+            };
+        }
+
         const withinGeofence = geofence.withinGeofence === true;
 
         return {
