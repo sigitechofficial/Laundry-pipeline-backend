@@ -168,10 +168,11 @@ const agentEmployeeManagementService = require('../../services/Agent/employeeMan
 const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
 const agentOrderManagementService = require('../../services/Agent/orderManagementService');
 const agentWalletService = require('../../services/Agent/agentWalletService');
+const agentSettlementService = require('../../services/Agent/agentSettlementService');
 
-async function tryCreditAgentWallet(bookingId) {
+async function tryCreditAgentWallet(bookingId, options = {}) {
     try {
-        const result = await agentWalletService.creditAgentForPaidBooking(bookingId);
+        const result = await agentWalletService.creditAgentForPaidBooking(bookingId, options);
         if (result.credited) {
             console.log(
                 `[agentWallet] Credited booking ${bookingId}: ${result.amount}`
@@ -2245,7 +2246,7 @@ exports.recordCashPayment = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    await tryCreditAgentWallet(bookingId);
+    await tryCreditAgentWallet(bookingId, { cashCollectedAmount: collectedAmount });
 
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
@@ -5345,6 +5346,22 @@ exports.getAgentWalletTransactions = async (req, res) => {
         limit,
     });
     return ResponseHelper.success(res, "Agent wallet transactions", data);
+};
+
+exports.getAgentSettlement = async (req, res) => {
+    const agentId = req.user.id;
+    const data = await agentSettlementService.getAgentSettlementSummary(agentId);
+    return ResponseHelper.success(res, "Agent settlement summary", data);
+};
+
+exports.submitCashRemittance = async (req, res) => {
+    const agentId = req.user.id;
+    const { amount, note } = req.body;
+    const data = await agentSettlementService.submitCashRemittance(agentId, {
+        amount,
+        note,
+    });
+    return ResponseHelper.success(res, "Cash remittance submitted", data);
 };
 
 

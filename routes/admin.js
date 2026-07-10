@@ -12,6 +12,7 @@ const { createDestinationDirectory } = require('../utils/destination')
 const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
+const agentSettlementController = require('../controllers/Admin/agentSettlementController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -480,6 +481,39 @@ router.get('/getAgentAddress/:userId', asyncMiddleware(adminController.getAgentA
 //Get Shop Address with Business Info
 router.get('/getShopAddress/:userId', asyncMiddleware(adminController.getShopAddress))
 
+//!-----------------------------------Agent Settlement------------------------------------//
+router.get(
+    '/agents/cash-due',
+    asyncMiddleware(agentSettlementController.listAgentsWithCashDue)
+)
+router.get(
+    '/agents/remittances/pending',
+    asyncMiddleware(agentSettlementController.listPendingRemittances)
+)
+router.patch(
+    '/agents/remittances/:remittanceId/confirm',
+    asyncMiddleware(agentSettlementController.confirmCashRemittance)
+)
+router.patch(
+    '/agents/remittances/:remittanceId/reject',
+    asyncMiddleware(agentSettlementController.rejectCashRemittance)
+)
+router.get(
+    '/agents/:agentId/settlement',
+    asyncMiddleware(agentSettlementController.getAgentSettlement)
+)
+router.post(
+    '/agents/:agentId/cash-settlement',
+    asyncMiddleware(agentSettlementController.recordCashSettlement)
+)
+router.post(
+    '/agents/:agentId/settlement-adjustment',
+    asyncMiddleware(agentSettlementController.recordSettlementAdjustment)
+)
+router.post(
+    '/agents/:agentId/payout',
+    asyncMiddleware(agentSettlementController.recordAgentPayout)
+)
 
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts

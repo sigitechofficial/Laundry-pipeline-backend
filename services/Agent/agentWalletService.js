@@ -12,6 +12,10 @@ const invoiceManagementService = require("./invoiceManagementService");
 const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
 
 const COMMISSION_REFERENCE = "booking_commission";
+const CASH_COLLECTED_REFERENCE = "cash_collected";
+const CASH_REMITTED_REFERENCE = "cash_remitted";
+const ADMIN_SETTLEMENT_REFERENCE = "admin_settlement";
+const PAYOUT_REFERENCE = "payout";
 const DEFAULT_CURRENCY = "GBP";
 
 async function resolveShopOwnerUserId(laundryShopId) {
@@ -44,12 +48,12 @@ async function resolveCurrencyForBooking(bookingRow) {
     return DEFAULT_CURRENCY;
 }
 
-async function hasCommissionCredit(bookingId) {
+async function hasWalletEntry(bookingId, referenceType, type) {
     const existing = await wallet.findOne({
         where: {
             bookingId,
-            referenceType: COMMISSION_REFERENCE,
-            type: "credit",
+            referenceType,
+            type,
             status: "completed",
         },
         attributes: ["id"],
@@ -57,11 +61,126 @@ async function hasCommissionCredit(bookingId) {
     return Boolean(existing);
 }
 
+async function hasCommissionCredit(bookingId) {
+    return hasWalletEntry(bookingId, COMMISSION_REFERENCE, "credit");
+}
+
+async function sumWalletAmount(userId, type, options = {}) {
+    const where = {
+        userId,
+        type,
+        status: options.status || "completed",
+    };
+    if (options.referenceType) {
+        where.referenceType = options.referenceType;
+    }
+
+    const rows = await wallet.findAll({
+        where,
+        attributes: ["amount"],
+        raw: true,
+    });
+    return rows.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
+}
+
+/**
+ * Cash bucket: full cash bookings + card upfront with balance collected in cash.
+ * Card bucket: remaining card bookings.
+ */
+function classifyAgentEarningChannel(bookingRow) {
+    if (!bookingRow) return "card";
+
+    const paymentType = normalizePaymentType(bookingRow.paymentType);
+    if (paymentType === "cash") {
+        return "cash";
+    }
+
+    const collectedVia = bookingRow.balanceCollectedVia;
+    if (collectedVia === "cash") {
+        return "cash";
+    }
+    if (collectedVia === "card") {
+        return "card";
+    }
+
+    if (bookingRow.balancePaymentMethod === "cash") {
+        return "cash";
+    }
+
+    return "card";
+}
+
+async function resolveCashCollectedAmount(bookingId, bookingRow, options = {}) {
+    if (options.cashCollectedAmount != null && options.cashCollectedAmount !== "") {
+        const parsed = parseFloat(options.cashCollectedAmount);
+        if (Number.isFinite(parsed) && parsed > 0) {
+            return parseFloat(parsed.toFixed(2));
+        }
+    }
+
+    const existing = await wallet.findOne({
+        where: {
+            bookingId,
+            referenceType: CASH_COLLECTED_REFERENCE,
+            type: "debit",
+            status: "completed",
+        },
+        attributes: ["amount"],
+    });
+    if (existing) {
+        return parseFloat(parseFloat(existing.amount || 0).toFixed(2));
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const totalOrderAmount = Number(
+        paymentSummary?.orderSummary?.totalOrderAmount ?? 0
+    );
+    if (totalOrderAmount > 0) {
+        const channel = classifyAgentEarningChannel(bookingRow);
+        if (channel === "cash" && normalizePaymentType(bookingRow.paymentType) === "cash") {
+            return parseFloat(totalOrderAmount.toFixed(2));
+        }
+    }
+
+    return 0;
+}
+
+async function recordCashCollectedForBooking({
+    bookingId,
+    agentUserId,
+    cashCollectedAmount,
+    currency,
+    orderLabel,
+}) {
+    if (await hasWalletEntry(bookingId, CASH_COLLECTED_REFERENCE, "debit")) {
+        return { recorded: false, reason: "already_recorded" };
+    }
+
+    const entry = await wallet.create({
+        userId: agentUserId,
+        bookingId,
+        referenceType: CASH_COLLECTED_REFERENCE,
+        amount: cashCollectedAmount,
+        currency,
+        type: "debit",
+        status: "completed",
+        description: `Cash collected for order #${orderLabel}`,
+    });
+
+    return {
+        recorded: true,
+        amount: cashCollectedAmount,
+        walletId: entry.id,
+    };
+}
+
 /**
  * Credit agent wallet when booking is fully paid. Idempotent per booking.
- * @returns {{ credited: boolean, amount?: number, walletId?: number, reason?: string }}
+ * Cash orders also record cash_collected debit (agent physically holds customer cash).
+ * @returns {{ credited: boolean, cashRecorded?: boolean, amount?: number, walletId?: number, reason?: string }}
  */
-async function creditAgentForPaidBooking(bookingId) {
+async function creditAgentForPaidBooking(bookingId, options = {}) {
     const bookingRow = await booking.findByPk(bookingId, {
         attributes: [
             "id",
@@ -69,6 +188,8 @@ async function creditAgentForPaidBooking(bookingId) {
             "laundryShopId",
             "zoneId",
             "paymentType",
+            "balancePaymentMethod",
+            "balanceCollectedVia",
         ],
         include: [
             {
@@ -110,12 +231,38 @@ async function creditAgentForPaidBooking(bookingId) {
         return { credited: false, reason: "no_shop_owner" };
     }
 
-    if (await hasCommissionCredit(bookingId)) {
-        return { credited: false, reason: "already_credited" };
-    }
-
     const currency = await resolveCurrencyForBooking(bookingRow);
     const orderLabel = bookingRow.orderTrackId || String(bookingId);
+    const channel = classifyAgentEarningChannel(bookingRow);
+
+    let cashRecorded = false;
+    if (channel === "cash") {
+        const cashCollectedAmount = await resolveCashCollectedAmount(
+            bookingId,
+            bookingRow,
+            options
+        );
+        if (!cashCollectedAmount || cashCollectedAmount <= 0) {
+            return { credited: false, reason: "cash_not_recorded" };
+        }
+
+        const cashResult = await recordCashCollectedForBooking({
+            bookingId,
+            agentUserId,
+            cashCollectedAmount,
+            currency,
+            orderLabel,
+        });
+        cashRecorded = cashResult.recorded;
+    }
+
+    if (await hasCommissionCredit(bookingId)) {
+        return {
+            credited: false,
+            cashRecorded,
+            reason: "already_credited",
+        };
+    }
 
     const entry = await wallet.create({
         userId: agentUserId,
@@ -130,50 +277,12 @@ async function creditAgentForPaidBooking(bookingId) {
 
     return {
         credited: true,
+        cashRecorded,
         amount: agentEarning,
         walletId: entry.id,
         agentUserId,
+        channel,
     };
-}
-
-async function sumWalletAmount(userId, type) {
-    const rows = await wallet.findAll({
-        where: {
-            userId,
-            type,
-            status: "completed",
-        },
-        attributes: ["amount"],
-        raw: true,
-    });
-    return rows.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
-}
-
-/**
- * Cash bucket: full cash bookings + card upfront with balance collected in cash.
- * Card bucket: remaining card bookings.
- */
-function classifyAgentEarningChannel(bookingRow) {
-    if (!bookingRow) return "card";
-
-    const paymentType = normalizePaymentType(bookingRow.paymentType);
-    if (paymentType === "cash") {
-        return "cash";
-    }
-
-    const collectedVia = bookingRow.balanceCollectedVia;
-    if (collectedVia === "cash") {
-        return "cash";
-    }
-    if (collectedVia === "card") {
-        return "card";
-    }
-
-    if (bookingRow.balancePaymentMethod === "cash") {
-        return "cash";
-    }
-
-    return "card";
 }
 
 /**
@@ -240,6 +349,23 @@ async function getWalletSummary(agentUserId) {
     const totalDebited = await sumWalletAmount(agentUserId, "debit");
     const balance = parseFloat((totalCredited - totalDebited).toFixed(2));
 
+    const totalCashCollected = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: CASH_COLLECTED_REFERENCE,
+    });
+    const totalCashRemitted = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: CASH_REMITTED_REFERENCE,
+    });
+    const pendingCashRemitted = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: CASH_REMITTED_REFERENCE,
+        status: "pending",
+    });
+    const totalAdminSettlements = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: ADMIN_SETTLEMENT_REFERENCE,
+    });
+    const totalPayouts = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: PAYOUT_REFERENCE,
+    });
+
     let currency = DEFAULT_CURRENCY;
     if (shop.zoneId) {
         const zoneRow = await zone.findByPk(shop.zoneId, {
@@ -273,12 +399,23 @@ async function getWalletSummary(agentUserId) {
 
     const earnings = await sumAgentEarningsBreakdown(shop.id);
 
+    const cashDueToPlatform = balance < 0 ? parseFloat(Math.abs(balance).toFixed(2)) : 0;
+    const platformOwesAgent = balance > 0 ? parseFloat(balance.toFixed(2)) : 0;
+
     return {
         balance,
         currency,
+        netSettlement: balance,
+        cashDueToPlatform,
+        platformOwesAgent,
         totalEarning: earnings.totalEarning,
         totalEarningCash: earnings.totalEarningCash,
         totalEarningCard: earnings.totalEarningCard,
+        totalCashCollected: parseFloat(totalCashCollected.toFixed(2)),
+        totalCashRemitted: parseFloat(totalCashRemitted.toFixed(2)),
+        pendingCashRemittance: parseFloat(pendingCashRemitted.toFixed(2)),
+        totalAdminSettlements: parseFloat(totalAdminSettlements.toFixed(2)),
+        totalPayouts: parseFloat(totalPayouts.toFixed(2)),
         totalCredited: parseFloat(totalCredited.toFixed(2)),
         totalDebited: parseFloat(totalDebited.toFixed(2)),
         commissionCreditCount: commissionCredits,
@@ -323,9 +460,15 @@ async function getWalletTransactions(agentUserId, options = {}) {
     return {
         balance: summary.balance,
         currency: summary.currency,
+        netSettlement: summary.netSettlement,
+        cashDueToPlatform: summary.cashDueToPlatform,
+        platformOwesAgent: summary.platformOwesAgent,
         totalEarning: summary.totalEarning,
         totalEarningCash: summary.totalEarningCash,
         totalEarningCard: summary.totalEarningCard,
+        totalCashCollected: summary.totalCashCollected,
+        totalCashRemitted: summary.totalCashRemitted,
+        pendingCashRemittance: summary.pendingCashRemittance,
         totalCredited: summary.totalCredited,
         totalDebited: summary.totalDebited,
         transactions: rows.map((row) => {
@@ -356,8 +499,14 @@ async function getWalletTransactions(agentUserId, options = {}) {
 
 module.exports = {
     COMMISSION_REFERENCE,
+    CASH_COLLECTED_REFERENCE,
+    CASH_REMITTED_REFERENCE,
+    ADMIN_SETTLEMENT_REFERENCE,
+    PAYOUT_REFERENCE,
+    classifyAgentEarningChannel,
     creditAgentForPaidBooking,
     getWalletSummary,
     getWalletTransactions,
     hasCommissionCredit,
+    resolveShopOwnerUserId,
 };

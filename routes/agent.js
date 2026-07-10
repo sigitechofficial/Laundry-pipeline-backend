@@ -637,6 +637,16 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getAgentWalletTransactions)
 );
+router.get(
+    "/settlement",
+    validateAccessToken,
+    asyncMiddleware(agentController.getAgentSettlement)
+);
+router.post(
+    "/cash-remittance",
+    validateAccessToken,
+    asyncMiddleware(agentController.submitCashRemittance)
+);
 
 //!----------------------------Agent Postcode Lookup---------------------//
 router.get(
