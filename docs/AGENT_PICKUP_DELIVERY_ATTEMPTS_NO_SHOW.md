@@ -20,7 +20,7 @@ After the driver marks **Arrived** at pickup or delivery, the app must support *
 | **Unattended** | Bag at door, concierge, locker (policy + customer instructions allow) | New API + photo proof if required |
 | **Failed (no-show)** | Customer not available after grace period | New APIs → fee recorded → reschedule or cancel |
 
-**Max pickup attempts:** default **2**. After the 2nd failed pickup, the booking is **cancelled** (status 19).
+**Max pickup attempts:** default **3**. After the 3rd failed pickup, the booking is **cancelled** (status 19).
 
 **Fees:** Calculated from the zone’s active **no-show policy**. Recorded on the attempt (`feeAmount`) and booking (`noShowFeeAccrued`). **Stripe charging is not wired in this phase** — the app should show the fee to the driver; backend records it only.
 
@@ -39,7 +39,7 @@ After the driver marks **Arrived** at pickup or delivery, the app must support *
 | 14 | Driver Reached | **Arrived** at delivery — grace timer starts |
 | 15 | Delivery Failed | Delivery no-show — needs reschedule |
 | 17 | Delivered | Delivery success |
-| 19 | Cancelled | 2nd pickup attempt failed |
+| 19 | Cancelled | 3rd pickup attempt failed |
 
 ---
 
@@ -145,7 +145,8 @@ Body:
 | Attempt | Backend result | Booking status |
 |---------|----------------|----------------|
 | 1st fail | `outcome: "reschedule_required"` | **3** (Awaiting Collection) |
-| 2nd fail | `outcome: "cancelled"` | **19** (Cancelled) |
+| 2nd fail | `outcome: "reschedule_required"` | **3** (Awaiting Collection) |
+| 3rd fail | `outcome: "cancelled"` | **19** (Cancelled) |
 
 Customer receives a push notification in both cases.
 
@@ -171,16 +172,19 @@ Body:
 
 → Stays status **3** with updated dates. Driver can run **Attempt 2** from On the Way again.
 
-### 3.4 Two-attempt loop (diagram)
+### 3.4 Three-attempt loop (diagram)
 
 ```
 Attempt 1:
   4 → Arrived (5) → grace → fail → fee → status 3 → reschedule slot
 
 Attempt 2:
+  4 → Arrived (5) → grace → fail → fee → status 3 → reschedule slot
+
+Attempt 3:
   4 → Arrived (5) → grace → fail → fee → status 19 (CANCELLED)
 
-Attempt 2 success:
+Any attempt success:
   5 → complete / unattended → status 7 → normal facility flow
 ```
 
@@ -392,7 +396,7 @@ GET /agent/booking/:bookingId/attempt-options?type=pickup|delivery&driverLat=51.
       { "method": "bag_at_door", "label": "Bag at door" }
     ],
     "requirePhoto": true,
-    "maxPickupAttempts": 2,
+    "maxPickupAttempts": 3,
     "pickupAttemptCount": 0,
     "deliveryAttemptCount": 0,
     "feePreview": {
@@ -432,7 +436,7 @@ POST /agent/booking/:bookingId/attempt/fail
     "outcome": "reschedule_required",
     "attemptId": 12,
     "pickupAttemptCount": 1,
-    "maxPickupAttempts": 2,
+    "maxPickupAttempts": 3,
     "fee": {
       "feeAmount": 15,
       "currency": "USD",
@@ -445,13 +449,13 @@ POST /agent/booking/:bookingId/attempt/fail
 }
 ```
 
-**Example — 2nd pickup fail:**
+**Example — 3rd pickup fail:**
 
 ```json
 {
   "data": {
     "outcome": "cancelled",
-    "pickupAttemptCount": 2,
+    "pickupAttemptCount": 3,
     "bookingStatusId": 19,
     "message": "Maximum pickup attempts reached. Booking cancelled."
   }
@@ -517,7 +521,7 @@ Always call **Arrived** (with GPS) before using attempt-options / fail / unatten
 
 ```
 ┌─────────────────────────────────────┐
-│  Arrived at pickup — Attempt 1/2    │
+│  Arrived at pickup — Attempt 1/3    │
 │  ⏱ Grace: 08:32 remaining           │
 ├─────────────────────────────────────┤
 │  [ Complete Pickup ]                │  → agentInspectionStatus
@@ -527,9 +531,9 @@ Always call **Arrived** (with GPS) before using attempt-options / fail / unatten
 └─────────────────────────────────────┘
 ```
 
-After 1st fail → show reschedule form → `attempt/reschedule` → return to order list (status 3).
+After 1st or 2nd fail → show reschedule form → `attempt/reschedule` → return to order list (status 3).
 
-After 2nd fail → show “Order cancelled” → remove from active list.
+After 3rd fail → show “Order cancelled” → remove from active list.
 
 ### Delivery — status 14 screen
 
@@ -556,7 +560,7 @@ Same pattern with `type=delivery`; success button → `bookingDeliverToCustomer`
 | `booking_attempts` | Per-attempt log: arrived, failed, unattended, fees |
 | `bookings.pickupAttemptCount` | Failed pickup count |
 | `bookings.deliveryAttemptCount` | Failed delivery count |
-| `bookings.maxPickupAttempts` | Default 2 |
+| `bookings.maxPickupAttempts` | Default 3 |
 | `bookings.noShowFeeAccrued` | Running total fees on booking |
 | `bookings.noShowPolicyId` | Snapshotted policy on first attempt |
 

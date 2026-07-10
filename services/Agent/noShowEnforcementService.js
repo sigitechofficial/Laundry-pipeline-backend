@@ -392,7 +392,7 @@ class NoShowEnforcementService {
             canMarkUnattended: withinGeofence,
             unattendedOptions: this._unattendedOptions(config, bookingData, normalizedType),
             requirePhoto: Boolean(config?.requirePhoto),
-            maxPickupAttempts: bookingData.maxPickupAttempts || 2,
+            maxPickupAttempts: bookingData.maxPickupAttempts || 3,
             pickupAttemptCount: bookingData.pickupAttemptCount || 0,
             deliveryAttemptCount: bookingData.deliveryAttemptCount || 0,
             feePreview: {
@@ -488,7 +488,7 @@ class NoShowEnforcementService {
 
         if (normalizedType === 'pickup') {
             const newPickupCount = (bookingData.pickupAttemptCount || 0) + 1;
-            const maxAttempts = bookingData.maxPickupAttempts || 2;
+            const maxAttempts = bookingData.maxPickupAttempts || 3;
 
             if (newPickupCount >= maxAttempts) {
                 await booking.update(

@@ -131,7 +131,7 @@ module.exports = {
             await queryInterface.addColumn('bookings', 'maxPickupAttempts', {
                 type: Sequelize.INTEGER,
                 allowNull: false,
-                defaultValue: 2,
+                defaultValue: 3,
             });
         }
         if (!bookingTable.noShowFeeAccrued) {

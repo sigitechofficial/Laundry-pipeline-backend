@@ -201,7 +201,7 @@ module.exports = (sequelize, DataTypes) => {
   maxPickupAttempts: {
     type: DataTypes.INTEGER,
     allowNull: false,
-    defaultValue: 2,
+    defaultValue: 3,
   },
   noShowFeeAccrued: {
     type: DataTypes.DECIMAL(10, 2),

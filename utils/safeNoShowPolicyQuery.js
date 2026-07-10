@@ -180,7 +180,7 @@ function applyBookingAttemptDefaults(row) {
     if (!row) return row;
     if (row.pickupAttemptCount == null) row.setDataValue('pickupAttemptCount', 0);
     if (row.deliveryAttemptCount == null) row.setDataValue('deliveryAttemptCount', 0);
-    if (row.maxPickupAttempts == null) row.setDataValue('maxPickupAttempts', 2);
+    if (row.maxPickupAttempts == null) row.setDataValue('maxPickupAttempts', 3);
     if (row.noShowFeeAccrued == null) row.setDataValue('noShowFeeAccrued', 0);
     if (row.noShowPolicyId == null) row.setDataValue('noShowPolicyId', null);
     return row;

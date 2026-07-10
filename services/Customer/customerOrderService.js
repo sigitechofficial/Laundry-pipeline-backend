@@ -30,6 +30,7 @@ const {
     policy,
     cancellationPolicyConfig,
     noShowPolicyConfig,
+    bookingAttempt,
     units,
     customerSelectedServiceAddOn,
     addOnServices
@@ -73,6 +74,9 @@ const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction')
 
 // Import coupon service
 const couponService = require('./couponService');
+const cancelBookingService = require('./cancelBookingService');
+const noShowEnforcementService = require('../Agent/noShowEnforcementService');
+const { resolveNoShowPolicyForBooking } = require('../../utils/safeNoShowPolicyQuery');
 
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
@@ -830,6 +834,7 @@ function mapNoShowPolicyResponse(noShowPolicyRaw) {
         percentageFee: config.percentageFee ?? null,
         graceMinutesOnSite: config.graceMinutesOnSite ?? null,
         driverLateSLA: config.driverLateSLA ?? null,
+        arrivalRadiusMeters: config.arrivalRadiusMeters ?? 100,
         autoForgiveFirstNoShow: config.autoForgiveFirstNoShow ?? true,
         autoForgiveCount: config.autoForgiveCount ?? null,
         autoForgivePeriod: config.autoForgivePeriod ?? null,
@@ -838,6 +843,204 @@ function mapNoShowPolicyResponse(noShowPolicyRaw) {
         capWindowDays: config.capWindowDays ?? null,
         absoluteWaiverAmount: config.absoluteWaiverAmount ?? null,
         percentageWaiverAmount: config.percentageWaiverAmount ?? null,
+    };
+}
+
+function resolveCancellationPhase(bookingStatusId) {
+    const statusId = Number(bookingStatusId);
+
+    if (statusId === 19) {
+        return {
+            phase: 'cancelled',
+            label: 'Cancelled',
+            canCancel: false,
+            cancelBlockedReason: 'This booking has already been cancelled',
+        };
+    }
+    if ([16, 17].includes(statusId)) {
+        return {
+            phase: 'completed',
+            label: 'Completed',
+            canCancel: false,
+            cancelBlockedReason: 'Cannot cancel completed bookings',
+        };
+    }
+    if (statusId === 11) {
+        return {
+            phase: 'processing',
+            label: 'Processing at facility',
+            canCancel: false,
+            cancelBlockedReason:
+                'Cannot cancel booking. Items are currently being processed at the facility',
+        };
+    }
+    if (statusId === 10) {
+        return {
+            phase: 'invoiced',
+            label: 'Invoice generated',
+            canCancel: false,
+            cancelBlockedReason: 'Cannot cancel booking. Invoice has already been generated',
+        };
+    }
+    if (statusId >= 12) {
+        return {
+            phase: 'post_invoice',
+            label: 'Post-invoice / delivery stage',
+            canCancel: false,
+            cancelBlockedReason: 'Cannot cancel booking at this stage',
+        };
+    }
+    if ([1, 2, 3].includes(statusId)) {
+        return {
+            phase: 'pre_pickup',
+            label: 'Pre-pickup',
+            canCancel: true,
+            cancelBlockedReason: null,
+        };
+    }
+    if ([4, 5, 6, 7, 8, 9].includes(statusId)) {
+        return {
+            phase: 'unprocessed',
+            label: 'Unprocessed (picked up, before invoice)',
+            canCancel: true,
+            cancelBlockedReason: null,
+        };
+    }
+
+    return {
+        phase: 'unknown',
+        label: 'Unknown',
+        canCancel: false,
+        cancelBlockedReason: 'Cannot cancel booking at this stage',
+    };
+}
+
+function mapCustomerAttemptRow(attemptRow) {
+    if (!attemptRow) return null;
+    return {
+        id: attemptRow.id,
+        attemptType: attemptRow.attemptType,
+        attemptNumber: attemptRow.attemptNumber,
+        status: attemptRow.status,
+        feeAmount: parseFloat(attemptRow.feeAmount) || 0,
+        feeCurrency: attemptRow.feeCurrency || null,
+        feeWaived: Boolean(attemptRow.feeWaived),
+        feeWaiveReason: attemptRow.feeWaiveReason || null,
+        unattendedMethod: attemptRow.unattendedMethod || null,
+        failureReason: attemptRow.failureReason || null,
+        driverLateMinutes: attemptRow.driverLateMinutes ?? null,
+        arrivedAt: attemptRow.arrivedAt || null,
+        completedAt: attemptRow.completedAt || null,
+        failedAt: attemptRow.failedAt || null,
+    };
+}
+
+async function buildCustomerBookingPolicySummaries(bookingPlain, { timeZone } = {}) {
+    let cancellationPolicyRaw = bookingPlain.cancellationPolicyBookings;
+    if (!cancellationPolicyRaw?.cancellationConfig) {
+        cancellationPolicyRaw = await cancelBookingService.resolveCancellationPolicy(
+            bookingPlain
+        );
+    }
+
+    let noShowPolicyRaw = bookingPlain.noShowPolicyBookings;
+    if (!noShowPolicyRaw?.noShowConfig) {
+        noShowPolicyRaw = await resolveNoShowPolicyForBooking({
+            noShowPolicyId: bookingPlain.noShowPolicyId,
+            zoneId: bookingPlain.zoneId,
+        });
+    }
+
+    const cancellationPolicy = mapCancellationPolicyResponse(cancellationPolicyRaw);
+    const noShowPolicy = mapNoShowPolicyResponse(noShowPolicyRaw);
+    const phase = resolveCancellationPhase(bookingPlain.bookingStatusId);
+
+    let feePreview = null;
+    if (phase.canCancel) {
+        const config = cancellationPolicyRaw?.cancellationConfig;
+        if (
+            phase.phase === 'unprocessed' &&
+            config &&
+            config.allowCancelUnprocessed === false
+        ) {
+            phase.canCancel = false;
+            phase.cancelBlockedReason =
+                'Cancellation is not allowed at this stage according to the policy';
+        } else {
+            const feeBaseAmount =
+                cancelBookingService.resolvePrepaidChargedAmount(bookingPlain);
+            const prepaidCharged = bookingPlain.paymentConfirmed ? feeBaseAmount : 0;
+            feePreview = await cancelBookingService.calculateCancellationCharge(
+                bookingPlain,
+                cancellationPolicyRaw,
+                bookingPlain.customerId,
+                timeZone || null,
+                prepaidCharged,
+                feeBaseAmount
+            );
+        }
+    }
+
+    const pickupFeePreview = noShowPolicyRaw
+        ? await noShowEnforcementService.calculateNoShowFee({
+              bookingData: bookingPlain,
+              attemptType: 'pickup',
+              driverLateMinutes: 0,
+              policyRecord: noShowPolicyRaw,
+          })
+        : null;
+
+    const deliveryFeePreview = noShowPolicyRaw
+        ? await noShowEnforcementService.calculateNoShowFee({
+              bookingData: bookingPlain,
+              attemptType: 'delivery',
+              driverLateMinutes: 0,
+              policyRecord: noShowPolicyRaw,
+          })
+        : null;
+
+    const attemptRows = Array.isArray(bookingPlain.attempts) ? bookingPlain.attempts : [];
+    const maxPickupAttempts = bookingPlain.maxPickupAttempts ?? 3;
+    const pickupAttemptCount = bookingPlain.pickupAttemptCount ?? 0;
+    const deliveryAttemptCount = bookingPlain.deliveryAttemptCount ?? 0;
+
+    const cancellationSummary = {
+        phase: phase.phase,
+        phaseLabel: phase.label,
+        canCancel: phase.canCancel,
+        cancelBlockedReason: phase.cancelBlockedReason,
+        policy: cancellationPolicy,
+        policySource: bookingPlain.cancellationPolicyId ? 'snapshotted' : 'active',
+        feePreview,
+    };
+
+    const noShowSummary = {
+        policy: noShowPolicy,
+        policySource: bookingPlain.noShowPolicyId ? 'snapshotted' : 'active',
+        pickupAttemptCount,
+        deliveryAttemptCount,
+        maxPickupAttempts,
+        remainingPickupAttempts: Math.max(0, maxPickupAttempts - pickupAttemptCount),
+        noShowFeeAccrued: parseFloat(bookingPlain.noShowFeeAccrued) || 0,
+        feePreview: {
+            pickup: pickupFeePreview,
+            delivery: deliveryFeePreview,
+        },
+        attempts: attemptRows.map(mapCustomerAttemptRow).filter(Boolean),
+    };
+
+    return {
+        cancellationPolicy,
+        noShowPolicy,
+        cancellationSummary,
+        noShowSummary,
+        orderStatusContext: {
+            bookingStatusId: bookingPlain.bookingStatusId,
+            title: bookingPlain.bookingStatus?.title || null,
+            description: bookingPlain.bookingStatus?.description || null,
+            cancellationPhase: phase.phase,
+            cancellationPhaseLabel: phase.label,
+        },
     };
 }
 
@@ -1782,7 +1985,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with booking details
      */
     async bookingDetailsById(data) {
-        const { bookingId, orderTrackId } = data;
+        const { bookingId, orderTrackId, timeZone } = data;
 
         let whereCondition = {};
 
@@ -1985,6 +2188,28 @@ class CustomerOrderService {
                     required: false,
                 },
                 {
+                    model: bookingAttempt,
+                    as: 'attempts',
+                    required: false,
+                    attributes: [
+                        'id',
+                        'attemptType',
+                        'attemptNumber',
+                        'status',
+                        'arrivedAt',
+                        'completedAt',
+                        'failedAt',
+                        'feeAmount',
+                        'feeCurrency',
+                        'feeWaived',
+                        'feeWaiveReason',
+                        'unattendedMethod',
+                        'failureReason',
+                        'driverLateMinutes',
+                    ],
+                    order: [['id', 'DESC']],
+                },
+                {
                     model: policy,
                     as: "cancellationPolicyBookings",
                     attributes: ["id", "name", "type", "isActive", "isDefault", "description"],
@@ -2037,6 +2262,7 @@ class CustomerOrderService {
                                 "percentageFee",
                                 "graceMinutesOnSite",
                                 "driverLateSLA",
+                                "arrivalRadiusMeters",
                                 "autoForgiveFirstNoShow",
                                 "autoForgiveCount",
                                 "autoForgivePeriod",
@@ -2071,10 +2297,17 @@ class CustomerOrderService {
                 selectedServices
             );
 
-        const cancellationPolicy = mapCancellationPolicyResponse(
-            bookingPlain.cancellationPolicyBookings
-        );
-        const noShowPolicy = mapNoShowPolicyResponse(bookingPlain.noShowPolicyBookings);
+        const policySummaries = await buildCustomerBookingPolicySummaries(bookingPlain, {
+            timeZone,
+        });
+
+        const {
+            cancellationPolicy,
+            noShowPolicy,
+            cancellationSummary,
+            noShowSummary,
+            orderStatusContext,
+        } = policySummaries;
 
         // Fetch saved card details from Stripe using the stored paymentMethodId
         let cardDetails = null;
@@ -2157,6 +2390,9 @@ class CustomerOrderService {
             cardDetails,
             cancellationPolicy,
             noShowPolicy,
+            cancellationSummary,
+            noShowSummary,
+            orderStatusContext,
             pickupProofNote,
             deliveryProofNote,
         };
@@ -2176,6 +2412,7 @@ class CustomerOrderService {
 
         delete resultData.cancellationPolicyBookings;
         delete resultData.noShowPolicyBookings;
+        delete resultData.attempts;
 
         return {
             message: "Customer Order Details Fetched",

@@ -211,12 +211,13 @@ async function allBookings(req, res) {
  * Customer booking Detail
  */
 async function bookingDetailsById(req, res) {
-    const { bookingId, orderTrackId } = req.query;
+    const { bookingId, orderTrackId, timeZone } = req.query;
 
     // Call service to handle business logic
     const result = await customerOrderService.bookingDetailsById({
         bookingId,
-        orderTrackId
+        orderTrackId,
+        timeZone,
     });
 
     // Return response using ResponseHelper success method
