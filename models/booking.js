@@ -58,6 +58,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'bookingId',
         as: 'bookingPreferences'
       })
+
+      booking.hasMany(models.bookingAttempt, {
+        foreignKey: 'bookingId',
+        as: 'attempts'
+      })
     }
   }
   booking.init({
@@ -182,6 +187,38 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true,
     defaultValue: 0.00
+  },
+  pickupAttemptCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  deliveryAttemptCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  maxPickupAttempts: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 2,
+  },
+  noShowFeeAccrued: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: false,
+    defaultValue: 0,
+  },
+  noShowPolicyId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  cancellationPolicyId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  zoneId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
   },
   agentBroadcastHeld: {
     type: DataTypes.BOOLEAN,

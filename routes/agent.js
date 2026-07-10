@@ -3,6 +3,7 @@ const router = express();
 //const agentAuthController = require("../controllers/Agent/agentAuth");
 const agentAuthController = require("../controllers/Agent/authController");
 const agentController = require("../controllers/Agent/agents");
+const bookingAttemptController = require("../controllers/Agent/bookingAttemptController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
@@ -241,6 +242,31 @@ router.patch(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.driverStatusArrived)
+);
+// Pickup/delivery attempt options after Arrived (grace, fail, unattended)
+router.get(
+    "/booking/:bookingId/attempt-options",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(bookingAttemptController.getAttemptOptions)
+);
+router.post(
+    "/booking/:bookingId/attempt/fail",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(bookingAttemptController.markAttemptFailed)
+);
+router.post(
+    "/booking/:bookingId/attempt/reschedule",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(bookingAttemptController.rescheduleAfterFail)
+);
+router.post(
+    "/booking/:bookingId/attempt/unattended",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(bookingAttemptController.markAttemptUnattended)
 );
 //Agent boooking status update picking and inspeection
 router.patch(

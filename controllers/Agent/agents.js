@@ -1680,6 +1680,13 @@ exports.driverStatusArrived = async (req, res) => {
         bookingId: bookingId,
     });
 
+    const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
+    await noShowEnforcementService.openAttempt({
+        bookingId,
+        attemptType: "pickup",
+        driverId: bookingfind.driverId,
+    });
+
     const customerId = bookingfind.customerId;
     let title = "Driver Arrived";
     let body = "Your driver has arrived at the pickup location";
@@ -1825,6 +1832,9 @@ exports.agentInspectionStatus = async (req, res) => {
         bookingStatusId: statusId
     }))
     await bookingHistory.bulkCreate(bookinghistories);
+
+    const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
+    await noShowEnforcementService.completeOpenAttempt(bookingId, "pickup");
 
     const customerId = bookingFind.customerId;
     let title = "Driver Picked Up";
@@ -2492,6 +2502,13 @@ exports.driverReachedForDelivery = async (req, res) => {
         bookingStatusId: 14,
     });
 
+    const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
+    await noShowEnforcementService.openAttempt({
+        bookingId,
+        attemptType: "delivery",
+        driverId: bookingCheck.driverId,
+    });
+
     const customerId = bookingCheck.customerId;
     let title = "Driver Reached at Customer Destination";
     let body = "Your driver has reached at the customer destination";
@@ -2549,6 +2566,9 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         bookingStatusId: statusId
     }))
     await bookingHistory.bulkCreate(bookinghistories);
+
+    const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
+    await noShowEnforcementService.completeOpenAttempt(bookingId, "delivery");
 
     const customerId = bookingCheck.customerId;
     let title = "Laundry Delivered to Customer";
