@@ -73,3 +73,12 @@ exports.recordAgentPayout = async (req, res) => {
     });
     return ResponseHelper.success(res, "Agent payout recorded", data);
 };
+
+exports.syncAgentWalletsFromBookings = async (req, res) => {
+    const { bookingId, limit } = req.body || {};
+    const data = await agentSettlementService.syncAgentWalletsFromBookings({
+        bookingId,
+        limit,
+    });
+    return ResponseHelper.success(res, "Wallet sync completed", data);
+};

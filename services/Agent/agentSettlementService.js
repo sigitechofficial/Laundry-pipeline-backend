@@ -319,7 +319,7 @@ async function listAgentsWithCashDue(options = {}) {
         if (!shop.userId) continue;
         try {
             const summary = await agentWalletService.getWalletSummary(shop.userId);
-            if (summary.cashDueToPlatform > 0 || summary.pendingCashRemittance > 0) {
+            if (agentWalletService.hasSettlementActivity(summary)) {
                 summaries.push({
                     agentUserId: shop.userId,
                     shopId: shop.id,
@@ -354,6 +354,10 @@ async function listAgentsWithCashDue(options = {}) {
     };
 }
 
+async function syncAgentWalletsFromBookings(options = {}) {
+    return agentWalletService.backfillWalletsFromPaidBookings(options);
+}
+
 module.exports = {
     submitCashRemittance,
     listPendingRemittances,
@@ -364,4 +368,5 @@ module.exports = {
     recordAgentPayout,
     getAgentSettlementSummary,
     listAgentsWithCashDue,
+    syncAgentWalletsFromBookings,
 };

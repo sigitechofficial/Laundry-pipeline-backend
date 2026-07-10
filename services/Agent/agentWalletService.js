@@ -422,6 +422,82 @@ async function getWalletSummary(agentUserId) {
     };
 }
 
+function hasSettlementActivity(summary) {
+    if (!summary) return false;
+    return (
+        summary.cashDueToPlatform > 0 ||
+        summary.pendingCashRemittance > 0 ||
+        summary.platformOwesAgent > 0 ||
+        summary.totalCashCollected > 0 ||
+        summary.commissionCreditCount > 0
+    );
+}
+
+/**
+ * Create wallet ledger rows for paid bookings that pre-date the wallet feature
+ * or missed automatic credit (e.g. cash not recorded at delivery).
+ */
+async function backfillWalletsFromPaidBookings(options = {}) {
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 500, 1), 2000);
+    const bookingIdFilter =
+        options.bookingId != null && options.bookingId !== ""
+            ? parseInt(options.bookingId, 10)
+            : null;
+
+    const bookingWhere = {
+        laundryShopId: { [Op.ne]: null },
+    };
+    if (Number.isFinite(bookingIdFilter) && bookingIdFilter > 0) {
+        bookingWhere.id = bookingIdFilter;
+    }
+
+    const rows = await billingDetails.findAll({
+        where: {
+            paymentStatus: "Paid",
+            agentEarning: { [Op.gt]: 0 },
+        },
+        attributes: ["bookingId", "agentEarning"],
+        include: [
+            {
+                model: booking,
+                as: "booking",
+                required: true,
+                where: bookingWhere,
+                attributes: ["id", "orderTrackId", "paymentType"],
+            },
+        ],
+        limit,
+        order: [["updatedAt", "DESC"]],
+    });
+
+    const stats = {
+        processed: 0,
+        credited: 0,
+        cashRecorded: 0,
+        skipped: [],
+    };
+
+    for (const row of rows) {
+        stats.processed += 1;
+        const result = await creditAgentForPaidBooking(row.bookingId);
+        if (result.credited) {
+            stats.credited += 1;
+        }
+        if (result.cashRecorded) {
+            stats.cashRecorded += 1;
+        }
+        if (!result.credited && result.reason && result.reason !== "already_credited") {
+            stats.skipped.push({
+                bookingId: row.bookingId,
+                orderTrackId: row.booking?.orderTrackId || null,
+                reason: result.reason,
+            });
+        }
+    }
+
+    return stats;
+}
+
 async function getWalletTransactions(agentUserId, options = {}) {
     const page = Math.max(parseInt(options.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
@@ -505,6 +581,8 @@ module.exports = {
     PAYOUT_REFERENCE,
     classifyAgentEarningChannel,
     creditAgentForPaidBooking,
+    backfillWalletsFromPaidBookings,
+    hasSettlementActivity,
     getWalletSummary,
     getWalletTransactions,
     hasCommissionCredit,

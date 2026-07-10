@@ -514,6 +514,10 @@ router.post(
     '/agents/:agentId/payout',
     asyncMiddleware(agentSettlementController.recordAgentPayout)
 )
+router.post(
+    '/agents/wallet-sync',
+    asyncMiddleware(agentSettlementController.syncAgentWalletsFromBookings)
+)
 
 //!-----------------------------------Shop Management------------------------------------>>>>
 //Shops Data Counts
