@@ -5716,7 +5716,9 @@ const getSlotBookings = async (laundryShopId) => {
                     "deliveryDate",
                     "driverInstructionOptions",
                     "driverInstructionOptions1",
-                    "bookingStatusId"
+                    "bookingStatusId",
+                    "pickupAttemptCount",
+                    "deliveryAttemptCount",
                 ],
                 include: [
                     {
@@ -5778,10 +5780,20 @@ const getSlotBookings = async (laundryShopId) => {
             });
 
             // Return the result for each slot
+            const enrichedBookings = bookings.map((b) => {
+                const plain = b.toJSON ? b.toJSON() : b;
+                const isPickupFailed =
+                    plain.bookingStatusId === 3 && (plain.pickupAttemptCount || 0) > 0;
+                plain.displayStatus = isPickupFailed
+                    ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
+                    : plain.bookingStatus || null;
+                return plain;
+            });
+
             return {
                 slot: `${collectionTimeFrom} - ${collectionTimeTo}`,
                 bookingCount: bookingCount,
-                bookings: bookings, // Include the actual booking details
+                bookings: enrichedBookings,
             };
         })
     );
