@@ -1035,6 +1035,8 @@ exports.agentBookingFilters = async (req, res) => {
             "totalBags",
             "sameBagForAllServices",
             "noOfBags",
+            "pickupAttemptCount",
+            "deliveryAttemptCount",
         ],
         include: [
             {
@@ -1240,6 +1242,16 @@ exports.agentBookingFilters = async (req, res) => {
                 ]
             }
         ],
+    });
+
+    // Compute displayStatus for pickup-failed orders (status 3 + pickupAttemptCount > 0)
+    results.All = results.All.map((b) => {
+        const plain = b.toJSON ? b.toJSON() : b;
+        const isPickupFailed = plain.bookingStatusId === 3 && (plain.pickupAttemptCount || 0) > 0;
+        plain.displayStatus = isPickupFailed
+            ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
+            : plain.bookingStatus || null;
+        return plain;
     });
 
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
