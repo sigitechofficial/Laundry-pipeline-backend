@@ -36,6 +36,7 @@ const {
 } = require('../../utils/bookingTimeZone');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
+const { sendNotification } = require('../../utils/notification');
 
 /**
  * Helper: find shops in zone available for a given time slot
@@ -217,6 +218,37 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
  * Handles reschedule with policy enforcement and re-notification when not yet accepted
  */
 class RescheduleBookingService {
+    async _notifyAssignedAgentOnReschedule(bookingData) {
+        try {
+            const recipientIds = new Set();
+            if (bookingData?.driverId) recipientIds.add(Number(bookingData.driverId));
+
+            const assignedShopAddressId = bookingData?.adminAssignedShopId || bookingData?.laundryShopId;
+            if (assignedShopAddressId) {
+                const shopAddress = await addressDb.findOne({
+                    where: { id: assignedShopAddressId },
+                    attributes: ['id', 'userId'],
+                });
+                if (shopAddress?.userId) recipientIds.add(Number(shopAddress.userId));
+            }
+
+            for (const userId of recipientIds) {
+                sendNotification(
+                    userId,
+                    'Booking rescheduled by customer',
+                    `Order #${bookingData.orderTrackId || bookingData.id} has been rescheduled by the customer.`,
+                    {
+                        bookingId: bookingData.id,
+                        orderTrackId: bookingData.orderTrackId,
+                        eventType: 'booking_rescheduled_by_customer',
+                    }
+                );
+            }
+        } catch (err) {
+            console.error('[reschedule] Failed to send agent notification:', err?.message || err);
+        }
+    }
+
     _getDatePart(dateValue, fieldName) {
         if (typeof dateValue === 'string' && dateValue.length >= 10) {
             return dateValue.slice(0, 10);
@@ -337,7 +369,7 @@ class RescheduleBookingService {
                 'laundryShopId', 'orderTrackId', 'frequency',
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
-                'paymentMethodId', 'paymentType'
+                'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId'
             ]
         });
 
@@ -614,6 +646,9 @@ class RescheduleBookingService {
             date: rescheduleMoment.format('YYYY-MM-DD'),
             time: rescheduleMoment.format('HH:mm:ss')
         });
+
+        // Notify assigned agent/shop owner that customer changed schedule.
+        await this._notifyAssignedAgentOnReschedule(bookingData);
 
         // Step 10: If status is 1 (created, no agent accepted yet) re-fire the booking event
         // so agents are notified of the updated schedule and services

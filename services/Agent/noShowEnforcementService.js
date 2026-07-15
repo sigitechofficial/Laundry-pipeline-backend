@@ -15,6 +15,7 @@ const {
 } = require('../../utils/safeNoShowPolicyQuery');
 const { attachNoShowPolicyOnBooking } = require('../../utils/bookingPolicyAttach');
 const { sendNotification } = require('../../utils/notification');
+const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 const {
     ValidationError,
     NotFoundError,
@@ -57,9 +58,55 @@ class NoShowEnforcementService {
     }
 
     async _loadBooking(bookingId) {
-        const row = await loadBookingForAttempts(bookingId);
+        const row = await loadBookingForAttempts(bookingId, ['orderTrackId']);
         if (!row) throw new NotFoundError(`Booking ${bookingId} not found`);
         return row;
+    }
+
+    async _sendCustomerAttemptFailureEmail({
+        bookingData,
+        attemptType,
+        feeAmount = 0,
+        feeCurrency = 'GBP',
+        maxAttemptsReached = false,
+    }) {
+        try {
+            const customer = await users.findOne({
+                where: { id: bookingData.customerId },
+                attributes: ['email', 'firstName'],
+            });
+            if (!customer?.email) return;
+
+            const customerName = customer.firstName || 'Customer';
+            const orderRef = bookingData.orderTrackId || bookingData.id;
+            const numericFee = Number.parseFloat(feeAmount) || 0;
+            const feeText = numericFee > 0 ? `\nNo-show fee: ${feeCurrency} ${numericFee.toFixed(2)}` : '';
+
+            let subject = 'Action required on your laundry order';
+            let text = '';
+            if (attemptType === 'pickup') {
+                if (maxAttemptsReached) {
+                    subject = 'Pickup attempts exhausted - order cancelled';
+                    text = `Hi ${customerName},\n\nYour pickup attempts were exhausted and order #${orderRef} has been cancelled.${feeText}\n\nIf needed, please place a new order in the app.\n\n- Just Dry Cleaners`;
+                } else {
+                    subject = 'Pickup attempt failed - please reschedule';
+                    text = `Hi ${customerName},\n\nWe were unable to complete pickup for order #${orderRef}. Please reschedule your collection slot in the app.${feeText}\n\n- Just Dry Cleaners`;
+                }
+            } else {
+                subject = 'Delivery attempt failed - please reschedule';
+                text = `Hi ${customerName},\n\nWe were unable to complete delivery for order #${orderRef}. Please reschedule your delivery slot in the app.${feeText}\n\n- Just Dry Cleaners`;
+            }
+
+            const html = `<div style="font-family:Arial,sans-serif;line-height:1.6"><p>${text.replace(/\n/g, '<br/>')}</p></div>`;
+            await sendEmailViaAPI({
+                to: customer.email,
+                subject,
+                text,
+                html,
+            });
+        } catch (err) {
+            console.error('[noShow] Failed to send attempt failure email:', err?.message || err);
+        }
     }
 
     /**
@@ -620,6 +667,13 @@ class NoShowEnforcementService {
                     'Your order was cancelled after multiple missed pickup attempts.',
                     { bookingId, attemptType: 'pickup', feeAmount: feeResult.feeAmount }
                 );
+                await this._sendCustomerAttemptFailureEmail({
+                    bookingData,
+                    attemptType: 'pickup',
+                    feeAmount: feeResult.feeAmount,
+                    feeCurrency: feeResult.currency || 'GBP',
+                    maxAttemptsReached: true,
+                });
 
                 return {
                     outcome: 'cancelled',
@@ -655,6 +709,13 @@ class NoShowEnforcementService {
                 'Your driver could not complete pickup. Please reschedule your collection slot.',
                 { bookingId, attemptType: 'pickup', feeAmount: feeResult.feeAmount }
             );
+            await this._sendCustomerAttemptFailureEmail({
+                bookingData,
+                attemptType: 'pickup',
+                feeAmount: feeResult.feeAmount,
+                feeCurrency: feeResult.currency || 'GBP',
+                maxAttemptsReached: false,
+            });
 
             return {
                 outcome: 'reschedule_required',
@@ -686,6 +747,13 @@ class NoShowEnforcementService {
             'Your driver could not complete delivery. Please reschedule your delivery slot.',
             { bookingId, attemptType: 'delivery', feeAmount: feeResult.feeAmount }
         );
+        await this._sendCustomerAttemptFailureEmail({
+            bookingData,
+            attemptType: 'delivery',
+            feeAmount: feeResult.feeAmount,
+            feeCurrency: feeResult.currency || 'GBP',
+            maxAttemptsReached: false,
+        });
 
         return {
             outcome: 'delivery_failed',
