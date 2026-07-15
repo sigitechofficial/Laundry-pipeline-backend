@@ -5796,9 +5796,23 @@ const getSlotBookings = async (laundryShopId) => {
                 const plain = b.toJSON ? b.toJSON() : b;
                 const isPickupFailed =
                     plain.bookingStatusId === 3 && (plain.pickupAttemptCount || 0) > 0;
+                const isDeliveryFailed = plain.bookingStatusId === 15;
+                const failedAttemptType = isDeliveryFailed
+                    ? 'delivery'
+                    : isPickupFailed
+                        ? 'pickup'
+                        : null;
                 plain.displayStatus = isPickupFailed
                     ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
                     : plain.bookingStatus || null;
+                // Explicit flags for agent app so it can detect failed attempts
+                // even when bookingStatus remains "Awaiting Collection" (status 3).
+                plain.attemptFlags = {
+                    hasFailedAttempt: Boolean(failedAttemptType),
+                    failedAttemptType,
+                    pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
+                    deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
+                };
                 return plain;
             });
 
