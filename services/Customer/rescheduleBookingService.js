@@ -355,7 +355,7 @@ class RescheduleBookingService {
         if ([16, 17].includes(statusId)) {
             throw new ValidationError("Cannot reschedule a completed booking");
         }
-        if ([14, 15].includes(statusId)) {
+        if (statusId === 14) {
             throw new ValidationError("Cannot reschedule booking at this stage. Items are out for delivery");
         }
 
@@ -838,8 +838,8 @@ class RescheduleBookingService {
             }
         }
 
-        // ── Phase B: post-pickup through delivery (status 4–10 and 12–13) ─────────
-        else if ([4, 5, 6, 7, 8, 9, 10, 12, 13].includes(statusId)) {
+        // ── Phase B: post-pickup through delivery (status 4–10, 12–13, 15 delivery failed) ─────────
+        else if ([4, 5, 6, 7, 8, 9, 10, 12, 13, 15].includes(statusId)) {
             currency = config.atDeliveryAbsoluteCurrency || 'GBP';
 
             // Check courtesy count for post-pickup phase

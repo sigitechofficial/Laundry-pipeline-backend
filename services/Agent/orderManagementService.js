@@ -37,11 +37,13 @@ const {
 } = require('../../utils/bookingTimeZone');
 const invoiceManagementService = require('./invoiceManagementService');
 
-const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold'];
+const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
 const COMPLETED_STATUS_IDS = [17];
 const CANCELLED_STATUS_IDS = [19, 21];
 const ON_HOLD_STATUS_IDS = [18, 22, 24];
 const ACTIVE_EXCLUDED_STATUS_IDS = [17, 19, 21];
+const DELIVERY_FAILED_STATUS_ID = 15;
+const AWAITING_COLLECTION_STATUS_ID = 3;
 
 /**
  * Agent Order Management Service
@@ -176,6 +178,13 @@ class AgentOrderManagementService {
                 return { bookingStatusId: { [Op.in]: CANCELLED_STATUS_IDS } };
             case 'on_hold':
                 return { bookingStatusId: { [Op.in]: ON_HOLD_STATUS_IDS } };
+            case 'delivery_failed':
+                return { bookingStatusId: DELIVERY_FAILED_STATUS_ID };
+            case 'pickup_failed':
+                return {
+                    bookingStatusId: AWAITING_COLLECTION_STATUS_ID,
+                    pickupAttemptCount: { [Op.gt]: 0 },
+                };
             case 'all':
             default:
                 return { bookingStatusId: { [Op.ne]: 1 } };
@@ -234,7 +243,7 @@ class AgentOrderManagementService {
 
         if (!ORDER_HISTORY_STATUSES.includes(status)) {
             throw new ValidationError(
-                'Invalid status. Allowed: all, active, completed, cancelled, on_hold'
+                'Invalid status. Allowed: all, active, completed, cancelled, on_hold, delivery_failed, pickup_failed'
             );
         }
 
@@ -250,7 +259,7 @@ class AgentOrderManagementService {
         const statusWhere = this._buildOrderHistoryStatusWhere(status);
         const listWhere = { ...shopBaseWhere, ...statusWhere };
 
-        const [total, orders, allCount, activeCount, completedCount, cancelledCount, onHoldCount] =
+        const [total, orders, allCount, activeCount, completedCount, cancelledCount, onHoldCount, deliveryFailedCount, pickupFailedCount] =
             await Promise.all([
                 booking.count({ where: listWhere }),
                 booking.findAll({
@@ -318,6 +327,18 @@ class AgentOrderManagementService {
                         ...this._buildOrderHistoryStatusWhere('on_hold'),
                     },
                 }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('delivery_failed'),
+                    },
+                }),
+                booking.count({
+                    where: {
+                        ...shopBaseWhere,
+                        ...this._buildOrderHistoryStatusWhere('pickup_failed'),
+                    },
+                }),
             ]);
 
         const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
@@ -338,6 +359,8 @@ class AgentOrderManagementService {
                 completed: completedCount,
                 cancelled: cancelledCount,
                 onHold: onHoldCount,
+                deliveryFailed: deliveryFailedCount,
+                pickupFailed: pickupFailedCount,
             },
             orders: await Promise.all(
                 orders.map((row) => this._enrichOrderHistoryItem(row.toJSON()))
