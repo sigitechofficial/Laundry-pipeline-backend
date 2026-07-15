@@ -220,30 +220,34 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
 class RescheduleBookingService {
     async _notifyAssignedAgentOnReschedule(bookingData) {
         try {
-            const recipientIds = new Set();
-            if (bookingData?.driverId) recipientIds.add(Number(bookingData.driverId));
+            let targetUserId = bookingData?.driverId ? Number(bookingData.driverId) : null;
 
-            const assignedShopAddressId = bookingData?.adminAssignedShopId || bookingData?.laundryShopId;
-            if (assignedShopAddressId) {
-                const shopAddress = await addressDb.findOne({
-                    where: { id: assignedShopAddressId },
-                    attributes: ['id', 'userId'],
-                });
-                if (shopAddress?.userId) recipientIds.add(Number(shopAddress.userId));
-            }
-
-            for (const userId of recipientIds) {
-                sendNotification(
-                    userId,
-                    'Booking rescheduled by customer',
-                    `Order #${bookingData.orderTrackId || bookingData.id} has been rescheduled by the customer.`,
-                    {
-                        bookingId: bookingData.id,
-                        orderTrackId: bookingData.orderTrackId,
-                        eventType: 'booking_rescheduled_by_customer',
+            // Fallback to assigned shop owner only if no driver is currently assigned.
+            if (!targetUserId) {
+                const assignedShopAddressId = bookingData?.adminAssignedShopId || bookingData?.laundryShopId;
+                if (assignedShopAddressId) {
+                    const shopAddress = await addressDb.findOne({
+                        where: { id: assignedShopAddressId },
+                        attributes: ['id', 'userId'],
+                    });
+                    if (shopAddress?.userId) {
+                        targetUserId = Number(shopAddress.userId);
                     }
-                );
+                }
             }
+
+            if (!targetUserId) return;
+
+            sendNotification(
+                targetUserId,
+                'Booking rescheduled by customer',
+                `Order #${bookingData.orderTrackId || bookingData.id} has been rescheduled by the customer.`,
+                {
+                    bookingId: bookingData.id,
+                    orderTrackId: bookingData.orderTrackId,
+                    eventType: 'booking_rescheduled_by_customer',
+                }
+            );
         } catch (err) {
             console.error('[reschedule] Failed to send agent notification:', err?.message || err);
         }
