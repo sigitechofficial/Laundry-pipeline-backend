@@ -199,10 +199,22 @@ class AgentOrderManagementService {
             paymentSummary.orderSummary?.laundrySubtotal ??
             0;
 
+        // Compute a display-level status override for cases where bookingStatusId alone
+        // is not descriptive enough (e.g. status 3 = Awaiting Collection, but after a
+        // failed pickup attempt it should surface as "Pickup Failed").
+        const isPickupFailed =
+            orderPlain.bookingStatusId === AWAITING_COLLECTION_STATUS_ID &&
+            (orderPlain.pickupAttemptCount || 0) > 0;
+
+        const displayStatus = isPickupFailed
+            ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
+            : orderPlain.bookingStatus || null;
+
         const enriched = {
             ...orderPlain,
             servicesSubtotal,
             paymentSummary,
+            displayStatus,
             agentEarning:
                 orderPlain.billingDetail?.agentEarning != null
                     ? parseFloat(orderPlain.billingDetail.agentEarning)
@@ -292,6 +304,8 @@ class AgentOrderManagementService {
                         'driverInstructionOptions',
                         'driverInstructionOptions1',
                         'driverInstruction',
+                        'pickupAttemptCount',
+                        'deliveryAttemptCount',
                         'createdAt',
                         'updatedAt',
                     ],

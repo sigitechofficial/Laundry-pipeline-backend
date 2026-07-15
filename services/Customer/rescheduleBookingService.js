@@ -299,8 +299,10 @@ class RescheduleBookingService {
             deliveryDate,
             deliveryTimeFrom,
             deliveryTimeTo,
-            timeZone
+            timeZone,
+            rescheduleType,
         } = newSchedule;
+        const isDeliveryOnlyReschedule = rescheduleType === 'delivery';
 
         const scheduleTotalBags =
             newSchedule.totalBags != null && newSchedule.totalBags !== ""
@@ -370,7 +372,9 @@ class RescheduleBookingService {
             'YYYY-MM-DD HH:mm:ss',
             resolvedTz
         );
-        if (newCollectionMoment.isBefore(moment.tz(resolvedTz))) {
+
+        // For delivery-only reschedules (status 15), pickup already happened — skip collection future check
+        if (!isDeliveryOnlyReschedule && newCollectionMoment.isBefore(moment.tz(resolvedTz))) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
@@ -379,8 +383,8 @@ class RescheduleBookingService {
             'YYYY-MM-DD HH:mm:ss',
             resolvedTz
         );
-        if (newDeliveryMoment.isBefore(newCollectionMoment)) {
-            throw new ValidationError("Delivery date must be after the collection date");
+        if (newDeliveryMoment.isBefore(moment.tz(resolvedTz))) {
+            throw new ValidationError("New delivery date and time must be in the future");
         }
 
         let rescheduleServiceIds = (services || []).map((s) => s.serviceId).filter(Boolean);

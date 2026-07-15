@@ -1119,7 +1119,8 @@ async function rescheduleCustomerBooking(req, res) {
         sameBagForAllServices,
         totalItems,
         timeZone,
-        clientTimeZone
+        clientTimeZone,
+        rescheduleType,
     } = req.body;
 
     const customerId = req.user.id;
@@ -1149,6 +1150,7 @@ async function rescheduleCustomerBooking(req, res) {
             totalBags,
             sameBagForAllServices,
             totalItems,
+            rescheduleType,
         },
         reasonText,
         services,
