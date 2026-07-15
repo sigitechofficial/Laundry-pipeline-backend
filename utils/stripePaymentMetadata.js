@@ -8,6 +8,7 @@ const CHARGE_TYPE_LABELS = {
     delivery_balance: "Delivery balance",
     cancellation_fee: "Cancellation fee",
     reschedule_fee: "Reschedule fee",
+    no_show_fee: "No-show fee",
 };
 
 const PAYMENT_STAGE = {
@@ -16,6 +17,7 @@ const PAYMENT_STAGE = {
     delivery_balance: "balance_at_delivery",
     cancellation_fee: "cancellation_penalty",
     reschedule_fee: "reschedule_penalty",
+    no_show_fee: "no_show_penalty",
 };
 
 const STATEMENT_SUFFIX = {
@@ -24,6 +26,7 @@ const STATEMENT_SUFFIX = {
     delivery_balance: "LAUNDRY",
     cancellation_fee: "CANCEL",
     reschedule_fee: "RESCHED",
+    no_show_fee: "NOSHOW",
 };
 
 function formatPersonName(firstName, lastName) {
@@ -146,6 +149,16 @@ function buildStripeChargePresentation({
         metadata.rescheduleFee = amountStr;
         if (extra.rescheduledCount != null) {
             metadata.rescheduledCount = String(extra.rescheduledCount);
+        }
+    }
+
+    if (chargeType === "no_show_fee") {
+        metadata.noShowFee = amountStr;
+        if (extra.attemptType) {
+            metadata.attemptType = String(extra.attemptType);
+        }
+        if (extra.attemptId != null) {
+            metadata.attemptId = String(extra.attemptId);
         }
     }
 

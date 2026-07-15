@@ -2454,7 +2454,8 @@ class CustomerOrderService {
      * @param {Object} data - Request data
      * @returns {Object} - Result object with service details
      */
-    async serviceDetail() {
+    async serviceDetail(data = {}) {
+        const { lat, lng } = data;
         const activeServices = await service.findAll({
             where: { status: true },
             attributes: [
@@ -2533,9 +2534,41 @@ class CustomerOrderService {
             throw new NotFoundError('No Service Details Found');
         }
 
+        // Resolve currency: prefer the customer's saved/selected address (lat/lng),
+        // fall back to the platform's default (first active) zone if not available.
+        let resolvedZone = null;
+        const parsedLat = lat !== undefined && lat !== null && lat !== '' ? parseFloat(lat) : NaN;
+        const parsedLng = lng !== undefined && lng !== null && lng !== '' ? parseFloat(lng) : NaN;
+
+        if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
+            try {
+                const matchedZones = await findZones(parsedLat, parsedLng);
+                resolvedZone = Array.isArray(matchedZones) ? matchedZones[0] : matchedZones;
+            } catch (err) {
+                console.warn('serviceDetail: zone lookup by coordinates failed, falling back to default zone:', err.message);
+            }
+        }
+
+        if (!resolvedZone) {
+            resolvedZone = await zone.findOne({
+                where: { status: true },
+                include: zoneInclude,
+                attributes: zoneAttributes,
+                order: [['id', 'ASC']],
+            });
+        }
+
+        const currency = resolvedZone?.currencyUnitZ
+            ? {
+                  id: resolvedZone.currencyUnitZ.id,
+                  name: resolvedZone.currencyUnitZ.name,
+                  symbol: resolvedZone.currencyUnitZ.symbol,
+              }
+            : { id: null, name: null, symbol: '$' };
+
         return {
             message: 'Service Details',
-            data: { serviceData: result },
+            data: { serviceData: result, currency },
         };
     }
 

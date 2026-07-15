@@ -22,7 +22,7 @@ After the driver marks **Arrived** at pickup or delivery, the app must support *
 
 **Max pickup attempts:** default **3**. After the 3rd failed pickup, the booking is **cancelled** (status 19).
 
-**Fees:** Calculated from the zone’s active **no-show policy**. Recorded on the attempt (`feeAmount`) and booking (`noShowFeeAccrued`). **Stripe charging is not wired in this phase** — the app should show the fee to the driver; backend records it only.
+**Fees:** Calculated from the zone’s active **no-show policy**. Recorded on the attempt (`feeAmount`) and booking (`noShowFeeAccrued`). **Pickup fail:** if fee > 0 and not waived, backend charges saved card via Stripe (`chargeOffSession`, idempotency per attempt). Delivery fail fee is recorded only (Stripe not wired for delivery yet).
 
 ---
 
@@ -442,7 +442,10 @@ POST /agent/booking/:bookingId/attempt/fail
       "currency": "USD",
       "feeWaived": false,
       "feeWaiveReason": null,
-      "policyApplied": "no_show_fee"
+      "policyApplied": "no_show_fee",
+      "stripeCharged": true,
+      "stripePaymentIntentId": "pi_xxx",
+      "stripeChargeError": null
     },
     "bookingStatusId": 3
   }

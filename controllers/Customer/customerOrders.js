@@ -240,7 +240,8 @@ async function allServices(req, res) {
  */
 async function serviceDetail(req, res) {
     // Call service to handle business logic
-    const result = await customerOrderService.serviceDetail();
+    const { lat, lng } = req.query;
+    const result = await customerOrderService.serviceDetail({ lat, lng });
 
     // Return response using ResponseHelper success method
     return ResponseHelper.success(res, result.message, result.data);

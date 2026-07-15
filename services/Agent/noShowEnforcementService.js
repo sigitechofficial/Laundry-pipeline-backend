@@ -5,7 +5,10 @@ const {
     bookingAttempt,
     bookingHistory,
     proofOfDeliveries,
+    users,
 } = require('../../models');
+const { chargeOffSession } = require('../../controllers/stripe');
+const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const {
     resolveNoShowPolicyForBooking,
     loadBookingForAttempts,
@@ -57,6 +60,100 @@ class NoShowEnforcementService {
         const row = await loadBookingForAttempts(bookingId);
         if (!row) throw new NotFoundError(`Booking ${bookingId} not found`);
         return row;
+    }
+
+    /**
+     * Charge no-show fee on saved card (off-session). Non-blocking — caller still completes fail flow.
+     */
+    async _attemptNoShowFeeCharge({ bookingData, feeResult, attemptId, attemptType }) {
+        const chargeAmount = parseFloat(feeResult?.feeAmount) || 0;
+        if (chargeAmount <= 0 || feeResult?.feeWaived) {
+            return { stripeChargeResult: null, stripeChargeError: null, stripeCharged: false };
+        }
+
+        const stripeBooking = await loadBookingForAttempts(bookingData.id, [
+            'paymentMethodId',
+            'paymentType',
+            'orderTrackId',
+            'adminAssignedShopId',
+        ]);
+        const paymentMethodId = stripeBooking?.paymentMethodId;
+        if (!paymentMethodId) {
+            return {
+                stripeChargeResult: null,
+                stripeChargeError: 'No saved payment method found for this booking',
+                stripeCharged: false,
+            };
+        }
+
+        const customerData = await users.findOne({
+            where: { id: bookingData.customerId },
+            attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
+        });
+
+        if (!customerData?.stripeCustomerId) {
+            return {
+                stripeChargeResult: null,
+                stripeChargeError: 'No Stripe customer ID found for this customer',
+                stripeCharged: false,
+            };
+        }
+
+        const currency = feeResult.currency || 'GBP';
+
+        try {
+            const idempotencyKey = `noshow-${attemptType}-booking-${bookingData.id}-attempt-${attemptId}`;
+            const stripePresentation = buildStripeChargePresentation({
+                chargeType: 'no_show_fee',
+                bookingId: bookingData.id,
+                orderTrackId: stripeBooking.orderTrackId,
+                amount: chargeAmount,
+                currency,
+                paymentType: stripeBooking.paymentType || 'card',
+                customer: customerData,
+                agent: {},
+                zoneId: bookingData.zoneId,
+                laundryShopId: stripeBooking.adminAssignedShopId,
+                extra: {
+                    attemptType,
+                    attemptId,
+                    policyApplied: feeResult.policyApplied || 'no_show_fee',
+                },
+            });
+
+            const stripeChargeResult = await chargeOffSession(
+                chargeAmount,
+                customerData.stripeCustomerId,
+                paymentMethodId,
+                idempotencyKey,
+                stripePresentation
+            );
+
+            console.log(
+                `✅ No-show charge of ${chargeAmount} ${currency} for booking ${bookingData.id} (${attemptType} attempt ${attemptId})`
+            );
+
+            return {
+                stripeChargeResult: {
+                    id: stripeChargeResult.id,
+                    status: stripeChargeResult.status,
+                    amount: stripeChargeResult.amount,
+                },
+                stripeChargeError: null,
+                stripeCharged: true,
+            };
+        } catch (chargeErr) {
+            const message = chargeErr.message || String(chargeErr);
+            console.error(
+                `❌ Failed to charge no-show fee for booking ${bookingData.id}:`,
+                message
+            );
+            return {
+                stripeChargeResult: null,
+                stripeChargeError: message,
+                stripeCharged: false,
+            };
+        }
     }
 
     async resolveNoShowPolicy(bookingData) {
@@ -479,6 +576,27 @@ class NoShowEnforcementService {
             noShowPolicyId: policyRecord?.id || openAttempt.noShowPolicyId,
         });
 
+        let stripeCharge = {
+            stripeChargeResult: null,
+            stripeChargeError: null,
+            stripeCharged: false,
+        };
+        if (normalizedType === 'pickup') {
+            stripeCharge = await this._attemptNoShowFeeCharge({
+                bookingData,
+                feeResult,
+                attemptId: openAttempt.id,
+                attemptType: normalizedType,
+            });
+        }
+
+        const feeWithStripe = {
+            ...feeResult,
+            stripeCharged: stripeCharge.stripeCharged,
+            stripeChargeError: stripeCharge.stripeChargeError,
+            stripePaymentIntentId: stripeCharge.stripeChargeResult?.id || null,
+        };
+
         const accrued = this._roundMoney(
             (parseFloat(bookingData.noShowFeeAccrued) || 0) + feeResult.feeAmount
         );
@@ -515,7 +633,7 @@ class NoShowEnforcementService {
                     attemptId: openAttempt.id,
                     pickupAttemptCount: newPickupCount,
                     maxPickupAttempts: maxAttempts,
-                    fee: feeResult,
+                    fee: feeWithStripe,
                     bookingStatusId: CANCELLED_STATUS,
                     message: 'Maximum pickup attempts reached. Booking cancelled.',
                 };
@@ -550,11 +668,13 @@ class NoShowEnforcementService {
                 attemptId: openAttempt.id,
                 pickupAttemptCount: newPickupCount,
                 maxPickupAttempts: maxAttempts,
-                fee: feeResult,
+                fee: feeWithStripe,
                 bookingStatusId: AWAITING_COLLECTION_STATUS,
                 message: 'Pickup failed. Booking returned to Awaiting Collection for retry.',
             };
         }
+
+        const deliveryFeeWithStripe = { ...feeResult };
 
         const newDeliveryCount = (bookingData.deliveryAttemptCount || 0) + 1;
         await booking.update(
@@ -580,7 +700,7 @@ class NoShowEnforcementService {
             outcome: 'delivery_failed',
             attemptId: openAttempt.id,
             deliveryAttemptCount: newDeliveryCount,
-            fee: feeResult,
+            fee: deliveryFeeWithStripe,
             bookingStatusId: DELIVERY_FAILED_STATUS,
             message: 'Delivery failed. Customer must reschedule delivery.',
         };
