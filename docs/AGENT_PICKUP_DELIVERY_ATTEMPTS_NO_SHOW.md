@@ -22,7 +22,7 @@ After the driver marks **Arrived** at pickup or delivery, the app must support *
 
 **Max pickup attempts:** default **3**. After the 3rd failed pickup, the booking is **cancelled** (status 19).
 
-**Fees:** Calculated from the zone’s active **no-show policy**. Recorded on the attempt (`feeAmount`) and booking (`noShowFeeAccrued`). **Pickup fail:** if fee > 0 and not waived, backend charges saved card via Stripe (`chargeOffSession`, idempotency per attempt). Delivery fail fee is recorded only (Stripe not wired for delivery yet).
+**Fees:** Calculated from the zone’s active **no-show policy**. Recorded on the attempt (`feeAmount`) and booking (`noShowFeeAccrued`). **Both pickup and delivery fail:** if fee > 0 and not waived, backend charges the saved card via Stripe (`chargeOffSession`, idempotency key per attempt: `noshow-<pickup|delivery>-booking-<bookingId>-attempt-<attemptId>`).
 
 ---
 
@@ -263,7 +263,9 @@ Body:
 }
 ```
 
-→ Status **15** (Delivery Failed), `outcome: "delivery_failed"`.
+→ Status **15** (Delivery Failed), `outcome: "delivery_failed"`. If the fee is > 0 and not waived, the customer's saved card is charged via Stripe automatically (same as pickup fail) and the response's `fee` object includes `stripeCharged` / `stripePaymentIntentId` / `stripeChargeError`.
+
+Delivery attempts are **not capped** — the driver can keep retrying delivery (reschedule → out for delivery → fail) as many times as needed; each failed attempt is charged its own no-show fee (subject to the same auto-forgive/cap rules as pickup).
 
 ### 4.3 Reschedule after delivery fail
 
@@ -601,9 +603,9 @@ Same pattern with `type=delivery`; success button → `bookingDeliverToCustomer`
 
 ## 13. Out of scope (this phase)
 
-- Stripe charge for no-show fee (fee is recorded only)
 - Cash-order-specific no-show handling
 - Admin waive UI for fees
 - Storage fee per day after no-show
+- Max delivery attempt cap (delivery attempts are unlimited by design — see §4.2)
 
 These may be added in a later phase.

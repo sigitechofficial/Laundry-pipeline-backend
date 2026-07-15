@@ -1965,7 +1965,7 @@ class CustomerOrderService {
                     attributes: ["title", "description"],
                 },
             ],
-            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
+            attributes: ["id", "orderAmount", "orderTrackId", "bookingStatusId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1", "pickupAttemptCount", "deliveryAttemptCount", "noShowFeeAccrued"],
         });
         if (!findAllBooking || findAllBooking.length === 0) {
             throw new NotFoundError("No Bookings Found");

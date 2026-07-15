@@ -576,19 +576,12 @@ class NoShowEnforcementService {
             noShowPolicyId: policyRecord?.id || openAttempt.noShowPolicyId,
         });
 
-        let stripeCharge = {
-            stripeChargeResult: null,
-            stripeChargeError: null,
-            stripeCharged: false,
-        };
-        if (normalizedType === 'pickup') {
-            stripeCharge = await this._attemptNoShowFeeCharge({
-                bookingData,
-                feeResult,
-                attemptId: openAttempt.id,
-                attemptType: normalizedType,
-            });
-        }
+        const stripeCharge = await this._attemptNoShowFeeCharge({
+            bookingData,
+            feeResult,
+            attemptId: openAttempt.id,
+            attemptType: normalizedType,
+        });
 
         const feeWithStripe = {
             ...feeResult,
@@ -674,8 +667,6 @@ class NoShowEnforcementService {
             };
         }
 
-        const deliveryFeeWithStripe = { ...feeResult };
-
         const newDeliveryCount = (bookingData.deliveryAttemptCount || 0) + 1;
         await booking.update(
             {
@@ -700,7 +691,7 @@ class NoShowEnforcementService {
             outcome: 'delivery_failed',
             attemptId: openAttempt.id,
             deliveryAttemptCount: newDeliveryCount,
-            fee: deliveryFeeWithStripe,
+            fee: feeWithStripe,
             bookingStatusId: DELIVERY_FAILED_STATUS,
             message: 'Delivery failed. Customer must reschedule delivery.',
         };
