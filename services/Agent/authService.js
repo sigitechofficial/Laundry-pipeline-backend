@@ -22,6 +22,16 @@ const {
 } = require('../../utils/agentTimeZone');
 
 /**
+ * Replaces all existing device tokens for a user with a single new one.
+ * Prevents token accumulation (which causes duplicate notifications).
+ */
+async function _refreshDeviceToken(userId, newToken) {
+    if (!newToken) return;
+    await deviceToken.destroy({ where: { userId } });
+    await deviceToken.create({ tokenId: newToken, status: true, userId });
+}
+
+/**
  * Agent Authentication Service
  * Handles all agent authentication related business logic
  */
@@ -279,16 +289,9 @@ class AgentAuthService {
                 });
             }
 
-            // Handle device token
+            // Replace all old tokens with the new one to prevent accumulation
             if (data.dvToken) {
-                const existingDeviceToken = userfindByEmail.deviceToken?.find(dt => dt.tokenId === data.dvToken);
-                if (!existingDeviceToken) {
-                    await deviceToken.create({
-                        tokenId: data.dvToken,
-                        status: true,
-                        userId: userfindByEmail.id
-                    });
-                }
+                await _refreshDeviceToken(userfindByEmail.id, data.dvToken);
             }
 
             // Generate access token
@@ -1070,10 +1073,7 @@ class AgentAuthService {
                 throw new UnauthorizedError('Blocked by admin. Please contact admin to continue');
             }
 
-            const dvTokenFound = socialUser.deviceToken?.find(ele => ele.tokenId === data.dvToken);
-            if (!dvTokenFound) {
-                await deviceToken.create({ tokenId: data.dvToken, status: true, userId: socialUser.id });
-            }
+            await _refreshDeviceToken(socialUser.id, data.dvToken);
 
             const accessToken = jwt.sign({
                 id: socialUser.id,
@@ -1119,10 +1119,7 @@ class AgentAuthService {
             });
         }
 
-        const dvTokenFound = userFind.deviceToken?.find(ele => ele.tokenId === data.dvToken);
-        if (!dvTokenFound) {
-            await deviceToken.create({ tokenId: data.dvToken, status: true, userId: userFind.id });
-        }
+        await _refreshDeviceToken(userFind.id, data.dvToken);
 
         const accessToken = jwt.sign({
             id: userFind.id,
@@ -1513,10 +1510,7 @@ class AgentAuthService {
 
         this._assertAgentApprovalForLogin(userData);
         
-        const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === data.dvToken);
-        if (!dvTokenFound) {
-            await deviceToken.create({ tokenId: data.dvToken, status: true, userId: userData.id });
-        }
+        await _refreshDeviceToken(userData.id, data.dvToken);
         
         const accessToken = jwt.sign({
             id: userData.id,

@@ -66,6 +66,16 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 
 /**
+ * Replaces all existing device tokens for a user with a single new one.
+ * Prevents token accumulation (which causes duplicate notifications).
+ */
+async function _refreshDeviceToken(userId, newToken) {
+    if (!newToken) return;
+    await deviceToken.destroy({ where: { userId } });
+    await deviceToken.create({ tokenId: newToken, status: true, userId });
+}
+
+/**
  * Customer Authentication Service
  * Handles all customer authentication related business logic
  */
@@ -242,15 +252,7 @@ class CustomerAuthService {
             }
 
             if (dvToken) {
-                const tokenRows = userfindByEmail.deviceTokens || userfindByEmail.deviceToken || [];
-                const existingDeviceToken = tokenRows.find((t) => t.tokenId === dvToken);
-                if (!existingDeviceToken) {
-                    await deviceToken.create({
-                        tokenId: dvToken,
-                        status: true,
-                        userId: userfindByEmail.id
-                    });
-                }
+                await _refreshDeviceToken(userfindByEmail.id, dvToken);
             }
 
             const accessToken = jwt.sign({
@@ -377,14 +379,7 @@ class CustomerAuthService {
             throw new NotFoundError("User not found");
         }
 
-        // Check if device token exists, create if not
-        if (!userData.deviceToken) {
-            await deviceToken.create({
-                tokenId: dvToken,
-                status: true,
-                userId: userData.id
-            });
-        }
+        await _refreshDeviceToken(userData.id, dvToken);
 
         // Handle device token - generate one if not provided
         let finalDvToken = dvToken;
@@ -799,14 +794,7 @@ class CustomerAuthService {
                 console.log("⚠️ No dvToken provided, generated:", finalDvToken);
             }
 
-            const dvTokenFound = socialUserFind.deviceToken?.find((ele) => ele.tokenId === finalDvToken);
-            if (!dvTokenFound) {
-                await deviceToken.create({
-                    tokenId: finalDvToken,
-                    status: true,
-                    userId: socialUserFind.id
-                });
-            }
+            await _refreshDeviceToken(socialUserFind.id, finalDvToken);
 
             // Generate access token
             const accessToken = jwt.sign({
@@ -898,15 +886,7 @@ class CustomerAuthService {
             console.log("⚠️ No dvToken provided, generated:", finalDvToken);
         }
 
-        const dvTokenFound = userFind.deviceTokens?.find((ele) => ele.tokenId === finalDvToken);
-        console.log("🚀 ~ loginUser ~ dvTokenFound:", dvTokenFound);
-        if (!dvTokenFound) {
-            await deviceToken.create({
-                tokenId: finalDvToken,
-                status: true,
-                userId: userFind.id
-            });
-        }
+        await _refreshDeviceToken(userFind.id, finalDvToken);
 
         // Generate access token
         const accessToken = jwt.sign({

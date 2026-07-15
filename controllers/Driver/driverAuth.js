@@ -26,6 +26,16 @@ const { create } = require('domain');
 const accessToken = require("../../middlewares/accessToken");
 const axios = require('axios')
 
+/**
+ * Replaces all existing device tokens for a user with a single new one.
+ * Prevents token accumulation (which causes duplicate notifications).
+ */
+async function _refreshDeviceToken(userId, newToken) {
+    if (!newToken) return;
+    await deviceToken.destroy({ where: { userId } });
+    await deviceToken.create({ tokenId: newToken, status: true, userId });
+}
+
 //!------------------------------------Driver Auth-------------------------------------//
 
 
@@ -397,12 +407,7 @@ async function driverRegister3(req, res) {
     await driverDetail.update({ licIssueDate, licExpiryDate, licFrontImage, licBackImage }, { where: { userId } })
 
 
-    //const found = userData.deviceToken.find((ele) => ele.tokenId === dvToken);
-    await deviceToken.create({
-        tokenId: dvToken,
-        status: true,
-        userId: userData.id
-    })
+    await _refreshDeviceToken(userData.id, dvToken);
 
     const accessToken = jwt.sign({
         id: userData.id,
@@ -548,14 +553,7 @@ async function driverLogin(req, res) {
     console.log("Device Tokens", requ);
 
 
-    const dvTokenFound = userData.deviceTokens.find((ele) => ele.tokenId === dvToken)
-    if (!dvTokenFound) {
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userData.id
-        })
-    }
+    await _refreshDeviceToken(userData.id, dvToken);
 
     const accessToken = jwt.sign({
         id: userData.id,

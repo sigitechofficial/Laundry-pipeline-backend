@@ -29,6 +29,16 @@ const { stat } = require('fs')
 const stripe = require('../stripe')
 const { create } = require('domain');
 
+/**
+ * Replaces all existing device tokens for a user with a single new one.
+ * Prevents token accumulation (which causes duplicate notifications).
+ */
+async function _refreshDeviceToken(userId, newToken) {
+    if (!newToken) return;
+    await deviceToken.destroy({ where: { userId } });
+    await deviceToken.create({ tokenId: newToken, status: true, userId });
+}
+
 //!-------------------Agent Auth Controller---------------------//
 
 // OTP && Registration
@@ -601,10 +611,7 @@ exports.loginUser = async (req, res) => {
             throw new customError('Blocked by admin. Please contact admin to continue');
         }
 
-        const dvTokenFound = socialUser.deviceToken.find(ele => ele.tokenId === dvToken);
-        if (!dvTokenFound) {
-            await deviceToken.create({ tokenId: dvToken, status: true, userId: socialUser.id });
-        }
+        await _refreshDeviceToken(socialUser.id, dvToken);
 
         const accessToken = jwt.sign({
             id: socialUser.id,
@@ -651,11 +658,7 @@ exports.loginUser = async (req, res) => {
         throw new customError("Bad credentials", "Please enter correct password to continue");
     }
 
-    // Device token check
-    const dvTokenFound = userFind.deviceToken?.find(ele => ele.tokenId === dvToken);
-    if (!dvTokenFound) {
-        await deviceToken.create({ tokenId: dvToken, status: true, userId: userFind.id });
-    }
+    await _refreshDeviceToken(userFind.id, dvToken);
 
     // Features fetch
     const featureData = await features.findAll({
@@ -981,10 +984,7 @@ exports.session = async (req, res) => {
         return res.json(responsefunc("4", "Please complete your information before logging in.", outObj, ""));
     }
     
-    const dvTokenFound = userData.deviceToken?.find(ele => ele.tokenId === dvToken);
-    if (!dvTokenFound) {
-        await deviceToken.create({ tokenId: dvToken, status: true, userId: userData.id });
-    }
+    await _refreshDeviceToken(userData.id, dvToken);
     
     const accessToken = jwt.sign({
         id: userData.id,
