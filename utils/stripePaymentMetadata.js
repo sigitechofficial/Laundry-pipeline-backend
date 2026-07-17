@@ -79,6 +79,13 @@ function buildStripeChargePresentation({
     const amountStr = roundMoneyString(amount);
 
     const descriptionParts = [chargeLabel, `Order ${orderLabel}`];
+    if (chargeType === "no_show_fee" && extra?.attemptType) {
+        const attemptLabel =
+            extra.attemptType === "delivery"
+                ? "Delivery attempt failed"
+                : "Pickup attempt failed";
+        descriptionParts.push(attemptLabel);
+    }
     if (customerName) {
         descriptionParts.push(customerName);
     }
