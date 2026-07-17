@@ -38,6 +38,11 @@ const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { sendNotification } = require('../../utils/notification');
 
+// Booking status IDs relevant to failed-attempt recovery on reschedule.
+const AWAITING_COLLECTION_STATUS_ID = 3;
+const COMPLETED_AT_FACILITY_STATUS_ID = 12;
+const DELIVERY_FAILED_STATUS_ID = 15;
+
 /**
  * Helper: find shops in zone available for a given time slot
  * Used to re-trigger the booking event after reschedule (status 1 only)
@@ -373,7 +378,8 @@ class RescheduleBookingService {
                 'laundryShopId', 'orderTrackId', 'frequency',
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
-                'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId'
+                'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId',
+                'pickupAttemptCount', 'deliveryAttemptCount'
             ]
         });
 
@@ -622,6 +628,24 @@ class RescheduleBookingService {
             }
         }
 
+        // Resolve booking status after reschedule when recovering from a failed attempt:
+        //  - Delivery Failed (15): items are washed & ready at facility → move to
+        //    Completed (At Facility, 12) so the agent can re-dispatch delivery on the new slot.
+        //  - Pickup Failed (Awaiting Collection 3 + pickupAttemptCount > 0): stay Awaiting
+        //    Collection but reset the failed indicator so it no longer shows "Pickup Failed".
+        const isPickupFailed =
+            statusId === AWAITING_COLLECTION_STATUS_ID &&
+            (bookingData.pickupAttemptCount || 0) > 0;
+        let resolvedBookingStatusId = statusId;
+        const statusResetFields = {};
+        if (statusId === DELIVERY_FAILED_STATUS_ID) {
+            resolvedBookingStatusId = COMPLETED_AT_FACILITY_STATUS_ID;
+            statusResetFields.bookingStatusId = COMPLETED_AT_FACILITY_STATUS_ID;
+        } else if (isPickupFailed) {
+            resolvedBookingStatusId = AWAITING_COLLECTION_STATUS_ID;
+            statusResetFields.pickupAttemptCount = 0;
+        }
+
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
         await booking.update(
             {
@@ -638,6 +662,7 @@ class RescheduleBookingService {
                 ...(scheduleTotalBags != null ? { totalBags: scheduleTotalBags } : {}),
                 sameBagForAllServices: scheduleSameBagForAllServices,
                 ...(scheduleTotalItems != null ? { totalItems: scheduleTotalItems } : {}),
+                ...statusResetFields,
             },
             { where: { id: bookingId } }
         );
@@ -646,7 +671,7 @@ class RescheduleBookingService {
         const rescheduleMoment = moment.tz(resolvedTz);
         await bookingHistory.create({
             bookingId,
-            bookingStatusId: statusId,
+            bookingStatusId: resolvedBookingStatusId,
             date: rescheduleMoment.format('YYYY-MM-DD'),
             time: rescheduleMoment.format('HH:mm:ss')
         });
