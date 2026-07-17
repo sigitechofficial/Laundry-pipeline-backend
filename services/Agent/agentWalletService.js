@@ -16,6 +16,10 @@ const CASH_COLLECTED_REFERENCE = "cash_collected";
 const CASH_REMITTED_REFERENCE = "cash_remitted";
 const ADMIN_SETTLEMENT_REFERENCE = "admin_settlement";
 const PAYOUT_REFERENCE = "payout";
+// Debit created ONLY when an agent withdraws their earnings to their own
+// (Stripe Connect) account. Nothing else should create a wallet debit that the
+// agent sees as "Debited". Reserved now; the Stripe transfer flow is added later.
+const WITHDRAWAL_REFERENCE = "agent_withdrawal";
 const DEFAULT_CURRENCY = "GBP";
 
 async function resolveShopOwnerUserId(laundryShopId) {
@@ -346,8 +350,18 @@ async function getWalletSummary(agentUserId) {
     }
 
     const totalCredited = await sumWalletAmount(agentUserId, "credit");
-    const totalDebited = await sumWalletAmount(agentUserId, "debit");
-    const balance = parseFloat((totalCredited - totalDebited).toFixed(2));
+    // Full debit sum across all reference types.
+    const totalDebitedAll = await sumWalletAmount(agentUserId, "debit");
+    // Legacy admin payouts are deprecated: they must NOT reduce the agent's
+    // wallet balance anymore. Earnings are only reduced by a real withdrawal.
+    const totalPayouts = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: PAYOUT_REFERENCE,
+    });
+    // Net-settlement balance (drives cash-due / platform-owes accounting),
+    // ignoring deprecated payout debits.
+    const balance = parseFloat(
+        (totalCredited - (totalDebitedAll - totalPayouts)).toFixed(2)
+    );
 
     const totalCashCollected = await sumWalletAmount(agentUserId, "debit", {
         referenceType: CASH_COLLECTED_REFERENCE,
@@ -362,9 +376,16 @@ async function getWalletSummary(agentUserId) {
     const totalAdminSettlements = await sumWalletAmount(agentUserId, "credit", {
         referenceType: ADMIN_SETTLEMENT_REFERENCE,
     });
-    const totalPayouts = await sumWalletAmount(agentUserId, "debit", {
-        referenceType: PAYOUT_REFERENCE,
+    // Money the agent has actually withdrawn to their own account. This is the
+    // ONLY thing that should count as "Debited" from the agent's perspective.
+    const totalWithdrawn = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: WITHDRAWAL_REFERENCE,
     });
+    // What the agent can still withdraw = everything credited minus what they
+    // have already withdrawn. Never negative.
+    const availableBalance = parseFloat(
+        Math.max(totalCredited - totalWithdrawn, 0).toFixed(2)
+    );
 
     let currency = DEFAULT_CURRENCY;
     if (shop.zoneId) {
@@ -408,6 +429,7 @@ async function getWalletSummary(agentUserId) {
         netSettlement: balance,
         cashDueToPlatform,
         platformOwesAgent,
+        availableBalance,
         totalEarning: earnings.totalEarning,
         totalEarningCash: earnings.totalEarningCash,
         totalEarningCard: earnings.totalEarningCard,
@@ -416,8 +438,11 @@ async function getWalletSummary(agentUserId) {
         pendingCashRemittance: parseFloat(pendingCashRemitted.toFixed(2)),
         totalAdminSettlements: parseFloat(totalAdminSettlements.toFixed(2)),
         totalPayouts: parseFloat(totalPayouts.toFixed(2)),
+        totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
         totalCredited: parseFloat(totalCredited.toFixed(2)),
-        totalDebited: parseFloat(totalDebited.toFixed(2)),
+        // Agent-facing "Debited" = withdrawals only (0 until they withdraw).
+        // Cash held / legacy payouts are NOT shown here.
+        totalDebited: parseFloat(totalWithdrawn.toFixed(2)),
         commissionCreditCount: commissionCredits,
     };
 }
@@ -506,7 +531,15 @@ async function getWalletTransactions(agentUserId, options = {}) {
     const summary = await getWalletSummary(agentUserId);
 
     const { count, rows } = await wallet.findAndCountAll({
-        where: { userId: agentUserId },
+        where: {
+            userId: agentUserId,
+            // Hide deprecated admin-payout debits from the agent's ledger — they
+            // no longer represent a real movement of the agent's earnings.
+            [Op.or]: [
+                { referenceType: { [Op.ne]: PAYOUT_REFERENCE } },
+                { referenceType: { [Op.is]: null } },
+            ],
+        },
         order: [["createdAt", "DESC"]],
         limit,
         offset,
@@ -539,6 +572,7 @@ async function getWalletTransactions(agentUserId, options = {}) {
         netSettlement: summary.netSettlement,
         cashDueToPlatform: summary.cashDueToPlatform,
         platformOwesAgent: summary.platformOwesAgent,
+        availableBalance: summary.availableBalance,
         totalEarning: summary.totalEarning,
         totalEarningCash: summary.totalEarningCash,
         totalEarningCard: summary.totalEarningCard,
@@ -546,6 +580,7 @@ async function getWalletTransactions(agentUserId, options = {}) {
         totalCashRemitted: summary.totalCashRemitted,
         pendingCashRemittance: summary.pendingCashRemittance,
         totalCredited: summary.totalCredited,
+        totalWithdrawn: summary.totalWithdrawn,
         totalDebited: summary.totalDebited,
         transactions: rows.map((row) => {
             const plain = row.get({ plain: true });
@@ -579,6 +614,7 @@ module.exports = {
     CASH_REMITTED_REFERENCE,
     ADMIN_SETTLEMENT_REFERENCE,
     PAYOUT_REFERENCE,
+    WITHDRAWAL_REFERENCE,
     classifyAgentEarningChannel,
     creditAgentForPaidBooking,
     backfillWalletsFromPaidBookings,

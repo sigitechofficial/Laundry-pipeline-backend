@@ -9,7 +9,6 @@ const agentWalletService = require("./agentWalletService");
 const {
     CASH_REMITTED_REFERENCE,
     ADMIN_SETTLEMENT_REFERENCE,
-    PAYOUT_REFERENCE,
 } = agentWalletService;
 
 const DEFAULT_CURRENCY = "GBP";
@@ -248,45 +247,18 @@ async function adminRecordAdjustment(agentUserId, { amount, direction, note }) {
 }
 
 /**
- * Record platform payout to agent (card earnings disbursed).
+ * Manual admin payout is DISABLED.
+ *
+ * Earnings are no longer disbursed by an admin creating a wallet debit. Instead,
+ * an agent withdraws their available balance to their own (Stripe Connect)
+ * account, and only that withdrawal creates a debit. Until that flow runs, the
+ * agent's "Debited" stays 0 and their full credited earnings remain available.
  */
-async function recordAgentPayout(agentUserId, { amount, note }) {
-    const parsedAmount = parseFloat(amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-        throw new ValidationError("amount must be a positive number");
-    }
-
+async function recordAgentPayout(agentUserId /* , { amount, note } */) {
     await resolveAgentShop(agentUserId);
-    const summary = await agentWalletService.getWalletSummary(agentUserId);
-
-    if (summary.platformOwesAgent <= 0) {
-        throw new ValidationError("No positive balance payable to this agent");
-    }
-
-    if (parsedAmount > summary.platformOwesAgent + 0.02) {
-        throw new ValidationError(
-            `Payout exceeds payable balance (${summary.platformOwesAgent.toFixed(2)})`
-        );
-    }
-
-    const entry = await wallet.create({
-        userId: agentUserId,
-        bookingId: null,
-        referenceType: PAYOUT_REFERENCE,
-        amount: parseFloat(parsedAmount.toFixed(2)),
-        currency: summary.currency || DEFAULT_CURRENCY,
-        type: "debit",
-        status: "completed",
-        description: note || "Agent earnings payout",
-    });
-
-    const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
-
-    return {
-        payoutId: entry.id,
-        amount: parseFloat(entry.amount),
-        settlement: updatedSummary,
-    };
+    throw new ValidationError(
+        "Manual payouts are disabled. Agent earnings are withdrawn by the agent to their own account."
+    );
 }
 
 async function getAgentSettlementSummary(agentUserId) {
