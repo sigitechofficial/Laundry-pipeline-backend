@@ -1052,7 +1052,7 @@ exports.agentBookingFilters = async (req, res) => {
         where: {
             laundryShopId: addressFound.id,
             bookingStatusId: {
-                [Op.notIn]: [1, 13, 17, 19]
+                [Op.notIn]: [1, 17, 19]
             }
         },
         order: [["id", "DESC"]],
@@ -5765,7 +5765,7 @@ const getSlotBookings = async (laundryShopId) => {
                     laundryShopId: laundryShopId,
                     collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
                     collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                    bookingStatusId: { [Op.notIn]: [1, 13] } // exclude status 1 and 3
+                    bookingStatusId: { [Op.notIn]: [1] } // exclude only not-yet-accepted (status 1); show Out for Delivery (13)
                 },
                 attributes: [
                     "id",
