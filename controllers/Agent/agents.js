@@ -668,11 +668,49 @@ exports.getBookingHome = async (req, res) => {
         ],
     });
 
+    // Agent's actively-offered service IDs. A broadcast booking is only shown if
+    // the agent offers EVERY service the customer selected on that booking.
+    const agentServiceRows = await agentSelectServices.findAll({
+        where: { agentServiceId: agentId, status: true },
+        attributes: ["serviceId"],
+    });
+    const agentServiceIdSet = new Set(
+        agentServiceRows.map((r) => Number(r.serviceId))
+    );
+
+    // Map each booking → the distinct service IDs the customer selected on it.
+    const bookingIds = bookingData.map((b) => b.id);
+    const bookingServiceIds = new Map();
+    if (bookingIds.length > 0) {
+        const selectedServiceRows = await customerSelectedService.findAll({
+            where: { bookingId: { [Op.in]: bookingIds } },
+            attributes: ["bookingId", "serviceId"],
+        });
+        for (const row of selectedServiceRows) {
+            const bId = Number(row.bookingId);
+            const sId = Number(row.serviceId);
+            if (!Number.isFinite(sId) || sId <= 0) continue;
+            if (!bookingServiceIds.has(bId)) bookingServiceIds.set(bId, new Set());
+            bookingServiceIds.get(bId).add(sId);
+        }
+    }
+
     const bookingDataForResponse = [];
 
     for (const row of bookingData) {
         const plain = row.get({ plain: true });
         if (!plain.orderExpireTime) continue;
+
+        // Skip bookings whose selected services this agent does not fully offer.
+        const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
+        if (
+            !requiredServiceIds ||
+            requiredServiceIds.size === 0 ||
+            ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
+        ) {
+            continue;
+        }
+
         if (
             !isBookingAcceptWindowOpen(
                 getAcceptWindowAnchor(plain),

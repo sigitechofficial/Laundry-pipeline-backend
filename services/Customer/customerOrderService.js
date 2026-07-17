@@ -450,7 +450,7 @@ async function bookingEventSentCheckTheShops(
                             },
                             status: true,
                         },
-                        attributes: ['id'],
+                        attributes: ['id', 'serviceId'],
                         required: false
                     },
                     {
@@ -472,7 +472,34 @@ async function bookingEventSentCheckTheShops(
 
     let availableShops = [];
 
+    // The customer's distinct selected service IDs. An agent is only eligible
+    // for this booking if they actively offer EVERY one of these services.
+    const requiredServiceIds = [
+        ...new Set(
+            (services || [])
+                .map((s) => Number(s.serviceId))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        ),
+    ];
+
+    // Count shops in the zone that actively offer ALL selected services,
+    // independent of slot/working-hours availability. Used to detect a service
+    // coverage gap (→ notify admin for manual assignment).
+    let serviceEligibleShopCount = 0;
+
     for (let shop of getShopsAndOwners) {
+        // Skip shops whose owner does not offer ALL of the selected services.
+        const offeredServiceIds = new Set(
+            (shop.user?.agentServices || []).map((a) => Number(a.serviceId))
+        );
+        const offersAllServices =
+            requiredServiceIds.length > 0 &&
+            requiredServiceIds.every((id) => offeredServiceIds.has(id));
+        if (!offersAllServices) {
+            continue;
+        }
+        serviceEligibleShopCount += 1;
+
         let checkSlots = await checkIfTimeSlotBooked(
             shop.id,
             deliveryDate,
@@ -664,10 +691,52 @@ async function bookingEventSentCheckTheShops(
                 console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
             }
         });
-        return { notifiedCount, availableShopCount: availableShops.length };
+        return {
+            notifiedCount,
+            availableShopCount: availableShops.length,
+            serviceEligibleShopCount,
+            zoneShopCount: getShopsAndOwners.length,
+        };
     }
 
-    return { notifiedCount: 0, availableShopCount: 0 };
+    return {
+        notifiedCount: 0,
+        availableShopCount: 0,
+        serviceEligibleShopCount,
+        zoneShopCount: getShopsAndOwners.length,
+    };
+}
+
+/**
+ * Notify admins when no agent in the zone offers all of the customer's selected
+ * services, so the booking can be manually assigned. Best-effort / non-blocking.
+ */
+async function notifyAdminNoEligibleAgent(bookingId, zoneId) {
+    try {
+        const { sendNotificationToAdmin } = require("../Agent/notificationService");
+        const bookingRecord = await booking.findOne({
+            where: { id: bookingId },
+            attributes: ["id", "orderTrackId"],
+        });
+        const orderLabel = bookingRecord?.orderTrackId || String(bookingId);
+        await sendNotificationToAdmin(
+            "Order needs manual assignment",
+            `Order #${orderLabel} has no agent in its zone that offers all selected services. Please assign it manually.`,
+            {
+                bookingId: Number(bookingId),
+                zoneId: zoneId != null ? Number(zoneId) : null,
+                type: "no_eligible_agent_for_services",
+            }
+        );
+        console.log(
+            `[createBooking] admin notified — no service-eligible agent for booking ${bookingId} (zone ${zoneId})`
+        );
+    } catch (err) {
+        console.error(
+            `[createBooking] failed to notify admin for booking ${bookingId}:`,
+            err?.message || err
+        );
+    }
 }
 
 function normalizeSelectedServiceAddOn(addOn) {
@@ -1709,7 +1778,11 @@ class CustomerOrderService {
                 `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
             );
 
-            const { notifiedCount } = await bookingEventSentCheckTheShops(
+            const {
+                notifiedCount,
+                serviceEligibleShopCount,
+                zoneShopCount,
+            } = await bookingEventSentCheckTheShops(
                 bookingId,
                 zoneId,
                 collectionDate,
@@ -1735,6 +1808,12 @@ class CustomerOrderService {
                 console.log(
                     `[createBooking] booking ${bookingId} held — zone open but no agent notified`
                 );
+            }
+
+            // Service coverage gap: shops exist in the zone but none offer ALL of
+            // the customer's selected services → notify admin for manual assignment.
+            if (zoneShopCount > 0 && serviceEligibleShopCount === 0) {
+                await notifyAdminNoEligibleAgent(bookingId, zoneId);
             }
         }
 

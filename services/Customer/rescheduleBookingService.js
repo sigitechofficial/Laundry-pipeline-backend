@@ -60,6 +60,20 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
 
     const countryCtx = await getCountryContextFromZoneId(zoneId);
 
+    // The booking's distinct selected service IDs. Only shops that actively offer
+    // ALL of them are eligible to receive the rescheduled booking.
+    const selectedServiceRows = await customerSelectedService.findAll({
+        where: { bookingId },
+        attributes: ['serviceId'],
+    });
+    const requiredServiceIds = [
+        ...new Set(
+            selectedServiceRows
+                .map((s) => Number(s.serviceId))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        ),
+    ];
+
     // Fetch all laundry shops in the zone
     const shopsInZone = await addressDb.findAll({
         where: {
@@ -75,7 +89,10 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
                     {
                         model: agentSelectServices,
                         as: 'agentServices',
-                        attributes: ['id'],
+                        where: requiredServiceIds.length > 0
+                            ? { serviceId: { [Op.in]: requiredServiceIds }, status: true }
+                            : undefined,
+                        attributes: ['id', 'serviceId'],
                         required: false
                     },
                     {
@@ -93,6 +110,17 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
     // Check which shops have no conflicting bookings on the new time slot
     const availableShops = [];
     for (const shop of shopsInZone) {
+        // Skip shops whose owner does not offer ALL of the selected services.
+        const offeredServiceIds = new Set(
+            (shop.user?.agentServices || []).map((a) => Number(a.serviceId))
+        );
+        const offersAllServices =
+            requiredServiceIds.length > 0 &&
+            requiredServiceIds.every((id) => offeredServiceIds.has(id));
+        if (!offersAllServices) {
+            continue;
+        }
+
         const conflictingBookings = await booking.findAll({
             where: {
                 laundryShopId: shop.id,
