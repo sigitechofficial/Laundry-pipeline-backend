@@ -66,6 +66,7 @@ const BOOKING_CORE_ATTRS = [
 const BOOKING_ATTEMPT_ATTRS = [
     'noShowPolicyId',
     'pickupAttemptCount',
+    'pickupRescheduleRequired',
     'deliveryAttemptCount',
     'maxPickupAttempts',
     'noShowFeeAccrued',
@@ -179,6 +180,9 @@ async function resolveArrivalRadiusForBookingId(bookingId) {
 function applyBookingAttemptDefaults(row) {
     if (!row) return row;
     if (row.pickupAttemptCount == null) row.setDataValue('pickupAttemptCount', 0);
+    if (row.pickupRescheduleRequired == null) {
+        row.setDataValue('pickupRescheduleRequired', false);
+    }
     if (row.deliveryAttemptCount == null) row.setDataValue('deliveryAttemptCount', 0);
     if (row.maxPickupAttempts == null) row.setDataValue('maxPickupAttempts', 3);
     if (row.noShowFeeAccrued == null) row.setDataValue('noShowFeeAccrued', 0);

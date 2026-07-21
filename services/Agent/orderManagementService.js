@@ -183,7 +183,7 @@ class AgentOrderManagementService {
             case 'pickup_failed':
                 return {
                     bookingStatusId: AWAITING_COLLECTION_STATUS_ID,
-                    pickupAttemptCount: { [Op.gt]: 0 },
+                    pickupRescheduleRequired: true,
                 };
             case 'all':
             default:
@@ -204,7 +204,7 @@ class AgentOrderManagementService {
         // failed pickup attempt it should surface as "Pickup Failed").
         const isPickupFailed =
             orderPlain.bookingStatusId === AWAITING_COLLECTION_STATUS_ID &&
-            (orderPlain.pickupAttemptCount || 0) > 0;
+            Boolean(orderPlain.pickupRescheduleRequired);
 
         const displayStatus = isPickupFailed
             ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
@@ -305,6 +305,7 @@ class AgentOrderManagementService {
                         'driverInstructionOptions1',
                         'driverInstruction',
                         'pickupAttemptCount',
+                        'pickupRescheduleRequired',
                         'deliveryAttemptCount',
                         'createdAt',
                         'updatedAt',

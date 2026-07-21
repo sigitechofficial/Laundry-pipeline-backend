@@ -1075,6 +1075,7 @@ exports.agentBookingFilters = async (req, res) => {
             "sameBagForAllServices",
             "noOfBags",
             "pickupAttemptCount",
+            "pickupRescheduleRequired",
             "deliveryAttemptCount",
         ],
         include: [
@@ -1283,10 +1284,12 @@ exports.agentBookingFilters = async (req, res) => {
         ],
     });
 
-    // Compute displayStatus for pickup-failed orders (status 3 + pickupAttemptCount > 0)
+    // Compute displayStatus only while the failed pickup still needs rescheduling.
     results.All = results.All.map((b) => {
         const plain = b.toJSON ? b.toJSON() : b;
-        const isPickupFailed = plain.bookingStatusId === 3 && (plain.pickupAttemptCount || 0) > 0;
+        const isPickupFailed =
+            plain.bookingStatusId === 3 &&
+            Boolean(plain.pickupRescheduleRequired);
         const isDeliveryFailed = plain.bookingStatusId === 15;
         const failedAttemptType = isDeliveryFailed
             ? 'delivery'
@@ -1300,6 +1303,7 @@ exports.agentBookingFilters = async (req, res) => {
             hasFailedAttempt: Boolean(failedAttemptType),
             failedAttemptType,
             pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
+            pickupRescheduleRequired: Boolean(plain.pickupRescheduleRequired),
             deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
         };
         return plain;
@@ -5795,6 +5799,7 @@ const getSlotBookings = async (laundryShopId) => {
                     "driverInstructionOptions1",
                     "bookingStatusId",
                     "pickupAttemptCount",
+                    "pickupRescheduleRequired",
                     "deliveryAttemptCount",
                 ],
                 include: [
@@ -5860,7 +5865,8 @@ const getSlotBookings = async (laundryShopId) => {
             const enrichedBookings = bookings.map((b) => {
                 const plain = b.toJSON ? b.toJSON() : b;
                 const isPickupFailed =
-                    plain.bookingStatusId === 3 && (plain.pickupAttemptCount || 0) > 0;
+                    plain.bookingStatusId === 3 &&
+                    Boolean(plain.pickupRescheduleRequired);
                 const isDeliveryFailed = plain.bookingStatusId === 15;
                 const failedAttemptType = isDeliveryFailed
                     ? 'delivery'
@@ -5876,6 +5882,9 @@ const getSlotBookings = async (laundryShopId) => {
                     hasFailedAttempt: Boolean(failedAttemptType),
                     failedAttemptType,
                     pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
+                    pickupRescheduleRequired: Boolean(
+                        plain.pickupRescheduleRequired
+                    ),
                     deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
                 };
                 return plain;

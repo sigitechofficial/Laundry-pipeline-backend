@@ -407,7 +407,7 @@ class RescheduleBookingService {
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
                 'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId',
-                'pickupAttemptCount', 'deliveryAttemptCount'
+                'pickupAttemptCount', 'pickupRescheduleRequired', 'deliveryAttemptCount'
             ]
         });
 
@@ -659,11 +659,11 @@ class RescheduleBookingService {
         // Resolve booking status after reschedule when recovering from a failed attempt:
         //  - Delivery Failed (15): items are washed & ready at facility → move to
         //    Completed (At Facility, 12) so the agent can re-dispatch delivery on the new slot.
-        //  - Pickup Failed (Awaiting Collection 3 + pickupAttemptCount > 0): stay Awaiting
-        //    Collection but reset the failed indicator so it no longer shows "Pickup Failed".
+        //  - Pickup Failed: stay Awaiting Collection and clear only the unresolved
+        //    reschedule flag. Keep pickupAttemptCount cumulative for policy limits.
         const isPickupFailed =
             statusId === AWAITING_COLLECTION_STATUS_ID &&
-            (bookingData.pickupAttemptCount || 0) > 0;
+            Boolean(bookingData.pickupRescheduleRequired);
         let resolvedBookingStatusId = statusId;
         const statusResetFields = {};
         if (statusId === DELIVERY_FAILED_STATUS_ID) {
@@ -671,7 +671,7 @@ class RescheduleBookingService {
             statusResetFields.bookingStatusId = COMPLETED_AT_FACILITY_STATUS_ID;
         } else if (isPickupFailed) {
             resolvedBookingStatusId = AWAITING_COLLECTION_STATUS_ID;
-            statusResetFields.pickupAttemptCount = 0;
+            statusResetFields.pickupRescheduleRequired = false;
         }
 
         // Step 8: Update booking with new dates, new order amount and reschedule metadata

@@ -538,6 +538,9 @@ class NoShowEnforcementService {
             requirePhoto: Boolean(config?.requirePhoto),
             maxPickupAttempts: bookingData.maxPickupAttempts || 3,
             pickupAttemptCount: bookingData.pickupAttemptCount || 0,
+            pickupRescheduleRequired: Boolean(
+                bookingData.pickupRescheduleRequired
+            ),
             deliveryAttemptCount: bookingData.deliveryAttemptCount || 0,
             feePreview: {
                 amount: feePreview.feeAmount,
@@ -652,6 +655,7 @@ class NoShowEnforcementService {
                 await booking.update(
                     {
                         pickupAttemptCount: newPickupCount,
+                        pickupRescheduleRequired: false,
                         noShowFeeAccrued: accrued,
                         bookingStatusId: CANCELLED_STATUS,
                     },
@@ -679,6 +683,7 @@ class NoShowEnforcementService {
                     outcome: 'cancelled',
                     attemptId: openAttempt.id,
                     pickupAttemptCount: newPickupCount,
+                    pickupRescheduleRequired: false,
                     maxPickupAttempts: maxAttempts,
                     fee: feeWithStripe,
                     bookingStatusId: CANCELLED_STATUS,
@@ -689,6 +694,7 @@ class NoShowEnforcementService {
             await booking.update(
                 {
                     pickupAttemptCount: newPickupCount,
+                    pickupRescheduleRequired: true,
                     noShowFeeAccrued: accrued,
                     bookingStatusId: AWAITING_COLLECTION_STATUS,
                 },
@@ -721,6 +727,7 @@ class NoShowEnforcementService {
                 outcome: 'reschedule_required',
                 attemptId: openAttempt.id,
                 pickupAttemptCount: newPickupCount,
+                pickupRescheduleRequired: true,
                 maxPickupAttempts: maxAttempts,
                 fee: feeWithStripe,
                 bookingStatusId: AWAITING_COLLECTION_STATUS,
@@ -931,6 +938,7 @@ class NoShowEnforcementService {
                     deliveryTimeFrom,
                     deliveryTimeTo,
                     bookingStatusId: AWAITING_COLLECTION_STATUS,
+                    pickupRescheduleRequired: false,
                 },
                 { where: { id: bookingId } }
             );

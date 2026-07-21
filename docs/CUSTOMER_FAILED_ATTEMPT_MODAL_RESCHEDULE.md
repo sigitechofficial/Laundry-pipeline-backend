@@ -13,12 +13,13 @@ Auth: `Authorization: Bearer <customer_access_token>`
   - `bookingStatusId = 15` (`Delivery Failed`)
 - **Pickup failed** does **not** have its own status row.
   - Booking returns to `bookingStatusId = 3` (`Awaiting Collection`)
-  - Detect pickup-failed using `pickupAttemptCount > 0` while status is `3`
+  - Detect an unresolved pickup failure using `pickupRescheduleRequired === true`
+  - `pickupAttemptCount` remains cumulative after rescheduling for policy limits
 
 So customer app must treat both cases as attention-required:
 
 - Delivery failed: `bookingStatusId === 15`
-- Pickup failed: `bookingStatusId === 3 && pickupAttemptCount > 0`
+- Pickup failed: `bookingStatusId === 3 && pickupRescheduleRequired === true`
 
 ---
 
@@ -34,6 +35,7 @@ Use these fields from each booking:
 - `orderTrackId`
 - `bookingStatusId`
 - `pickupAttemptCount`
+- `pickupRescheduleRequired`
 - `deliveryAttemptCount`
 - `noShowFeeAccrued` (optional display)
 - schedule fields (`collectionDate`, `collectionTimeFrom`, `deliveryDate`, etc.)
@@ -43,7 +45,7 @@ Failed-attempt detector logic:
 ```js
 const isDeliveryFailed = booking.bookingStatusId === 15;
 const isPickupFailed =
-  booking.bookingStatusId === 3 && Number(booking.pickupAttemptCount) > 0;
+  booking.bookingStatusId === 3 && Boolean(booking.pickupRescheduleRequired);
 const needsAttention = isDeliveryFailed || isPickupFailed;
 ```
 
@@ -170,7 +172,7 @@ Show these messages directly in user toast/snackbar where possible.
 For customer cards/list rows:
 
 - If `bookingStatusId === 15` -> badge label: `Delivery Failed`
-- If `bookingStatusId === 3 && pickupAttemptCount > 0` -> badge label: `Pickup Failed`
+- If `bookingStatusId === 3 && pickupRescheduleRequired === true` -> badge label: `Pickup Failed`
 - Else use backend `bookingStatus.title`
 
 This keeps failed pickup behavior visually consistent with failed delivery.
