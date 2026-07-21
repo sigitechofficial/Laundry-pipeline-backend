@@ -47,6 +47,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.ENUM('pending', 'completed', 'failed'),
       allowNull: false,
       defaultValue: 'completed'
+    },
+    stripeTransferId: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    failureReason: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
     }
   }, {
     sequelize,

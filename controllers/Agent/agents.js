@@ -169,6 +169,7 @@ const agentBookingDeclineService = require('../../services/Agent/agentBookingDec
 const agentOrderManagementService = require('../../services/Agent/orderManagementService');
 const agentWalletService = require('../../services/Agent/agentWalletService');
 const agentSettlementService = require('../../services/Agent/agentSettlementService');
+const agentWithdrawalService = require('../../services/Agent/agentWithdrawalService');
 
 async function tryCreditAgentWallet(bookingId, options = {}) {
     try {
@@ -5448,6 +5449,20 @@ exports.getAgentWalletTransactions = async (req, res) => {
         limit,
     });
     return ResponseHelper.success(res, "Agent wallet transactions", data);
+};
+
+exports.withdrawAgentWallet = async (req, res) => {
+    const agentId = req.user.id;
+    const { amount } = req.body || {};
+    const data = await agentWithdrawalService.withdrawAgentEarnings(
+        agentId,
+        amount
+    );
+    return ResponseHelper.success(
+        res,
+        "Withdrawal transferred to Stripe Connect successfully",
+        data
+    );
 };
 
 exports.getAgentSettlement = async (req, res) => {

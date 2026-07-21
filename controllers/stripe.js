@@ -729,10 +729,49 @@ async function checkConnectAccountStatus(accountId) {
         return {
             chargesEnabled: account.charges_enabled,
             payoutsEnabled: account.payouts_enabled,
-            detailsSubmitted: account.details_submitted
+            detailsSubmitted: account.details_submitted,
+            transfersEnabled: account.capabilities?.transfers === "active",
         };
     } catch (error) {
         throw new customError(`Stripe Account Status Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Transfer platform funds into an agent's Stripe Connect balance.
+ *
+ * Stripe subsequently pays the connected balance to the agent's bank according
+ * to that Connect account's payout schedule.
+ */
+async function transferToConnectAccount(
+    amount,
+    accountId,
+    idempotencyKey,
+    metadata = {}
+) {
+    const amountInCents = convertToCents(amount);
+    if (!Number.isInteger(amountInCents) || amountInCents <= 0) {
+        throw new customError("Transfer amount must be greater than 0", 400);
+    }
+    if (!accountId) {
+        throw new customError("Stripe Connect account is required", 400);
+    }
+
+    try {
+        return await stripe.transfers.create(
+            {
+                amount: amountInCents,
+                currency: "gbp",
+                destination: accountId,
+                description: "Agent wallet withdrawal",
+                metadata: sanitizeStripeMetadata(metadata),
+            },
+            {
+                idempotencyKey: String(idempotencyKey).slice(0, 255),
+            }
+        );
+    } catch (error) {
+        throw new customError(`Stripe transfer failed: ${error.message}`, 400);
     }
 }
 
@@ -856,6 +895,7 @@ module.exports = {
     createStripeConnectAccount,
     createStripeOnboardingLink,
     checkConnectAccountStatus,
+    transferToConnectAccount,
     createStripeAccountLink,
     createConnectAccount
 };

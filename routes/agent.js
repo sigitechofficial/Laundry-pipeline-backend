@@ -663,6 +663,11 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.getAgentWalletTransactions)
 );
+router.post(
+    "/wallet/withdraw",
+    validateAccessToken,
+    asyncMiddleware(agentController.withdrawAgentWallet)
+);
 router.get(
     "/settlement",
     validateAccessToken,

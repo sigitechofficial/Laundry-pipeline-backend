@@ -2,6 +2,7 @@ const {
     booking,
     billingDetails,
     addressDb,
+    bussinessInformation,
     wallet,
     units,
     zone,
@@ -370,6 +371,10 @@ async function getWalletSummary(agentUserId) {
     const totalWithdrawn = await sumWalletAmount(agentUserId, "debit", {
         referenceType: WITHDRAWAL_REFERENCE,
     });
+    const pendingWithdrawals = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: WITHDRAWAL_REFERENCE,
+        status: "pending",
+    });
 
     const totalCashCollected = await sumWalletAmount(agentUserId, "debit", {
         referenceType: CASH_COLLECTED_REFERENCE,
@@ -398,7 +403,19 @@ async function getWalletSummary(agentUserId) {
     //   Available = Credit − withdrawn
     const walletCredit = parseFloat(agentPayoutCredits.toFixed(2));
     const availableBalance = parseFloat(
-        Math.max(agentPayoutCredits - totalWithdrawn, 0).toFixed(2)
+        Math.max(
+            agentPayoutCredits - totalWithdrawn - pendingWithdrawals,
+            0
+        ).toFixed(2)
+    );
+
+    const businessInfo = await bussinessInformation.findOne({
+        where: { shopAddressId: shop.id },
+        attributes: ["connectAccountId", "isConnectAccountConnected"],
+    });
+    const connectAccountConnected = Boolean(
+        businessInfo?.connectAccountId &&
+        businessInfo?.isConnectAccountConnected
     );
 
     let currency = DEFAULT_CURRENCY;
@@ -459,6 +476,10 @@ async function getWalletSummary(agentUserId) {
         totalPayouts: parseFloat(totalPayouts.toFixed(2)),
         totalAgentPayouts: walletCredit,
         totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
+        pendingWithdrawals: parseFloat(pendingWithdrawals.toFixed(2)),
+        connectAccountConnected,
+        canWithdraw: connectAccountConnected && availableBalance >= 1,
+        minimumWithdrawal: 1,
         // Agent-facing "Credit" = money released to the agent via admin payout
         // (0 until an admin pays out). Order commissions are NOT counted here.
         totalCredited: walletCredit,
@@ -574,6 +595,8 @@ async function getWalletTransactions(agentUserId, options = {}) {
             "description",
             "bookingId",
             "referenceType",
+            "stripeTransferId",
+            "failureReason",
             "createdAt",
         ],
         include: [
@@ -604,7 +627,11 @@ async function getWalletTransactions(agentUserId, options = {}) {
         totalCredited: summary.totalCredited,
         totalAgentPayouts: summary.totalAgentPayouts,
         totalWithdrawn: summary.totalWithdrawn,
+        pendingWithdrawals: summary.pendingWithdrawals,
         totalDebited: summary.totalDebited,
+        connectAccountConnected: summary.connectAccountConnected,
+        canWithdraw: summary.canWithdraw,
+        minimumWithdrawal: summary.minimumWithdrawal,
         transactions: rows.map((row) => {
             const plain = row.get({ plain: true });
             return {
@@ -617,6 +644,8 @@ async function getWalletTransactions(agentUserId, options = {}) {
                 bookingId: plain.bookingId,
                 orderTrackId: plain.booking?.orderTrackId || null,
                 referenceType: plain.referenceType,
+                stripeTransferId: plain.stripeTransferId,
+                failureReason: plain.failureReason,
                 createdAt: plain.createdAt,
             };
         }),
