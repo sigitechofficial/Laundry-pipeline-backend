@@ -243,6 +243,45 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
     };
 }
 
+/**
+ * Agent-app flags for cash COD (pay after delivery) vs card pay-before-process.
+ *
+ * @param {object} options
+ * @param {string} [options.paymentType]
+ * @param {boolean} [options.paymentConfirmed]
+ * @param {number} [options.amountDueNow]
+ * @param {string} [options.balancePaymentMethod]
+ * @param {string} [options.billingPaymentStatus]
+ */
+function buildCollectPaymentFlags(options = {}) {
+    const paymentType = normalizePaymentType(options.paymentType);
+    const balancePaymentMethod = resolveBalancePaymentMethod({
+        paymentType,
+        balancePaymentMethod: options.balancePaymentMethod,
+    });
+    const billingPaymentStatus = options.billingPaymentStatus || "Pending";
+    const amountDueNow = roundMoney(options.amountDueNow || 0);
+    const isBillingPaid = billingPaymentStatus === "Paid";
+    const paymentConfirmed =
+        Boolean(options.paymentConfirmed) || (isBillingPaid && amountDueNow <= 0.02);
+    const unpaid = !isBillingPaid && amountDueNow > 0.02;
+    const isCashBooking = paymentType === "cash";
+    const collectCashAtDelivery =
+        unpaid && (isCashBooking || balancePaymentMethod === "cash");
+
+    return {
+        paymentType,
+        paymentConfirmed: paymentConfirmed && !unpaid,
+        collectPaymentAfterDelivery: collectCashAtDelivery,
+        canProceedWithoutPayment:
+            isCashBooking ||
+            !unpaid ||
+            balancePaymentMethod === "cash",
+        canCollectPaymentNow: collectCashAtDelivery,
+        invoicePaymentWindowApplies: paymentType === "card",
+    };
+}
+
 module.exports = {
     buildPaymentSummary,
     buildCashPaymentSummary,
@@ -250,5 +289,6 @@ module.exports = {
     normalizePaymentType,
     resolveBalancePaymentMethod,
     enrichPaymentSummary,
+    buildCollectPaymentFlags,
     roundMoney,
 };

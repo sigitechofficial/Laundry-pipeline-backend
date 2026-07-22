@@ -36,6 +36,7 @@ const {
     getActiveBookingCutoff,
 } = require('../../utils/bookingTimeZone');
 const invoiceManagementService = require('./invoiceManagementService');
+const { buildCollectPaymentFlags, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
 const COMPLETED_STATUS_IDS = [17];
@@ -220,6 +221,18 @@ class AgentOrderManagementService {
                     ? parseFloat(orderPlain.billingDetail.agentEarning)
                     : null,
         };
+
+        const paymentFlags = buildCollectPaymentFlags({
+            paymentType: orderPlain.paymentType,
+            paymentConfirmed: Boolean(orderPlain.paymentConfirmed),
+            amountDueNow: paymentSummary?.amountDueNow,
+            balancePaymentMethod: orderPlain.balancePaymentMethod,
+            billingPaymentStatus:
+                orderPlain.billingDetail?.paymentStatus ||
+                paymentSummary?.billingPaymentStatus ||
+                "Pending",
+        });
+        Object.assign(enriched, paymentFlags);
 
         const hasInvoiceTotals =
             orderPlain.invoiceStatus === 'finalized' ||
@@ -617,15 +630,40 @@ class AgentOrderManagementService {
         });
 
         if (bookingfind.bookingStatusId === 5) {
-            const oneHourLater = moment().add(1, "hours").format("HH:mm A"); // 24-hour format with AM/PM
-            return {
-                bookingfind,
-                oneHourLater,
-            };
+            const paymentType = normalizePaymentType(bookingfind.paymentType);
+            const result = { bookingfind };
+            // 1-hour payment window hint applies to card only (cash COD skips)
+            if (paymentType === 'card') {
+                result.oneHourLater = moment().add(1, 'hours').format('HH:mm A');
+                result.invoicePaymentWindowApplies = true;
+            } else {
+                result.invoicePaymentWindowApplies = false;
+            }
+            return result;
         }
 
+        let paymentSummary = null;
+        try {
+            paymentSummary =
+                await invoiceManagementService.getPaymentSummaryForBooking(
+                    bookingfind.id
+                );
+        } catch (_) {
+            paymentSummary = null;
+        }
+
+        const paymentFlags = buildCollectPaymentFlags({
+            paymentType: bookingfind.paymentType,
+            paymentConfirmed: Boolean(bookingfind.paymentConfirmed),
+            amountDueNow: paymentSummary?.amountDueNow,
+            balancePaymentMethod: bookingfind.balancePaymentMethod,
+            billingPaymentStatus: paymentSummary?.billingPaymentStatus,
+        });
+
         return {
-            bookingfind
+            bookingfind,
+            paymentSummary,
+            ...paymentFlags,
         };
     }
 

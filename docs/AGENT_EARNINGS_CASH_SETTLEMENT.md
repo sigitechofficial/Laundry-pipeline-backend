@@ -55,33 +55,46 @@ Pickup (status → On the Way)
 
 Facility → Invoice created & finalized
   → billingDetails.agentEarning saved
+  → Collect balance payment (Stripe) BEFORE processing
+  → POST …/bookingInvoiceGeneratedStatusUpdated  (requires paid / no amountDueNow)
 
-Delivery — collect balance
-  → Option A: Card balance
-       PATCH /agent/booking/:id/balance-payment-method  { balancePaymentMethod: "card" }
-       POST  /agent/createIntentUsingStripeForAgent     { bookingId, ... }
-  → Option B: Cash balance
-       PATCH /agent/booking/:id/balance-payment-method  { balancePaymentMethod: "cash" }
-       POST  /agent/recordCashPayment                   { bookingId, amountCollected }
+Facility → wash → Out for delivery → Deliver
 
 Order fully paid
   → System credits agent wallet (commission)
+
+(Optional hybrid) Card + cash balance:
+  → PATCH balance-payment-method { "cash" }
+  → Proceed unpaid → deliver → POST /agent/recordCashPayment
 ```
 
-### 3.2 Cash booking
+### 3.2 Cash booking (COD — pay after delivery)
 
 ```
 Pickup (status → On the Way)
   → No Stripe charge
-  → paymentStatus stays pending until delivery
+  → paymentConfirmed stays false; paymentStatus pending
 
 Facility → Invoice created & finalized
   → billingDetails.agentEarning saved
+  → paymentStatus = Pending
+  → Flags: collectPaymentAfterDelivery=true, canProceedWithoutPayment=true
 
-Delivery — collect full amount in cash
+Proceed (skip payment sheet)
+  → POST …/bookingInvoiceGeneratedStatusUpdated
+  → Status → Processing (11)
+  → Does NOT set Paid / paymentConfirmed
+  → Wallet NOT credited yet
+
+Processing → Completed at facility → Out for delivery → Deliver
+  → Unpaid cash allowed (no payment gate)
+
+Delivery success
+  → App shows Collect payment sheet
   → POST /agent/recordCashPayment { bookingId, amountCollected }
 
 Order fully paid
+  → paymentConfirmed = true, paymentStatus = Paid
   → System records:
        cash_collected (debit)  = amount agent received from customer
        booking_commission (credit) = agent earning
@@ -90,15 +103,21 @@ Order fully paid
 
 ### 3.3 Agent checklist (per order)
 
-| Step | Card | Cash |
-|------|------|------|
+| Step | Card | Cash (COD) |
+|------|------|------------|
 | 1. Finalize invoice at facility | Required | Required |
-| 2. Set balance method (if card booking) | Before delivery charge | N/A (always cash at delivery) |
-| 3. Collect payment at delivery | Stripe **or** record cash | **Must** call `recordCashPayment` |
-| 4. Verify order shows **Paid** | Yes | Yes |
-| 5. Check wallet updated | Optional | Optional |
+| 2. Collect payment before process | **Required** (Stripe) | **Skip** — Proceed unpaid |
+| 3. Process → facility → OFD → Deliver | After payment | Allowed unpaid |
+| 4. Collect payment at / after delivery | Only if cash balance hybrid | **Must** `recordCashPayment` |
+| 5. Verify order shows **Paid** | Yes | Yes (after cash record) |
+| 6. Check wallet updated | Optional | After cash record |
+
+**App UI:**
+- **Cash:** Invoice → Proceed (skip payment sheet) → … → Deliver → Collect payment  
+- **Card:** Invoice → Collect payment / Stripe → then facility / delivery  
 
 **Important:** Cash orders **must** use `recordCashPayment`. Do not use Stripe APIs for cash bookings.
+Cash COD does **not** use the 1-hour invoice payment window (`invoicePaymentWindowApplies: false`).
 
 ---
 
@@ -196,6 +215,22 @@ Use when:
   "paymentType": "cash",
   "balancePaymentMethod": "cash",
   "amountCollected": 45.50,
+  "paymentConfirmed": true,
+  "collectPaymentAfterDelivery": false,
+  "canProceedWithoutPayment": true,
+  "canCollectPaymentNow": false,
+  "invoicePaymentWindowApplies": false,
+  "paymentSummary": { "...": "..." }
+}
+```
+
+**Already paid (idempotent):**
+```json
+{
+  "bookingId": 1234,
+  "alreadyPaid": true,
+  "amountCollected": 0,
+  "paymentConfirmed": true,
   "paymentSummary": { "...": "..." }
 }
 ```
@@ -205,6 +240,18 @@ Use when:
 - `"This is a cash booking. Use POST /agent/recordCashPayment instead of Stripe."` — wrong API used  
 - `"Amount mismatch. Balance due is X, received Y"` — wrong amount entered
 
+### 6.1b COD / payment UI flags (order & invoice responses)
+
+Returned on invoice finalize, proceed, deliver, invoice details, and order history:
+
+| Flag | Meaning |
+|------|---------|
+| `paymentType` | `"cash"` \| `"card"` |
+| `paymentConfirmed` | Fully paid |
+| `collectPaymentAfterDelivery` | Cash unpaid — collect after deliver |
+| `canProceedWithoutPayment` | Cash (or cash-balance) may skip payment sheet |
+| `canCollectPaymentNow` | Agent may call `recordCashPayment` |
+| `invoicePaymentWindowApplies` | `false` for cash COD; `true` for card |
 ---
 
 ### 6.2 Set balance collection method (card bookings only)

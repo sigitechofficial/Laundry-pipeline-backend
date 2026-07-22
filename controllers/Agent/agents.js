@@ -151,6 +151,7 @@ const { buildStripeChargePresentation } = require("../../utils/stripePaymentMeta
 const {
     resolveBalancePaymentMethod,
     normalizePaymentType,
+    buildCollectPaymentFlags,
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
@@ -1009,11 +1010,18 @@ exports.orderDetailsById = async (req, res) => {
     });
 
     if (bookingfind.bookingStatusId === 5) {
-        const oneHourLater = moment().add(1, "hours").format("HH:mm A"); // 24-hour format with AM/PM
+        const paymentType = normalizePaymentType(bookingfind.paymentType);
+        const payload = { bookingfind };
+        if (paymentType === "card") {
+            payload.oneHourLater = moment().add(1, "hours").format("HH:mm A");
+            payload.invoicePaymentWindowApplies = true;
+        } else {
+            payload.invoicePaymentWindowApplies = false;
+        }
         return ResponseHelper.success(
             res,
             `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
-            { bookingfind, oneHourLater }
+            payload
         );
     }
 
@@ -2252,11 +2260,19 @@ exports.recordCashPayment = async (req, res) => {
     const amountDue = paymentSummary.amountDueNow;
 
     if (bookingRow.billingDetail?.paymentStatus === "Paid" && amountDue <= 0) {
+        const paymentFlags = buildCollectPaymentFlags({
+            paymentType: bookingRow.paymentType || "cash",
+            paymentConfirmed: true,
+            amountDueNow: 0,
+            balancePaymentMethod: balanceMethod,
+            billingPaymentStatus: "Paid",
+        });
         return ResponseHelper.success(res, "Cash already recorded for this booking", {
             bookingId,
             paymentSummary,
             amountCollected: 0,
             alreadyPaid: true,
+            ...paymentFlags,
         });
     }
 
@@ -2338,12 +2354,21 @@ exports.recordCashPayment = async (req, res) => {
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
 
+    const paymentFlags = buildCollectPaymentFlags({
+        paymentType: bookingRow.paymentType || "cash",
+        paymentConfirmed: true,
+        amountDueNow: 0,
+        balancePaymentMethod: balanceMethod,
+        billingPaymentStatus: "Paid",
+    });
+
     return ResponseHelper.success(res, "Cash payment recorded successfully", {
         bookingId,
         paymentType: bookingRow.paymentType || "cash",
         balancePaymentMethod: balanceMethod,
         amountCollected: collectedAmount,
         paymentSummary: updatedPaymentSummary,
+        ...paymentFlags,
     });
 };
 
@@ -2351,6 +2376,8 @@ exports.recordCashPayment = async (req, res) => {
 
 /*
  *   Laundry Status Updated Invoice Generated and Status goes to In-Procesing
+ *   Cash COD: proceed unpaid (collect after delivery via recordCashPayment).
+ *   Card: require full payment first (unless balance method is cash).
  */
 exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     const { bookingId } = req.params;
@@ -2359,6 +2386,14 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         where: {
             id: bookingId,
         },
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus", "total"],
+            },
+        ],
     });
 
     if (!bookingCheck) {
@@ -2371,31 +2406,53 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         throw new ValidationError("Booking is still not In Transit to Facility");
     }
 
-    await booking.update(
-        {
-            bookingStatusId: 11,
-            paymentConfirmed: true,
-        },
-        { where: { id: bookingId } }
-    );
+    const paymentType = normalizePaymentType(bookingCheck.paymentType);
+    const isCashBooking = paymentType === "cash";
+    const balanceMethod = resolveBalancePaymentMethod(bookingCheck);
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = Number(paymentSummary?.amountDueNow ?? 0);
+    const billingPaid = bookingCheck.billingDetail?.paymentStatus === "Paid";
+    const isFullyPaid = billingPaid || amountDue <= 0.02;
 
-    await billingDetails.update(
-        {
-            paymentStatus: "Paid",
-        },
-        { where: { bookingId: bookingId } }
-    );
+    // Card with card balance: payment must be collected before processing
+    if (!isCashBooking && amountDue > 0.02 && balanceMethod !== "cash") {
+        throw new ValidationError(
+            "Payment required before processing. Collect card payment first, or set balance method to cash for pay-after-delivery."
+        );
+    }
 
-    await tryCreditAgentWallet(bookingId);
+    if (isFullyPaid) {
+        await booking.update(
+            {
+                bookingStatusId: 11,
+                paymentConfirmed: true,
+            },
+            { where: { id: bookingId } }
+        );
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
+        if (!billingPaid) {
+            await billingDetails.update(
+                { paymentStatus: "Paid" },
+                { where: { bookingId } }
+            );
+        }
 
-    const currentDate = new Date().toISOString().split("T")[0];
+        await tryCreditAgentWallet(bookingId);
+    } else {
+        // Cash COD (or card + cash balance): advance without marking Paid
+        await booking.update(
+            { bookingStatusId: 11 },
+            { where: { id: bookingId } }
+        );
 
+        if (!billingPaid) {
+            await billingDetails.update(
+                { paymentStatus: "Pending" },
+                { where: { bookingId } }
+            );
+        }
+    }
 
     const statusId = [10, 11];
     const bookinghistories = statusId.map(statusId => ({
@@ -2415,7 +2472,20 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
+    const paymentFlags = buildCollectPaymentFlags({
+        paymentType,
+        paymentConfirmed: isFullyPaid,
+        amountDueNow: isFullyPaid ? 0 : amountDue,
+        balancePaymentMethod: balanceMethod,
+        billingPaymentStatus: isFullyPaid ? "Paid" : "Pending",
+    });
+
+    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {
+        bookingId: Number(bookingId),
+        bookingStatusId: 11,
+        ...paymentFlags,
+        paymentSummary,
+    });
 }
 
 
@@ -2666,8 +2736,32 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
+    let paymentFlags = {};
+    let paymentSummary = null;
+    try {
+        paymentSummary =
+            await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+        paymentFlags = buildCollectPaymentFlags({
+            paymentType: bookingCheck.paymentType,
+            paymentConfirmed: Boolean(bookingCheck.paymentConfirmed),
+            amountDueNow: paymentSummary?.amountDueNow,
+            balancePaymentMethod: bookingCheck.balancePaymentMethod,
+            billingPaymentStatus:
+                paymentSummary?.billingPaymentStatus || "Pending",
+        });
+    } catch (err) {
+        console.error(
+            `[bookingDeliverToCustomer] payment flags failed for ${bookingId}:`,
+            err.message
+        );
+    }
 
-    return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {});
+    return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {
+        bookingId: Number(bookingId),
+        bookingStatusId: 17,
+        ...paymentFlags,
+        paymentSummary,
+    });
 }
 
 //!-----------------------------Booking Step-2 When Agent/Driver Added the Services------------------------//
@@ -2857,6 +2951,14 @@ exports.driverAddSerivces = async (req, res) => {
         console.error('⚠️ Failed to send invoice emails (non-blocking):', emailError.message);
     }
 
+    const paymentFlags = buildCollectPaymentFlags({
+        paymentType: bookings.paymentType,
+        paymentConfirmed: Boolean(bookings.paymentConfirmed),
+        amountDueNow: paymentSummary?.amountDueNow,
+        balancePaymentMethod: bookings.balancePaymentMethod,
+        billingPaymentStatus: "Pending",
+    });
+
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
         bookingId,
         invoiceStatus: "finalized",
@@ -2865,6 +2967,7 @@ exports.driverAddSerivces = async (req, res) => {
         subTotal,
         total: discountedTotal,
         orderAmount: discountedTotal,
+        ...paymentFlags,
     });
 }
 
@@ -3278,6 +3381,17 @@ exports.invoiceCreation = async (req, res) => {
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
 
+    const paymentFlags = buildCollectPaymentFlags({
+        paymentType: bookingData.paymentType,
+        paymentConfirmed: Boolean(bookingData.paymentConfirmed),
+        amountDueNow: paymentSummary?.amountDueNow,
+        balancePaymentMethod: bookingData.balancePaymentMethod,
+        billingPaymentStatus:
+            bookingData.billingDetail?.paymentStatus ||
+            paymentSummary?.billingPaymentStatus ||
+            "Pending",
+    });
+
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         servicesSubtotal,
@@ -3285,6 +3399,7 @@ exports.invoiceCreation = async (req, res) => {
         paymentSummary,
         remainingTime,
         customerHasResponded,
+        ...paymentFlags,
     });
 }
 
