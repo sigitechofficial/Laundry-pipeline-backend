@@ -77,6 +77,7 @@ const couponService = require('./couponService');
 const cancelBookingService = require('./cancelBookingService');
 const noShowEnforcementService = require('../Agent/noShowEnforcementService');
 const { resolveNoShowPolicyForBooking } = require('../../utils/safeNoShowPolicyQuery');
+const { buildOrderTrackTimeline } = require('../../utils/orderTrackTimeline');
 
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
@@ -2231,11 +2232,17 @@ class CustomerOrderService {
                 },
                 {
                     model: bookingHistory,
-                    attributes: ["date", "time"],
+                    attributes: ["id", "date", "time", "createdAt"],
+                    separate: true,
+                    order: [
+                        ["date", "DESC"],
+                        ["time", "DESC"],
+                        ["id", "DESC"],
+                    ],
                     include: [
                         {
                             model: bookingStatus,
-                            attributes: ["id","title", "description"],
+                            attributes: ["id", "title", "description"],
                         },
                     ],
                 },
@@ -2462,6 +2469,8 @@ class CustomerOrderService {
         const pickupProofNote = extractProofNote(proofOfDeliveriesList, "pickUp");
         const deliveryProofNote = extractProofNote(proofOfDeliveriesList, "dropOff");
 
+        const track = buildOrderTrackTimeline(bookingPlain);
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
@@ -2474,6 +2483,9 @@ class CustomerOrderService {
             orderStatusContext,
             pickupProofNote,
             deliveryProofNote,
+            trackTimeline: track.timeline,
+            trackCurrentStatus: track.currentStatus,
+            actionRequired: track.actionRequired,
         };
 
         if (hasInvoiceTotals) {
@@ -2496,6 +2508,38 @@ class CustomerOrderService {
         return {
             message: "Customer Order Details Fetched",
             data: resultData
+        };
+    }
+
+    /**
+     * Dedicated customer track-order payload (detailed timeline).
+     */
+    async trackOrder(data) {
+        const detail = await this.bookingDetailsById(data);
+        const bookingData = detail?.data || {};
+
+        return {
+            message: "Order track timeline fetched",
+            data: {
+                id: bookingData.id,
+                orderTrackId: bookingData.orderTrackId,
+                bookingStatusId: bookingData.bookingStatusId,
+                bookingStatus: bookingData.bookingStatus,
+                collectionDate: bookingData.collectionDate,
+                collectionTimeFrom: bookingData.collectionTimeFrom,
+                collectionTimeTo: bookingData.collectionTimeTo,
+                deliveryDate: bookingData.deliveryDate,
+                deliveryTimeFrom: bookingData.deliveryTimeFrom,
+                deliveryTimeTo: bookingData.deliveryTimeTo,
+                pickupAddress: bookingData.pickupAddress,
+                dropOffAddress: bookingData.dropOffAddress,
+                pickupAttemptCount: bookingData.pickupAttemptCount,
+                pickupRescheduleRequired: bookingData.pickupRescheduleRequired,
+                deliveryAttemptCount: bookingData.deliveryAttemptCount,
+                currentStatus: bookingData.trackCurrentStatus,
+                actionRequired: bookingData.actionRequired,
+                timeline: bookingData.trackTimeline || [],
+            },
         };
     }
 

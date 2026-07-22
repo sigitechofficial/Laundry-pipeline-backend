@@ -73,6 +73,8 @@ router.post('/createBooking',validateAccessToken,asyncMiddleware(customerOtherCo
 router.get('/allBookings',validateAccessToken,asyncMiddleware(customerOtherController.allBookings))
 //Customer Specific Booking
 router.get('/bookingDetailsById',validateAccessToken,asyncMiddleware(customerOtherController.bookingDetailsById))
+//Customer detailed track order timeline
+router.get('/trackOrder',validateAccessToken,asyncMiddleware(customerOtherController.trackOrder))
 //Custome Response Update and Evemt Sent To Agent
 router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(customerOtherController.customerResponseUpdate))
 

@@ -225,6 +225,25 @@ async function bookingDetailsById(req, res) {
 }
 
 /*
+ * Customer detailed track-order timeline
+ */
+async function trackOrder(req, res) {
+    const { bookingId, orderTrackId, timeZone } = req.query;
+
+    if (!bookingId && !orderTrackId) {
+        throw new ValidationError("bookingId or orderTrackId is required");
+    }
+
+    const result = await customerOrderService.trackOrder({
+        bookingId,
+        orderTrackId,
+        timeZone,
+    });
+
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
+/*
  * Services For the Customer
  */
 async function allServices(req, res) {
@@ -1220,6 +1239,7 @@ module.exports = {
     onHoldCustomerShow,
     allBookings,
     bookingDetailsById,
+    trackOrder,
     customerResponseUpdate,
     getPrefrencesValues,
     //---------Services----------//
