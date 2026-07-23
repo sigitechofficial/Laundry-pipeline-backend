@@ -176,6 +176,25 @@ function buildHistoryEvents(histories = []) {
         .filter((event) => event.title);
 }
 
+function stampFromDate(dateObj, fallback) {
+    if (dateObj && !Number.isNaN(dateObj.getTime())) {
+        return {
+            date: dateObj.toISOString().slice(0, 10),
+            time: dateObj.toISOString().slice(11, 19),
+            occurredAt: dateObj.toISOString(),
+            sortTs: dateObj.getTime(),
+        };
+    }
+    const date = normalizeDatePart(fallback);
+    const time = "00:00:00";
+    return {
+        date,
+        time,
+        occurredAt: date ? `${date}T${time}` : null,
+        sortTs: toSortableTs(date, time, fallback),
+    };
+}
+
 function buildAttemptEvents(attempts = []) {
     const events = [];
 
@@ -186,12 +205,10 @@ function buildAttemptEvents(attempts = []) {
 
         if (status === "failed") {
             const failedAt = attempt?.failedAt ? new Date(attempt.failedAt) : null;
-            const date = failedAt
-                ? failedAt.toISOString().slice(0, 10)
-                : normalizeDatePart(attempt?.updatedAt || attempt?.createdAt);
-            const time = failedAt
-                ? failedAt.toISOString().slice(11, 19)
-                : "00:00:00";
+            const stamp = stampFromDate(
+                failedAt,
+                attempt?.updatedAt || attempt?.createdAt
+            );
             const reason = attempt?.failureReason
                 ? String(attempt.failureReason).trim()
                 : null;
@@ -222,10 +239,7 @@ function buildAttemptEvents(attempts = []) {
                         ? parseFloat(attempt.feeAmount)
                         : null,
                 feeCurrency: attempt?.feeCurrency || null,
-                date,
-                time,
-                occurredAt: date ? `${date}T${time}` : null,
-                sortTs: toSortableTs(date, time, attempt?.failedAt || attempt?.createdAt),
+                ...stamp,
                 isException: true,
             });
             continue;
@@ -235,12 +249,7 @@ function buildAttemptEvents(attempts = []) {
             const arrivedAt = attempt?.arrivedAt
                 ? new Date(attempt.arrivedAt)
                 : null;
-            const date = arrivedAt
-                ? arrivedAt.toISOString().slice(0, 10)
-                : normalizeDatePart(attempt?.createdAt);
-            const time = arrivedAt
-                ? arrivedAt.toISOString().slice(11, 19)
-                : "00:00:00";
+            const stamp = stampFromDate(arrivedAt, attempt?.createdAt);
             events.push({
                 id: `attempt-arrived-${attempt.id}`,
                 source: "attempt",
@@ -262,14 +271,7 @@ function buildAttemptEvents(attempts = []) {
                 failureReason: null,
                 feeAmount: null,
                 feeCurrency: null,
-                date,
-                time,
-                occurredAt: date ? `${date}T${time}` : null,
-                sortTs: toSortableTs(
-                    date,
-                    time,
-                    attempt?.arrivedAt || attempt?.createdAt
-                ),
+                ...stamp,
                 isException: false,
             });
             continue;
@@ -281,12 +283,7 @@ function buildAttemptEvents(attempts = []) {
                 : attempt?.updatedAt
                   ? new Date(attempt.updatedAt)
                   : null;
-            const date = completedAt
-                ? completedAt.toISOString().slice(0, 10)
-                : normalizeDatePart(attempt?.createdAt);
-            const time = completedAt
-                ? completedAt.toISOString().slice(11, 19)
-                : "00:00:00";
+            const stamp = stampFromDate(completedAt, attempt?.createdAt);
             const method = attempt?.unattendedMethod
                 ? String(attempt.unattendedMethod).replace(/_/g, " ")
                 : null;
@@ -310,20 +307,143 @@ function buildAttemptEvents(attempts = []) {
                 failureReason: null,
                 feeAmount: null,
                 feeCurrency: null,
-                date,
-                time,
-                occurredAt: date ? `${date}T${time}` : null,
-                sortTs: toSortableTs(
-                    date,
-                    time,
-                    attempt?.completedAt || attempt?.createdAt
-                ),
+                ...stamp,
                 isException: false,
             });
         }
     }
 
     return events;
+}
+
+/** Statuses that repeat on every failed delivery retry loop. */
+const DELIVERY_LOOP_STATUS_IDS = new Set([13, 14]);
+/** Agent batch-creates these twins together — keep the later customer-facing one. */
+const BATCH_TWIN_DROP = new Map([
+    [6, 7], // Collecting → In Transit
+    [10, 11], // Invoice Generated → Processing
+    [16, 17], // Delivered → Completed
+]);
+const FIVE_MIN_MS = 5 * 60 * 1000;
+
+function compareEventsAsc(a, b) {
+    if (a.sortTs !== b.sortTs) return a.sortTs - b.sortTs;
+    return String(a.id).localeCompare(String(b.id));
+}
+
+/**
+ * Collapse noisy bookingHistory + attempt rows into a customer-friendly story:
+ * - one row per normal status (latest)
+ * - unique failed attempts (by type + attemptNumber)
+ * - hide superseded pickup/delivery loop rows after return-to-awaiting / ready
+ * - drop batch twin + duplicate arrived events
+ */
+function collapseTrackTimelineEvents(events = []) {
+    if (!Array.isArray(events) || events.length === 0) return [];
+
+    let list = [...events].sort(compareEventsAsc);
+
+    // 1) Failed attempts: keep latest per attemptType + attemptNumber
+    const seenFailKeys = new Set();
+    const failsNewestFirst = [...list]
+        .filter((e) => e.kind === "pickup_failed" || e.kind === "delivery_failed")
+        .sort((a, b) => compareEventsAsc(b, a));
+    const keepFailIds = new Set();
+    for (const fail of failsNewestFirst) {
+        const key = `${fail.attemptType || "unknown"}:${fail.attemptNumber ?? "x"}`;
+        if (seenFailKeys.has(key)) continue;
+        seenFailKeys.add(key);
+        keepFailIds.add(fail.id);
+    }
+    list = list.filter((e) => {
+        if (e.kind === "pickup_failed" || e.kind === "delivery_failed") {
+            return keepFailIds.has(e.id);
+        }
+        return true;
+    });
+
+    // 2) Drop attempt-arrived when history already has reached status nearby
+    list = list.filter((event) => {
+        if (event.kind !== "pickup_arrived" && event.kind !== "delivery_arrived") {
+            return true;
+        }
+        const matchStatusId = event.kind === "delivery_arrived" ? 14 : 5;
+        return !list.some(
+            (other) =>
+                other.source === "history" &&
+                other.statusId === matchStatusId &&
+                Math.abs(other.sortTs - event.sortTs) <= FIVE_MIN_MS
+        );
+    });
+
+    // 3) Drop batch twin (e.g. status 10 when 11 follows within 5 min)
+    list = list.filter((event, index) => {
+        if (event.source !== "history" || event.statusId == null) return true;
+        const twin = BATCH_TWIN_DROP.get(event.statusId);
+        if (twin == null) return true;
+        return !list.slice(index + 1).some(
+            (other) =>
+                other.source === "history" &&
+                other.statusId === twin &&
+                other.sortTs - event.sortTs >= 0 &&
+                other.sortTs - event.sortTs <= FIVE_MIN_MS
+        );
+    });
+
+    // 4) Latest history row per statusId (exceptions keep latest too — attempts carry fail detail)
+    const latestByStatus = new Map();
+    for (const event of list) {
+        if (event.source !== "history" || event.statusId == null) continue;
+        latestByStatus.set(event.statusId, event);
+    }
+    list = list.filter((event) => {
+        if (event.source !== "history" || event.statusId == null) return true;
+        return latestByStatus.get(event.statusId)?.id === event.id;
+    });
+
+    // 5) Hide pickup loop rows superseded by a later "Awaiting Collection"
+    const latestAwaitingTs = latestByStatus.get(3)?.sortTs;
+    if (latestAwaitingTs != null) {
+        list = list.filter((event) => {
+            if (event.source !== "history") return true;
+            if (![4, 5, 6].includes(event.statusId)) return true;
+            return event.sortTs >= latestAwaitingTs;
+        });
+    }
+
+    // 6) Hide delivery loop rows superseded by later ready / failed / completed
+    const deliveryResetTs = Math.max(
+        latestByStatus.get(12)?.sortTs || 0,
+        latestByStatus.get(15)?.sortTs || 0,
+        latestByStatus.get(16)?.sortTs || 0,
+        latestByStatus.get(17)?.sortTs || 0
+    );
+    if (deliveryResetTs > 0) {
+        list = list.filter((event) => {
+            if (event.source !== "history") return true;
+            if (!DELIVERY_LOOP_STATUS_IDS.has(event.statusId)) return true;
+            return event.sortTs >= deliveryResetTs;
+        });
+    }
+
+    // 7) Consecutive same history status (safety net)
+    const collapsed = [];
+    for (const event of list) {
+        const prev = collapsed[collapsed.length - 1];
+        if (
+            prev &&
+            prev.source === "history" &&
+            event.source === "history" &&
+            prev.statusId != null &&
+            prev.statusId === event.statusId
+        ) {
+            collapsed[collapsed.length - 1] = event;
+            continue;
+        }
+        collapsed.push(event);
+    }
+
+    return collapsed;
 }
 
 function buildActionRequired(bookingPlain) {
@@ -361,7 +481,11 @@ function buildOrderTrackTimeline(bookingPlain) {
         ? bookingPlain.attempts
         : [];
 
-    const timeline = [...buildHistoryEvents(histories), ...buildAttemptEvents(attempts)]
+    const rawTimeline = [
+        ...buildHistoryEvents(histories),
+        ...buildAttemptEvents(attempts),
+    ];
+    const timeline = collapseTrackTimelineEvents(rawTimeline)
         .sort((a, b) => {
             if (b.sortTs !== a.sortTs) return b.sortTs - a.sortTs;
             return String(b.id).localeCompare(String(a.id));
@@ -392,4 +516,5 @@ module.exports = {
     buildOrderTrackTimeline,
     buildActionRequired,
     getStatusCopy,
+    collapseTrackTimelineEvents,
 };

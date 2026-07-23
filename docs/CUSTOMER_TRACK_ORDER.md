@@ -87,6 +87,17 @@ Extra fields:
    - CTA button → existing reschedule flow
 5. Keep historical failed attempts in timeline after reschedule; only hide Action Required when resolved.
 
+### Timeline collapsing (server-side)
+
+`trackTimeline` is already cleaned for customer UX:
+
+- Latest row only per normal status (no repeated Awaiting / Out for Pickup loops)
+- Failed attempts kept once per `attemptType` + `attemptNumber`
+- Superseded pickup loop rows (Out for Pickup / Driver Reached) hidden after a later Awaiting Collection
+- Batch twin noise dropped (Invoice+Processing, Delivered+Completed, etc.)
+
+App should render the list as returned — do not re-expand raw `bookingHistory`.
+
 ## Action required
 
 ```json
