@@ -16,7 +16,7 @@ Authorization: Bearer <agent_token>
 Content-Type: application/json
 ```
 
-### Body — SMS (fixed notify template)
+### Body — Notify (push then SMS)
 
 ```json
 {
@@ -25,10 +25,19 @@ Content-Type: application/json
 }
 ```
 
-No `customMessage`. Backend sends a fixed template:
+Same body for notify. Backend picks channel by attempt count **per booking + leg**:
+
+| Attempt # | What happens |
+|-----------|----------------|
+| **1st–3rd** | Firebase push to customer app |
+| **4th+** | Twilio SMS to customer phone |
+
+Fixed message template (push body + SMS body):
 
 - pickup: `Hi {name}, your driver has arrived for laundry pickup. Order {orderTrackId}. — Just Dry Cleans`
 - delivery: `Hi {name}, your driver has arrived to deliver your laundry. Order {orderTrackId}. — Just Dry Cleans`
+
+If the customer has no FCM device token on attempts 1–3, the attempt is still **counted**; SMS unlocks on the 4th notify.
 
 ### Body — Call (click-to-call)
 
@@ -74,21 +83,39 @@ No `customMessage`. Backend sends a fixed template:
 | `pickup` | **5** (Driver Reached Pickup) or **6** |
 | `delivery` | **13** (Out for Delivery) or **14** (Driver Reached) |
 
-### Success — SMS
+### Success — Notify (push, attempts 1–3)
 
 ```json
 {
   "status": "1",
-  "message": "SMS sent to customer",
+  "message": "Push notification sent (attempt 1 of 3).",
+  "data": {
+    "bookingId": 123,
+    "leg": "pickup",
+    "channel": "push",
+    "attemptNumber": 1,
+    "remainingPushAttempts": 2,
+    "nextChannel": "push",
+    "pushSent": true,
+    "bodyPreview": "Hi John, your driver has arrived for laundry pickup..."
+  }
+}
+```
+
+### Success — Notify (SMS, attempt 4+)
+
+```json
+{
+  "status": "1",
+  "message": "SMS sent (notify attempt 4).",
   "data": {
     "bookingId": 123,
     "leg": "pickup",
     "channel": "sms",
+    "attemptNumber": 4,
     "to": "+4477****1133",
     "from": "+447450310609",
     "messageSid": "SMxxx",
-    "callSid": null,
-    "twilioStatus": "queued",
     "bodyPreview": "Hi John, your driver has arrived for laundry pickup..."
   }
 }
@@ -118,10 +145,11 @@ No `customMessage`. Backend sends a fixed template:
 
 ### App UI
 
-- **Notify SMS** → `{ "leg": "...", "channel": "sms" }` (no text field / no customMessage)
+- **Notify customer** → `{ "leg": "...", "channel": "sms" }` (one button; backend chooses push vs SMS)
+- Response includes `channel` (`push`|`sms`), `attemptNumber`, `remainingPushAttempts`, `nextChannel`
 - **Call customer** → `{ "leg": "...", "channel": "call" }`
-- Rate limit: 1 SMS **and** 1 call per booking+leg every **2 minutes** (separate)
-- Cost note: call ≈ 2 legs (Twilio→agent + Twilio→customer)
+- Rate limit: notify (push/sms shared) and call each **2 minutes** per booking+leg
+- Cost note: SMS only from 4th notify; call ≈ 2 Twilio legs
 
 ### Env
 
@@ -153,9 +181,12 @@ SMS and calls are saved in `booking_notifications` and linked to the open `booki
 {
   "contacted": {
     "smsSent": true,
-    "smsSentAt": "2026-07-24T10:15:00.000Z",
     "smsCount": 1,
-    "callMade": true,
+    "pushSent": true,
+    "pushCount": 3,
+    "notifyAttemptCount": 4,
+    "nextNotifyChannel": "sms",
+    "callMade": false,
     "callMadeAt": "2026-07-24T10:16:00.000Z",
     "callCount": 1,
     "hasContactedCustomer": true,

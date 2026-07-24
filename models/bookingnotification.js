@@ -34,7 +34,7 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
             },
             channel: {
-                type: DataTypes.ENUM('sms', 'call'),
+                type: DataTypes.ENUM('sms', 'call', 'push'),
                 allowNull: false,
                 defaultValue: 'sms',
             },

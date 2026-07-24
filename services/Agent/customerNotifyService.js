@@ -2,13 +2,8 @@
  * Agent → customer SMS / click-to-call (Twilio) when reached for pickup / delivery.
  */
 
-const {
-    booking,
-    users,
-    addressDb,
-    bookingAttempt,
-    bookingNotification,
-} = require("../../models");
+const { booking, users, addressDb, bookingAttempt, bookingNotification } = require("../../models");
+const { Op } = require("sequelize");
 const {
     ValidationError,
     NotFoundError,
@@ -22,8 +17,11 @@ const {
 const twilioSmsService = require("../twilioSmsService");
 const twilioCallService = require("../twilioCallService");
 const { maskPhoneNumber } = require("../../utils/maskPhone");
+const { sendNotification } = require("../../utils/notification");
 
 const RATE_LIMIT_MS = 2 * 60 * 1000;
+/** Push notifies before SMS is used for the same booking+leg */
+const PUSH_ATTEMPTS_BEFORE_SMS = 3;
 /** @type {Map<string, number>} */
 const recentNotifyByKey = new Map();
 
@@ -32,6 +30,11 @@ const TEMPLATES = {
         "Hi {name}, your driver has arrived for laundry pickup. Order {orderTrackId}. — Just Dry Cleans",
     arrived_delivery:
         "Hi {name}, your driver has arrived to deliver your laundry. Order {orderTrackId}. — Just Dry Cleans",
+};
+
+const PUSH_TITLES = {
+    pickup: "Driver arrived for pickup",
+    delivery: "Driver arrived for delivery",
 };
 
 const PICKUP_STATUS_IDS = new Set([5, 6]);
@@ -297,7 +300,7 @@ async function notifyCustomer({
     }
 
     if (normalizedChannel === "sms") {
-        return sendSmsNotify({
+        return sendNotifyLadder({
             bookingRow,
             agentUserId,
             leg,
@@ -313,21 +316,170 @@ async function notifyCustomer({
     });
 }
 
-async function sendSmsNotify({
+function buildNotifyBody(bookingRow, leg) {
+    const template = TEMPLATES[defaultTemplateKey(leg)];
+    const firstName = bookingRow.customer?.firstName || "there";
+    return fillTemplate(template, {
+        name: firstName,
+        orderTrackId: bookingRow.orderTrackId || bookingRow.id,
+    });
+}
+
+/**
+ * Count prior notify taps (push + sms) for this booking+leg.
+ * Call channel is excluded.
+ */
+async function countNotifyAttempts(bookingId, leg) {
+    return bookingNotification.count({
+        where: {
+            bookingId,
+            leg,
+            channel: { [Op.in]: ["push", "sms"] },
+        },
+    });
+}
+
+/**
+ * Attempts 1–3 → Firebase push; attempt 4+ → Twilio SMS.
+ */
+async function sendNotifyLadder({
     bookingRow,
     agentUserId,
     leg,
     customerPhone,
 }) {
-    const template = TEMPLATES[defaultTemplateKey(leg)];
-    const firstName = bookingRow.customer?.firstName || "there";
-    const body = fillTemplate(template, {
-        name: firstName,
-        orderTrackId: bookingRow.orderTrackId || bookingRow.id,
+    const priorCount = await countNotifyAttempts(bookingRow.id, leg);
+    const attemptNumber = priorCount + 1;
+    const body = buildNotifyBody(bookingRow, leg);
+
+    // Shared rate limit for notify button (push or sms)
+    assertRateLimit(bookingRow.id, leg, "notify");
+
+    if (priorCount < PUSH_ATTEMPTS_BEFORE_SMS) {
+        return sendPushNotify({
+            bookingRow,
+            agentUserId,
+            leg,
+            customerPhone,
+            body,
+            attemptNumber,
+        });
+    }
+
+    return sendSmsNotify({
+        bookingRow,
+        agentUserId,
+        leg,
+        customerPhone,
+        body,
+        attemptNumber,
+    });
+}
+
+async function sendPushNotify({
+    bookingRow,
+    agentUserId,
+    leg,
+    customerPhone,
+    body,
+    attemptNumber,
+}) {
+    const customerId = bookingRow.customerId;
+    const title = PUSH_TITLES[leg] || "Driver update";
+    let pushResult = { sent: false, reason: "UNKNOWN", successCount: 0 };
+
+    try {
+        pushResult =
+            (await sendNotification(
+                customerId,
+                title,
+                body,
+                {
+                    bookingId: String(bookingRow.id),
+                    orderTrackId: String(
+                        bookingRow.orderTrackId || bookingRow.id
+                    ),
+                    leg,
+                    type: "agent_customer_notify",
+                    channel: "push",
+                    attemptNumber: String(attemptNumber),
+                },
+                { throwOnFailure: false }
+            )) || pushResult;
+    } catch (err) {
+        clearRateLimit(bookingRow.id, leg, "notify");
+        throw new UniversalHttpError(
+            err?.message || "Failed to send push notification. Please try again.",
+            502
+        );
+    }
+
+    const openAttempt = await loadOpenAttempt(bookingRow.id, leg);
+    const sentAt = new Date();
+    const bodyPreview =
+        body.length > 80 ? `${body.slice(0, 77)}...` : body;
+    const toMasked = maskPhone(customerPhone);
+
+    const pushStatus = pushResult.sent
+        ? "sent"
+        : pushResult.reason === "NO_TOKENS"
+          ? "no_tokens"
+          : "failed";
+
+    const notificationId = await logNotification({
+        bookingId: bookingRow.id,
+        attemptId: openAttempt?.id || null,
+        leg,
+        channel: "push",
+        agentUserId,
+        twilioSid: null,
+        twilioStatus: pushStatus,
+        bodyPreview,
+        toMasked,
+        fromNumber: "firebase",
+        sentAt,
     });
 
-    assertRateLimit(bookingRow.id, leg, "sms");
+    return {
+        bookingId: bookingRow.id,
+        orderTrackId: bookingRow.orderTrackId,
+        leg,
+        channel: "push",
+        attemptNumber,
+        attemptsBeforeSms: PUSH_ATTEMPTS_BEFORE_SMS,
+        remainingPushAttempts: Math.max(
+            0,
+            PUSH_ATTEMPTS_BEFORE_SMS - attemptNumber
+        ),
+        nextChannel:
+            attemptNumber >= PUSH_ATTEMPTS_BEFORE_SMS ? "sms" : "push",
+        to: toMasked,
+        from: "firebase",
+        messageSid: null,
+        callSid: null,
+        twilioStatus: pushStatus,
+        pushSent: Boolean(pushResult.sent),
+        pushReason: pushResult.reason || null,
+        bodyPreview,
+        attemptId: openAttempt?.id || null,
+        notificationId,
+        sentAt: sentAt.toISOString(),
+        message: pushResult.sent
+            ? `Push notification sent (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`
+            : pushResult.reason === "NO_TOKENS"
+              ? `No customer app device token. Attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS} counted; SMS unlocks on attempt ${PUSH_ATTEMPTS_BEFORE_SMS + 1}.`
+              : `Push may have failed (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`,
+    };
+}
 
+async function sendSmsNotify({
+    bookingRow,
+    agentUserId,
+    leg,
+    customerPhone,
+    body,
+    attemptNumber,
+}) {
     let twilioResult;
     try {
         twilioResult = await twilioSmsService.sendSms({
@@ -335,7 +487,7 @@ async function sendSmsNotify({
             body,
         });
     } catch (err) {
-        clearRateLimit(bookingRow.id, leg, "sms");
+        clearRateLimit(bookingRow.id, leg, "notify");
         throw new UniversalHttpError(
             err?.message || "Failed to send SMS via Twilio. Please try again.",
             502
@@ -367,6 +519,10 @@ async function sendSmsNotify({
         orderTrackId: bookingRow.orderTrackId,
         leg,
         channel: "sms",
+        attemptNumber,
+        attemptsBeforeSms: PUSH_ATTEMPTS_BEFORE_SMS,
+        remainingPushAttempts: 0,
+        nextChannel: "sms",
         to: toMasked,
         from: twilioResult.from,
         messageSid: twilioResult.sid,
@@ -376,6 +532,7 @@ async function sendSmsNotify({
         attemptId: openAttempt?.id || null,
         notificationId,
         sentAt: sentAt.toISOString(),
+        message: `SMS sent (notify attempt ${attemptNumber}).`,
     };
 }
 
@@ -512,16 +669,22 @@ async function getContactSummary({ bookingId, leg, attemptId = null }) {
 
     const smsRows = relevant.filter((r) => r.channel === "sms");
     const callRows = relevant.filter((r) => r.channel === "call");
+    const pushRows = relevant.filter((r) => r.channel === "push");
     const latestSms = smsRows[0] || null;
     const latestCall = callRows[0] || null;
+    const latestPush = pushRows[0] || null;
     const smsSent = smsRows.length > 0;
     const callMade = callRows.length > 0;
+    const pushSent = pushRows.length > 0;
+    const notifyAttemptCount = smsRows.length + pushRows.length;
 
     let latest = null;
-    if (latestSms || latestCall) {
-        const smsTs = latestSms ? new Date(latestSms.sentAt).getTime() : 0;
-        const callTs = latestCall ? new Date(latestCall.sentAt).getTime() : 0;
-        const pick = smsTs >= callTs ? latestSms : latestCall;
+    const candidates = [latestSms, latestCall, latestPush].filter(Boolean);
+    if (candidates.length) {
+        candidates.sort(
+            (a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime()
+        );
+        const pick = candidates[0];
         latest = {
             channel: pick.channel,
             sentAt: new Date(pick.sentAt).toISOString(),
@@ -534,12 +697,21 @@ async function getContactSummary({ bookingId, leg, attemptId = null }) {
         smsSent,
         smsSentAt: latestSms ? new Date(latestSms.sentAt).toISOString() : null,
         smsCount: smsRows.length,
+        pushSent,
+        pushSentAt: latestPush
+            ? new Date(latestPush.sentAt).toISOString()
+            : null,
+        pushCount: pushRows.length,
+        notifyAttemptCount,
+        attemptsBeforeSms: PUSH_ATTEMPTS_BEFORE_SMS,
+        nextNotifyChannel:
+            notifyAttemptCount < PUSH_ATTEMPTS_BEFORE_SMS ? "push" : "sms",
         callMade,
         callMadeAt: latestCall
             ? new Date(latestCall.sentAt).toISOString()
             : null,
         callCount: callRows.length,
-        hasContactedCustomer: smsSent || callMade,
+        hasContactedCustomer: smsSent || callMade || pushSent,
         latest,
     };
 }
