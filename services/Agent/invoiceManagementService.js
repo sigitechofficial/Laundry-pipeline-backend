@@ -526,6 +526,7 @@ class AgentInvoiceManagementService {
                 balancePaymentMethod: bookingRow.balancePaymentMethod,
                 balanceCollectedVia: bookingRow.balanceCollectedVia,
                 billingPaymentStatus: existingBilling?.paymentStatus,
+                paymentConfirmed: Boolean(bookingRow.paymentConfirmed),
             }
         );
 
@@ -572,6 +573,7 @@ class AgentInvoiceManagementService {
             attributes: [
                 "id",
                 "paymentType",
+                "paymentConfirmed",
                 "balancePaymentMethod",
                 "balanceCollectedVia",
             ],

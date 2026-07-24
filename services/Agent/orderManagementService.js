@@ -227,10 +227,12 @@ class AgentOrderManagementService {
             paymentConfirmed: Boolean(orderPlain.paymentConfirmed),
             amountDueNow: paymentSummary?.amountDueNow,
             balancePaymentMethod: orderPlain.balancePaymentMethod,
+            balanceCollectedVia: orderPlain.balanceCollectedVia,
             billingPaymentStatus:
                 orderPlain.billingDetail?.paymentStatus ||
                 paymentSummary?.billingPaymentStatus ||
                 "Pending",
+            bookingStatusId: orderPlain.bookingStatusId,
         });
         Object.assign(enriched, paymentFlags);
 

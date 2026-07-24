@@ -2259,13 +2259,20 @@ exports.recordCashPayment = async (req, res) => {
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
     const amountDue = paymentSummary.amountDueNow;
 
-    if (bookingRow.billingDetail?.paymentStatus === "Paid" && amountDue <= 0) {
+    // Cash COD: only "already paid" after paymentConfirmed (ignore premature billing Paid)
+    const alreadySettled = isCashBooking
+        ? Boolean(bookingRow.paymentConfirmed) && amountDue <= 0
+        : bookingRow.billingDetail?.paymentStatus === "Paid" && amountDue <= 0;
+
+    if (alreadySettled) {
         const paymentFlags = buildCollectPaymentFlags({
             paymentType: bookingRow.paymentType || "cash",
             paymentConfirmed: true,
             amountDueNow: 0,
             balancePaymentMethod: balanceMethod,
+            balanceCollectedVia: bookingRow.balanceCollectedVia || "cash",
             billingPaymentStatus: "Paid",
+            bookingStatusId: bookingRow.bookingStatusId,
         });
         return ResponseHelper.success(res, "Cash already recorded for this booking", {
             bookingId,
@@ -2477,14 +2484,20 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         paymentConfirmed: isFullyPaid,
         amountDueNow: isFullyPaid ? 0 : amountDue,
         balancePaymentMethod: balanceMethod,
+        balanceCollectedVia: bookingCheck.balanceCollectedVia,
         billingPaymentStatus: isFullyPaid ? "Paid" : "Pending",
+        bookingStatusId: 11,
     });
 
     return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {
         bookingId: Number(bookingId),
         bookingStatusId: 11,
         ...paymentFlags,
-        paymentSummary,
+        paymentSummary: {
+            ...paymentSummary,
+            ...paymentFlags,
+            paymentType: paymentFlags.paymentType,
+        },
     });
 }
 
@@ -2675,7 +2688,41 @@ exports.driverReachedForDelivery = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    return ResponseHelper.success(res, "Driver reached for delivery", {});
+    let paymentFlags = {};
+    let paymentSummary = null;
+    try {
+        paymentSummary =
+            await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+        paymentFlags = buildCollectPaymentFlags({
+            paymentType: bookingCheck.paymentType,
+            paymentConfirmed: Boolean(bookingCheck.paymentConfirmed),
+            amountDueNow: paymentSummary?.amountDueNow,
+            balancePaymentMethod: bookingCheck.balancePaymentMethod,
+            balanceCollectedVia: bookingCheck.balanceCollectedVia,
+            billingPaymentStatus:
+                paymentSummary?.billingPaymentStatus || "Pending",
+            bookingStatusId: 14,
+        });
+    } catch (err) {
+        console.error(
+            `[driverReachedForDelivery] payment flags failed for ${bookingId}:`,
+            err.message
+        );
+    }
+
+    return ResponseHelper.success(res, "Driver reached for delivery", {
+        bookingId: Number(bookingId),
+        bookingStatusId: 14,
+        amountDueNow: paymentSummary?.amountDueNow ?? paymentFlags.amountDueNow,
+        ...paymentFlags,
+        paymentSummary: paymentSummary
+            ? {
+                  ...paymentSummary,
+                  ...paymentFlags,
+                  paymentType: paymentFlags.paymentType || paymentSummary.paymentType,
+              }
+            : paymentSummary,
+    });
 }
 
 /*
@@ -2746,8 +2793,10 @@ exports.bookingDeliverToCustomer = async (req, res) => {
             paymentConfirmed: Boolean(bookingCheck.paymentConfirmed),
             amountDueNow: paymentSummary?.amountDueNow,
             balancePaymentMethod: bookingCheck.balancePaymentMethod,
+            balanceCollectedVia: bookingCheck.balanceCollectedVia,
             billingPaymentStatus:
                 paymentSummary?.billingPaymentStatus || "Pending",
+            bookingStatusId: 17,
         });
     } catch (err) {
         console.error(
@@ -2760,7 +2809,13 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         bookingId: Number(bookingId),
         bookingStatusId: 17,
         ...paymentFlags,
-        paymentSummary,
+        paymentSummary: paymentSummary
+            ? {
+                  ...paymentSummary,
+                  ...paymentFlags,
+                  paymentType: paymentFlags.paymentType || paymentSummary.paymentType,
+              }
+            : paymentSummary,
     });
 }
 
@@ -2956,13 +3011,19 @@ exports.driverAddSerivces = async (req, res) => {
         paymentConfirmed: Boolean(bookings.paymentConfirmed),
         amountDueNow: paymentSummary?.amountDueNow,
         balancePaymentMethod: bookings.balancePaymentMethod,
+        balanceCollectedVia: bookings.balanceCollectedVia,
         billingPaymentStatus: "Pending",
+        bookingStatusId: 9,
     });
 
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
         bookingId,
         invoiceStatus: "finalized",
-        paymentSummary,
+        paymentSummary: {
+            ...paymentSummary,
+            ...paymentFlags,
+            paymentType: paymentFlags.paymentType,
+        },
         servicesSubtotal,
         subTotal,
         total: discountedTotal,
@@ -3386,19 +3447,55 @@ exports.invoiceCreation = async (req, res) => {
         paymentConfirmed: Boolean(bookingData.paymentConfirmed),
         amountDueNow: paymentSummary?.amountDueNow,
         balancePaymentMethod: bookingData.balancePaymentMethod,
+        balanceCollectedVia: bookingData.balanceCollectedVia,
         billingPaymentStatus:
-            bookingData.billingDetail?.paymentStatus ||
             paymentSummary?.billingPaymentStatus ||
+            bookingData.billingDetail?.paymentStatus ||
             "Pending",
+        bookingStatusId: bookingData.bookingStatusId,
     });
+
+    // Stable COD fields on invoiceDetails (app reads this across statuses)
+    bookingData.paymentType = paymentFlags.paymentType;
+    bookingData.paymentConfirmed = paymentFlags.paymentConfirmed;
+    bookingData.collectPaymentAfterDelivery =
+        paymentFlags.collectPaymentAfterDelivery;
+    bookingData.canProceedWithoutPayment = paymentFlags.canProceedWithoutPayment;
+    bookingData.canCollectPaymentNow = paymentFlags.canCollectPaymentNow;
+    bookingData.invoicePaymentWindowApplies =
+        paymentFlags.invoicePaymentWindowApplies;
+    bookingData.amountDueNow = paymentFlags.amountDueNow;
+
+    if (bookingData.billingDetail) {
+        bookingData.billingDetail = {
+            ...bookingData.billingDetail,
+            paymentStatus:
+                paymentSummary?.billingPaymentStatus ||
+                bookingData.billingDetail.paymentStatus ||
+                "Pending",
+            balanceDue: paymentSummary?.amountDueNow ?? 0,
+        };
+    }
+
+    const paymentSummaryWithFlags = {
+        ...paymentSummary,
+        paymentType: paymentFlags.paymentType,
+        paymentConfirmed: paymentFlags.paymentConfirmed,
+        collectPaymentAfterDelivery: paymentFlags.collectPaymentAfterDelivery,
+        canProceedWithoutPayment: paymentFlags.canProceedWithoutPayment,
+        canCollectPaymentNow: paymentFlags.canCollectPaymentNow,
+        invoicePaymentWindowApplies: paymentFlags.invoicePaymentWindowApplies,
+        amountDueNow: paymentSummary?.amountDueNow ?? paymentFlags.amountDueNow,
+    };
 
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         servicesSubtotal,
         totalItems: bookingData.totalItems,
-        paymentSummary,
+        paymentSummary: paymentSummaryWithFlags,
         remainingTime,
         customerHasResponded,
+        amountDueNow: paymentSummaryWithFlags.amountDueNow,
         ...paymentFlags,
     });
 }

@@ -242,16 +242,24 @@ Use when:
 
 ### 6.1b COD / payment UI flags (order & invoice responses)
 
-Returned on invoice finalize, proceed, deliver, invoice details, and order history:
+Returned on **root**, **`invoiceDetails`**, and **`paymentSummary`** from
+`GET /agent/invoiceCreation/:bookingId` (and related agent responses) — values stay
+stable from invoice through delivery until cash is collected:
 
-| Flag | Meaning |
-|------|---------|
-| `paymentType` | `"cash"` \| `"card"` |
-| `paymentConfirmed` | Fully paid |
-| `collectPaymentAfterDelivery` | Cash unpaid — collect after deliver |
-| `canProceedWithoutPayment` | Cash (or cash-balance) may skip payment sheet |
-| `canCollectPaymentNow` | Agent may call `recordCashPayment` |
-| `invoicePaymentWindowApplies` | `false` for cash COD; `true` for card |
+| Flag | Cash unpaid (COD) | Notes |
+|------|-------------------|-------|
+| `paymentType` | `"cash"` | Must not drop after status changes |
+| `paymentConfirmed` | `false` until cash collected | Don't mark paid early |
+| `collectPaymentAfterDelivery` | `true` | Until `recordCashPayment` succeeds |
+| `canProceedWithoutPayment` | `true` at invoice | Proceed without charging |
+| `canCollectPaymentNow` | `true` at status **14+** (Driver Reached / Complete) | Show Collect cash before Complete |
+| `invoicePaymentWindowApplies` | `false` | No 1-hour window for cash COD |
+| `amountDueNow` | outstanding (> 0) | Collect sheet amount |
+| `billingDetail.paymentStatus` | not `"Paid"` until collected | Premature Paid is corrected to Pending for cash |
+
+**App rule:** Complete screen → if `canCollectPaymentNow` (or `collectPaymentAfterDelivery` + status ≥ 14) → Collect cash → `POST /agent/recordCashPayment` → then Complete.
+
+`recordCashPayment` does **not** advance delivery/finalize status — only marks Paid / `paymentConfirmed`.
 ---
 
 ### 6.2 Set balance collection method (card bookings only)

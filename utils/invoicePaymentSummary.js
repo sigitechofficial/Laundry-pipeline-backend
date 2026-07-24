@@ -136,6 +136,20 @@ function resolveBalancePaymentMethod(booking = {}) {
     return "card";
 }
 
+function isPaidBillingStatus(status) {
+    return String(status || "").trim().toLowerCase() === "paid";
+}
+
+/**
+ * Cash is only "collected" after recordCashPayment (or explicit confirm).
+ * Ignore premature billingDetails.paymentStatus = Paid from older proceed bugs.
+ */
+function isCashCollectionComplete(options = {}) {
+    if (Boolean(options.paymentConfirmed)) return true;
+    if (options.balanceCollectedVia === "cash") return true;
+    return false;
+}
+
 /**
  * Add agent/customer-facing payment state labels for invoice & order history.
  */
@@ -145,8 +159,9 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
         paymentType,
         balancePaymentMethod: options.balancePaymentMethod,
     });
-    const billingPaymentStatus = options.billingPaymentStatus || "Pending";
+    const rawBillingStatus = options.billingPaymentStatus || "Pending";
     const balanceCollectedVia = options.balanceCollectedVia || null;
+    const paymentConfirmed = Boolean(options.paymentConfirmed);
 
     const calculatedDue = roundMoney(paymentSummary.amountDueNow);
     const totalOrderAmount = roundMoney(
@@ -155,12 +170,19 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
     const upfrontPaid = roundMoney(paymentSummary.paidAtBooking?.totalPaid || 0);
     const discount = roundMoney(paymentSummary.orderSummary?.discount || 0);
 
-    const isBillingPaid = billingPaymentStatus === "Paid";
-    const displayAmountDueNow = isBillingPaid ? 0 : calculatedDue;
-    const isFullyPaid = isBillingPaid;
+    const isBillingPaid = isPaidBillingStatus(rawBillingStatus);
+    const cashStillDue =
+        paymentType === "cash" &&
+        !isCashCollectionComplete({ paymentConfirmed, balanceCollectedVia }) &&
+        calculatedDue > 0.02;
+
+    // Don't zero amountDueNow for cash COD when billing was marked Paid early
+    const isFullyPaid = cashStillDue ? false : isBillingPaid;
+    const displayAmountDueNow = isFullyPaid ? 0 : calculatedDue;
+    const billingPaymentStatus = cashStillDue ? "Pending" : rawBillingStatus;
 
     let laterPaid = 0;
-    if (isBillingPaid) {
+    if (isFullyPaid) {
         if (paymentType === "cash") {
             laterPaid = roundMoney(Math.max(0, totalOrderAmount - discount));
         } else if (upfrontPaid > 0) {
@@ -224,6 +246,7 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
 
     return {
         ...paymentSummary,
+        paymentType,
         amountDueNow: displayAmountDueNow,
         balancePaymentMethod,
         balanceCollectedVia,
@@ -243,6 +266,9 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
     };
 }
 
+/** Driver reached / delivery complete stages where agent should Collect cash. */
+const CASH_COLLECT_STATUS_IDS = new Set([14, 15, 16, 17]);
+
 /**
  * Agent-app flags for cash COD (pay after delivery) vs card pay-before-process.
  *
@@ -252,6 +278,8 @@ function enrichPaymentSummary(paymentSummary, options = {}) {
  * @param {number} [options.amountDueNow]
  * @param {string} [options.balancePaymentMethod]
  * @param {string} [options.billingPaymentStatus]
+ * @param {number} [options.bookingStatusId]
+ * @param {string} [options.balanceCollectedVia]
  */
 function buildCollectPaymentFlags(options = {}) {
     const paymentType = normalizePaymentType(options.paymentType);
@@ -261,24 +289,42 @@ function buildCollectPaymentFlags(options = {}) {
     });
     const billingPaymentStatus = options.billingPaymentStatus || "Pending";
     const amountDueNow = roundMoney(options.amountDueNow || 0);
-    const isBillingPaid = billingPaymentStatus === "Paid";
-    const paymentConfirmed =
-        Boolean(options.paymentConfirmed) || (isBillingPaid && amountDueNow <= 0.02);
-    const unpaid = !isBillingPaid && amountDueNow > 0.02;
+    const isBillingPaid = isPaidBillingStatus(billingPaymentStatus);
+    const explicitlyConfirmed = Boolean(options.paymentConfirmed);
     const isCashBooking = paymentType === "cash";
+    const cashCollected = isCashCollectionComplete({
+        paymentConfirmed: explicitlyConfirmed,
+        balanceCollectedVia: options.balanceCollectedVia,
+    });
+
+    // Cash COD: paymentConfirmed (or balanceCollectedVia) is source of truth — not premature Paid
+    const unpaid = isCashBooking
+        ? !cashCollected || amountDueNow > 0.02
+        : (!isBillingPaid && amountDueNow > 0.02) ||
+          (balancePaymentMethod === "cash" &&
+              !cashCollected &&
+              amountDueNow > 0.02);
+
     const collectCashAtDelivery =
         unpaid && (isCashBooking || balancePaymentMethod === "cash");
 
+    const statusId = Number(options.bookingStatusId);
+    const hasStatus = Number.isFinite(statusId) && statusId > 0;
+    const atCollectStage = hasStatus && CASH_COLLECT_STATUS_IDS.has(statusId);
+
     return {
         paymentType,
-        paymentConfirmed: paymentConfirmed && !unpaid,
+        paymentConfirmed: !unpaid && (cashCollected || isBillingPaid),
         collectPaymentAfterDelivery: collectCashAtDelivery,
         canProceedWithoutPayment:
             isCashBooking ||
             !unpaid ||
             balancePaymentMethod === "cash",
-        canCollectPaymentNow: collectCashAtDelivery,
+        // At invoice/processing: false. At Driver Reached / Complete: true for unpaid cash.
+        // If status unknown (other endpoints), keep collect-eligible so callers aren't blocked.
+        canCollectPaymentNow: collectCashAtDelivery && (!hasStatus || atCollectStage),
         invoicePaymentWindowApplies: paymentType === "card",
+        amountDueNow: unpaid ? amountDueNow : 0,
     };
 }
 
