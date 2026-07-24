@@ -78,4 +78,38 @@ Agent APIs **do not** return the full customer phone number.
 | `phoneMasked` | `true` |
 | `hasPhone` | `true` if a number exists (show Call/SMS buttons) |
 
-Contact via `POST /agent/bookings/:bookingId/notify-customer` (and future call API) only — server uses the real number.
+## Contact log (before attempt fail)
+
+Every successful `notify-customer` SMS is saved in `booking_notifications` and linked to the open `booking_attempt` when present.
+
+### `GET /agent/booking/:bookingId/attempt-options?type=pickup|delivery`
+
+Extra fields:
+
+```json
+{
+  "contacted": {
+    "smsSent": true,
+    "smsSentAt": "2026-07-24T10:15:00.000Z",
+    "smsCount": 1,
+    "callMade": false,
+    "callMadeAt": null,
+    "callCount": 0,
+    "hasContactedCustomer": true,
+    "latest": {
+      "channel": "sms",
+      "sentAt": "2026-07-24T10:15:00.000Z",
+      "twilioSid": "SMxxx",
+      "twilioStatus": "queued"
+    }
+  },
+  "contactRecommendedBeforeFail": true
+}
+```
+
+**App:** fail se pehle agar `contacted.hasContactedCustomer === false` → warn / pehle Notify SMS.  
+Hard block abhi nahi (sirf recommended).
+
+### Notify response also includes
+
+`attemptId`, `notificationId`, `sentAt`

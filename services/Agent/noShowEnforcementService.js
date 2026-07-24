@@ -520,6 +520,30 @@ class NoShowEnforcementService {
 
         const withinGeofence = geofence.withinGeofence === true;
 
+        let contacted = {
+            smsSent: false,
+            smsSentAt: null,
+            smsCount: 0,
+            callMade: false,
+            callMadeAt: null,
+            callCount: 0,
+            hasContactedCustomer: false,
+            latest: null,
+        };
+        try {
+            const customerNotifyService = require("./customerNotifyService");
+            contacted = await customerNotifyService.getContactSummary({
+                bookingId,
+                leg: normalizedType,
+                attemptId: openAttempt.id,
+            });
+        } catch (contactErr) {
+            console.warn(
+                `[noShowEnforcement] contact summary failed for booking ${bookingId}:`,
+                contactErr.message
+            );
+        }
+
         return {
             bookingId,
             attemptType: normalizedType,
@@ -551,6 +575,9 @@ class NoShowEnforcementService {
                 normalizedType === 'pickup'
                     ? bookingData.bookingStatusId === PICKUP_ARRIVED_STATUS
                     : bookingData.bookingStatusId === DELIVERY_ARRIVED_STATUS,
+            contacted,
+            // Soft signal for app — not a hard block (yet)
+            contactRecommendedBeforeFail: true,
         };
     }
 
@@ -595,6 +622,25 @@ class NoShowEnforcementService {
         const openAttempt = await this.getOpenAttempt(bookingId, normalizedType);
         if (!openAttempt) {
             throw new ConflictError('No open attempt found. Mark Arrived first.');
+        }
+
+        let contactedAtFail = {
+            hasContactedCustomer: false,
+            smsSent: false,
+            callMade: false,
+        };
+        try {
+            const customerNotifyService = require('./customerNotifyService');
+            contactedAtFail = await customerNotifyService.getContactSummary({
+                bookingId,
+                leg: normalizedType,
+                attemptId: openAttempt.id,
+            });
+        } catch (contactErr) {
+            console.warn(
+                `[noShowEnforcement] contact summary on fail for booking ${bookingId}:`,
+                contactErr.message
+            );
         }
 
         const policyRecord = await this.resolveNoShowPolicy(bookingData);
@@ -687,6 +733,7 @@ class NoShowEnforcementService {
                     maxPickupAttempts: maxAttempts,
                     fee: feeWithStripe,
                     bookingStatusId: CANCELLED_STATUS,
+                    contacted: contactedAtFail,
                     message: 'Maximum pickup attempts reached. Booking cancelled.',
                 };
             }
@@ -731,6 +778,7 @@ class NoShowEnforcementService {
                 maxPickupAttempts: maxAttempts,
                 fee: feeWithStripe,
                 bookingStatusId: AWAITING_COLLECTION_STATUS,
+                contacted: contactedAtFail,
                 message: 'Pickup failed. Booking returned to Awaiting Collection for retry.',
             };
         }
@@ -768,6 +816,7 @@ class NoShowEnforcementService {
             deliveryAttemptCount: newDeliveryCount,
             fee: feeWithStripe,
             bookingStatusId: DELIVERY_FAILED_STATUS,
+            contacted: contactedAtFail,
             message: 'Delivery failed. Customer must reschedule delivery.',
         };
     }

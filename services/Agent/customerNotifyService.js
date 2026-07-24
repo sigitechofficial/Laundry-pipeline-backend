@@ -2,7 +2,7 @@
  * Agent → customer SMS (Twilio) when reached for pickup / delivery.
  */
 
-const { booking, users, addressDb } = require("../../models");
+const { booking, users, addressDb, bookingAttempt, bookingNotification } = require("../../models");
 const {
     ValidationError,
     NotFoundError,
@@ -233,21 +233,128 @@ async function notifyCustomer({
         throw new UniversalHttpError(msg, 502);
     }
 
+    const openAttempt = await bookingAttempt.findOne({
+        where: {
+            bookingId: bookingRow.id,
+            attemptType: leg,
+            status: "arrived",
+        },
+        order: [["id", "DESC"]],
+        attributes: ["id"],
+    });
+
+    const sentAt = new Date();
+    const bodyPreview =
+        body.length > 80 ? `${body.slice(0, 77)}...` : body;
+    const toMasked = maskPhone(phone);
+
+    let notificationId = null;
+    try {
+        const row = await bookingNotification.create({
+            bookingId: bookingRow.id,
+            attemptId: openAttempt?.id || null,
+            leg,
+            channel: "sms",
+            agentUserId,
+            twilioSid: twilioResult.sid,
+            twilioStatus: twilioResult.status,
+            bodyPreview,
+            toMasked,
+            fromNumber: twilioResult.from,
+            sentAt,
+        });
+        notificationId = row.id;
+    } catch (logErr) {
+        console.error(
+            `[customerNotify] failed to log SMS for booking ${bookingRow.id}:`,
+            logErr.message
+        );
+    }
+
     return {
         bookingId: bookingRow.id,
         orderTrackId: bookingRow.orderTrackId,
         leg,
         channel: "sms",
-        to: maskPhone(phone),
+        to: toMasked,
         from: twilioResult.from,
         messageSid: twilioResult.sid,
         twilioStatus: twilioResult.status,
-        bodyPreview: body.length > 80 ? `${body.slice(0, 77)}...` : body,
+        bodyPreview,
+        attemptId: openAttempt?.id || null,
+        notificationId,
+        sentAt: sentAt.toISOString(),
+    };
+}
+
+/**
+ * Contact summary for attempt-options / fail audit.
+ */
+async function getContactSummary({ bookingId, leg, attemptId = null }) {
+    const normalizedLeg = normalizeLeg(leg) || leg;
+    const rows = await bookingNotification.findAll({
+        where: {
+            bookingId,
+            leg: normalizedLeg,
+        },
+        order: [["sentAt", "DESC"]],
+        attributes: [
+            "id",
+            "channel",
+            "sentAt",
+            "twilioSid",
+            "twilioStatus",
+            "attemptId",
+            "bodyPreview",
+        ],
+        limit: 30,
+    });
+
+    const relevant = attemptId
+        ? rows.filter(
+              (r) =>
+                  Number(r.attemptId) === Number(attemptId) ||
+                  r.attemptId == null
+          )
+        : rows;
+
+    const smsRows = relevant.filter((r) => r.channel === "sms");
+    const callRows = relevant.filter((r) => r.channel === "call");
+    const latestSms = smsRows[0] || null;
+    const latestCall = callRows[0] || null;
+    const smsSent = smsRows.length > 0;
+    const callMade = callRows.length > 0;
+
+    let latest = null;
+    if (latestSms || latestCall) {
+        const smsTs = latestSms ? new Date(latestSms.sentAt).getTime() : 0;
+        const callTs = latestCall ? new Date(latestCall.sentAt).getTime() : 0;
+        const pick = smsTs >= callTs ? latestSms : latestCall;
+        latest = {
+            channel: pick.channel,
+            sentAt: new Date(pick.sentAt).toISOString(),
+            twilioSid: pick.twilioSid || null,
+            twilioStatus: pick.twilioStatus || null,
+        };
+    }
+
+    return {
+        smsSent,
+        smsSentAt: latestSms ? new Date(latestSms.sentAt).toISOString() : null,
+        smsCount: smsRows.length,
+        callMade,
+        callMadeAt: latestCall
+            ? new Date(latestCall.sentAt).toISOString()
+            : null,
+        callCount: callRows.length,
+        hasContactedCustomer: smsSent || callMade,
+        latest,
     };
 }
 
 module.exports = {
     notifyCustomer,
+    getContactSummary,
     TEMPLATES,
     normalizePhoneNumber,
     normalizeLeg,
