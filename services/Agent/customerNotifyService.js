@@ -326,21 +326,21 @@ function buildNotifyBody(bookingRow, leg) {
 }
 
 /**
- * Count prior notify taps (push + sms) for this booking+leg.
- * Call channel is excluded.
+ * Push-phase progress (SMS companion on 1st tap is logged separately).
  */
-async function countNotifyAttempts(bookingId, leg) {
+async function countPushAttempts(bookingId, leg) {
     return bookingNotification.count({
         where: {
             bookingId,
             leg,
-            channel: { [Op.in]: ["push", "sms"] },
+            channel: "push",
         },
     });
 }
 
 /**
- * Attempts 1–3 → Firebase push; attempt 4+ → Twilio SMS.
+ * Attempts 1–3 → Firebase push (attempt 1 also sends Twilio SMS);
+ * after 3 pushes → SMS only.
  */
 async function sendNotifyLadder({
     bookingRow,
@@ -348,14 +348,15 @@ async function sendNotifyLadder({
     leg,
     customerPhone,
 }) {
-    const priorCount = await countNotifyAttempts(bookingRow.id, leg);
-    const attemptNumber = priorCount + 1;
+    const pushCount = await countPushAttempts(bookingRow.id, leg);
     const body = buildNotifyBody(bookingRow, leg);
 
     // Shared rate limit for notify button (push or sms)
     assertRateLimit(bookingRow.id, leg, "notify");
 
-    if (priorCount < PUSH_ATTEMPTS_BEFORE_SMS) {
+    if (pushCount < PUSH_ATTEMPTS_BEFORE_SMS) {
+        const attemptNumber = pushCount + 1;
+        const alsoSendSms = pushCount === 0; // first notify: push + SMS together
         return sendPushNotify({
             bookingRow,
             agentUserId,
@@ -363,8 +364,18 @@ async function sendNotifyLadder({
             customerPhone,
             body,
             attemptNumber,
+            alsoSendSms,
         });
     }
+
+    const smsOnlyAttempt =
+        (await bookingNotification.count({
+            where: {
+                bookingId: bookingRow.id,
+                leg,
+                channel: { [Op.in]: ["push", "sms"] },
+            },
+        })) + 1;
 
     return sendSmsNotify({
         bookingRow,
@@ -372,7 +383,7 @@ async function sendNotifyLadder({
         leg,
         customerPhone,
         body,
-        attemptNumber,
+        attemptNumber: smsOnlyAttempt,
     });
 }
 
@@ -383,6 +394,7 @@ async function sendPushNotify({
     customerPhone,
     body,
     attemptNumber,
+    alsoSendSms = false,
 }) {
     const customerId = bookingRow.customerId;
     const title = PUSH_TITLES[leg] || "Driver update";
@@ -440,35 +452,95 @@ async function sendPushNotify({
         sentAt,
     });
 
+    let smsResult = null;
+    if (alsoSendSms) {
+        try {
+            const twilioResult = await twilioSmsService.sendSms({
+                to: customerPhone,
+                body,
+            });
+            const smsNotificationId = await logNotification({
+                bookingId: bookingRow.id,
+                attemptId: openAttempt?.id || null,
+                leg,
+                channel: "sms",
+                agentUserId,
+                twilioSid: twilioResult.sid,
+                twilioStatus: twilioResult.status,
+                bodyPreview,
+                toMasked,
+                fromNumber: twilioResult.from,
+                sentAt: new Date(),
+            });
+            smsResult = {
+                sent: true,
+                messageSid: twilioResult.sid,
+                twilioStatus: twilioResult.status,
+                from: twilioResult.from,
+                notificationId: smsNotificationId,
+            };
+        } catch (smsErr) {
+            console.error(
+                `[customerNotify] companion SMS failed for booking ${bookingRow.id}:`,
+                smsErr.message
+            );
+            smsResult = {
+                sent: false,
+                error: smsErr.message || "SMS failed",
+            };
+        }
+    }
+
+    const remainingPushAttempts = Math.max(
+        0,
+        PUSH_ATTEMPTS_BEFORE_SMS - attemptNumber
+    );
+
+    let message;
+    if (alsoSendSms) {
+        const pushPart = pushResult.sent
+            ? "Push sent"
+            : pushResult.reason === "NO_TOKENS"
+              ? "Push skipped (no device token)"
+              : "Push may have failed";
+        const smsPart = smsResult?.sent
+            ? "SMS sent"
+            : `SMS failed${smsResult?.error ? `: ${smsResult.error}` : ""}`;
+        message = `${pushPart} + ${smsPart} (first notify; push attempts ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`;
+    } else if (pushResult.sent) {
+        message = `Push notification sent (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`;
+    } else if (pushResult.reason === "NO_TOKENS") {
+        message = `No customer app device token. Attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS} counted.`;
+    } else {
+        message = `Push may have failed (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`;
+    }
+
     return {
         bookingId: bookingRow.id,
         orderTrackId: bookingRow.orderTrackId,
         leg,
-        channel: "push",
+        channel: alsoSendSms ? "push_and_sms" : "push",
         attemptNumber,
         attemptsBeforeSms: PUSH_ATTEMPTS_BEFORE_SMS,
-        remainingPushAttempts: Math.max(
-            0,
-            PUSH_ATTEMPTS_BEFORE_SMS - attemptNumber
-        ),
+        remainingPushAttempts,
         nextChannel:
             attemptNumber >= PUSH_ATTEMPTS_BEFORE_SMS ? "sms" : "push",
         to: toMasked,
-        from: "firebase",
-        messageSid: null,
+        from: alsoSendSms && smsResult?.from ? smsResult.from : "firebase",
+        messageSid: smsResult?.messageSid || null,
         callSid: null,
-        twilioStatus: pushStatus,
+        twilioStatus: alsoSendSms
+            ? smsResult?.twilioStatus || pushStatus
+            : pushStatus,
         pushSent: Boolean(pushResult.sent),
         pushReason: pushResult.reason || null,
+        smsSent: alsoSendSms ? Boolean(smsResult?.sent) : false,
         bodyPreview,
         attemptId: openAttempt?.id || null,
         notificationId,
+        smsNotificationId: smsResult?.notificationId || null,
         sentAt: sentAt.toISOString(),
-        message: pushResult.sent
-            ? `Push notification sent (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`
-            : pushResult.reason === "NO_TOKENS"
-              ? `No customer app device token. Attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS} counted; SMS unlocks on attempt ${PUSH_ATTEMPTS_BEFORE_SMS + 1}.`
-              : `Push may have failed (attempt ${attemptNumber} of ${PUSH_ATTEMPTS_BEFORE_SMS}).`,
+        message,
     };
 }
 

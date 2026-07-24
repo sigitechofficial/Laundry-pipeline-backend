@@ -5,7 +5,7 @@ When the agent reaches **pickup** or **delivery**, the app can notify (push/SMS)
 ## Scope
 
 **In scope:**
-- Notify ladder: push (1–3) then SMS (4+)
+- Notify ladder: 1st = push+SMS; 2nd–3rd = push; then SMS
 - **Native dialer call:** API returns Twilio number → app opens `tel:` → agent dials → Twilio webhook bridges to customer
 
 **Out of scope:** number pool, encrypted phone vault, bidirectional customer→agent, enterprise multi-DID allocation.
@@ -29,8 +29,9 @@ Content-Type: application/json
 
 | Attempt # | What happens |
 |-----------|----------------|
-| **1st–3rd** | Firebase push |
-| **4th+** | Twilio SMS |
+| **1st** | Firebase push **+** Twilio SMS (together) |
+| **2nd–3rd** | Firebase push only |
+| **4th+** | Twilio SMS only |
 
 ### Body — Call (native dialer)
 

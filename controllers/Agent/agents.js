@@ -6275,9 +6275,10 @@ exports.notifyCustomer = async (req, res) => {
         normalizedChannel === "call"
             ? result?.message ||
               "Open dialer and call the masked number to reach the customer"
-            : result?.channel === "push"
-              ? result.message || "Push notification sent to customer"
-              : result?.message || "SMS sent to customer";
+            : result?.message ||
+              (result?.channel === "push" || result?.channel === "push_and_sms"
+                  ? "Notification sent to customer"
+                  : "SMS sent to customer");
 
     return ResponseHelper.success(res, successMessage, result);
 };
