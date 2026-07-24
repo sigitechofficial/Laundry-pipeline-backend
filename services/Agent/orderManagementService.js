@@ -37,6 +37,7 @@ const {
 } = require('../../utils/bookingTimeZone');
 const invoiceManagementService = require('./invoiceManagementService');
 const { buildCollectPaymentFlags, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
+const { redactCustomerPhone } = require('../../utils/maskPhone');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
 const COMPLETED_STATUS_IDS = [17];
@@ -221,6 +222,10 @@ class AgentOrderManagementService {
                     ? parseFloat(orderPlain.billingDetail.agentEarning)
                     : null,
         };
+
+        if (enriched.customer) {
+            enriched.customer = redactCustomerPhone(enriched.customer);
+        }
 
         const paymentFlags = buildCollectPaymentFlags({
             paymentType: orderPlain.paymentType,
@@ -494,8 +499,16 @@ class AgentOrderManagementService {
             order: [['createdAt', 'DESC']]
         });
 
+        const bookingDataPlain = bookingData.map((row) => {
+            const plain = row.toJSON ? row.toJSON() : row;
+            if (plain.customer) {
+                plain.customer = redactCustomerPhone(plain.customer);
+            }
+            return plain;
+        });
+
         return {
-            bookingData,
+            bookingData: bookingDataPlain,
         };
     }
 
@@ -577,8 +590,16 @@ class AgentOrderManagementService {
             order: [['createdAt', 'DESC']]
         });
 
+        const getBookingPlain = getBooking.map((row) => {
+            const plain = row.toJSON ? row.toJSON() : row;
+            if (plain.customer) {
+                plain.customer = redactCustomerPhone(plain.customer);
+            }
+            return plain;
+        });
+
         return {
-            getBooking,
+            getBooking: getBookingPlain,
         };
     }
 
@@ -633,7 +654,11 @@ class AgentOrderManagementService {
 
         if (bookingfind.bookingStatusId === 5) {
             const paymentType = normalizePaymentType(bookingfind.paymentType);
-            const result = { bookingfind };
+            const plain = bookingfind.toJSON ? bookingfind.toJSON() : bookingfind;
+            if (plain.customer) {
+                plain.customer = redactCustomerPhone(plain.customer);
+            }
+            const result = { bookingfind: plain };
             // 1-hour payment window hint applies to card only (cash COD skips)
             if (paymentType === 'card') {
                 result.oneHourLater = moment().add(1, 'hours').format('HH:mm A');
@@ -662,8 +687,13 @@ class AgentOrderManagementService {
             billingPaymentStatus: paymentSummary?.billingPaymentStatus,
         });
 
+        const plain = bookingfind.toJSON ? bookingfind.toJSON() : bookingfind;
+        if (plain.customer) {
+            plain.customer = redactCustomerPhone(plain.customer);
+        }
+
         return {
-            bookingfind,
+            bookingfind: plain,
             paymentSummary,
             ...paymentFlags,
         };

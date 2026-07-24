@@ -704,6 +704,14 @@ router.get(
 );
 
 //!----------------------------------------------------------Notification APIs----------------------------------------------------------//
+// Twilio SMS to customer at pickup / delivery reached
+router.post(
+    "/bookings/:bookingId/notify-customer",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.notifyCustomer)
+);
+
 // Send notification to customer using booking ID
 router.post(
     '/sendNotificationToCustomer',

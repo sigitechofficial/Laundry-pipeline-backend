@@ -160,6 +160,7 @@ const { sendNotification } = require("../../utils/notification");
 const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
+const { redactCustomerPhone } = require("../../utils/maskPhone");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
@@ -905,8 +906,17 @@ exports.getAgentOrder = async (req, res) => {
                 firstName: b.customer?.firstName,
                 lastName: b.customer?.lastName,
                 email: b.customer?.email,
-                phoneNum: b.customer?.phoneNum,
                 image: b.customer?.image,
+                ...(() => {
+                    const redacted = redactCustomerPhone({
+                        phoneNum: b.customer?.phoneNum,
+                    });
+                    return {
+                        phoneNum: redacted.phoneNum,
+                        phoneMasked: redacted.phoneMasked,
+                        hasPhone: redacted.hasPhone,
+                    };
+                })(),
             },
             pickupAddress: b.pickupAddress
                 ? {
@@ -3392,6 +3402,9 @@ exports.invoiceCreation = async (req, res) => {
 
     // Flatten invoiceDetails and deduplicate servicePreferences
     const bookingData = invoiceDetails[0]?.toJSON();
+    if (bookingData?.customer) {
+        bookingData.customer = redactCustomerPhone(bookingData.customer);
+    }
     const seenServiceIds = new Set();
 
     bookingData.customerSelectedServices = (bookingData.customerSelectedServices || [])
@@ -6224,6 +6237,43 @@ exports.sendNotificationToCustomer = async (req, res) => {
     );
 
     return ResponseHelper.success(res, "Notification sent to customer", result);
+};
+
+/**
+ * Twilio SMS to customer when agent reached pickup / delivery.
+ * @route POST /agent/bookings/:bookingId/notify-customer
+ * @body {string} leg - pickup | delivery
+ * @body {string} [channel=sms]
+ * @body {string} [templateKey] - arrived_pickup | arrived_delivery
+ * @body {string} [customMessage]
+ */
+exports.notifyCustomer = async (req, res) => {
+    const customerNotifyService = require("../../services/Agent/customerNotifyService");
+    const bookingId = req.params.bookingId || req.body.bookingId;
+    const {
+        leg,
+        channel = "sms",
+        templateKey,
+        customMessage,
+    } = req.body;
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+    if (!leg) {
+        throw new ValidationError('leg is required ("pickup" or "delivery")');
+    }
+
+    const result = await customerNotifyService.notifyCustomer({
+        bookingId,
+        agentUserId: req.user.id,
+        leg,
+        channel,
+        templateKey,
+        customMessage,
+    });
+
+    return ResponseHelper.success(res, "SMS sent to customer", result);
 };
 
 /**

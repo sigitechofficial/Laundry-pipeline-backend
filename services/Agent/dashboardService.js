@@ -18,6 +18,7 @@ const {
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
 const { wallClockNow } = require('../../utils/bookingTimeZone');
+const { redactCustomerPhone } = require('../../utils/maskPhone');
 
 /**
  * Agent Dashboard Service
@@ -109,8 +110,16 @@ class AgentDashboardService {
             order: [['createdAt', 'DESC']]
         });
 
+        const bookingDataPlain = bookingData.map((row) => {
+            const plain = row.toJSON ? row.toJSON() : row;
+            if (plain.customer) {
+                plain.customer = redactCustomerPhone(plain.customer);
+            }
+            return plain;
+        });
+
         return {
-            bookingData,
+            bookingData: bookingDataPlain,
         };
     }
 

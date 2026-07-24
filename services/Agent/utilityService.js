@@ -11,12 +11,13 @@ const {
     customerSelectedService,
     onHoldOption
 } = require('../../models');
-const { 
-    UnauthorizedError, 
-    NotFoundError, 
-    ConflictError, 
-    ValidationError 
+const {
+    UnauthorizedError,
+    NotFoundError,
+    ConflictError,
+    ValidationError
 } = require('../../middlewares/universalErrorHandler');
+const { redactCustomerPhone } = require('../../utils/maskPhone');
 
 /**
  * Agent Utility Service
@@ -168,8 +169,16 @@ class AgentUtilityService {
             throw new NotFoundError("Booking not found");
         }
 
+        const datafindPlain = datafind.map((row) => {
+            const plain = row.toJSON ? row.toJSON() : row;
+            if (plain.customer) {
+                plain.customer = redactCustomerPhone(plain.customer);
+            }
+            return plain;
+        });
+
         return {
-            datafind,
+            datafind: datafindPlain,
         };
     }
 }

@@ -29,6 +29,7 @@ const {
     NotFoundError,
     ValidationError,
 } = require("../../middlewares/universalErrorHandler");
+const { redactCustomerPhone } = require("../../utils/maskPhone");
 const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
@@ -905,6 +906,16 @@ class AgentInvoiceManagementService {
                 },
             ],
         });
+
+        if (Array.isArray(results.All)) {
+            results.All = results.All.map((row) => {
+                const plain = row.toJSON ? row.toJSON() : row;
+                if (plain.customer) {
+                    plain.customer = redactCustomerPhone(plain.customer);
+                }
+                return plain;
+            });
+        }
 
         return { results };
     }
