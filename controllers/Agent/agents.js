@@ -6240,11 +6240,11 @@ exports.sendNotificationToCustomer = async (req, res) => {
 };
 
 /**
- * Twilio SMS to customer when agent reached pickup / delivery.
+ * Twilio SMS or click-to-call when agent reached pickup / delivery.
  * @route POST /agent/bookings/:bookingId/notify-customer
  * @body {string} leg - pickup | delivery
- * @body {string} [channel=sms]
- * @body {string} customMessage - required free-text SMS (max 320)
+ * @body {string} [channel=sms] - sms | call
+ * @body {string} [customMessage] - required for sms (max 320)
  */
 exports.notifyCustomer = async (req, res) => {
     const customerNotifyService = require("../../services/Agent/customerNotifyService");
@@ -6261,19 +6261,34 @@ exports.notifyCustomer = async (req, res) => {
     if (!leg) {
         throw new ValidationError('leg is required ("pickup" or "delivery")');
     }
-    if (customMessage == null || !String(customMessage).trim()) {
-        throw new ValidationError("customMessage is required");
+
+    const normalizedChannel = String(channel || "sms")
+        .toLowerCase()
+        .trim();
+    if (normalizedChannel === "sms") {
+        if (customMessage == null || !String(customMessage).trim()) {
+            throw new ValidationError(
+                "customMessage is required when channel is sms"
+            );
+        }
+    } else if (normalizedChannel !== "call") {
+        throw new ValidationError('channel must be "sms" or "call"');
     }
 
     const result = await customerNotifyService.notifyCustomer({
         bookingId,
         agentUserId: req.user.id,
         leg,
-        channel,
+        channel: normalizedChannel,
         customMessage,
     });
 
-    return ResponseHelper.success(res, "SMS sent to customer", result);
+    const successMessage =
+        normalizedChannel === "call"
+            ? "Calling your phone — answer to connect to the customer"
+            : "SMS sent to customer";
+
+    return ResponseHelper.success(res, successMessage, result);
 };
 
 /**

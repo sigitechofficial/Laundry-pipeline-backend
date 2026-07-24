@@ -1,8 +1,14 @@
 /**
- * Agent → customer SMS (Twilio) when reached for pickup / delivery.
+ * Agent → customer SMS / click-to-call (Twilio) when reached for pickup / delivery.
  */
 
-const { booking, users, addressDb, bookingAttempt, bookingNotification } = require("../../models");
+const {
+    booking,
+    users,
+    addressDb,
+    bookingAttempt,
+    bookingNotification,
+} = require("../../models");
 const {
     ValidationError,
     NotFoundError,
@@ -10,13 +16,16 @@ const {
     TooManyRequestsError,
     UniversalHttpError,
 } = require("../../middlewares/universalErrorHandler");
-const { assertBookingNotCancelledForAgent } = require("../../utils/assertBookingNotCancelledForAgent");
+const {
+    assertBookingNotCancelledForAgent,
+} = require("../../utils/assertBookingNotCancelledForAgent");
 const twilioSmsService = require("../twilioSmsService");
+const twilioCallService = require("../twilioCallService");
 const { maskPhoneNumber } = require("../../utils/maskPhone");
 
 const RATE_LIMIT_MS = 2 * 60 * 1000;
 /** @type {Map<string, number>} */
-const recentSmsByKey = new Map();
+const recentNotifyByKey = new Map();
 
 const PICKUP_STATUS_IDS = new Set([5, 6]);
 const DELIVERY_STATUS_IDS = new Set([13, 14]);
@@ -31,6 +40,14 @@ function normalizeLeg(leg) {
     if (value === "delivery" || value === "dropoff" || value === "drop_off") {
         return "delivery";
     }
+    return null;
+}
+
+function normalizeChannel(channel) {
+    const value = String(channel || "sms")
+        .toLowerCase()
+        .trim();
+    if (value === "sms" || value === "call") return value;
     return null;
 }
 
@@ -85,7 +102,11 @@ function normalizePhoneNumber(rawPhone, rawCountryCode = null) {
     const dialDigits = dial ? dial.slice(1) : null;
 
     // National number already includes country digits (92300… / 4477…)
-    if (dialDigits && phone.startsWith(dialDigits) && phone.length > dialDigits.length + 6) {
+    if (
+        dialDigits &&
+        phone.startsWith(dialDigits) &&
+        phone.length > dialDigits.length + 6
+    ) {
         phone = `+${phone}`;
     } else if (dial) {
         // Strip leading 0 from national format (07… / 03…)
@@ -116,23 +137,26 @@ function maskPhone(phone) {
     return maskPhoneNumber(phone) || "***";
 }
 
-function assertRateLimit(bookingId, leg) {
-    const key = `${bookingId}:${leg}:sms`;
+function assertRateLimit(bookingId, leg, channel) {
+    const key = `${bookingId}:${leg}:${channel}`;
     const now = Date.now();
-    const last = recentSmsByKey.get(key) || 0;
+    const last = recentNotifyByKey.get(key) || 0;
     if (now - last < RATE_LIMIT_MS) {
         const waitSec = Math.ceil((RATE_LIMIT_MS - (now - last)) / 1000);
         throw new TooManyRequestsError(
-            `Please wait ${waitSec}s before sending another SMS for this ${leg}.`
+            `Please wait ${waitSec}s before another ${channel} for this ${leg}.`
         );
     }
-    // prune old entries occasionally
-    if (recentSmsByKey.size > 500) {
-        for (const [k, ts] of recentSmsByKey) {
-            if (now - ts > RATE_LIMIT_MS) recentSmsByKey.delete(k);
+    if (recentNotifyByKey.size > 500) {
+        for (const [k, ts] of recentNotifyByKey) {
+            if (now - ts > RATE_LIMIT_MS) recentNotifyByKey.delete(k);
         }
     }
-    recentSmsByKey.set(key, now);
+    recentNotifyByKey.set(key, now);
+}
+
+function clearRateLimit(bookingId, leg, channel) {
+    recentNotifyByKey.delete(`${bookingId}:${leg}:${channel}`);
 }
 
 async function resolveAgentShopId(agentUserId) {
@@ -146,13 +170,38 @@ async function resolveAgentShopId(agentUserId) {
     return shop?.id || null;
 }
 
+async function loadOpenAttempt(bookingId, leg) {
+    return bookingAttempt.findOne({
+        where: {
+            bookingId,
+            attemptType: leg,
+            status: "arrived",
+        },
+        order: [["id", "DESC"]],
+        attributes: ["id"],
+    });
+}
+
+async function logNotification(payload) {
+    try {
+        const row = await bookingNotification.create(payload);
+        return row.id;
+    } catch (logErr) {
+        console.error(
+            `[customerNotify] failed to log ${payload.channel} for booking ${payload.bookingId}:`,
+            logErr.message
+        );
+        return null;
+    }
+}
+
 /**
  * @param {object} params
  * @param {number|string} params.bookingId
  * @param {number} params.agentUserId
  * @param {string} params.leg - pickup | delivery
- * @param {string} [params.channel] - sms (call later)
- * @param {string} params.customMessage - required free-text SMS body (max 320)
+ * @param {string} [params.channel] - sms | call
+ * @param {string} [params.customMessage] - required for sms (max 320)
  */
 async function notifyCustomer({
     bookingId,
@@ -166,11 +215,9 @@ async function notifyCustomer({
         throw new ValidationError('leg must be "pickup" or "delivery"');
     }
 
-    const normalizedChannel = String(channel || "sms").toLowerCase().trim();
-    if (normalizedChannel !== "sms") {
-        throw new ValidationError(
-            'Only channel "sms" is supported for now. Call coming soon.'
-        );
+    const normalizedChannel = normalizeChannel(channel);
+    if (!normalizedChannel) {
+        throw new ValidationError('channel must be "sms" or "call"');
     }
 
     const bookingRow = await booking.findOne({
@@ -214,88 +261,98 @@ async function notifyCustomer({
     const statusId = Number(bookingRow.bookingStatusId);
     if (leg === "pickup" && !PICKUP_STATUS_IDS.has(statusId)) {
         throw new ValidationError(
-            "SMS for pickup is only allowed after driver reached pickup (status 5)."
+            "Notify for pickup is only allowed after driver reached pickup (status 5)."
         );
     }
     if (leg === "delivery" && !DELIVERY_STATUS_IDS.has(statusId)) {
         throw new ValidationError(
-            "SMS for delivery is only allowed when out for delivery or driver reached (status 13–14)."
+            "Notify for delivery is only allowed when out for delivery or driver reached (status 13–14)."
         );
     }
 
-    const phone = normalizePhoneNumber(
+    const customerPhone = normalizePhoneNumber(
         bookingRow.customer?.phoneNum,
         bookingRow.customer?.countryCode
     );
-    if (!phone) {
+    if (!customerPhone) {
         throw new ValidationError(
-            "Customer phone number is missing or invalid. Cannot send SMS."
+            "Customer phone number is missing or invalid. Cannot notify customer."
         );
     }
 
+    if (normalizedChannel === "sms") {
+        return sendSmsNotify({
+            bookingRow,
+            agentUserId,
+            leg,
+            customerPhone,
+            customMessage,
+        });
+    }
+
+    return startCallNotify({
+        bookingRow,
+        agentUserId,
+        leg,
+        customerPhone,
+    });
+}
+
+async function sendSmsNotify({
+    bookingRow,
+    agentUserId,
+    leg,
+    customerPhone,
+    customMessage,
+}) {
     const trimmedCustom =
         customMessage != null ? String(customMessage).trim() : "";
     if (!trimmedCustom) {
         throw new ValidationError(
-            "customMessage is required. Agent must type the SMS text."
+            "customMessage is required for SMS. Agent must type the SMS text."
         );
     }
     if (trimmedCustom.length > 320) {
         throw new ValidationError("customMessage must be 320 characters or less");
     }
-    const body = trimmedCustom;
 
-    assertRateLimit(bookingRow.id, leg);
+    assertRateLimit(bookingRow.id, leg, "sms");
 
     let twilioResult;
     try {
-        twilioResult = await twilioSmsService.sendSms({ to: phone, body });
-    } catch (err) {
-        // undo rate limit so agent can retry after real Twilio failures
-        recentSmsByKey.delete(`${bookingRow.id}:${leg}:sms`);
-        const msg =
-            err?.message ||
-            "Failed to send SMS via Twilio. Please try again.";
-        throw new UniversalHttpError(msg, 502);
-    }
-
-    const openAttempt = await bookingAttempt.findOne({
-        where: {
-            bookingId: bookingRow.id,
-            attemptType: leg,
-            status: "arrived",
-        },
-        order: [["id", "DESC"]],
-        attributes: ["id"],
-    });
-
-    const sentAt = new Date();
-    const bodyPreview =
-        body.length > 80 ? `${body.slice(0, 77)}...` : body;
-    const toMasked = maskPhone(phone);
-
-    let notificationId = null;
-    try {
-        const row = await bookingNotification.create({
-            bookingId: bookingRow.id,
-            attemptId: openAttempt?.id || null,
-            leg,
-            channel: "sms",
-            agentUserId,
-            twilioSid: twilioResult.sid,
-            twilioStatus: twilioResult.status,
-            bodyPreview,
-            toMasked,
-            fromNumber: twilioResult.from,
-            sentAt,
+        twilioResult = await twilioSmsService.sendSms({
+            to: customerPhone,
+            body: trimmedCustom,
         });
-        notificationId = row.id;
-    } catch (logErr) {
-        console.error(
-            `[customerNotify] failed to log SMS for booking ${bookingRow.id}:`,
-            logErr.message
+    } catch (err) {
+        clearRateLimit(bookingRow.id, leg, "sms");
+        throw new UniversalHttpError(
+            err?.message || "Failed to send SMS via Twilio. Please try again.",
+            502
         );
     }
+
+    const openAttempt = await loadOpenAttempt(bookingRow.id, leg);
+    const sentAt = new Date();
+    const bodyPreview =
+        trimmedCustom.length > 80
+            ? `${trimmedCustom.slice(0, 77)}...`
+            : trimmedCustom;
+    const toMasked = maskPhone(customerPhone);
+
+    const notificationId = await logNotification({
+        bookingId: bookingRow.id,
+        attemptId: openAttempt?.id || null,
+        leg,
+        channel: "sms",
+        agentUserId,
+        twilioSid: twilioResult.sid,
+        twilioStatus: twilioResult.status,
+        bodyPreview,
+        toMasked,
+        fromNumber: twilioResult.from,
+        sentAt,
+    });
 
     return {
         bookingId: bookingRow.id,
@@ -305,11 +362,95 @@ async function notifyCustomer({
         to: toMasked,
         from: twilioResult.from,
         messageSid: twilioResult.sid,
+        callSid: null,
         twilioStatus: twilioResult.status,
         bodyPreview,
         attemptId: openAttempt?.id || null,
         notificationId,
         sentAt: sentAt.toISOString(),
+    };
+}
+
+async function startCallNotify({
+    bookingRow,
+    agentUserId,
+    leg,
+    customerPhone,
+}) {
+    const agentUser = await users.findOne({
+        where: { id: agentUserId },
+        attributes: ["id", "phoneNum", "countryCode", "firstName"],
+    });
+
+    const agentPhone = normalizePhoneNumber(
+        agentUser?.phoneNum,
+        agentUser?.countryCode
+    );
+    if (!agentPhone) {
+        throw new ValidationError(
+            "Your agent phone number is missing or invalid. Update profile phone to place a call."
+        );
+    }
+
+    if (agentPhone === customerPhone) {
+        throw new ValidationError(
+            "Agent and customer phone numbers are the same. Cannot start click-to-call."
+        );
+    }
+
+    assertRateLimit(bookingRow.id, leg, "call");
+
+    let twilioResult;
+    try {
+        twilioResult = await twilioCallService.startClickToCall({
+            agentPhone,
+            customerPhone,
+        });
+    } catch (err) {
+        clearRateLimit(bookingRow.id, leg, "call");
+        throw new UniversalHttpError(
+            err?.message ||
+                "Failed to start call via Twilio. Please try again.",
+            502
+        );
+    }
+
+    const openAttempt = await loadOpenAttempt(bookingRow.id, leg);
+    const sentAt = new Date();
+    const toMasked = maskPhone(customerPhone);
+    const agentMasked = maskPhone(agentPhone);
+
+    const notificationId = await logNotification({
+        bookingId: bookingRow.id,
+        attemptId: openAttempt?.id || null,
+        leg,
+        channel: "call",
+        agentUserId,
+        twilioSid: twilioResult.sid,
+        twilioStatus: twilioResult.status,
+        bodyPreview: "click-to-call",
+        toMasked,
+        fromNumber: twilioResult.from,
+        sentAt,
+    });
+
+    return {
+        bookingId: bookingRow.id,
+        orderTrackId: bookingRow.orderTrackId,
+        leg,
+        channel: "call",
+        to: toMasked,
+        agentTo: agentMasked,
+        from: twilioResult.from,
+        messageSid: null,
+        callSid: twilioResult.sid,
+        twilioStatus: twilioResult.status,
+        bodyPreview: "click-to-call",
+        attemptId: openAttempt?.id || null,
+        notificationId,
+        sentAt: sentAt.toISOString(),
+        message:
+            "Calling your phone first. Answer to be connected to the customer.",
     };
 }
 
@@ -384,4 +525,5 @@ module.exports = {
     normalizePhoneNumber,
     normalizeCountryDialCode,
     normalizeLeg,
+    normalizeChannel,
 };
