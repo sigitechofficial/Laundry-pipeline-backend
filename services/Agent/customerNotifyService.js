@@ -18,13 +18,6 @@ const RATE_LIMIT_MS = 2 * 60 * 1000;
 /** @type {Map<string, number>} */
 const recentSmsByKey = new Map();
 
-const TEMPLATES = {
-    arrived_pickup:
-        "Hi {name}, your driver has arrived for laundry pickup. Order {orderTrackId}. — Just Dry Cleans",
-    arrived_delivery:
-        "Hi {name}, your driver has arrived to deliver your laundry. Order {orderTrackId}. — Just Dry Cleans",
-};
-
 const PICKUP_STATUS_IDS = new Set([5, 6]);
 const DELIVERY_STATUS_IDS = new Set([13, 14]);
 
@@ -41,32 +34,76 @@ function normalizeLeg(leg) {
     return null;
 }
 
-function defaultTemplateKey(leg) {
-    return leg === "delivery" ? "arrived_delivery" : "arrived_pickup";
+/**
+ * Map users.countryCode (+44 / 44 / GB / PK / +92) → dial prefix like "+44".
+ */
+function normalizeCountryDialCode(rawCountryCode) {
+    if (rawCountryCode == null) return null;
+    let code = String(rawCountryCode).trim().replace(/[\s()-]/g, "");
+    if (!code) return null;
+
+    const upper = code.toUpperCase();
+    if (upper === "GB" || upper === "UK") return "+44";
+    if (upper === "PK") return "+92";
+
+    if (code.startsWith("00")) {
+        code = `+${code.slice(2)}`;
+    }
+    if (!code.startsWith("+")) {
+        if (/^\d{1,4}$/.test(code)) {
+            code = `+${code}`;
+        } else {
+            return null;
+        }
+    }
+
+    if (!/^\+[1-9]\d{0,3}$/.test(code)) {
+        return null;
+    }
+    return code;
 }
 
 /**
- * Best-effort E.164-ish normalize for UK/PK numbers stored in DB.
+ * Build E.164 from users.phoneNum + users.countryCode.
+ * Prefer full international phoneNum; otherwise prepend countryCode.
  */
-function normalizePhoneNumber(raw) {
-    if (raw == null) return null;
-    let phone = String(raw).trim().replace(/[\s()-]/g, "");
+function normalizePhoneNumber(rawPhone, rawCountryCode = null) {
+    if (rawPhone == null) return null;
+    let phone = String(rawPhone).trim().replace(/[\s()-]/g, "");
     if (!phone) return null;
 
     if (phone.startsWith("00")) {
         phone = `+${phone.slice(2)}`;
     }
-    if (!phone.startsWith("+")) {
-        if (phone.startsWith("44")) {
-            phone = `+${phone}`;
-        } else if (phone.startsWith("0") && phone.length >= 10) {
-            // UK national format 07... → +447...
-            phone = `+44${phone.slice(1)}`;
-        } else if (phone.startsWith("92")) {
-            phone = `+${phone}`;
-        } else if (/^\d{10,15}$/.test(phone)) {
-            phone = `+${phone}`;
+
+    // Already E.164
+    if (phone.startsWith("+")) {
+        return /^\+[1-9]\d{7,14}$/.test(phone) ? phone : null;
+    }
+
+    const dial = normalizeCountryDialCode(rawCountryCode);
+    const dialDigits = dial ? dial.slice(1) : null;
+
+    // National number already includes country digits (92300… / 4477…)
+    if (dialDigits && phone.startsWith(dialDigits) && phone.length > dialDigits.length + 6) {
+        phone = `+${phone}`;
+    } else if (dial) {
+        // Strip leading 0 from national format (07… / 03…)
+        const national = phone.startsWith("0") ? phone.slice(1) : phone;
+        if (!/^\d{6,14}$/.test(national)) {
+            return null;
         }
+        phone = `${dial}${national}`;
+    } else if (phone.startsWith("44") || phone.startsWith("92")) {
+        phone = `+${phone}`;
+    } else if (phone.startsWith("07") && phone.length >= 10) {
+        // UK mobile without countryCode
+        phone = `+44${phone.slice(1)}`;
+    } else if (phone.startsWith("03") && phone.length >= 10) {
+        // Pakistan mobile without countryCode
+        phone = `+92${phone.slice(1)}`;
+    } else {
+        return null;
     }
 
     if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
@@ -77,13 +114,6 @@ function normalizePhoneNumber(raw) {
 
 function maskPhone(phone) {
     return maskPhoneNumber(phone) || "***";
-}
-
-function fillTemplate(template, vars) {
-    return String(template).replace(/\{(\w+)\}/g, (_, key) => {
-        const value = vars[key];
-        return value != null && value !== "" ? String(value) : "";
-    });
 }
 
 function assertRateLimit(bookingId, leg) {
@@ -122,15 +152,13 @@ async function resolveAgentShopId(agentUserId) {
  * @param {number} params.agentUserId
  * @param {string} params.leg - pickup | delivery
  * @param {string} [params.channel] - sms (call later)
- * @param {string} [params.templateKey]
- * @param {string} [params.customMessage]
+ * @param {string} params.customMessage - required free-text SMS body (max 320)
  */
 async function notifyCustomer({
     bookingId,
     agentUserId,
     leg: rawLeg,
     channel = "sms",
-    templateKey,
     customMessage,
 }) {
     const leg = normalizeLeg(rawLeg);
@@ -160,7 +188,13 @@ async function notifyCustomer({
             {
                 model: users,
                 as: "customer",
-                attributes: ["id", "firstName", "lastName", "phoneNum"],
+                attributes: [
+                    "id",
+                    "firstName",
+                    "lastName",
+                    "phoneNum",
+                    "countryCode",
+                ],
                 required: false,
             },
         ],
@@ -189,35 +223,27 @@ async function notifyCustomer({
         );
     }
 
-    const phone = normalizePhoneNumber(bookingRow.customer?.phoneNum);
+    const phone = normalizePhoneNumber(
+        bookingRow.customer?.phoneNum,
+        bookingRow.customer?.countryCode
+    );
     if (!phone) {
         throw new ValidationError(
             "Customer phone number is missing or invalid. Cannot send SMS."
         );
     }
 
-    let body = null;
     const trimmedCustom =
         customMessage != null ? String(customMessage).trim() : "";
-    if (trimmedCustom) {
-        if (trimmedCustom.length > 320) {
-            throw new ValidationError("customMessage must be 320 characters or less");
-        }
-        body = trimmedCustom;
-    } else {
-        const key = templateKey || defaultTemplateKey(leg);
-        const template = TEMPLATES[key];
-        if (!template) {
-            throw new ValidationError(
-                `Unknown templateKey. Allowed: ${Object.keys(TEMPLATES).join(", ")}`
-            );
-        }
-        const firstName = bookingRow.customer?.firstName || "there";
-        body = fillTemplate(template, {
-            name: firstName,
-            orderTrackId: bookingRow.orderTrackId || bookingRow.id,
-        });
+    if (!trimmedCustom) {
+        throw new ValidationError(
+            "customMessage is required. Agent must type the SMS text."
+        );
     }
+    if (trimmedCustom.length > 320) {
+        throw new ValidationError("customMessage must be 320 characters or less");
+    }
+    const body = trimmedCustom;
 
     assertRateLimit(bookingRow.id, leg);
 
@@ -355,7 +381,7 @@ async function getContactSummary({ bookingId, leg, attemptId = null }) {
 module.exports = {
     notifyCustomer,
     getContactSummary,
-    TEMPLATES,
     normalizePhoneNumber,
+    normalizeCountryDialCode,
     normalizeLeg,
 };

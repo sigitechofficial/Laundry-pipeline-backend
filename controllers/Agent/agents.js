@@ -6244,8 +6244,7 @@ exports.sendNotificationToCustomer = async (req, res) => {
  * @route POST /agent/bookings/:bookingId/notify-customer
  * @body {string} leg - pickup | delivery
  * @body {string} [channel=sms]
- * @body {string} [templateKey] - arrived_pickup | arrived_delivery
- * @body {string} [customMessage]
+ * @body {string} customMessage - required free-text SMS (max 320)
  */
 exports.notifyCustomer = async (req, res) => {
     const customerNotifyService = require("../../services/Agent/customerNotifyService");
@@ -6253,7 +6252,6 @@ exports.notifyCustomer = async (req, res) => {
     const {
         leg,
         channel = "sms",
-        templateKey,
         customMessage,
     } = req.body;
 
@@ -6263,13 +6261,15 @@ exports.notifyCustomer = async (req, res) => {
     if (!leg) {
         throw new ValidationError('leg is required ("pickup" or "delivery")');
     }
+    if (customMessage == null || !String(customMessage).trim()) {
+        throw new ValidationError("customMessage is required");
+    }
 
     const result = await customerNotifyService.notifyCustomer({
         bookingId,
         agentUserId: req.user.id,
         leg,
         channel,
-        templateKey,
         customMessage,
     });
 

@@ -16,8 +16,7 @@ Content-Type: application/json
 {
   "leg": "pickup",
   "channel": "sms",
-  "templateKey": "arrived_pickup",
-  "customMessage": null
+  "customMessage": "Hi, I'm at your door for laundry pickup — please come out."
 }
 ```
 
@@ -25,8 +24,20 @@ Content-Type: application/json
 |-------|----------|--------|
 | `leg` | Yes | `"pickup"` or `"delivery"` |
 | `channel` | No | `"sms"` only for now (`call` later) |
-| `templateKey` | No | Default: `arrived_pickup` / `arrived_delivery` by leg |
-| `customMessage` | No | If set, overrides template (max 320 chars) |
+| `customMessage` | **Yes** | Agent-typed SMS text (max 320 chars). No auto template. |
+
+### Phone / country code
+
+SMS `To` is built server-side from `users.phoneNum` + `users.countryCode` (agent does not send the number).
+
+| DB example | Twilio `To` |
+|------------|-------------|
+| `phoneNum=+923001234567` | `+923001234567` (as-is) |
+| `countryCode=+92`, `phoneNum=03001234567` | `+923001234567` |
+| `countryCode=+44`, `phoneNum=07123456789` | `+447123456789` |
+| `countryCode=+44`, `phoneNum=1234567890` | `+441234567890` |
+| no countryCode, `03…` | assume PK → `+92…` |
+| no countryCode, `07…` | assume UK → `+44…` |
 
 ### When allowed
 
@@ -49,15 +60,16 @@ Content-Type: application/json
     "from": "+447450310609",
     "messageSid": "SMxxx",
     "twilioStatus": "queued",
-    "bodyPreview": "Hi John, your driver has arrived..."
+    "bodyPreview": "Hi, I'm at your door for laundry pickup..."
   }
 }
 ```
 
 ### App UI
 
-- Pickup reached screen → **Notify SMS** → `{ "leg": "pickup" }`
-- Delivery reached screen → **Notify SMS** → `{ "leg": "delivery" }`
+- Pickup / delivery reached → text field → **Send SMS**
+- Body: `{ "leg": "pickup"|"delivery", "customMessage": "<agent text>" }`
+- Empty `customMessage` → **400** validation error
 - Rate limit: 1 SMS per booking+leg every **2 minutes**
 
 ### Env
