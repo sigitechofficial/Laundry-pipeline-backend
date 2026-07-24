@@ -27,6 +27,13 @@ const RATE_LIMIT_MS = 2 * 60 * 1000;
 /** @type {Map<string, number>} */
 const recentNotifyByKey = new Map();
 
+const TEMPLATES = {
+    arrived_pickup:
+        "Hi {name}, your driver has arrived for laundry pickup. Order {orderTrackId}. — Just Dry Cleans",
+    arrived_delivery:
+        "Hi {name}, your driver has arrived to deliver your laundry. Order {orderTrackId}. — Just Dry Cleans",
+};
+
 const PICKUP_STATUS_IDS = new Set([5, 6]);
 const DELIVERY_STATUS_IDS = new Set([13, 14]);
 
@@ -137,6 +144,17 @@ function maskPhone(phone) {
     return maskPhoneNumber(phone) || "***";
 }
 
+function fillTemplate(template, vars) {
+    return String(template).replace(/\{(\w+)\}/g, (_, key) => {
+        const value = vars[key];
+        return value != null && value !== "" ? String(value) : "";
+    });
+}
+
+function defaultTemplateKey(leg) {
+    return leg === "delivery" ? "arrived_delivery" : "arrived_pickup";
+}
+
 function assertRateLimit(bookingId, leg, channel) {
     const key = `${bookingId}:${leg}:${channel}`;
     const now = Date.now();
@@ -201,14 +219,12 @@ async function logNotification(payload) {
  * @param {number} params.agentUserId
  * @param {string} params.leg - pickup | delivery
  * @param {string} [params.channel] - sms | call
- * @param {string} [params.customMessage] - required for sms (max 320)
  */
 async function notifyCustomer({
     bookingId,
     agentUserId,
     leg: rawLeg,
     channel = "sms",
-    customMessage,
 }) {
     const leg = normalizeLeg(rawLeg);
     if (!leg) {
@@ -286,7 +302,6 @@ async function notifyCustomer({
             agentUserId,
             leg,
             customerPhone,
-            customMessage,
         });
     }
 
@@ -303,18 +318,13 @@ async function sendSmsNotify({
     agentUserId,
     leg,
     customerPhone,
-    customMessage,
 }) {
-    const trimmedCustom =
-        customMessage != null ? String(customMessage).trim() : "";
-    if (!trimmedCustom) {
-        throw new ValidationError(
-            "customMessage is required for SMS. Agent must type the SMS text."
-        );
-    }
-    if (trimmedCustom.length > 320) {
-        throw new ValidationError("customMessage must be 320 characters or less");
-    }
+    const template = TEMPLATES[defaultTemplateKey(leg)];
+    const firstName = bookingRow.customer?.firstName || "there";
+    const body = fillTemplate(template, {
+        name: firstName,
+        orderTrackId: bookingRow.orderTrackId || bookingRow.id,
+    });
 
     assertRateLimit(bookingRow.id, leg, "sms");
 
@@ -322,7 +332,7 @@ async function sendSmsNotify({
     try {
         twilioResult = await twilioSmsService.sendSms({
             to: customerPhone,
-            body: trimmedCustom,
+            body,
         });
     } catch (err) {
         clearRateLimit(bookingRow.id, leg, "sms");
@@ -335,9 +345,7 @@ async function sendSmsNotify({
     const openAttempt = await loadOpenAttempt(bookingRow.id, leg);
     const sentAt = new Date();
     const bodyPreview =
-        trimmedCustom.length > 80
-            ? `${trimmedCustom.slice(0, 77)}...`
-            : trimmedCustom;
+        body.length > 80 ? `${body.slice(0, 77)}...` : body;
     const toMasked = maskPhone(customerPhone);
 
     const notificationId = await logNotification({
@@ -377,18 +385,32 @@ async function startCallNotify({
     leg,
     customerPhone,
 }) {
+    if (!twilioCallService.isVoiceEnabled()) {
+        throw new ValidationError(
+            "Voice calling is temporarily disabled. You can still send SMS."
+        );
+    }
+
     const agentUser = await users.findOne({
         where: { id: agentUserId },
         attributes: ["id", "phoneNum", "countryCode", "firstName"],
     });
 
+    const rawAgentPhone =
+        agentUser?.phoneNum != null ? String(agentUser.phoneNum).trim() : "";
+    if (!rawAgentPhone) {
+        throw new ValidationError(
+            "Your profile phone number is missing. Add phoneNum and countryCode on your agent profile before calling the customer."
+        );
+    }
+
     const agentPhone = normalizePhoneNumber(
-        agentUser?.phoneNum,
+        agentUser.phoneNum,
         agentUser?.countryCode
     );
     if (!agentPhone) {
         throw new ValidationError(
-            "Your agent phone number is missing or invalid. Update profile phone to place a call."
+            "Your profile phone number is invalid. Use E.164 (e.g. +4477…) or national format with countryCode (+44 / +92)."
         );
     }
 
@@ -408,6 +430,9 @@ async function startCallNotify({
         });
     } catch (err) {
         clearRateLimit(bookingRow.id, leg, "call");
+        if (err?.code === "TWILIO_VOICE_DISABLED") {
+            throw new ValidationError(err.message);
+        }
         throw new UniversalHttpError(
             err?.message ||
                 "Failed to start call via Twilio. Please try again.",

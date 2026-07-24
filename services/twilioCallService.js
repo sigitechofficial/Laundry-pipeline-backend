@@ -15,6 +15,22 @@ function escapeXml(value) {
 }
 
 /**
+ * Kill switch for voice only (SMS unaffected).
+ * Default ON. Set TWILIO_VOICE_ENABLED=false|0|off to disable.
+ */
+function isVoiceEnabled() {
+    const raw = process.env.TWILIO_VOICE_ENABLED;
+    if (raw == null || String(raw).trim() === "") return true;
+    const value = String(raw).trim().toLowerCase();
+    return !(
+        value === "false" ||
+        value === "0" ||
+        value === "off" ||
+        value === "no"
+    );
+}
+
+/**
  * Ring agentPhone first; when answered, dial customerPhone.
  * Customer sees TWILIO_PHONE_NUMBER as caller ID.
  *
@@ -26,6 +42,14 @@ async function startClickToCall({
     customerPhone,
     timeoutSeconds = 30,
 }) {
+    if (!isVoiceEnabled()) {
+        const err = new Error(
+            "Twilio voice calling is disabled (TWILIO_VOICE_ENABLED=false)."
+        );
+        err.code = "TWILIO_VOICE_DISABLED";
+        throw err;
+    }
+
     const { client, from } = getTwilioClient();
     const toAgent = String(agentPhone).trim();
     const toCustomer = String(customerPhone).trim();
@@ -58,4 +82,5 @@ async function startClickToCall({
 
 module.exports = {
     startClickToCall,
+    isVoiceEnabled,
 };

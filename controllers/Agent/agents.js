@@ -6244,16 +6244,11 @@ exports.sendNotificationToCustomer = async (req, res) => {
  * @route POST /agent/bookings/:bookingId/notify-customer
  * @body {string} leg - pickup | delivery
  * @body {string} [channel=sms] - sms | call
- * @body {string} [customMessage] - required for sms (max 320)
  */
 exports.notifyCustomer = async (req, res) => {
     const customerNotifyService = require("../../services/Agent/customerNotifyService");
     const bookingId = req.params.bookingId || req.body.bookingId;
-    const {
-        leg,
-        channel = "sms",
-        customMessage,
-    } = req.body;
+    const { leg, channel = "sms" } = req.body;
 
     if (!bookingId) {
         throw new ValidationError("bookingId is required");
@@ -6265,13 +6260,7 @@ exports.notifyCustomer = async (req, res) => {
     const normalizedChannel = String(channel || "sms")
         .toLowerCase()
         .trim();
-    if (normalizedChannel === "sms") {
-        if (customMessage == null || !String(customMessage).trim()) {
-            throw new ValidationError(
-                "customMessage is required when channel is sms"
-            );
-        }
-    } else if (normalizedChannel !== "call") {
+    if (normalizedChannel !== "sms" && normalizedChannel !== "call") {
         throw new ValidationError('channel must be "sms" or "call"');
     }
 
@@ -6280,7 +6269,6 @@ exports.notifyCustomer = async (req, res) => {
         agentUserId: req.user.id,
         leg,
         channel: normalizedChannel,
-        customMessage,
     });
 
     const successMessage =
