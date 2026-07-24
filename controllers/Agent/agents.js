@@ -6271,16 +6271,13 @@ exports.notifyCustomer = async (req, res) => {
         channel: normalizedChannel,
     });
 
-    let successMessage = "SMS sent to customer";
-    if (normalizedChannel === "call") {
-        successMessage =
-            "Calling your phone — answer to connect to the customer";
-    } else if (result?.channel === "push") {
-        successMessage =
-            result.message || "Push notification sent to customer";
-    } else if (result?.channel === "sms") {
-        successMessage = result.message || "SMS sent to customer";
-    }
+    const successMessage =
+        normalizedChannel === "call"
+            ? result?.message ||
+              "Open dialer and call the masked number to reach the customer"
+            : result?.channel === "push"
+              ? result.message || "Push notification sent to customer"
+              : result?.message || "SMS sent to customer";
 
     return ResponseHelper.success(res, successMessage, result);
 };

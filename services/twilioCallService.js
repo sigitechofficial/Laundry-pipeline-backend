@@ -1,18 +1,9 @@
 /**
- * Twilio Voice: click-to-call (ring agent, then dial customer).
- * Uses inline TwiML so no public webhook URL is required.
+ * Twilio Voice helpers: dialer-inbound bridge (agent dials Twilio → webhook dials customer).
  */
 
+const twilio = require("twilio");
 const { getTwilioClient } = require("./twilioSmsService");
-
-function escapeXml(value) {
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&apos;");
-}
 
 /**
  * Kill switch for voice only (SMS unaffected).
@@ -30,57 +21,104 @@ function isVoiceEnabled() {
     );
 }
 
-/**
- * Ring agentPhone first; when answered, dial customerPhone.
- * Customer sees TWILIO_PHONE_NUMBER as caller ID.
- *
- * @param {{ agentPhone: string, customerPhone: string, timeoutSeconds?: number }} params
- * @returns {Promise<{ sid: string, status: string, to: string, from: string }>}
- */
-async function startClickToCall({
-    agentPhone,
-    customerPhone,
-    timeoutSeconds = 30,
-}) {
-    if (!isVoiceEnabled()) {
+function getTwilioFromNumber() {
+    const { from } = getTwilioClient();
+    return from;
+}
+
+function getPublicBaseUrl() {
+    const fromEnv = process.env.PUBLIC_BASE_URL;
+    if (fromEnv && String(fromEnv).trim()) {
+        return String(fromEnv).trim().replace(/\/$/, "");
+    }
+    if (process.env.NODE_ENV === "production") {
+        return "https://prodlaundry.sigisolutions.net";
+    }
+    if (process.env.NODE_ENV === "test") {
+        return "https://stagelaundry.sigisolutions.net";
+    }
+    return null;
+}
+
+function getVoiceIncomingWebhookUrl() {
+    const base = getPublicBaseUrl();
+    if (!base) {
         const err = new Error(
-            "Twilio voice calling is disabled (TWILIO_VOICE_ENABLED=false)."
+            "PUBLIC_BASE_URL is required for dialer calling (Twilio voice webhook)."
         );
-        err.code = "TWILIO_VOICE_DISABLED";
+        err.code = "PUBLIC_BASE_URL_MISSING";
         throw err;
     }
+    return `${base}/webhooks/twilio/voice/incoming`;
+}
 
-    const { client, from } = getTwilioClient();
-    const toAgent = String(agentPhone).trim();
-    const toCustomer = String(customerPhone).trim();
-    const dialTimeout = Math.min(
-        Math.max(Number(timeoutSeconds) || 30, 15),
+function sessionTtlMinutes() {
+    const n = Number(process.env.PHONE_CALL_SESSION_TTL_MINUTES);
+    if (Number.isFinite(n) && n >= 5 && n <= 180) return n;
+    return 30;
+}
+
+/**
+ * Validate X-Twilio-Signature against the configured public webhook URL.
+ */
+function validateIncomingVoiceSignature(signature, params) {
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!authToken) return false;
+
+    // Controlled bypass for local automated tests only
+    if (
+        process.env.TWILIO_SKIP_SIGNATURE_VALIDATION === "true" &&
+        process.env.NODE_ENV !== "production"
+    ) {
+        return true;
+    }
+
+    if (!signature) return false;
+
+    const url = getVoiceIncomingWebhookUrl();
+    return twilio.validateRequest(authToken, signature, url, params || {});
+}
+
+/**
+ * TwiML: connect caller to customer; customer sees Twilio From as caller ID.
+ */
+function buildConnectCustomerTwiml(customerPhoneE164, options = {}) {
+    const timeout = Math.min(
+        Math.max(Number(options.timeoutSeconds) || 30, 15),
         60
     );
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Connecting you to the customer now.</Say>
-  <Dial callerId="${escapeXml(from)}" timeout="${dialTimeout}">${escapeXml(
-        toCustomer
-    )}</Dial>
-</Response>`;
-
-    const call = await client.calls.create({
-        to: toAgent,
-        from,
-        twiml,
+    const from = getTwilioFromNumber();
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say(
+        { voice: "alice" },
+        "Connecting you to the customer now."
+    );
+    const dial = twiml.dial({
+        callerId: from,
+        timeout,
+        answerOnBridge: true,
     });
+    dial.number(String(customerPhoneE164).trim());
+    return twiml.toString();
+}
 
-    return {
-        sid: call.sid,
-        status: call.status,
-        to: call.to,
-        from: call.from || from,
-    };
+function buildRejectTwiml(message) {
+    const twiml = new twilio.twiml.VoiceResponse();
+    twiml.say(
+        { voice: "alice" },
+        message || "This secure calling connection is unavailable."
+    );
+    twiml.hangup();
+    return twiml.toString();
 }
 
 module.exports = {
-    startClickToCall,
     isVoiceEnabled,
+    getTwilioFromNumber,
+    getPublicBaseUrl,
+    getVoiceIncomingWebhookUrl,
+    sessionTtlMinutes,
+    validateIncomingVoiceSignature,
+    buildConnectCustomerTwiml,
+    buildRejectTwiml,
 };

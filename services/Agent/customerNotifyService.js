@@ -2,7 +2,7 @@
  * Agent → customer SMS / click-to-call (Twilio) when reached for pickup / delivery.
  */
 
-const { booking, users, addressDb, bookingAttempt, bookingNotification } = require("../../models");
+const { booking, users, addressDb, bookingAttempt, bookingNotification, bookingCallSession } = require("../../models");
 const { Op } = require("sequelize");
 const {
     ValidationError,
@@ -548,6 +548,21 @@ async function startCallNotify({
         );
     }
 
+    let twilioFrom;
+    try {
+        twilioFrom = twilioCallService.getTwilioFromNumber();
+        // Ensures PUBLIC_BASE_URL is set (webhook must be reachable)
+        twilioCallService.getVoiceIncomingWebhookUrl();
+    } catch (err) {
+        if (err?.code === "PUBLIC_BASE_URL_MISSING") {
+            throw new ValidationError(err.message);
+        }
+        if (err?.code === "TWILIO_NOT_CONFIGURED") {
+            throw new ValidationError(err.message);
+        }
+        throw err;
+    }
+
     const agentUser = await users.findOne({
         where: { id: agentUserId },
         attributes: ["id", "phoneNum", "countryCode", "firstName"],
@@ -573,34 +588,70 @@ async function startCallNotify({
 
     if (agentPhone === customerPhone) {
         throw new ValidationError(
-            "Agent and customer phone numbers are the same. Cannot start click-to-call."
+            "Agent and customer phone numbers are the same. Cannot start masked call."
         );
     }
 
     assertRateLimit(bookingRow.id, leg, "call");
 
-    let twilioResult;
+    const ttlMinutes = twilioCallService.sessionTtlMinutes();
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+    const now = new Date();
+
+    let session;
     try {
-        twilioResult = await twilioCallService.startClickToCall({
-            agentPhone,
-            customerPhone,
+        // One active dialer session per agent phone
+        await bookingCallSession.update(
+            {
+                status: "closed",
+                closedAt: now,
+                closeReason: "replaced",
+            },
+            {
+                where: {
+                    agentPhoneE164: agentPhone,
+                    status: "active",
+                },
+            }
+        );
+
+        // Also close other active sessions for this booking+leg
+        await bookingCallSession.update(
+            {
+                status: "closed",
+                closedAt: now,
+                closeReason: "replaced",
+            },
+            {
+                where: {
+                    bookingId: bookingRow.id,
+                    leg,
+                    status: "active",
+                },
+            }
+        );
+
+        session = await bookingCallSession.create({
+            bookingId: bookingRow.id,
+            agentUserId,
+            leg,
+            agentPhoneE164: agentPhone,
+            status: "active",
+            expiresAt,
         });
     } catch (err) {
         clearRateLimit(bookingRow.id, leg, "call");
-        if (err?.code === "TWILIO_VOICE_DISABLED") {
-            throw new ValidationError(err.message);
-        }
         throw new UniversalHttpError(
-            err?.message ||
-                "Failed to start call via Twilio. Please try again.",
+            err?.message || "Failed to create call session. Please try again.",
             502
         );
     }
 
     const openAttempt = await loadOpenAttempt(bookingRow.id, leg);
-    const sentAt = new Date();
+    const sentAt = now;
     const toMasked = maskPhone(customerPhone);
     const agentMasked = maskPhone(agentPhone);
+    const dialUri = `tel:${twilioFrom}`;
 
     const notificationId = await logNotification({
         bookingId: bookingRow.id,
@@ -608,11 +659,11 @@ async function startCallNotify({
         leg,
         channel: "call",
         agentUserId,
-        twilioSid: twilioResult.sid,
-        twilioStatus: twilioResult.status,
-        bodyPreview: "click-to-call",
+        twilioSid: null,
+        twilioStatus: "session_ready",
+        bodyPreview: "dialer-session",
         toMasked,
-        fromNumber: twilioResult.from,
+        fromNumber: twilioFrom,
         sentAt,
     });
 
@@ -621,18 +672,23 @@ async function startCallNotify({
         orderTrackId: bookingRow.orderTrackId,
         leg,
         channel: "call",
+        sessionId: session.id,
+        maskedNumber: twilioFrom,
+        displayNumber: twilioFrom,
+        dialUri,
+        expiresAt: expiresAt.toISOString(),
         to: toMasked,
         agentTo: agentMasked,
-        from: twilioResult.from,
+        from: twilioFrom,
         messageSid: null,
-        callSid: twilioResult.sid,
-        twilioStatus: twilioResult.status,
-        bodyPreview: "click-to-call",
+        callSid: null,
+        twilioStatus: "session_ready",
+        bodyPreview: "dialer-session",
         attemptId: openAttempt?.id || null,
         notificationId,
         sentAt: sentAt.toISOString(),
         message:
-            "Calling your phone first. Answer to be connected to the customer.",
+            "Open your phone dialer and call the masked number. After you dial, the customer will be connected automatically.",
     };
 }
 
