@@ -1049,283 +1049,236 @@ exports.orderDetailsById = async (req, res) => {
 
 exports.agentBookingFilters = async (req, res) => {
     const agentId = req.user.id;
-
     const { filterType } = req.query;
 
+    // ── Shop address ────────────────────────────────────────────────────────
     const addressFound = await addressDb.findOne({
         where: { userId: agentId },
+        attributes: ["id", "zoneId"],
     });
 
     if (!addressFound) {
         throw new NotFoundError("Address not found for agent");
     }
 
-    const results = {};
+    const shopId  = addressFound.id;
+    const zoneId  = addressFound.zoneId;
 
+    // ── Slots shortcut ───────────────────────────────────────────────────────
     if (filterType === "slots") {
-        results.slots = await getSlotBookings(addressFound.id);
+        const results = { slots: await getSlotBookings(shopId) };
         return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
     }
 
-    results.All = await booking.findAll({
-        where: {
-            laundryShopId: addressFound.id,
-            bookingStatusId: {
-                [Op.notIn]: [1, 17, 19]
-            }
-        },
-        order: [["id", "DESC"]],
-        attributes: [
-            "id",
-            "orderTrackId",
-            "collectionTimeFrom",
-            "collectionTimeTo",
-            "collectionDate",
-            "deliveryTimeFrom",
-            "deliveryTimeTo",
-            "deliveryDate",
-            "driverInstructionOptions",
-            "driverInstructionOptions1",
-            "driverInstruction",
-            "bookingStatusId",
-            "totalItems",
-            "totalBags",
-            "sameBagForAllServices",
-            "noOfBags",
-            "pickupAttemptCount",
-            "pickupRescheduleRequired",
-            "deliveryAttemptCount",
-        ],
-        include: [
-            {
-                model: bookingStatus,
-                attributes: ["id", "title", "description"]
-            },
-            {
-                model: addressDb,
-                as: "laundryShop",
-                attributes: [
-                    "streetAddress",
-                    "district",
-                    "province",
-                    "addressType",
-                    "lat",
-                    "lng",
-                    "postalcode"
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["id", "name", "shortName"]
-                    },
-                    {
-                        model: cities,
-                        attributes: ["id", "name"]
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                as: "pickupAddress",
-                attributes: [
-                    "streetAddress",
-                    "district",
-                    "province",
-                    "addressType",
-                    "lat",
-                    "lng",
-                    "postalcode"
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["id", "name", "shortName"]
-                    },
-                    {
-                        model: cities,
-                        attributes: ["id", "name"]
-                    }
-                ]
-            },
-            {
-                model: addressDb,
-                as: "dropOffAddress",
-                attributes: [
-                    "streetAddress",
-                    "district",
-                    "province",
-                    "addressType",
-                    "lat",
-                    "lng",
-                    "postalcode"
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["id", "name", "shortName"]
-                    },
-                    {
-                        model: cities,
-                        attributes: ["id", "name"]
-                    }
-                ]
-            },
-            {
-                model: users,
-                as: "customer",
-                attributes: [
-                    "firstName",
-                    "lastName",
-                    "email",
-                    "phoneNum"
-                ],
-            },
-            {
-                model: customerSelectedService,
-                required: false,
-                where: {
-                    status: true
-                },
-                attributes: [
-                    "id",
-                    "date",
-                    "time",
-                    "servicePrice",
-                    "categoryPrice",
-                    "bookingId",
-                    "serviceId",
-                    "categoryId",
-                    "subCategoryId",
-                    "items",
-                    "bags",
-                    "serviceInstruction",
-                    "status"
-                ],
-                include: [
-                    {
-                        model: service,
-                        required: false,
-                        attributes: [
-                            "id",
-                            "name",
-                            "status",
-                            "image",
-                            "description",
-                            "pricingBasis",
-                            "numberOfBags",
-                            "numberOfItems"
-                        ]
-                    },
-                    {
-                        model: categories,
-                        required: false,
-                        attributes: [
-                            "id",
-                            "name",
-                            "status",
-                            "image",
-                            "description"
-                        ]
-                    },
-                    {
-                        model: subCategories,
-                        required: false,
-                        attributes: [
-                            "id",
-                            "name",
-                            "price",
-                            "status",
-                            "description",
-                            "barCode",
-                            "weightKg",
-                            "unitCount"
-                        ]
-                    },
-                    {
-                        model: customerSelectedServiceAddOn,
-                        as: "addOns",
-                        required: false,
-                        attributes: [
-                            "id",
-                            "customerSelectedServiceId",
-                            "addOnServiceId",
-                            "price",
-                            "items"
-                        ],
-                        include: [
-                            {
-                                model: addOnServices,
-                                as: "addOnService",
-                                required: false,
-                                attributes: [
-                                    "id",
-                                    "name",
-                                    "price"
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        model: bookingPreference,
-                        as: "selectedServicePreferences",
-                        required: false,
-                        attributes: [
-                            "id",
-                            "bookingId",
-                            "customerSelectedServiceId",
-                            "preferenceTypeId",
-                            "preferenceValueId",
-                            "parentPreferenceValueId",
-                            "preferenceInstruction"
-                        ],
-                        include: [
-                            {
-                                model: preferenceTypes,
-                                required: false,
-                                attributes: [
-                                    "id",
-                                    "name"
-                                ]
-                            },
-                            {
-                                model: preferenceValues,
-                                required: false,
-                                attributes: [
-                                    "id",
-                                    "value"
-                                ]
-                            }
-                        ]
-                    }
-                ]
-            }
-        ],
+    // ── Shared booking attributes ────────────────────────────────────────────
+    const BOOKING_ATTRS = [
+        "id", "orderTrackId",
+        "collectionTimeFrom", "collectionTimeTo", "collectionDate",
+        "deliveryTimeFrom",   "deliveryTimeTo",   "deliveryDate",
+        "driverInstructionOptions", "driverInstructionOptions1", "driverInstruction",
+        "bookingStatusId", "totalItems", "totalBags",
+        "sameBagForAllServices", "noOfBags",
+        "pickupAttemptCount", "pickupRescheduleRequired", "deliveryAttemptCount",
+    ];
+
+    const ADDRESS_ATTRS = ["streetAddress", "district", "province", "addressType", "lat", "lng", "postalcode"];
+    const COUNTRY_INCLUDE = [{ model: countries, attributes: ["id", "name", "shortName"] }];
+    const CITY_INCLUDE    = [{ model: cities,    attributes: ["id", "name"] }];
+    const ADDRESS_INCLUDE = (alias) => ({
+        model: addressDb, as: alias, required: false,
+        attributes: ADDRESS_ATTRS,
+        include: [...COUNTRY_INCLUDE, ...CITY_INCLUDE],
     });
 
-    // Compute displayStatus only while the failed pickup still needs rescheduling.
-    results.All = results.All.map((b) => {
-        const plain = b.toJSON ? b.toJSON() : b;
-        const isPickupFailed =
-            plain.bookingStatusId === 3 &&
-            Boolean(plain.pickupRescheduleRequired);
-        const isDeliveryFailed = plain.bookingStatusId === 15;
-        const failedAttemptType = isDeliveryFailed
-            ? 'delivery'
-            : isPickupFailed
-                ? 'pickup'
-                : null;
-        plain.displayStatus = isPickupFailed
-            ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
-            : plain.bookingStatus || null;
-        plain.attemptFlags = {
-            hasFailedAttempt: Boolean(failedAttemptType),
-            failedAttemptType,
-            pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
-            pickupRescheduleRequired: Boolean(plain.pickupRescheduleRequired),
-            deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
-        };
-        return plain;
-    });
+    const STANDARD_INCLUDES = [
+        { model: bookingStatus, attributes: ["id", "title", "description"] },
+        ADDRESS_INCLUDE("laundryShop"),
+        ADDRESS_INCLUDE("pickupAddress"),
+        ADDRESS_INCLUDE("dropOffAddress"),
+        { model: users, as: "customer", attributes: ["id", "firstName", "lastName", "email", "phoneNum", "countryCode"] },
+        {
+            model: customerSelectedService,
+            required: false,
+            where: { status: true },
+            attributes: ["id", "date", "time", "servicePrice", "categoryPrice", "bookingId", "serviceId", "categoryId", "subCategoryId", "items", "bags", "serviceInstruction", "status"],
+            include: [
+                { model: service,       required: false, attributes: ["id", "name", "status", "image", "description", "pricingBasis", "numberOfBags", "numberOfItems"] },
+                { model: categories,    required: false, attributes: ["id", "name", "status", "image", "description"] },
+                { model: subCategories, required: false, attributes: ["id", "name", "price", "status", "description", "barCode", "weightKg", "unitCount"] },
+                {
+                    model: customerSelectedServiceAddOn, as: "addOns", required: false,
+                    attributes: ["id", "customerSelectedServiceId", "addOnServiceId", "price", "items"],
+                    include: [{ model: addOnServices, as: "addOnService", required: false, attributes: ["id", "name", "price"] }],
+                },
+                {
+                    model: bookingPreference, as: "selectedServicePreferences", required: false,
+                    attributes: ["id", "bookingId", "customerSelectedServiceId", "preferenceTypeId", "preferenceValueId", "parentPreferenceValueId", "preferenceInstruction"],
+                    include: [
+                        { model: preferenceTypes,  required: false, attributes: ["id", "name"] },
+                        { model: preferenceValues, required: false, attributes: ["id", "value"] },
+                    ],
+                },
+            ],
+        },
+    ];
+
+    // ── displayStatus + attemptFlags helper ──────────────────────────────────
+    const addDisplayStatus = (rows) =>
+        rows.map((b) => {
+            const plain = b.toJSON ? b.toJSON() : b;
+            const isPickupFailed   = plain.bookingStatusId === 3 && Boolean(plain.pickupRescheduleRequired);
+            const isDeliveryFailed = plain.bookingStatusId === 15;
+            const failedAttemptType = isDeliveryFailed ? "delivery" : isPickupFailed ? "pickup" : null;
+            plain.displayStatus = isPickupFailed
+                ? { id: 3, title: "Pickup Failed", description: "A pickup attempt was unsuccessful" }
+                : plain.bookingStatus || null;
+            plain.attemptFlags = {
+                hasFailedAttempt: Boolean(failedAttemptType),
+                failedAttemptType,
+                pickupAttemptCount:        Number(plain.pickupAttemptCount) || 0,
+                pickupRescheduleRequired:  Boolean(plain.pickupRescheduleRequired),
+                deliveryAttemptCount:      Number(plain.deliveryAttemptCount) || 0,
+            };
+            return plain;
+        });
+
+    // ── Date helpers ─────────────────────────────────────────────────────────
+    const todayStr     = moment().format("YYYY-MM-DD");
+    const tomorrowStr  = moment().add(1, "day").format("YYYY-MM-DD");
+    const dayAfterStr  = moment().add(2, "day").format("YYYY-MM-DD");
+
+    // Status groups
+    const PICKUP_STATUSES    = [3, 4, 5, 6, 7];
+    const INVOICE_STATUSES   = [8, 9, 10];
+    const PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
+    const ALL_ACTIVE_STATUSES = [...PICKUP_STATUSES, ...INVOICE_STATUSES, ...PROCESSING_STATUSES];
+
+    const results = {};
+
+    // ── NEW — unaccepted bookings in agent's zone ────────────────────────────
+    if (!filterType || filterType === "new") {
+        const rows = await booking.findAll({
+            where: {
+                bookingStatusId: 1,
+                laundryShopId: null,
+                zoneId,
+                [Op.or]: [
+                    { adminAssignedShopId: null },
+                    { adminAssignedShopId: shopId },
+                ],
+            },
+            order: [["id", "DESC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.New = addDisplayStatus(rows);
+        if (filterType === "new") {
+            return ResponseHelper.success(res, "New bookings fetched", results);
+        }
+    }
+
+    // ── TODAY — agent's accepted pickups for today ───────────────────────────
+    if (!filterType || filterType === "today") {
+        const rows = await booking.findAll({
+            where: {
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: PICKUP_STATUSES },
+                collectionDate: {
+                    [Op.gte]: new Date(`${todayStr}T00:00:00.000Z`),
+                    [Op.lt]:  new Date(`${tomorrowStr}T00:00:00.000Z`),
+                },
+            },
+            order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.Today = addDisplayStatus(rows);
+        if (filterType === "today") {
+            return ResponseHelper.success(res, "Today's bookings fetched", results);
+        }
+    }
+
+    // ── TOMORROW — agent's accepted pickups for tomorrow ─────────────────────
+    if (!filterType || filterType === "tomorrow") {
+        const rows = await booking.findAll({
+            where: {
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: PICKUP_STATUSES },
+                collectionDate: {
+                    [Op.gte]: new Date(`${tomorrowStr}T00:00:00.000Z`),
+                    [Op.lt]:  new Date(`${dayAfterStr}T00:00:00.000Z`),
+                },
+            },
+            order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.Tomorrow = addDisplayStatus(rows);
+        if (filterType === "tomorrow") {
+            return ResponseHelper.success(res, "Tomorrow's bookings fetched", results);
+        }
+    }
+
+    // ── ORDERS — all active bookings (master list) ───────────────────────────
+    if (!filterType || filterType === "orders") {
+        const rows = await booking.findAll({
+            where: {
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
+            },
+            order: [["id", "DESC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.Orders = addDisplayStatus(rows);
+        if (filterType === "orders") {
+            return ResponseHelper.success(res, "Orders fetched", results);
+        }
+    }
+
+    // ── INVOICE — delivered to shop → services added → invoice generated ─────
+    if (!filterType || filterType === "invoice") {
+        const rows = await booking.findAll({
+            where: {
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: INVOICE_STATUSES },
+            },
+            order: [["id", "DESC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.Invoice = addDisplayStatus(rows);
+        if (filterType === "invoice") {
+            return ResponseHelper.success(res, "Invoice bookings fetched", results);
+        }
+    }
+
+    // ── PROCESSING — processing → delivery → delivered ───────────────────────
+    if (!filterType || filterType === "processing") {
+        const rows = await booking.findAll({
+            where: {
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: PROCESSING_STATUSES },
+            },
+            order: [["id", "DESC"]],
+            attributes: BOOKING_ATTRS,
+            include: STANDARD_INCLUDES,
+        });
+        results.Processing = addDisplayStatus(rows);
+        if (filterType === "processing") {
+            return ResponseHelper.success(res, "Processing bookings fetched", results);
+        }
+    }
+
+    // ── Backward compat — no filterType returns everything ───────────────────
+    // Keep old "All" key so existing Flutter code doesn't break
+    if (!filterType) {
+        results.All = [
+            ...(results.Today    || []),
+            ...(results.Tomorrow || []),
+            ...(results.Orders   || []),
+        ];
+    }
 
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 };
