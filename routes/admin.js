@@ -13,6 +13,7 @@ const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
+const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -651,6 +652,9 @@ router.get('/reports/daily-earnings', asyncMiddleware(reportsController.getDaily
 router.get('/reports/daily-earnings/zone', asyncMiddleware(reportsController.getDailyEarningByZoneReport))
 // 8. Daily Earning Report by Shop
 router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.getDailyEarningByShopReport))
+
+//!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
+router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))
 
 
 //!-----------------------------------Coupon Management------------------------------------>>>>
