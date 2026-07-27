@@ -1081,21 +1081,39 @@ exports.agentBookingFilters = async (req, res) => {
         "pickupAttemptCount", "pickupRescheduleRequired", "deliveryAttemptCount",
     ];
 
-    const ADDRESS_ATTRS = ["streetAddress", "district", "province", "addressType", "lat", "lng", "postalcode"];
-    const COUNTRY_INCLUDE = [{ model: countries, attributes: ["id", "name", "shortName"] }];
-    const CITY_INCLUDE    = [{ model: cities,    attributes: ["id", "name"] }];
-    const ADDRESS_INCLUDE = (alias) => ({
-        model: addressDb, as: alias, required: false,
-        attributes: ADDRESS_ATTRS,
-        include: [...COUNTRY_INCLUDE, ...CITY_INCLUDE],
-    });
-
-    const STANDARD_INCLUDES = [
+    // ── Fresh includes factory — returns NEW objects every call ─────────────
+    //    Sequelize mutates include objects internally; reusing the same array
+    //    reference across multiple findAll calls corrupts the 2nd+ queries.
+    const makeIncludes = () => [
         { model: bookingStatus, attributes: ["id", "title", "description"] },
-        ADDRESS_INCLUDE("laundryShop"),
-        ADDRESS_INCLUDE("pickupAddress"),
-        ADDRESS_INCLUDE("dropOffAddress"),
-        { model: users, as: "customer", attributes: ["id", "firstName", "lastName", "email", "phoneNum", "countryCode"] },
+        {
+            model: addressDb, as: "laundryShop", required: false,
+            attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", "postalcode"],
+            include: [
+                { model: countries, attributes: ["id", "name", "shortName"] },
+                { model: cities,    attributes: ["id", "name"] },
+            ],
+        },
+        {
+            model: addressDb, as: "pickupAddress", required: false,
+            attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", "postalcode"],
+            include: [
+                { model: countries, attributes: ["id", "name", "shortName"] },
+                { model: cities,    attributes: ["id", "name"] },
+            ],
+        },
+        {
+            model: addressDb, as: "dropOffAddress", required: false,
+            attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", "postalcode"],
+            include: [
+                { model: countries, attributes: ["id", "name", "shortName"] },
+                { model: cities,    attributes: ["id", "name"] },
+            ],
+        },
+        {
+            model: users, as: "customer",
+            attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+        },
         {
             model: customerSelectedService,
             required: false,
@@ -1120,7 +1138,7 @@ exports.agentBookingFilters = async (req, res) => {
                 },
             ],
         },
-    ];
+    ];  // <-- end makeIncludes
 
     // ── displayStatus + attemptFlags helper ──────────────────────────────────
     const addDisplayStatus = (rows) =>
@@ -1169,7 +1187,7 @@ exports.agentBookingFilters = async (req, res) => {
             },
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.New = addDisplayStatus(rows);
         if (filterType === "new") {
@@ -1183,14 +1201,11 @@ exports.agentBookingFilters = async (req, res) => {
             where: {
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: PICKUP_STATUSES },
-                collectionDate: {
-                    [Op.gte]: new Date(`${todayStr}T00:00:00.000Z`),
-                    [Op.lt]:  new Date(`${tomorrowStr}T00:00:00.000Z`),
-                },
+                collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr },
             },
             order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.Today = addDisplayStatus(rows);
         if (filterType === "today") {
@@ -1204,14 +1219,11 @@ exports.agentBookingFilters = async (req, res) => {
             where: {
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: PICKUP_STATUSES },
-                collectionDate: {
-                    [Op.gte]: new Date(`${tomorrowStr}T00:00:00.000Z`),
-                    [Op.lt]:  new Date(`${dayAfterStr}T00:00:00.000Z`),
-                },
+                collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr },
             },
             order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.Tomorrow = addDisplayStatus(rows);
         if (filterType === "tomorrow") {
@@ -1228,7 +1240,7 @@ exports.agentBookingFilters = async (req, res) => {
             },
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.Orders = addDisplayStatus(rows);
         if (filterType === "orders") {
@@ -1245,7 +1257,7 @@ exports.agentBookingFilters = async (req, res) => {
             },
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.Invoice = addDisplayStatus(rows);
         if (filterType === "invoice") {
@@ -1262,7 +1274,7 @@ exports.agentBookingFilters = async (req, res) => {
             },
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
-            include: STANDARD_INCLUDES,
+            include: makeIncludes(),
         });
         results.Processing = addDisplayStatus(rows);
         if (filterType === "processing") {
@@ -6304,3 +6316,4 @@ exports.sendNotificationToMultiple = async (req, res) => {
 
 
 //!---------------------------------------------Controllers Converted to Export Approach----------------------------------------//
+
