@@ -33,7 +33,7 @@ const {
     bookingAttempt,
     units,
     customerSelectedServiceAddOn,
-    addOnServices
+    addOnServices,
     customerOriginalServiceSnapshot,
     customerOriginalPreferenceSnapshot,
 } = require('../../models');
