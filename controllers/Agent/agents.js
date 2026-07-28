@@ -1265,7 +1265,12 @@ exports.agentBookingFilters = async (req, res) => {
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
             },
-            order: [["id", "DESC"]],
+            order: [
+                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END IS NULL`), "ASC"],
+                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END`), "ASC"],
+                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END IS NULL`), "ASC"],
+                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END`), "ASC"],
+            ],
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
