@@ -78,8 +78,28 @@ exports.getServiceComparison = async (bookingId) => {
         ]
     });
 
+    // ── Fallback for old bookings: no snapshot yet → show live customerSelectedService ──
+    const snapshotAvailable = originalServices.length > 0;
+
+    if (!snapshotAvailable) {
+        // Show current live services as "Customer Original" — they haven't been modified yet
+        // (or this is an old booking that predates the snapshot feature)
+        return {
+            snapshotAvailable: false,
+            fallbackToLive: true,
+            customerOriginal: {
+                services:           agentServices.map((s) => s.toJSON()),
+                bookingPreferences: [],
+            },
+            agentInvoice: {
+                services: agentServices.map((s) => s.toJSON()),
+            },
+        };
+    }
+
     return {
-        snapshotAvailable: originalServices.length > 0,
+        snapshotAvailable: true,
+        fallbackToLive: false,
         customerOriginal: {
             services:            originalServices.map((s) => s.toJSON()),
             bookingPreferences:  originalBookingPrefs.map((p) => p.toJSON()),

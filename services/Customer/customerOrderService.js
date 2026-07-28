@@ -34,6 +34,8 @@ const {
     units,
     customerSelectedServiceAddOn,
     addOnServices
+    customerOriginalServiceSnapshot,
+    customerOriginalPreferenceSnapshot,
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -1582,6 +1584,57 @@ class CustomerOrderService {
                 });
 
                 await bookingPreference.bulkCreate(bookingPreferencesToCreate);
+            }
+
+            // ── Snapshot customer's original selections immediately at booking creation ──
+            try {
+                const snapServices = await customerSelectedService.findAll({
+                    where: { bookingId: bookingData.id, status: true }
+                });
+                for (const svc of snapServices) {
+                    const snap = await customerOriginalServiceSnapshot.create({
+                        bookingId:          bookingData.id,
+                        serviceId:          svc.serviceId          ?? null,
+                        categoryId:         svc.categoryId         ?? null,
+                        subCategoryId:      svc.subCategoryId      ?? null,
+                        items:              svc.items               ?? null,
+                        bags:               svc.bags                ?? null,
+                        categoryPrice:      svc.categoryPrice       ?? null,
+                        serviceInstruction: svc.serviceInstruction  ?? null,
+                    });
+                    const svcPrefs = await bookingPreference.findAll({
+                        where: { bookingId: bookingData.id, customerSelectedServiceId: svc.id }
+                    });
+                    if (svcPrefs.length > 0) {
+                        await customerOriginalPreferenceSnapshot.bulkCreate(
+                            svcPrefs.map((p) => ({
+                                bookingId:               bookingData.id,
+                                snapshotServiceId:       snap.id,
+                                preferenceTypeId:        p.preferenceTypeId        ?? null,
+                                preferenceValueId:       p.preferenceValueId       ?? null,
+                                parentPreferenceValueId: p.parentPreferenceValueId ?? null,
+                                preferenceInstruction:   p.preferenceInstruction   ?? null,
+                            }))
+                        );
+                    }
+                }
+                const bookingLevelPrefs = await bookingPreference.findAll({
+                    where: { bookingId: bookingData.id, customerSelectedServiceId: null }
+                });
+                if (bookingLevelPrefs.length > 0) {
+                    await customerOriginalPreferenceSnapshot.bulkCreate(
+                        bookingLevelPrefs.map((p) => ({
+                            bookingId:               bookingData.id,
+                            snapshotServiceId:       null,
+                            preferenceTypeId:        p.preferenceTypeId        ?? null,
+                            preferenceValueId:       p.preferenceValueId       ?? null,
+                            parentPreferenceValueId: p.parentPreferenceValueId ?? null,
+                            preferenceInstruction:   p.preferenceInstruction   ?? null,
+                        }))
+                    );
+                }
+            } catch (snapErr) {
+                console.error(`⚠️ Failed to snapshot customer selections for booking ${bookingData.id}:`, snapErr.message);
             }
         } else if (services.length === 0) {
             throw new ValidationError(
