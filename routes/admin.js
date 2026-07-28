@@ -14,6 +14,7 @@ const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
+const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -655,6 +656,9 @@ router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.get
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))
+
+//!-----------------------------------Service Comparison (customer original vs agent invoice)------------------------------------>>>>
+router.get('/bookings/:bookingId/service-comparison', asyncMiddleware(serviceComparisonController.getServiceComparison))
 
 
 //!-----------------------------------Coupon Management------------------------------------>>>>

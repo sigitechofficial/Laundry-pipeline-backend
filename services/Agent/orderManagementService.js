@@ -15,7 +15,10 @@ const {
     service,
     proofOfDeliveries,
     OnHoldConfirmation,
-    bookingHistory
+    bookingHistory,
+    customerOriginalServiceSnapshot,
+    customerOriginalPreferenceSnapshot,
+    bookingPreference
 } = require('../../models');
 const moment = require('moment');
 const { Op } = require('sequelize');
@@ -1200,6 +1203,66 @@ class AgentOrderManagementService {
     }
 
     /**
+     * Take a one-time frozen snapshot of customer's original service selections
+     * (called once when booking transitions 7 → 8). Idempotent — skips if already taken.
+     */
+    async _snapshotCustomerSelections(bookingId) {
+        const existing = await customerOriginalServiceSnapshot.count({ where: { bookingId } });
+        if (existing > 0) return;
+
+        const services = await customerSelectedService.findAll({
+            where: { bookingId, status: true }
+        });
+
+        for (const svc of services) {
+            const snap = await customerOriginalServiceSnapshot.create({
+                bookingId,
+                serviceId:          svc.serviceId    ?? null,
+                categoryId:         svc.categoryId   ?? null,
+                subCategoryId:      svc.subCategoryId ?? null,
+                items:              svc.items         ?? null,
+                bags:               svc.bags          ?? null,
+                categoryPrice:      svc.categoryPrice ?? null,
+                serviceInstruction: svc.serviceInstruction ?? null,
+            });
+
+            const prefs = await bookingPreference.findAll({
+                where: { bookingId, customerSelectedServiceId: svc.id }
+            });
+
+            if (prefs.length > 0) {
+                await customerOriginalPreferenceSnapshot.bulkCreate(
+                    prefs.map((p) => ({
+                        bookingId,
+                        snapshotServiceId:        snap.id,
+                        preferenceTypeId:         p.preferenceTypeId         ?? null,
+                        preferenceValueId:        p.preferenceValueId        ?? null,
+                        parentPreferenceValueId:  p.parentPreferenceValueId  ?? null,
+                        preferenceInstruction:    p.preferenceInstruction    ?? null,
+                    }))
+                );
+            }
+        }
+
+        // Also capture booking-level preferences (not tied to a specific service)
+        const bookingLevelPrefs = await bookingPreference.findAll({
+            where: { bookingId, customerSelectedServiceId: null }
+        });
+        if (bookingLevelPrefs.length > 0) {
+            await customerOriginalPreferenceSnapshot.bulkCreate(
+                bookingLevelPrefs.map((p) => ({
+                    bookingId,
+                    snapshotServiceId:        null,
+                    preferenceTypeId:         p.preferenceTypeId         ?? null,
+                    preferenceValueId:        p.preferenceValueId        ?? null,
+                    parentPreferenceValueId:  p.parentPreferenceValueId  ?? null,
+                    preferenceInstruction:    p.preferenceInstruction    ?? null,
+                }))
+            );
+        }
+    }
+
+    /**
      * Laundry Wash Completed
      * @param {Object} data - Wash completion data
      * @param {number} data.bookingId - Booking ID
@@ -1221,6 +1284,8 @@ class AgentOrderManagementService {
         if (bookingfind.bookingStatusId !== 7) {
             throw new ValidationError("Laundry not at delivery shop yet");
         }
+
+        await this._snapshotCustomerSelections(bookingId);
 
         await booking.update(
             { bookingStatusId: 8 },
