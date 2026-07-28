@@ -37,8 +37,8 @@ const PUSH_TITLES = {
     delivery: "Driver arrived for delivery",
 };
 
-const PICKUP_STATUS_IDS   = new Set([3, 4, 5, 6, 7]);
-const DELIVERY_STATUS_IDS = new Set([12, 13, 14, 15]);
+
+
 
 function normalizeLeg(leg) {
     const value = String(leg || "")
@@ -275,18 +275,6 @@ async function notifyCustomer({
     const shopId = await resolveAgentShopId(agentUserId);
     if (!shopId || Number(bookingRow.laundryShopId) !== Number(shopId)) {
         throw new ForbiddenError("You are not assigned to this booking");
-    }
-
-    const statusId = Number(bookingRow.bookingStatusId);
-    if (leg === "pickup" && !PICKUP_STATUS_IDS.has(statusId)) {
-        throw new ValidationError(
-            "Notify for pickup is only allowed once the booking is accepted (status 3 or later)."
-        );
-    }
-    if (leg === "delivery" && !DELIVERY_STATUS_IDS.has(statusId)) {
-        throw new ValidationError(
-            "Notify for delivery is only allowed when out for delivery or later (status 12–15)."
-        );
     }
 
     const customerPhone = normalizePhoneNumber(
