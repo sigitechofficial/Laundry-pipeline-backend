@@ -1187,6 +1187,14 @@ exports.agentBookingFilters = async (req, res) => {
                     { adminAssignedShopId: null },
                     { adminAssignedShopId: shopId },
                 ],
+                [Op.and]: [
+                    {
+                        [Op.or]: [
+                            { orderExpireTime: null },
+                            { orderExpireTime: { [Op.gt]: new Date() } },
+                        ],
+                    },
+                ],
             },
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
@@ -1195,7 +1203,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.New = addDisplayStatus(rows);
         if (filterType === "new") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1222,7 +1230,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.Today = addDisplayStatus(rows);
         if (filterType === "today") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1249,7 +1257,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.Tomorrow = addDisplayStatus(rows);
         if (filterType === "tomorrow") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1280,7 +1288,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.Orders = addDisplayStatus(rows);
         if (filterType === "orders") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1311,7 +1319,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.Invoice = addDisplayStatus(rows);
         if (filterType === "invoice") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1342,7 +1350,7 @@ exports.agentBookingFilters = async (req, res) => {
         results.Processing = addDisplayStatus(rows);
         if (filterType === "processing") {
             const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
                 booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
@@ -1366,7 +1374,7 @@ exports.agentBookingFilters = async (req, res) => {
 
     // ── COUNTS — always returned for tab badge updates ────────────────────────
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-        booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }] } }),
+        booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
         booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
         booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
         booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
