@@ -686,14 +686,29 @@ async function bookingEventSentCheckTheShops(
             },
         };
         let notifiedCount = 0;
+        const { sendNotification } = require('../../utils/notification');
+        const fcmPromises = [];
         availableShops.forEach((shop) => {
             if (shop.user && shop.user.id) {
                 sendEvent(shop.user.id, eventData);
+                // FCM push — non-blocking, fire-and-forget
+                fcmPromises.push(
+                    sendNotification(
+                        shop.user.id,
+                        "New Booking Request",
+                        `Order ${bookingDetails.orderTrackId || bookingId} is waiting for acceptance.`,
+                        { bookingId: String(bookingId), type: "newBookingRequest" }
+                    ).catch((e) =>
+                        console.error(`⚠️ FCM failed for agent ${shop.user.id}:`, e.message)
+                    )
+                );
                 notifiedCount += 1;
             } else {
                 console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
             }
         });
+        // Await all FCM pushes in parallel (non-blocking to booking creation)
+        Promise.all(fcmPromises).catch(() => {});
         return {
             notifiedCount,
             availableShopCount: availableShops.length,
