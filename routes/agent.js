@@ -324,6 +324,13 @@ router.get(
     checkPermissions,
     asyncMiddleware(agentController.agentBookingFilters)
 );
+// Lightweight tab badge counts only (no list data)
+router.get(
+    "/bookingCounts",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(agentController.getBookingCounts)
+);
 // Agent past orders — active, completed, cancelled, on hold
 router.get(
     "/order-history",

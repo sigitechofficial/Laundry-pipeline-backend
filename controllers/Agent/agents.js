@@ -1386,6 +1386,45 @@ exports.agentBookingFilters = async (req, res) => {
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 };
 
+/**
+ * @route GET /agent/bookingCounts
+ * Lightweight — returns only tab badge counts, no list data, no JOINs.
+ */
+exports.getBookingCounts = async (req, res) => {
+    const userId  = req.user.id;
+    const shopRow = await addressDb.findOne({
+        where: { userId, deletedAt: null },
+        attributes: ["id", "zoneId"],
+    });
+    if (!shopRow) return ResponseHelper.success(res, "Booking counts", { counts: { new: 0, today: 0, tomorrow: 0, orders: 0, invoice: 0, processing: 0 } });
+
+    const shopId = shopRow.id;
+    const zoneId = shopRow.zoneId;
+
+    const PICKUP_STATUSES     = [3, 4, 5, 6, 7];
+    const INVOICE_STATUSES    = [8, 9, 10];
+    const PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
+    const ALL_ACTIVE_STATUSES = [...PICKUP_STATUSES, ...INVOICE_STATUSES, ...PROCESSING_STATUSES];
+
+    const todayStr        = moment().format("YYYY-MM-DD");
+    const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
+    const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
+    const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
+
+    const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
+        booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
+    ]);
+
+    return ResponseHelper.success(res, "Booking counts", {
+        counts: { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing },
+    });
+};
+
 exports.getAgentOrderHistory = async (req, res) => {
     const agentId = req.user.id;
     const { status, page, limit } = req.query;
