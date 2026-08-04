@@ -118,9 +118,12 @@ jobs:
             **/node_modules/**
             **/.vscode/**
 
+      # Stage TLS cert is currently expired (prod cert is valid). Use -k so CI
+      # can still hit stage-trigger.php like main hits trigger.php. Renew the
+      # stagelaundry.sigisolutions.net certificate, then remove -k.
       - name: Trigger npm install on stage server
         run: |
           echo "Triggering npm install via PHP script..."
-          curl -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php"
+          curl -k -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php"
         env:
           HOME: /home/sigisolutions
