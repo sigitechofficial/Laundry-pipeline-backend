@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - stage
+    paths-ignore:
+      # Keep Live→Stage DB sync workflow edits from redeploying apps.
+      - '.github/workflows/sync-live-to-stage-db.yml'
   workflow_dispatch:
 
 jobs:

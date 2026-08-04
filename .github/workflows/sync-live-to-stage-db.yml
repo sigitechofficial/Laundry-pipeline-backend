@@ -33,45 +33,59 @@ jobs:
           fi
 
           mkdir -p config backups
-          # Same write style as deploy workflow (secrets may include indentation).
-          cat << EOF > config/config.json
-          ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
-          EOF
-          cat << EOF > config/config.prod.sync.json
-          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
-          EOF
+          # Write secrets via env (no bash expansion). Configs may be JSON or JS-object style.
+          printf '%s\n' "$CONFIG_JSON_CONTENT_STAGE" > config/config.json.raw
+          printf '%s\n' "$CONFIG_JSON_CONTENT_PROD" > config/config.prod.sync.json.raw
 
-          python3 <<'PY'
-          from pathlib import Path
-          import json
+          node <<'JS'
+          const fs = require('fs');
 
-          def normalize(path):
-              text = Path(path).read_text(encoding='utf-8').lstrip('\ufeff')
-              try:
-                  obj = json.loads(text)
-                  Path(path).write_text(json.dumps(obj, indent=2) + '\n', encoding='utf-8')
-                  return obj
-              except json.JSONDecodeError:
-                  dedented = '\n'.join(line.lstrip() for line in text.splitlines())
-                  obj = json.loads(dedented)
-                  Path(path).write_text(json.dumps(obj, indent=2) + '\n', encoding='utf-8')
-                  return obj
+          function normalize(rawPath, outPath) {
+            let text = fs.readFileSync(rawPath, 'utf8').replace(/^\uFEFF/, '');
+            text = text.split(/\r?\n/).map((l) => l.replace(/^\s+/, '')).join('\n').trim();
+            let obj;
+            try {
+              obj = JSON.parse(text);
+            } catch (e) {
+              // Secrets are sometimes stored as JS object literals (unquoted keys / single quotes).
+              obj = Function('"use strict"; return (' + text + ')')();
+            }
+            if (!obj || typeof obj !== 'object') {
+              throw new Error('Config did not parse to an object: ' + outPath);
+            }
+            fs.writeFileSync(outPath, JSON.stringify(obj, null, 2) + '\n');
+            return obj;
+          }
 
-          def pick(raw, keys):
-              for k in keys:
-                  if isinstance(raw.get(k), dict) and raw[k].get('database'):
-                      return raw[k]
-              if raw.get('database'):
-                  return raw
-              raise SystemExit(f'bad config shape keys={list(raw)[:8]}')
+          function pick(raw, keys) {
+            for (const k of keys) {
+              if (raw[k] && raw[k].database) return raw[k];
+            }
+            if (raw.database) return raw;
+            throw new Error('bad config shape keys=' + Object.keys(raw).slice(0, 8).join(','));
+          }
 
-          prod = pick(normalize('config/config.prod.sync.json'), ['production', 'test', 'development'])
-          stage = pick(normalize('config/config.json'), ['test', 'development', 'production'])
-          print(f"Live target: {prod.get('host')}:{prod.get('port', 3306)}/{prod.get('database')} (user {prod.get('username')})")
-          print(f"Stage target: {stage.get('host')}:{stage.get('port', 3306)}/{stage.get('database')} (user {stage.get('username')})")
-          if prod.get('host') == stage.get('host') and prod.get('database') == stage.get('database'):
-              raise SystemExit('Live and stage point at the same DB — refusing')
-          PY
+          const prod = pick(
+            normalize('config/config.prod.sync.json.raw', 'config/config.prod.sync.json'),
+            ['production', 'test', 'development']
+          );
+          const stage = pick(
+            normalize('config/config.json.raw', 'config/config.json'),
+            ['test', 'development', 'production']
+          );
+          console.log(
+            'Live target: ' + prod.host + ':' + (prod.port || 3306) + '/' + prod.database +
+              ' (user ' + prod.username + ')'
+          );
+          console.log(
+            'Stage target: ' + stage.host + ':' + (stage.port || 3306) + '/' + stage.database +
+              ' (user ' + stage.username + ')'
+          );
+          if (prod.host === stage.host && prod.database === stage.database) {
+            console.error('Live and stage point at the same DB — refusing');
+            process.exit(1);
+          }
+          JS
 
       - name: Create .htaccess file
         run: |
