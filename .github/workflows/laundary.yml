@@ -93,11 +93,46 @@ jobs:
           ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
           EOF
 
+      # Stage app is Node/Passenger; without exclusions, /stage-trigger.php is
+      # proxied to Express and returns 404. Keep secret htaccess, then ensure
+      # PHP deploy triggers bypass Passenger/Node (stage only — not prod).
       - name: Create .htaccess file
         env:
           HTACCESS_CONTENT: ${{ secrets.HTACCESS_CONTENT_STAGE }}
         run: |
           printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
+          python3 << 'PY'
+          from pathlib import Path
+
+          path = Path(".htaccess")
+          text = path.read_text()
+
+          bypass = """
+          # BEGIN stage PHP deploy-trigger bypass (CI)
+          <FilesMatch "^(stage-trigger|trigger)\\.php$">
+            PassengerEnabled off
+          </FilesMatch>
+          # END stage PHP deploy-trigger bypass (CI)
+          """
+          if "stage PHP deploy-trigger bypass" not in text:
+              text = text.rstrip() + "\n" + bypass
+
+          cond = r'RewriteCond %{REQUEST_URI} !^/(stage-trigger|trigger)\.php$ [NC]'
+          if cond not in text:
+              lines = text.splitlines()
+              out = []
+              inserted = False
+              for line in lines:
+                  if (not inserted) and line.strip().startswith("RewriteRule"):
+                      out.append(cond)
+                      inserted = True
+                  out.append(line)
+              text = "\n".join(out) + "\n"
+
+          path.write_text(text if text.endswith("\n") else text + "\n")
+          print("--- .htaccess (stage) ---")
+          print(path.read_text())
+          PY
 
       - name: Creating firebase.json file
         run: |
@@ -124,6 +159,13 @@ jobs:
       - name: Trigger npm install on stage server
         run: |
           echo "Triggering npm install via PHP script..."
-          curl -k -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php"
+          body="$(curl -k -sS -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php")"
+          echo "$body"
+          if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed'; then
+            echo "Stage trigger succeeded"
+          else
+            echo "Stage trigger failed: PHP script did not run (still routed to Node/Express?)"
+            exit 1
+          fi
         env:
           HOME: /home/sigisolutions
