@@ -1,6 +1,5 @@
 # One-shot / on-demand: copy Live MySQL → Stage MySQL (stage overwrite only).
 # Never writes to the live database.
-# MySQL is localhost on cPanel, so the sync script must run on that host (SSH).
 name: Sync Live DB to Stage
 
 on:
@@ -15,16 +14,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch configs, normalize stage DB target, upload sync assets
+      - name: Fetch configs, normalize stage DB, upload server sync assets
         id: prep
         env:
           PROD_FTP_USERNAME: ${{ secrets.PROD_FTP_USERNAME }}
           PROD_FTP_PASSWORD: ${{ secrets.PROD_FTP_PASSWORD }}
           STAGE_FTP_USERNAME: ${{ secrets.STAGE_FTP_USERNAME }}
           STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
+          PUBLIC_DB_HOST: ${{ secrets.SSH_HOST }}
         run: |
           set -euo pipefail
-          mkdir -p config backups scripts
+          mkdir -p config backups scripts config/remote
           python3 <<'PY'
           from ftplib import FTP, error_perm
           import json, os
@@ -46,7 +46,6 @@ jobs:
 
           def upload(user, password, local_path, remote_path):
               ftp = ftp_connect(user, password)
-              # ensure remote dirs
               parts = remote_path.split('/')[:-1]
               cur = ''
               for p in parts:
@@ -74,6 +73,14 @@ jobs:
                   return k, cfg
               raise SystemExit('No non-placeholder DB config found in keys ' + ','.join(keys))
 
+          def rewrite_host(raw, new_host):
+              out = json.loads(json.dumps(raw))
+              for k, v in list(out.items()):
+                  if isinstance(v, dict) and v.get('database'):
+                      if v.get('host') in ('127.0.0.1', 'localhost'):
+                          v['host'] = new_host
+              return out
+
           fetch(os.environ['PROD_FTP_USERNAME'], os.environ['PROD_FTP_PASSWORD'],
                 'config/config.json', 'config/config.prod.sync.json')
           fetch(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
@@ -85,7 +92,6 @@ jobs:
           prod_key, prod = pick(prod_raw, ['production', 'test', 'development'])
           stage_key, stage = pick(stage_raw, ['development', 'test', 'production'])
 
-          # Point all stage envs at the real stage DB (fixes placeholder test/production blocks).
           for k in ('development', 'test', 'production'):
               if k in stage_raw and isinstance(stage_raw[k], dict):
                   stage_raw[k] = dict(stage)
@@ -93,10 +99,16 @@ jobs:
 
           print(f'Live source [{prod_key}]: {prod.get("host")}/{prod.get("database")} user={prod.get("username")}')
           print(f'Stage target [{stage_key}]: {stage.get("host")}/{stage.get("database")} user={stage.get("username")}')
-          if prod.get('host') == stage.get('host') and prod.get('database') == stage.get('database'):
-              raise SystemExit('Live and stage resolve to the same database — refusing')
+          if prod.get('database') == stage.get('database'):
+              raise SystemExit('Live and stage resolve to the same database name — refusing')
 
-          # Upload only what the server-side sync needs
+          public_host = (os.environ.get('PUBLIC_DB_HOST') or 'sigisolutions.net').strip()
+          Path('config/remote/config.prod.sync.json').write_text(
+              json.dumps(rewrite_host(prod_raw, public_host), indent=2) + '\n')
+          Path('config/remote/config.json').write_text(
+              json.dumps(rewrite_host(stage_raw, public_host), indent=2) + '\n')
+          print(f'Remote attempt host: {public_host}')
+
           upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
                  'config/config.prod.sync.json', 'config/config.prod.sync.json')
           upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
@@ -107,8 +119,27 @@ jobs:
                  'scripts/run-live-to-stage-sync.sh', 'scripts/run-live-to-stage-sync.sh')
           PY
 
-      - name: Run sync over SSH (try key, then cPanel/FTP passwords)
+      - name: Install mysql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mysql-client
+
+      - name: Try Live→Stage sync via remote MySQL from runner
+        id: remote
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          export APP_ROOT="$PWD"
+          export PROD_CONFIG_PATH="$PWD/config/remote/config.prod.sync.json"
+          export STAGE_CONFIG_PATH="$PWD/config/remote/config.json"
+          export DB_BACKUP_DIR="$PWD/backups"
+          export DB_SYNC_STATUS_PATH="$PWD/backups/live-to-stage-sync-status.json"
+          node scripts/live-to-stage-db-sync.js
+          echo "REMOTE_SYNC_OK"
+
+      - name: Run sync over SSH (fallback)
         id: ssh
+        if: steps.remote.outcome != 'success'
         continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -120,12 +151,11 @@ jobs:
           command_timeout: 45m
           script: |
             set -euo pipefail
-            chmod +x /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh || true
             bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
 
-      - name: Retry SSH with STAGE FTP password as cPanel login
+      - name: Retry SSH with STAGE FTP password
         id: ssh2
-        if: steps.ssh.outcome != 'success'
+        if: steps.remote.outcome != 'success' && steps.ssh.outcome != 'success'
         continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -138,26 +168,15 @@ jobs:
             set -euo pipefail
             bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
 
-      - name: Retry SSH with PROD FTP password as cPanel login
-        id: ssh3
-        if: steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success'
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          password: ${{ secrets.PROD_FTP_PASSWORD }}
-          command_timeout: 45m
-          script: |
-            set -euo pipefail
-            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
-
-      - name: Require SSH sync success
-        if: steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success' && steps.ssh3.outcome != 'success'
+      - name: Fail with cPanel one-liner if all automated paths failed
+        if: steps.remote.outcome != 'success' && steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success'
         run: |
-          echo "SSH sync failed — no usable SSH key/password in GitHub secrets."
-          echo "Stage config was normalized and sync scripts were uploaded."
-          echo "In cPanel Terminal run ONE command:"
+          echo "Automated sync could not reach MySQL (remote host blocked and SSH auth missing)."
+          echo "Scripts + normalized stage config are already on the server."
+          echo "Run this in cPanel Terminal, then tell me the output:"
           echo "  bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh"
+          if [ -f backups/live-to-stage-sync-status.json ]; then
+            echo "Last status file:"
+            cat backups/live-to-stage-sync-status.json
+          fi
           exit 1
