@@ -1,4 +1,5 @@
 require('dotenv').config();
+// pipeline-smoke-test: 2026-08-04 stage deploy verification
 const express = require('express');
 const db = require('./models/index');
 const cors = require('cors');
