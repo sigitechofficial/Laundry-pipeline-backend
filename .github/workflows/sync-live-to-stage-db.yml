@@ -27,39 +27,61 @@ jobs:
           mkdir -p config backups scripts config/remote
           python3 <<'PY'
           from ftplib import FTP, error_perm
-          import json, os
+          import json, os, time
           from pathlib import Path
 
           def ftp_connect(user, password):
-              ftp = FTP()
-              ftp.connect('sigisolutions.net', 21, timeout=60)
-              ftp.login(user, password)
-              ftp.set_pasv(True)
-              return ftp
+              last = None
+              for attempt in range(1, 6):
+                  try:
+                      ftp = FTP()
+                      ftp.connect('sigisolutions.net', 21, timeout=90)
+                      ftp.login(user, password)
+                      ftp.set_pasv(True)
+                      return ftp
+                  except Exception as e:
+                      last = e
+                      print(f'FTP connect attempt {attempt} failed: {e}')
+                      time.sleep(5 * attempt)
+              raise last
 
           def fetch(user, password, remote_path, local_path):
-              ftp = ftp_connect(user, password)
-              with open(local_path, 'wb') as fh:
-                  ftp.retrbinary('RETR ' + remote_path, fh.write)
-              ftp.quit()
-              print(f'Downloaded {remote_path} -> {local_path}')
+              for attempt in range(1, 4):
+                  try:
+                      ftp = ftp_connect(user, password)
+                      with open(local_path, 'wb') as fh:
+                          ftp.retrbinary('RETR ' + remote_path, fh.write)
+                      ftp.quit()
+                      print(f'Downloaded {remote_path} -> {local_path}')
+                      return
+                  except Exception as e:
+                      print(f'FTP fetch attempt {attempt} failed: {e}')
+                      time.sleep(5 * attempt)
+              raise SystemExit(f'FTP fetch failed for {remote_path}')
 
           def upload(user, password, local_path, remote_path):
-              ftp = ftp_connect(user, password)
-              parts = remote_path.split('/')[:-1]
-              cur = ''
-              for p in parts:
-                  if not p:
-                      continue
-                  cur = (cur + '/' + p) if cur else p
+              for attempt in range(1, 4):
                   try:
-                      ftp.mkd(cur)
-                  except error_perm:
-                      pass
-              with open(local_path, 'rb') as fh:
-                  ftp.storbinary('STOR ' + remote_path, fh)
-              ftp.quit()
-              print(f'Uploaded {local_path} -> {remote_path}')
+                      ftp = ftp_connect(user, password)
+                      parts = remote_path.split('/')[:-1]
+                      cur = ''
+                      for p in parts:
+                          if not p:
+                              continue
+                          cur = (cur + '/' + p) if cur else p
+                          try:
+                              ftp.mkd(cur)
+                          except error_perm:
+                              pass
+                      with open(local_path, 'rb') as fh:
+                          ftp.storbinary('STOR ' + remote_path, fh)
+                      ftp.quit()
+                      print(f'Uploaded {local_path} -> {remote_path}')
+                      return
+                  except Exception as e:
+                      print(f'FTP upload attempt {attempt} failed: {e}')
+                      time.sleep(5 * attempt)
+              raise SystemExit(f'FTP upload failed for {remote_path}')
 
           def pick(raw, keys):
               for k in keys:
