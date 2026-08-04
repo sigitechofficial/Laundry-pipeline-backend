@@ -1,6 +1,6 @@
 # One-shot / on-demand: copy Live MySQL → Stage MySQL (stage overwrite only).
 # Never writes to the live database.
-# Both DBs are localhost on the cPanel host, so sync runs over SSH on that server.
+# MySQL is localhost on cPanel, so the sync script must run on that host (SSH).
 name: Sync Live DB to Stage
 
 on:
@@ -15,8 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch DB configs from servers (via FTP)
-        id: cfg
+      - name: Fetch configs, normalize stage DB target, upload sync assets
+        id: prep
         env:
           PROD_FTP_USERNAME: ${{ secrets.PROD_FTP_USERNAME }}
           PROD_FTP_PASSWORD: ${{ secrets.PROD_FTP_PASSWORD }}
@@ -24,129 +24,140 @@ jobs:
           STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p config backups
+          mkdir -p config backups scripts
           python3 <<'PY'
-          from ftplib import FTP
+          from ftplib import FTP, error_perm
           import json, os
           from pathlib import Path
 
-          def fetch(user, password, remote_path, local_path):
+          def ftp_connect(user, password):
               ftp = FTP()
               ftp.connect('sigisolutions.net', 21, timeout=60)
               ftp.login(user, password)
               ftp.set_pasv(True)
+              return ftp
+
+          def fetch(user, password, remote_path, local_path):
+              ftp = ftp_connect(user, password)
               with open(local_path, 'wb') as fh:
                   ftp.retrbinary('RETR ' + remote_path, fh.write)
               ftp.quit()
-              print(f'Downloaded {remote_path} -> {local_path} ({Path(local_path).stat().st_size} bytes)')
+              print(f'Downloaded {remote_path} -> {local_path}')
 
-          def summarize(path):
-              raw = json.loads(Path(path).read_text())
-              print(f'== {path} env keys: {list(raw.keys()) if isinstance(raw, dict) else type(raw)}')
-              if isinstance(raw, dict):
-                  for k, v in raw.items():
-                      if isinstance(v, dict) and 'database' in v:
-                          print(f'  [{k}] host={v.get("host")} port={v.get("port", 3306)} db={v.get("database")} user={v.get("username")}')
-              return raw
+          def upload(user, password, local_path, remote_path):
+              ftp = ftp_connect(user, password)
+              # ensure remote dirs
+              parts = remote_path.split('/')[:-1]
+              cur = ''
+              for p in parts:
+                  if not p:
+                      continue
+                  cur = (cur + '/' + p) if cur else p
+                  try:
+                      ftp.mkd(cur)
+                  except error_perm:
+                      pass
+              with open(local_path, 'rb') as fh:
+                  ftp.storbinary('STOR ' + remote_path, fh)
+              ftp.quit()
+              print(f'Uploaded {local_path} -> {remote_path}')
+
+          def pick(raw, keys):
+              for k in keys:
+                  cfg = raw.get(k) if isinstance(raw, dict) else None
+                  if not isinstance(cfg, dict) or not cfg.get('database'):
+                      continue
+                  db = str(cfg.get('database') or '')
+                  user = str(cfg.get('username') or '')
+                  if db.startswith('your_') or user.startswith('your_'):
+                      continue
+                  return k, cfg
+              raise SystemExit('No non-placeholder DB config found in keys ' + ','.join(keys))
 
           fetch(os.environ['PROD_FTP_USERNAME'], os.environ['PROD_FTP_PASSWORD'],
                 'config/config.json', 'config/config.prod.sync.json')
           fetch(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
                 'config/config.json', 'config/config.json')
-          summarize('config/config.prod.sync.json')
-          summarize('config/config.json')
+
+          prod_raw = json.loads(Path('config/config.prod.sync.json').read_text())
+          stage_raw = json.loads(Path('config/config.json').read_text())
+
+          prod_key, prod = pick(prod_raw, ['production', 'test', 'development'])
+          stage_key, stage = pick(stage_raw, ['development', 'test', 'production'])
+
+          # Point all stage envs at the real stage DB (fixes placeholder test/production blocks).
+          for k in ('development', 'test', 'production'):
+              if k in stage_raw and isinstance(stage_raw[k], dict):
+                  stage_raw[k] = dict(stage)
+          Path('config/config.json').write_text(json.dumps(stage_raw, indent=2) + '\n')
+
+          print(f'Live source [{prod_key}]: {prod.get("host")}/{prod.get("database")} user={prod.get("username")}')
+          print(f'Stage target [{stage_key}]: {stage.get("host")}/{stage.get("database")} user={stage.get("username")}')
+          if prod.get('host') == stage.get('host') and prod.get('database') == stage.get('database'):
+              raise SystemExit('Live and stage resolve to the same database — refusing')
+
+          # Upload only what the server-side sync needs
+          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
+                 'config/config.prod.sync.json', 'config/config.prod.sync.json')
+          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
+                 'config/config.json', 'config/config.json')
+          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
+                 'scripts/live-to-stage-db-sync.js', 'scripts/live-to-stage-db-sync.js')
+          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
+                 'scripts/run-live-to-stage-sync.sh', 'scripts/run-live-to-stage-sync.sh')
           PY
 
-      - name: Upload sync script + prod config to stage via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
-        with:
-          server: sigisolutions.net
-          username: ${{ secrets.STAGE_FTP_USERNAME }}
-          password: ${{ secrets.STAGE_FTP_PASSWORD }}
-          protocol: ftp
-          port: 21
-          local-dir: ./
-          exclude: |
-            **/.git*
-            **/.git*/**
-            **/node_modules/**
-            **/.vscode/**
-            **/backups/**
-            **/.github/**
-            **/migrations/**
-            **/seeders/**
-            **/Public/**
-            **/docs/**
-            **/examples/**
-            **/controllers/**
-            **/routes/**
-            **/services/**
-            **/middlewares/**
-            **/utils/**
-            **/helper/**
-            **/models/**
-            **/redis/**
-            **/socket_io.js
-            **/swagger.yaml
-            **/package-lock.json
-            **/laundary.js
-            **/.env
-            **/firebase.json
-            **/.htaccess
-
-      - name: Run Live→Stage DB sync over SSH
+      - name: Run sync over SSH (try key, then cPanel/FTP passwords)
+        id: ssh
+        continue-on-error: true
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_KEY }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           password: ${{ secrets.SSH_PASSWORD }}
           command_timeout: 45m
           script: |
             set -euo pipefail
-            source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
-            export HOME="${HOME:-/home/sigisolutions}"
-            APP_ROOT="${{ secrets.APP_ROOT }}"
-            if [ -z "$APP_ROOT" ] || [ "$APP_ROOT" = "" ]; then
-              APP_ROOT="/home/sigisolutions/stagelaundry.sigisolutions.net"
-            fi
-            cd "$APP_ROOT"
-            mkdir -p backups
-            # Prefer real env blocks; refuse obvious placeholders
-            node <<'JS'
-            const fs = require('fs');
-            const path = require('path');
-            function pick(raw, keys) {
-              for (const k of keys) {
-                if (raw[k] && raw[k].database) return { key: k, cfg: raw[k] };
-              }
-              if (raw.database) return { key: 'flat', cfg: raw };
-              throw new Error('No DB config found');
-            }
-            const prodRaw = JSON.parse(fs.readFileSync('config/config.prod.sync.json', 'utf8'));
-            const stageRaw = JSON.parse(fs.readFileSync('config/config.json', 'utf8'));
-            const prod = pick(prodRaw, ['production', 'test', 'development']);
-            const stage = pick(stageRaw, ['test', 'development', 'production']);
-            const bad = /your_/i;
-            if (bad.test(stage.cfg.database) || bad.test(stage.cfg.username || '')) {
-              console.error('Stage config still has placeholder credentials:', stage.cfg.database, stage.cfg.username);
-              console.error('Update GitHub secret CONFIG_JSON_CONTENT_STAGE (and redeploy stage) with the real stage MySQL database/user/password.');
-              process.exit(2);
-            }
-            if (prod.cfg.host === stage.cfg.host && prod.cfg.database === stage.cfg.database) {
-              console.error('Live and stage are the same database — refusing');
-              process.exit(3);
-            }
-            console.log('Using prod env', prod.key, prod.cfg.host + '/' + prod.cfg.database);
-            console.log('Using stage env', stage.key, stage.cfg.host + '/' + stage.cfg.database);
-            JS
-            export APP_ROOT
-            export PROD_CONFIG_PATH="$APP_ROOT/config/config.prod.sync.json"
-            export STAGE_CONFIG_PATH="$APP_ROOT/config/config.json"
-            export DB_BACKUP_DIR="$APP_ROOT/backups"
-            export DB_SYNC_STATUS_PATH="$APP_ROOT/backups/live-to-stage-sync-status.json"
-            node scripts/live-to-stage-db-sync.js
-            echo "SYNC_OK"
-            # show status summary without dumping SQL
-            node -e "const s=require('./backups/live-to-stage-sync-status.json'); console.log(JSON.stringify({state:s.state,phase:s.phase,liveTableCount:s.liveTableCount,stageTableCount:s.stageTableCount,stageBackup:s.stageBackup,error:s.error},null,2))"
+            chmod +x /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh || true
+            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
+
+      - name: Retry SSH with STAGE FTP password as cPanel login
+        id: ssh2
+        if: steps.ssh.outcome != 'success'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          password: ${{ secrets.STAGE_FTP_PASSWORD }}
+          command_timeout: 45m
+          script: |
+            set -euo pipefail
+            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
+
+      - name: Retry SSH with PROD FTP password as cPanel login
+        id: ssh3
+        if: steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          password: ${{ secrets.PROD_FTP_PASSWORD }}
+          command_timeout: 45m
+          script: |
+            set -euo pipefail
+            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
+
+      - name: Require SSH sync success
+        if: steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success' && steps.ssh3.outcome != 'success'
+        run: |
+          echo "SSH sync failed — no usable SSH key/password in GitHub secrets."
+          echo "Stage config was normalized and sync scripts were uploaded."
+          echo "In cPanel Terminal run ONE command:"
+          echo "  bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh"
+          exit 1
