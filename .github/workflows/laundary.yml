@@ -93,69 +93,10 @@ jobs:
           ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
           EOF
 
-      # Stage app is Node/Passenger; without exclusions, /stage-trigger.php is
-      # proxied to Express and returns 404. Keep secret htaccess, then ensure
-      # PHP deploy triggers bypass Passenger/Node (stage only — not prod).
       - name: Create .htaccess file
-        env:
-          HTACCESS_CONTENT: ${{ secrets.HTACCESS_CONTENT_STAGE }}
         run: |
-          printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
-          python3 << 'PY'
-          from pathlib import Path
-          import re
-
-          path = Path(".htaccess")
-          text = path.read_text()
-
-          # 1) CloudLinux Passenger: disable Node for PHP trigger files.
-          #    Must be near the top so it wins over Passenger app config.
-          passenger_bypass = """# BEGIN stage PHP deploy-trigger bypass (CI)
-          <FilesMatch "^(stage-trigger|trigger)\\.php$">
-            PassengerEnabled off
-          </FilesMatch>
-          # END stage PHP deploy-trigger bypass (CI)
-          """
-          if "stage PHP deploy-trigger bypass" not in text:
-              text = passenger_bypass.rstrip() + "\n\n" + text.lstrip()
-
-          # 2) Reverse-proxy/.htaccess rewrite setups: stop rewriting the PHP
-          #    triggers before ANY later proxy RewriteRule runs.
-          pass_through = r"RewriteRule ^(stage-trigger|trigger)\.php$ - [NC,L]"
-          if pass_through not in text:
-              lines = text.splitlines()
-              out = []
-              inserted = False
-              for line in lines:
-                  out.append(line)
-                  if (not inserted) and re.match(r"^\s*RewriteEngine\s+On\s*$", line, re.I):
-                      out.append(pass_through)
-                      inserted = True
-              if not inserted:
-                  out = ["RewriteEngine On", pass_through, ""] + out
-              text = "\n".join(out) + "\n"
-
-          # 3) Also guard every proxy-style RewriteRule ([P] or http:// backend)
-          cond = r"RewriteCond %{REQUEST_URI} !^/(stage-trigger|trigger)\.php$ [NC]"
-          lines = text.splitlines()
-          out = []
-          for idx, line in enumerate(lines):
-              stripped = line.strip()
-              is_proxy_rule = stripped.startswith("RewriteRule") and (
-                  "[P" in stripped.replace(" ", "") or "http://" in stripped or "https://" in stripped
-              )
-              prev = out[-1].strip() if out else ""
-              if is_proxy_rule and cond not in prev:
-                  # Avoid duplicating if we already added it just above
-                  if cond not in "\n".join(out[-3:]):
-                      out.append(cond)
-              out.append(line)
-          text = "\n".join(out) + "\n"
-
-          path.write_text(text)
-          print("--- .htaccess (stage) ---")
-          print(path.read_text())
-          PY
+          echo "Creating .htaccess file..."
+          echo "${{ secrets.HTACCESS_CONTENT_STAGE }}" > .htaccess
 
       - name: Creating firebase.json file
         run: |
@@ -176,18 +117,22 @@ jobs:
             **/node_modules/**
             **/.vscode/**
 
-      # Stage TLS cert is currently expired (prod cert is valid). Use -k so CI
-      # can still hit stage-trigger.php like main hits trigger.php. Renew the
-      # stagelaundry.sigisolutions.net certificate, then remove -k.
+      # Stage TLS cert is expired (prod is fine). Use -k until renewed.
+      # Hosting sends all traffic to PM2/Express, so /stage-trigger.php is handled
+      # by Express in laundary.js (same npm install + pm2 restart as stage-trigger.php).
+      # ONE-TIME after this lands: pm2 restart laundary-stage so the new route loads.
       - name: Trigger npm install on stage server
         run: |
-          echo "Triggering npm install via PHP script..."
-          body="$(curl -k -sS -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php")"
+          echo "Triggering stage deploy via /stage-trigger.php (Express handler)..."
+          body="$(curl -k -sS --max-time 600 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php")"
           echo "$body"
-          if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed'; then
+          if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then
             echo "Stage trigger succeeded"
           else
-            echo "Stage trigger failed: PHP script did not run (still routed to Node/Express?)"
+            echo "Stage trigger failed."
+            echo "If this is the first deploy of the Express /stage-trigger.php route, SSH once and run:"
+            echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage"
+            echo "Then re-run this workflow."
             exit 1
           fi
         env:

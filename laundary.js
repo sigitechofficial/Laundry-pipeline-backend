@@ -91,6 +91,62 @@ app.use(express.urlencoded({ extended: true }));
 
 
 // ============================================
+// STAGE DEPLOY TRIGGER
+// ============================================
+// Hosting proxies all HTTP to PM2/Express, so stage-trigger.php never reaches
+// PHP. This route mirrors stage-trigger.php for the stage CI pipeline only.
+// Production keeps using trigger.php outside this process (NODE_ENV=production).
+app.get('/stage-trigger.php', function (req, res) {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).send('Not found');
+  }
+
+  const { exec } = require('child_process');
+  const workingDir = '/home/sigisolutions/stagelaundry.sigisolutions.net';
+  const shell = '/bin/bash';
+  const env = Object.assign({}, process.env, {
+    HOME: '/home/sigisolutions',
+    PATH:
+      '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin:' +
+      (process.env.PATH || '')
+  });
+  const npmCommand =
+    'source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && cd ' +
+    workingDir +
+    ' && npm install';
+  const pm2Command =
+    'source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && pm2 stop laundary-stage || true && pm2 delete laundary-stage || true && pm2 start ' +
+    workingDir +
+    '/laundary.js --name laundary-stage && pm2 save';
+
+  exec(
+    npmCommand,
+    { shell: shell, cwd: workingDir, env: env, maxBuffer: 1024 * 1024 * 20 },
+    function (npmErr, npmStdout, npmStderr) {
+      if (npmErr) {
+        return res
+          .status(500)
+          .send(
+            'Failed to run npm install.<br>' +
+              String((npmStderr || npmErr.message || '')).replace(/\n/g, '<br>')
+          );
+      }
+
+      const body =
+        'NPM install completed successfully.<br>' +
+        String(npmStdout || '').replace(/\n/g, '<br>') +
+        'PM2 command scheduled.<br>';
+
+      // Finish HTTP response before PM2 replaces this process (PHP runs outside Node).
+      res.status(200).send(body);
+      setTimeout(function () {
+        exec(pm2Command, { shell: shell, cwd: workingDir, env: env }, function () {});
+      }, 1500);
+    }
+  );
+});
+
+// ============================================
 // SWAGGER DOCS
 // ============================================
 let swaggerUrl;
