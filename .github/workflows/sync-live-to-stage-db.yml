@@ -1,5 +1,4 @@
-# One-shot / on-demand: copy Live MySQL → Stage MySQL (stage overwrite only).
-# Never writes to the live database.
+# Live MySQL → Stage MySQL (stage overwrite only). Never writes to live.
 name: Sync Live DB to Stage
 
 on:
@@ -14,17 +13,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch configs, normalize stage DB, upload server sync assets
-        id: prep
+      - name: Prepare configs on stage via FTP
         env:
           PROD_FTP_USERNAME: ${{ secrets.PROD_FTP_USERNAME }}
           PROD_FTP_PASSWORD: ${{ secrets.PROD_FTP_PASSWORD }}
           STAGE_FTP_USERNAME: ${{ secrets.STAGE_FTP_USERNAME }}
           STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
-          PUBLIC_DB_HOST: ${{ secrets.SSH_HOST }}
         run: |
           set -euo pipefail
-          mkdir -p config backups scripts config/remote
+          mkdir -p config scripts
           python3 <<'PY'
           from ftplib import FTP, error_perm
           import json, os, time
@@ -46,62 +43,28 @@ jobs:
               raise last
 
           def fetch(user, password, remote_path, local_path):
-              for attempt in range(1, 4):
-                  try:
-                      ftp = ftp_connect(user, password)
-                      with open(local_path, 'wb') as fh:
-                          ftp.retrbinary('RETR ' + remote_path, fh.write)
-                      ftp.quit()
-                      print(f'Downloaded {remote_path} -> {local_path}')
-                      return
-                  except Exception as e:
-                      print(f'FTP fetch attempt {attempt} failed: {e}')
-                      time.sleep(5 * attempt)
-              raise SystemExit(f'FTP fetch failed for {remote_path}')
+              ftp = ftp_connect(user, password)
+              with open(local_path, 'wb') as fh:
+                  ftp.retrbinary('RETR ' + remote_path, fh.write)
+              ftp.quit()
+              print(f'Downloaded {remote_path}')
 
           def upload(user, password, local_path, remote_path):
-              for attempt in range(1, 4):
+              ftp = ftp_connect(user, password)
+              parts = remote_path.split('/')[:-1]
+              cur = ''
+              for p in parts:
+                  if not p:
+                      continue
+                  cur = (cur + '/' + p) if cur else p
                   try:
-                      ftp = ftp_connect(user, password)
-                      parts = remote_path.split('/')[:-1]
-                      cur = ''
-                      for p in parts:
-                          if not p:
-                              continue
-                          cur = (cur + '/' + p) if cur else p
-                          try:
-                              ftp.mkd(cur)
-                          except error_perm:
-                              pass
-                      with open(local_path, 'rb') as fh:
-                          ftp.storbinary('STOR ' + remote_path, fh)
-                      ftp.quit()
-                      print(f'Uploaded {local_path} -> {remote_path}')
-                      return
-                  except Exception as e:
-                      print(f'FTP upload attempt {attempt} failed: {e}')
-                      time.sleep(5 * attempt)
-              raise SystemExit(f'FTP upload failed for {remote_path}')
-
-          def pick(raw, keys):
-              for k in keys:
-                  cfg = raw.get(k) if isinstance(raw, dict) else None
-                  if not isinstance(cfg, dict) or not cfg.get('database'):
-                      continue
-                  db = str(cfg.get('database') or '')
-                  user = str(cfg.get('username') or '')
-                  if db.startswith('your_') or user.startswith('your_'):
-                      continue
-                  return k, cfg
-              raise SystemExit('No non-placeholder DB config found in keys ' + ','.join(keys))
-
-          def rewrite_host(raw, new_host):
-              out = json.loads(json.dumps(raw))
-              for k, v in list(out.items()):
-                  if isinstance(v, dict) and v.get('database'):
-                      if v.get('host') in ('127.0.0.1', 'localhost'):
-                          v['host'] = new_host
-              return out
+                      ftp.mkd(cur)
+                  except error_perm:
+                      pass
+              with open(local_path, 'rb') as fh:
+                  ftp.storbinary('STOR ' + remote_path, fh)
+              ftp.quit()
+              print(f'Uploaded {remote_path}')
 
           fetch(os.environ['PROD_FTP_USERNAME'], os.environ['PROD_FTP_PASSWORD'],
                 'config/config.json', 'config/config.prod.sync.json')
@@ -111,25 +74,35 @@ jobs:
           prod_raw = json.loads(Path('config/config.prod.sync.json').read_text())
           stage_raw = json.loads(Path('config/config.json').read_text())
 
-          prod_key, prod = pick(prod_raw, ['production', 'test', 'development'])
-          stage_key, stage = pick(stage_raw, ['development', 'test', 'production'])
+          # Live site NODE_ENV=development → sigisolutions_laundary
+          live = prod_raw.get('development') or prod_raw.get('production')
+          if not live or not live.get('database'):
+              raise SystemExit('No live DB config found on prodlaundry')
+          if 'fomino' in str(live.get('database', '')).lower() and prod_raw.get('development'):
+              live = prod_raw['development']
 
           for k in ('development', 'test', 'production'):
-              if k in stage_raw and isinstance(stage_raw[k], dict):
+              prod_raw[k] = dict(live)
+
+          # Stage: prefer real stagelaundry block (skip your_* placeholders)
+          stage = None
+          for k in ('development', 'test', 'production'):
+              cfg = stage_raw.get(k) or {}
+              db = str(cfg.get('database') or '')
+              user = str(cfg.get('username') or '')
+              if db and not db.startswith('your_') and not user.startswith('your_'):
+                  stage = cfg
+                  break
+          if not stage:
+              raise SystemExit('No real stage DB config found')
+          for k in ('development', 'test', 'production'):
+              if k in stage_raw:
                   stage_raw[k] = dict(stage)
+
+          Path('config/config.prod.sync.json').write_text(json.dumps(prod_raw, indent=2) + '\n')
           Path('config/config.json').write_text(json.dumps(stage_raw, indent=2) + '\n')
-
-          print(f'Live source [{prod_key}]: {prod.get("host")}/{prod.get("database")} user={prod.get("username")}')
-          print(f'Stage target [{stage_key}]: {stage.get("host")}/{stage.get("database")} user={stage.get("username")}')
-          if prod.get('database') == stage.get('database'):
-              raise SystemExit('Live and stage resolve to the same database name — refusing')
-
-          public_host = (os.environ.get('PUBLIC_DB_HOST') or 'sigisolutions.net').strip()
-          Path('config/remote/config.prod.sync.json').write_text(
-              json.dumps(rewrite_host(prod_raw, public_host), indent=2) + '\n')
-          Path('config/remote/config.json').write_text(
-              json.dumps(rewrite_host(stage_raw, public_host), indent=2) + '\n')
-          print(f'Remote attempt host: {public_host}')
+          print(f'Live source: {live.get("database")} user={live.get("username")}')
+          print(f'Stage target: {stage.get("database")} user={stage.get("username")}')
 
           upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
                  'config/config.prod.sync.json', 'config/config.prod.sync.json')
@@ -141,64 +114,45 @@ jobs:
                  'scripts/run-live-to-stage-sync.sh', 'scripts/run-live-to-stage-sync.sh')
           PY
 
-      - name: Install mysql client
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq mysql-client
-
-      - name: Try Live→Stage sync via remote MySQL from runner
-        id: remote
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          export APP_ROOT="$PWD"
-          export PROD_CONFIG_PATH="$PWD/config/remote/config.prod.sync.json"
-          export STAGE_CONFIG_PATH="$PWD/config/remote/config.json"
-          export DB_BACKUP_DIR="$PWD/backups"
-          export DB_SYNC_STATUS_PATH="$PWD/backups/live-to-stage-sync-status.json"
-          node scripts/live-to-stage-db-sync.js
-          echo "REMOTE_SYNC_OK"
-
-      - name: Run sync over SSH (fallback)
-        id: ssh
-        if: steps.remote.outcome != 'success'
-        continue-on-error: true
+      - name: Sync DB + restart stage via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
           password: ${{ secrets.SSH_PASSWORD }}
           command_timeout: 45m
           script: |
             set -euo pipefail
-            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
+            export HOME=/home/sigisolutions
+            source "$HOME/.nvm/nvm.sh"
+            APP_ROOT="${{ secrets.APP_ROOT }}"
+            if [ -z "$APP_ROOT" ]; then
+              APP_ROOT=/home/sigisolutions/stagelaundry.sigisolutions.net
+            fi
+            cd "$APP_ROOT"
 
-      - name: Retry SSH with STAGE FTP password
-        id: ssh2
-        if: steps.remote.outcome != 'success' && steps.ssh.outcome != 'success'
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          password: ${{ secrets.STAGE_FTP_PASSWORD }}
-          command_timeout: 45m
-          script: |
-            set -euo pipefail
-            bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh
+            # Prefer laundry-named live DB (prodlaundry uses NODE_ENV=development)
+            node <<'JS'
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('config/config.prod.sync.json', 'utf8'));
+            const live = c.development || c.production;
+            if (!live || !live.database) throw new Error('missing live config');
+            c.production = Object.assign({}, live);
+            c.test = Object.assign({}, live);
+            c.development = Object.assign({}, live);
+            fs.writeFileSync('config/config.prod.sync.json', JSON.stringify(c, null, 2));
+            console.log('Live source locked to', live.database, live.username);
+            JS
 
-      - name: Fail with cPanel one-liner if all automated paths failed
-        if: steps.remote.outcome != 'success' && steps.ssh.outcome != 'success' && steps.ssh2.outcome != 'success'
-        run: |
-          echo "Automated sync could not reach MySQL (remote host blocked and SSH auth missing)."
-          echo "Scripts + normalized stage config are already on the server."
-          echo "Run this in cPanel Terminal, then tell me the output:"
-          echo "  bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/run-live-to-stage-sync.sh"
-          if [ -f backups/live-to-stage-sync-status.json ]; then
-            echo "Last status file:"
-            cat backups/live-to-stage-sync-status.json
-          fi
-          exit 1
+            chmod +x scripts/run-live-to-stage-sync.sh || true
+            bash scripts/run-live-to-stage-sync.sh
+
+            # Free port / stop bad nodemon, then start PM2 stage cleanly
+            fuser -k 8888/tcp 2>/dev/null || true
+            pkill -f "nodemon.*laundary" 2>/dev/null || true
+            pm2 delete laundary-stage || true
+            pm2 start laundary.js --name laundary-stage
+            pm2 save
+            pm2 list | sed -n '1,30p'
+            echo DONE
