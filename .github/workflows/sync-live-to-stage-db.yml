@@ -10,149 +10,144 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: Checkout (for sync scripts)
         uses: actions/checkout@v4
 
-      - name: Prepare configs on stage via FTP
+      - name: Upload sync scripts to stage via FTP
+        continue-on-error: true
         env:
-          PROD_FTP_USERNAME: ${{ secrets.PROD_FTP_USERNAME }}
-          PROD_FTP_PASSWORD: ${{ secrets.PROD_FTP_PASSWORD }}
           STAGE_FTP_USERNAME: ${{ secrets.STAGE_FTP_USERNAME }}
           STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p config scripts
           python3 <<'PY'
           from ftplib import FTP, error_perm
-          import json, os, time
-          from pathlib import Path
+          import os, time
 
-          def ftp_connect(user, password):
+          def connect():
               last = None
-              for attempt in range(1, 6):
+              for i in range(1, 6):
                   try:
                       ftp = FTP()
                       ftp.connect('sigisolutions.net', 21, timeout=90)
-                      ftp.login(user, password)
+                      ftp.login(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'])
                       ftp.set_pasv(True)
                       return ftp
                   except Exception as e:
                       last = e
-                      print(f'FTP connect attempt {attempt} failed: {e}')
-                      time.sleep(5 * attempt)
+                      print('FTP retry', i, e)
+                      time.sleep(5 * i)
               raise last
 
-          def fetch(user, password, remote_path, local_path):
-              ftp = ftp_connect(user, password)
-              with open(local_path, 'wb') as fh:
-                  ftp.retrbinary('RETR ' + remote_path, fh.write)
-              ftp.quit()
-              print(f'Downloaded {remote_path}')
-
-          def upload(user, password, local_path, remote_path):
-              ftp = ftp_connect(user, password)
-              parts = remote_path.split('/')[:-1]
+          def upload(local, remote):
+              ftp = connect()
+              parts = remote.split('/')[:-1]
               cur = ''
               for p in parts:
-                  if not p:
-                      continue
                   cur = (cur + '/' + p) if cur else p
                   try:
                       ftp.mkd(cur)
                   except error_perm:
                       pass
-              with open(local_path, 'rb') as fh:
-                  ftp.storbinary('STOR ' + remote_path, fh)
+              with open(local, 'rb') as fh:
+                  ftp.storbinary('STOR ' + remote, fh)
               ftp.quit()
-              print(f'Uploaded {remote_path}')
+              print('Uploaded', remote)
 
-          fetch(os.environ['PROD_FTP_USERNAME'], os.environ['PROD_FTP_PASSWORD'],
-                'config/config.json', 'config/config.prod.sync.json')
-          fetch(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
-                'config/config.json', 'config/config.json')
-
-          prod_raw = json.loads(Path('config/config.prod.sync.json').read_text())
-          stage_raw = json.loads(Path('config/config.json').read_text())
-
-          # Live site NODE_ENV=development → sigisolutions_laundary
-          live = prod_raw.get('development') or prod_raw.get('production')
-          if not live or not live.get('database'):
-              raise SystemExit('No live DB config found on prodlaundry')
-          if 'fomino' in str(live.get('database', '')).lower() and prod_raw.get('development'):
-              live = prod_raw['development']
-
-          for k in ('development', 'test', 'production'):
-              prod_raw[k] = dict(live)
-
-          # Stage: prefer real stagelaundry block (skip your_* placeholders)
-          stage = None
-          for k in ('development', 'test', 'production'):
-              cfg = stage_raw.get(k) or {}
-              db = str(cfg.get('database') or '')
-              user = str(cfg.get('username') or '')
-              if db and not db.startswith('your_') and not user.startswith('your_'):
-                  stage = cfg
-                  break
-          if not stage:
-              raise SystemExit('No real stage DB config found')
-          for k in ('development', 'test', 'production'):
-              if k in stage_raw:
-                  stage_raw[k] = dict(stage)
-
-          Path('config/config.prod.sync.json').write_text(json.dumps(prod_raw, indent=2) + '\n')
-          Path('config/config.json').write_text(json.dumps(stage_raw, indent=2) + '\n')
-          print(f'Live source: {live.get("database")} user={live.get("username")}')
-          print(f'Stage target: {stage.get("database")} user={stage.get("username")}')
-
-          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
-                 'config/config.prod.sync.json', 'config/config.prod.sync.json')
-          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
-                 'config/config.json', 'config/config.json')
-          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
-                 'scripts/live-to-stage-db-sync.js', 'scripts/live-to-stage-db-sync.js')
-          upload(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'],
-                 'scripts/run-live-to-stage-sync.sh', 'scripts/run-live-to-stage-sync.sh')
+          upload('scripts/live-to-stage-db-sync.js', 'scripts/live-to-stage-db-sync.js')
+          upload('scripts/run-live-to-stage-sync.sh', 'scripts/run-live-to-stage-sync.sh')
           PY
 
-      - name: Sync DB + restart stage via SSH
+      - name: Sync Live→Stage DB and restart PM2 over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          STAGE_CONFIG_SECRET: ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           password: ${{ secrets.SSH_PASSWORD }}
           command_timeout: 45m
+          envs: STAGE_CONFIG_SECRET
           script: |
             set -euo pipefail
             export HOME=/home/sigisolutions
             source "$HOME/.nvm/nvm.sh"
-            APP_ROOT="${{ secrets.APP_ROOT }}"
-            if [ -z "$APP_ROOT" ]; then
-              APP_ROOT=/home/sigisolutions/stagelaundry.sigisolutions.net
-            fi
-            cd "$APP_ROOT"
 
-            # Prefer laundry-named live DB (prodlaundry uses NODE_ENV=development)
+            LIVE_ROOT=/home/sigisolutions/prodlaundry.sigisolutions.net
+            STAGE_ROOT=/home/sigisolutions/stagelaundry.sigisolutions.net
+            test -f "$LIVE_ROOT/config/config.json"
+            mkdir -p "$STAGE_ROOT/config" "$STAGE_ROOT/scripts" "$STAGE_ROOT/backups"
+
             node <<'JS'
             const fs = require('fs');
-            const c = JSON.parse(fs.readFileSync('config/config.prod.sync.json', 'utf8'));
-            const live = c.development || c.production;
-            if (!live || !live.database) throw new Error('missing live config');
-            c.production = Object.assign({}, live);
-            c.test = Object.assign({}, live);
-            c.development = Object.assign({}, live);
-            fs.writeFileSync('config/config.prod.sync.json', JSON.stringify(c, null, 2));
-            console.log('Live source locked to', live.database, live.username);
+            const LIVE_ROOT = '/home/sigisolutions/prodlaundry.sigisolutions.net';
+            const STAGE_ROOT = '/home/sigisolutions/stagelaundry.sigisolutions.net';
+
+            function parseMaybeJs(text) {
+              text = String(text || '').replace(/^\uFEFF/, '');
+              text = text.split(/\r?\n/).map(l => l.replace(/^\s+/, '')).join('\n').trim();
+              try { return JSON.parse(text); }
+              catch (e) { return Function('"use strict"; return (' + text + ')')(); }
+            }
+            function usable(cfg) {
+              if (!cfg || !cfg.database) return false;
+              const db = String(cfg.database);
+              const user = String(cfg.username || '');
+              return !db.startsWith('your_') && !user.startsWith('your_');
+            }
+            function pickStage(raw) {
+              for (const k of ['development', 'test', 'production']) {
+                if (usable(raw[k])) return raw[k];
+              }
+              return null;
+            }
+
+            const liveRaw = JSON.parse(fs.readFileSync(LIVE_ROOT + '/config/config.json', 'utf8'));
+            let stageRaw = JSON.parse(fs.readFileSync(STAGE_ROOT + '/config/config.json', 'utf8'));
+            let stage = pickStage(stageRaw);
+
+            // If server stage config is placeholders only, rebuild from GitHub secret
+            if (!stage && process.env.STAGE_CONFIG_SECRET) {
+              stageRaw = parseMaybeJs(process.env.STAGE_CONFIG_SECRET);
+              stage = pickStage(stageRaw);
+              console.log('Loaded stage config from GitHub secret');
+            }
+            if (!stage) throw new Error('No real stage DB credentials available');
+
+            // prodlaundry .env has NODE_ENV=development → sigisolutions_laundary
+            const live = liveRaw.development || liveRaw.production;
+            if (!live || !live.database) throw new Error('No live DB in prodlaundry config');
+            console.log('Live source:', live.database, live.username);
+            console.log('Stage target:', stage.database, stage.username);
+
+            const prodSync = {
+              development: Object.assign({}, live),
+              test: Object.assign({}, live),
+              production: Object.assign({}, live)
+            };
+            fs.writeFileSync(STAGE_ROOT + '/config/config.prod.sync.json', JSON.stringify(prodSync, null, 2));
+            for (const k of ['development', 'test', 'production']) {
+              if (stageRaw[k]) stageRaw[k] = Object.assign({}, stage);
+            }
+            fs.writeFileSync(STAGE_ROOT + '/config/config.json', JSON.stringify(stageRaw, null, 2));
             JS
 
-            chmod +x scripts/run-live-to-stage-sync.sh || true
-            bash scripts/run-live-to-stage-sync.sh
+            cd "$STAGE_ROOT"
+            export APP_ROOT="$STAGE_ROOT"
+            export PROD_CONFIG_PATH="$STAGE_ROOT/config/config.prod.sync.json"
+            export STAGE_CONFIG_PATH="$STAGE_ROOT/config/config.json"
+            export DB_BACKUP_DIR="$STAGE_ROOT/backups"
+            export DB_SYNC_STATUS_PATH="$STAGE_ROOT/backups/live-to-stage-sync-status.json"
 
-            # Free port / stop bad nodemon, then start PM2 stage cleanly
+            node scripts/live-to-stage-db-sync.js
+            echo SYNC_OK
+            node -e "const s=require('./backups/live-to-stage-sync-status.json'); console.log(JSON.stringify({state:s.state,liveTableCount:s.liveTableCount,stageTableCount:s.stageTableCount,stageBackup:s.stageBackup,error:s.error},null,2))"
+
             fuser -k 8888/tcp 2>/dev/null || true
             pkill -f "nodemon.*laundary" 2>/dev/null || true
             pm2 delete laundary-stage || true
-            pm2 start laundary.js --name laundary-stage
+            pm2 start "$STAGE_ROOT/laundary.js" --name laundary-stage --cwd "$STAGE_ROOT"
             pm2 save
-            pm2 list | sed -n '1,30p'
+            pm2 list
             echo DONE
