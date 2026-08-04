@@ -1,0 +1,133 @@
+# One-shot / on-demand: copy Live MySQL → Stage MySQL (stage overwrite only).
+# Never writes to the live database.
+name: Sync Live DB to Stage
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync_live_to_stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare stage env, configs, and sync token
+        id: prep
+        env:
+          ENV_FILE_CONTENT_STAGE: ${{ secrets.ENV_FILE_CONTENT_STAGE }}
+          CONFIG_JSON_CONTENT_STAGE: ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
+          CONFIG_JSON_CONTENT_PROD: ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(openssl rand -hex 24)"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+          printf '%s\n' "$ENV_FILE_CONTENT_STAGE" > .env
+          if grep -q '^DB_SYNC_TOKEN=' .env; then
+            sed -i "s/^DB_SYNC_TOKEN=.*/DB_SYNC_TOKEN=${TOKEN}/" .env
+          else
+            printf '\nDB_SYNC_TOKEN=%s\n' "$TOKEN" >> .env
+          fi
+
+          mkdir -p config backups
+          printf '%s\n' "$CONFIG_JSON_CONTENT_STAGE" > config/config.json
+          printf '%s\n' "$CONFIG_JSON_CONTENT_PROD" > config/config.prod.sync.json
+
+          # Sanity: never print secrets; only show host/db names
+          node <<'JS'
+          const fs = require('fs');
+          function pick(raw, keys) {
+            for (const k of keys) if (raw[k]?.database) return raw[k];
+            if (raw.database) return raw;
+            throw new Error('bad config shape');
+          }
+          const prod = pick(JSON.parse(fs.readFileSync('config/config.prod.sync.json','utf8')), ['production','test','development']);
+          const stage = pick(JSON.parse(fs.readFileSync('config/config.json','utf8')), ['test','development','production']);
+          console.log(`Live target: ${prod.host}:${prod.port||3306}/${prod.database} (user ${prod.username})`);
+          console.log(`Stage target: ${stage.host}:${stage.port||3306}/${stage.database} (user ${stage.username})`);
+          if (prod.host === stage.host && prod.database === stage.database) {
+            console.error('Live and stage point at the same DB — refusing');
+            process.exit(1);
+          }
+          JS
+
+      - name: Create .htaccess file
+        run: |
+          printf '%s\n' "${{ secrets.HTACCESS_CONTENT_STAGE }}" > .htaccess
+
+      - name: Creating firebase.json file
+        run: |
+          printf '%s\n' "${{ secrets.FIREBASE_CONTENT_STAGE }}" > firebase.json
+
+      - name: Deploy sync assets via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.STAGE_FTP_USERNAME }}
+          password: ${{ secrets.STAGE_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
+            **/backups/**
+
+      - name: Reload stage app so new route/env is active
+        run: |
+          set -euo pipefail
+          # Deploy trigger schedules npm + pm2 restart (fire-and-forget)
+          body="$(curl -k -sS --max-time 60 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
+          echo "$body" | head -c 500
+          echo
+          echo "Waiting for PM2 reload..."
+          sleep 45
+
+      - name: Start Live→Stage DB sync
+        env:
+          TOKEN: ${{ steps.prep.outputs.token }}
+        run: |
+          set -euo pipefail
+          code="$(curl -k -sS -o /tmp/sync-start.txt -w '%{http_code}' \
+            -X POST \
+            -H "x-db-sync-token: ${TOKEN}" \
+            "https://stagelaundry.sigisolutions.net/internal/live-to-stage-db-sync")"
+          echo "HTTP $code"
+          cat /tmp/sync-start.txt
+          echo
+          if [ "$code" != "202" ] && [ "$code" != "200" ]; then
+            echo "Failed to start sync"
+            exit 1
+          fi
+
+      - name: Poll sync status until done
+        env:
+          TOKEN: ${{ steps.prep.outputs.token }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            code="$(curl -k -sS -o /tmp/sync-status.json -w '%{http_code}' \
+              -H "x-db-sync-token: ${TOKEN}" \
+              "https://stagelaundry.sigisolutions.net/internal/live-to-stage-db-sync/status" || true)"
+            echo "Poll $i HTTP=$code"
+            if [ "$code" = "200" ]; then
+              cat /tmp/sync-status.json
+              echo
+              state="$(node -pe "JSON.parse(require('fs').readFileSync('/tmp/sync-status.json','utf8')).state || ''")"
+              if [ "$state" = "success" ]; then
+                echo "Live→Stage DB sync succeeded"
+                exit 0
+              fi
+              if [ "$state" = "failed" ]; then
+                echo "Live→Stage DB sync failed"
+                exit 1
+              fi
+            fi
+            sleep 20
+          done
+          echo "Timed out waiting for sync"
+          exit 1

@@ -145,6 +145,113 @@ app.get('/stage-trigger.php', function (req, res) {
 });
 
 // ============================================
+// LIVE → STAGE DB SYNC (token-protected, stage only)
+// ============================================
+app.post('/internal/live-to-stage-db-sync', function (req, res) {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).send('Not found');
+  }
+
+  const token = process.env.DB_SYNC_TOKEN;
+  const provided =
+    (req.get('x-db-sync-token') || '') ||
+    (req.query && req.query.token) ||
+    '';
+  if (!token || provided !== token) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  const { spawn } = require('child_process');
+  const fs = require('fs');
+  const path = require('path');
+  const workingDir = '/home/sigisolutions/stagelaundry.sigisolutions.net';
+  const statusPath = path.join(workingDir, 'backups', 'live-to-stage-sync-status.json');
+  const lockPath = path.join(workingDir, 'backups', '.live-to-stage-sync.lock');
+
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    if (fs.existsSync(lockPath)) {
+      return res.status(409).send('Sync already running');
+    }
+    fs.writeFileSync(lockPath, String(Date.now()));
+    fs.writeFileSync(
+      statusPath,
+      JSON.stringify(
+        {
+          state: 'queued',
+          startedAt: new Date().toISOString(),
+          phase: 'queued'
+        },
+        null,
+        2
+      )
+    );
+  } catch (e) {
+    return res.status(500).send('Failed to start sync: ' + e.message);
+  }
+
+  res.status(202).send('Live→Stage DB sync started');
+
+  const child = spawn(
+    '/bin/bash',
+    [
+      '-lc',
+      [
+        'source /home/sigisolutions/.nvm/nvm.sh',
+        'export HOME=/home/sigisolutions',
+        'cd "' + workingDir + '"',
+        'node scripts/live-to-stage-db-sync.js',
+        'rm -f "' + lockPath + '"'
+      ].join(' && ')
+    ],
+    {
+      cwd: workingDir,
+      env: Object.assign({}, process.env, {
+        HOME: '/home/sigisolutions',
+        APP_ROOT: workingDir,
+        PROD_CONFIG_PATH: path.join(workingDir, 'config', 'config.prod.sync.json'),
+        STAGE_CONFIG_PATH: path.join(workingDir, 'config', 'config.json'),
+        DB_BACKUP_DIR: path.join(workingDir, 'backups'),
+        DB_SYNC_STATUS_PATH: statusPath,
+        PATH:
+          '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin:' +
+          (process.env.PATH || '')
+      }),
+      detached: true,
+      stdio: 'ignore'
+    }
+  );
+  child.unref();
+});
+
+app.get('/internal/live-to-stage-db-sync/status', function (req, res) {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).send('Not found');
+  }
+
+  const token = process.env.DB_SYNC_TOKEN;
+  const provided =
+    (req.get('x-db-sync-token') || '') ||
+    (req.query && req.query.token) ||
+    '';
+  if (!token || provided !== token) {
+    return res.status(401).send('Unauthorized');
+  }
+
+  const fs = require('fs');
+  const statusPath =
+    '/home/sigisolutions/stagelaundry.sigisolutions.net/backups/live-to-stage-sync-status.json';
+  if (!fs.existsSync(statusPath)) {
+    return res.status(404).json({ state: 'unknown', error: 'No status file yet' });
+  }
+  try {
+    return res.status(200).json(JSON.parse(fs.readFileSync(statusPath, 'utf8')));
+  } catch (e) {
+    return res.status(500).json({ state: 'error', error: e.message });
+  }
+});
+
+// ============================================
 // SWAGGER DOCS
 // ============================================
 let swaggerUrl;
