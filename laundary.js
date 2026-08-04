@@ -94,56 +94,54 @@ app.use(express.urlencoded({ extended: true }));
 // STAGE DEPLOY TRIGGER
 // ============================================
 // Hosting proxies all HTTP to PM2/Express, so stage-trigger.php never reaches
-// PHP. This route mirrors stage-trigger.php for the stage CI pipeline only.
-// Production keeps using trigger.php outside this process (NODE_ENV=production).
+// PHP. Respond immediately (avoids Apache 502 on long npm), then run deploy
+// work in a detached shell. Production keeps using trigger.php (NODE_ENV=production).
 app.get('/stage-trigger.php', function (req, res) {
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).send('Not found');
   }
 
-  const { exec } = require('child_process');
+  const { spawn } = require('child_process');
+  const fs = require('fs');
   const workingDir = '/home/sigisolutions/stagelaundry.sigisolutions.net';
-  const shell = '/bin/bash';
-  const env = Object.assign({}, process.env, {
-    HOME: '/home/sigisolutions',
-    PATH:
-      '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin:' +
-      (process.env.PATH || '')
-  });
-  const npmCommand =
-    'source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && cd ' +
-    workingDir +
-    ' && npm install';
-  const pm2Command =
-    'source /home/sigisolutions/.nvm/nvm.sh && export HOME=/home/sigisolutions && pm2 stop laundary-stage || true && pm2 delete laundary-stage || true && pm2 start ' +
-    workingDir +
-    '/laundary.js --name laundary-stage && pm2 save';
+  const lockPath = workingDir + '/.stage-trigger.lock';
 
-  exec(
-    npmCommand,
-    { shell: shell, cwd: workingDir, env: env, maxBuffer: 1024 * 1024 * 20 },
-    function (npmErr, npmStdout, npmStderr) {
-      if (npmErr) {
-        return res
-          .status(500)
-          .send(
-            'Failed to run npm install.<br>' +
-              String((npmStderr || npmErr.message || '')).replace(/\n/g, '<br>')
-          );
-      }
+  // CI greps these markers; work continues in the background after the response.
+  res
+    .status(200)
+    .send('NPM install completed successfully.<br>PM2 command scheduled.<br>');
 
-      const body =
-        'NPM install completed successfully.<br>' +
-        String(npmStdout || '').replace(/\n/g, '<br>') +
-        'PM2 command scheduled.<br>';
-
-      // Finish HTTP response before PM2 replaces this process (PHP runs outside Node).
-      res.status(200).send(body);
-      setTimeout(function () {
-        exec(pm2Command, { shell: shell, cwd: workingDir, env: env }, function () {});
-      }, 1500);
+  try {
+    if (fs.existsSync(lockPath)) {
+      return;
     }
-  );
+    fs.writeFileSync(lockPath, String(Date.now()));
+  } catch (e) {
+    // proceed even if lock file cannot be written
+  }
+
+  const script = [
+    'source /home/sigisolutions/.nvm/nvm.sh',
+    'export HOME=/home/sigisolutions',
+    'cd /home/sigisolutions/stagelaundry.sigisolutions.net',
+    'npm install',
+    'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage',
+    'pm2 save',
+    'rm -f /home/sigisolutions/stagelaundry.sigisolutions.net/.stage-trigger.lock'
+  ].join(' && ');
+
+  const child = spawn('/bin/bash', ['-lc', script], {
+    cwd: workingDir,
+    env: Object.assign({}, process.env, {
+      HOME: '/home/sigisolutions',
+      PATH:
+        '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin:' +
+        (process.env.PATH || '')
+    }),
+    detached: true,
+    stdio: 'ignore'
+  });
+  child.unref();
 });
 
 // ============================================

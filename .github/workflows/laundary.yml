@@ -118,22 +118,26 @@ jobs:
             **/.vscode/**
 
       # Stage TLS cert is expired (prod is fine). Use -k until renewed.
-      # Hosting sends all traffic to PM2/Express, so /stage-trigger.php is handled
-      # by Express in laundary.js (same npm install + pm2 restart as stage-trigger.php).
-      # ONE-TIME after this lands: pm2 restart laundary-stage so the new route loads.
+      # /stage-trigger.php is handled by Express (hosting proxies all traffic to PM2).
       - name: Trigger npm install on stage server
         run: |
           echo "Triggering stage deploy via /stage-trigger.php (Express handler)..."
-          body="$(curl -k -sS --max-time 600 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php")"
-          echo "$body"
-          if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then
-            echo "Stage trigger succeeded"
-          else
-            echo "Stage trigger failed."
-            echo "If this is the first deploy of the Express /stage-trigger.php route, SSH once and run:"
-            echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage"
-            echo "Then re-run this workflow."
-            exit 1
-          fi
+          body=""
+          for attempt in 1 2 3; do
+            body="$(curl -k -sS --max-time 60 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
+            echo "Attempt ${attempt}:"
+            echo "$body"
+            if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then
+              echo "Stage trigger succeeded"
+              exit 0
+            fi
+            echo "Trigger not ready yet (proxy/app restarting?). Waiting 20s..."
+            sleep 20
+          done
+          echo "Stage trigger failed after retries."
+          echo "Ensure PM2 is online, then run once:"
+          echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage"
+          echo "Then re-run this workflow."
+          exit 1
         env:
           HOME: /home/sigisolutions
