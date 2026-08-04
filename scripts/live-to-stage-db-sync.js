@@ -42,17 +42,23 @@ function writeStatus( partial) {
   }
 }
 
+function isPlaceholder(cfg) {
+  const db = String((cfg && cfg.database) || '');
+  const user = String((cfg && cfg.username) || '');
+  return /^your_/i.test(db) || /^your_/i.test(user);
+}
+
 function pickConfig(raw, preferredKeys) {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Config is not an object');
   }
   for (let i = 0; i < preferredKeys.length; i++) {
     const key = preferredKeys[i];
-    if (raw[key] && raw[key].database) {
+    if (raw[key] && raw[key].database && !isPlaceholder(raw[key])) {
       return raw[key];
     }
   }
-  if (raw.database && raw.username) {
+  if (raw.database && raw.username && !isPlaceholder(raw)) {
     return raw;
   }
   throw new Error(
@@ -141,7 +147,7 @@ function main() {
 
   try {
     const prod = loadConfig(PROD_CONFIG_PATH, ['production', 'test', 'development']);
-    const stage = loadConfig(STAGE_CONFIG_PATH, ['test', 'development', 'production']);
+    const stage = loadConfig(STAGE_CONFIG_PATH, ['development', 'test', 'production']);
 
     if (prod.database === stage.database && prod.host === stage.host) {
       throw new Error(
