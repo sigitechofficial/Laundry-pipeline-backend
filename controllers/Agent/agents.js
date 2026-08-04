@@ -1047,9 +1047,74 @@ exports.orderDetailsById = async (req, res) => {
  */
 
 
+/**
+ * Agent Today/Tomorrow day-tab rules (relevantDate by phase):
+ * - bookingStatusId 3..7 (pickup through in-transit to facility) → collectionDate
+ * - bookingStatusId 8..16 (facility received / invoice / processing / delivery) → deliveryDate
+ * "Done with Today pickup work" = status >= 8 (reachedAtDeliveryShopStatus).
+ */
+const AGENT_PICKUP_STATUSES = [3, 4, 5, 6, 7];
+const AGENT_INVOICE_STATUSES = [8, 9, 10];
+const AGENT_PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
+const AGENT_POST_PICKUP_STATUSES = [...AGENT_INVOICE_STATUSES, ...AGENT_PROCESSING_STATUSES];
+const AGENT_ALL_ACTIVE_STATUSES = [...AGENT_PICKUP_STATUSES, ...AGENT_POST_PICKUP_STATUSES];
+
+const agentDayTabWhere = (shopId, dayStart, dayEnd) => ({
+    laundryShopId: shopId,
+    [Op.or]: [
+        {
+            bookingStatusId: { [Op.in]: AGENT_PICKUP_STATUSES },
+            collectionDate: { [Op.gte]: dayStart, [Op.lt]: dayEnd },
+        },
+        {
+            bookingStatusId: { [Op.in]: AGENT_POST_PICKUP_STATUSES },
+            deliveryDate: { [Op.gte]: dayStart, [Op.lt]: dayEnd },
+        },
+    ],
+});
+
+const agentRelevantDateOrder = [
+    [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END IS NULL`), "ASC"],
+    [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END`), "ASC"],
+    [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END IS NULL`), "ASC"],
+    [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END`), "ASC"],
+];
+
+/**
+ * Slot bucket where: pickup phase uses collection time(+date); facility+ uses delivery time(+date).
+ * When dayStart/dayEnd are omitted (current Flutter slots call), only pickup-phase rows are
+ * returned so client OR-date merge cannot put status>=8 orders back on Today. Day tabs
+ * (today/tomorrow) already return facility+ via agentDayTabWhere / deliveryDate.
+ */
+const agentSlotWhere = (laundryShopId, slotFrom, slotTo, dayStart, dayEnd) => {
+    const pickupBranch = {
+        bookingStatusId: { [Op.in]: AGENT_PICKUP_STATUSES },
+        collectionTimeFrom: { [Op.gte]: slotFrom },
+        collectionTimeTo: { [Op.lte]: slotTo },
+    };
+    if (dayStart && dayEnd) {
+        pickupBranch.collectionDate = { [Op.gte]: dayStart, [Op.lt]: dayEnd };
+        const deliveryBranch = {
+            bookingStatusId: { [Op.in]: AGENT_POST_PICKUP_STATUSES },
+            deliveryDate: { [Op.gte]: dayStart, [Op.lt]: dayEnd },
+            deliveryTimeFrom: { [Op.gte]: slotFrom },
+            deliveryTimeTo: { [Op.lte]: slotTo },
+        };
+        return {
+            laundryShopId,
+            bookingStatusId: { [Op.in]: AGENT_ALL_ACTIVE_STATUSES },
+            [Op.or]: [pickupBranch, deliveryBranch],
+        };
+    }
+    return {
+        laundryShopId,
+        ...pickupBranch,
+    };
+};
+
 exports.agentBookingFilters = async (req, res) => {
     const agentId = req.user.id;
-    const { filterType } = req.query;
+    const { filterType, filterDate } = req.query;
 
     // ── Shop address ────────────────────────────────────────────────────────
     const addressFound = await addressDb.findOne({
@@ -1066,7 +1131,7 @@ exports.agentBookingFilters = async (req, res) => {
 
     // ── Slots shortcut ───────────────────────────────────────────────────────
     if (filterType === "slots") {
-        const results = { slots: await getSlotBookings(shopId) };
+        const results = { slots: await getSlotBookings(shopId, filterDate) };
         return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
     }
 
@@ -1166,105 +1231,94 @@ exports.agentBookingFilters = async (req, res) => {
     const dayAfterStr      = moment().add(2, "day").format("YYYY-MM-DD");
     const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
 
-    // Status groups
-    const PICKUP_STATUSES    = [3, 4, 5, 6, 7];
-    const INVOICE_STATUSES   = [8, 9, 10];
-    const PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
-    const ALL_ACTIVE_STATUSES = [...PICKUP_STATUSES, ...INVOICE_STATUSES, ...PROCESSING_STATUSES];
+    // Status groups (shared constants — see AGENT_* above)
+    const PICKUP_STATUSES = AGENT_PICKUP_STATUSES;
+    const INVOICE_STATUSES = AGENT_INVOICE_STATUSES;
+    const PROCESSING_STATUSES = AGENT_PROCESSING_STATUSES;
+    const ALL_ACTIVE_STATUSES = AGENT_ALL_ACTIVE_STATUSES;
+
+    const newOrdersWhere = {
+        bookingStatusId: 1,
+        laundryShopId: null,
+        zoneId,
+        agentBroadcastHeld: { [Op.not]: true },
+        createdAt: { [Op.gte]: twentyFourHrsAgo },
+        [Op.or]: [
+            { adminAssignedShopId: null },
+            { adminAssignedShopId: shopId },
+        ],
+        [Op.and]: [
+            {
+                [Op.or]: [
+                    { orderExpireTime: null },
+                    { orderExpireTime: { [Op.gt]: new Date() } },
+                ],
+            },
+        ],
+    };
+
+    const fetchTabCounts = async () => {
+        const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
+            booking.count({ where: newOrdersWhere }),
+            booking.count({ where: agentDayTabWhere(shopId, todayStr, tomorrowStr) }),
+            booking.count({ where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr) }),
+            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
+            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
+            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
+        ]);
+        return {
+            new: countNew,
+            today: countToday,
+            tomorrow: countTomorrow,
+            orders: countOrders,
+            invoice: countInvoice,
+            processing: countProcessing,
+        };
+    };
 
     const results = {};
 
     // ── NEW — unaccepted bookings in agent's zone ────────────────────────────
     if (!filterType || filterType === "new") {
         const rows = await booking.findAll({
-            where: {
-                bookingStatusId: 1,
-                laundryShopId: null,
-                zoneId,
-                agentBroadcastHeld: { [Op.not]: true },
-                createdAt: { [Op.gte]: twentyFourHrsAgo },
-                [Op.or]: [
-                    { adminAssignedShopId: null },
-                    { adminAssignedShopId: shopId },
-                ],
-                [Op.and]: [
-                    {
-                        [Op.or]: [
-                            { orderExpireTime: null },
-                            { orderExpireTime: { [Op.gt]: new Date() } },
-                        ],
-                    },
-                ],
-            },
+            where: newOrdersWhere,
             order: [["id", "DESC"]],
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
         results.New = addDisplayStatus(rows);
         if (filterType === "new") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "New bookings fetched", results);
         }
     }
 
-    // ── TODAY — agent's accepted pickups for today ───────────────────────────
+    // ── TODAY — pickup phase by collectionDate OR facility+ by deliveryDate ─
     if (!filterType || filterType === "today") {
         const rows = await booking.findAll({
-            where: {
-                laundryShopId: shopId,
-                bookingStatusId: { [Op.in]: PICKUP_STATUSES },
-                collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr },
-            },
-            order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
+            where: agentDayTabWhere(shopId, todayStr, tomorrowStr),
+            order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
         results.Today = addDisplayStatus(rows);
         if (filterType === "today") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Today's bookings fetched", results);
         }
     }
 
-    // ── TOMORROW — agent's accepted pickups for tomorrow ─────────────────────
+    // ── TOMORROW — same relevantDate rules for tomorrow's calendar day ───────
     if (!filterType || filterType === "tomorrow") {
         const rows = await booking.findAll({
-            where: {
-                laundryShopId: shopId,
-                bookingStatusId: { [Op.in]: PICKUP_STATUSES },
-                collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr },
-            },
-            order: [["collectionDate", "ASC"], ["collectionTimeFrom", "ASC"]],
+            where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr),
+            order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
         results.Tomorrow = addDisplayStatus(rows);
         if (filterType === "tomorrow") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Tomorrow's bookings fetched", results);
         }
     }
@@ -1276,26 +1330,13 @@ exports.agentBookingFilters = async (req, res) => {
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
             },
-            order: [
-                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END IS NULL`), "ASC"],
-                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionDate ELSE deliveryDate END`), "ASC"],
-                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END IS NULL`), "ASC"],
-                [literal(`CASE WHEN bookingStatusId IN (3,4,5,6,7) THEN collectionTimeFrom ELSE deliveryTimeFrom END`), "ASC"],
-            ],
+            order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
         results.Orders = addDisplayStatus(rows);
         if (filterType === "orders") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Orders fetched", results);
         }
     }
@@ -1318,15 +1359,7 @@ exports.agentBookingFilters = async (req, res) => {
         });
         results.Invoice = addDisplayStatus(rows);
         if (filterType === "invoice") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Invoice bookings fetched", results);
         }
     }
@@ -1349,15 +1382,7 @@ exports.agentBookingFilters = async (req, res) => {
         });
         results.Processing = addDisplayStatus(rows);
         if (filterType === "processing") {
-            const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-                booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-                booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-            ]);
-            results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+            results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Processing bookings fetched", results);
         }
     }
@@ -1373,15 +1398,7 @@ exports.agentBookingFilters = async (req, res) => {
     }
 
     // ── COUNTS — always returned for tab badge updates ────────────────────────
-    const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-        booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
-    ]);
-    results.counts = { new: countNew, today: countToday, tomorrow: countTomorrow, orders: countOrders, invoice: countInvoice, processing: countProcessing };
+    results.counts = await fetchTabCounts();
 
     return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
 };
@@ -1401,23 +1418,28 @@ exports.getBookingCounts = async (req, res) => {
     const shopId = shopRow.id;
     const zoneId = shopRow.zoneId;
 
-    const PICKUP_STATUSES     = [3, 4, 5, 6, 7];
-    const INVOICE_STATUSES    = [8, 9, 10];
-    const PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
-    const ALL_ACTIVE_STATUSES = [...PICKUP_STATUSES, ...INVOICE_STATUSES, ...PROCESSING_STATUSES];
-
     const todayStr        = moment().format("YYYY-MM-DD");
     const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
     const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
     const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-        booking.count({ where: { bookingStatusId: 1, laundryShopId: null, zoneId, agentBroadcastHeld: { [Op.not]: true }, createdAt: { [Op.gte]: twentyFourHrsAgo }, [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }], [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }] } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: todayStr, [Op.lt]: tomorrowStr } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PICKUP_STATUSES }, collectionDate: { [Op.gte]: tomorrowStr, [Op.lt]: dayAfterStr } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
+        booking.count({
+            where: {
+                bookingStatusId: 1,
+                laundryShopId: null,
+                zoneId,
+                agentBroadcastHeld: { [Op.not]: true },
+                createdAt: { [Op.gte]: twentyFourHrsAgo },
+                [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }],
+                [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }],
+            },
+        }),
+        booking.count({ where: agentDayTabWhere(shopId, todayStr, tomorrowStr) }),
+        booking.count({ where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr) }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_ALL_ACTIVE_STATUSES } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_INVOICE_STATUSES } } }),
+        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_PROCESSING_STATUSES } } }),
     ]);
 
     return ResponseHelper.success(res, "Booking counts", {
@@ -6064,9 +6086,13 @@ const findZones = async (lat, lng) => {
     return findZone;
 }
 
-const getSlotBookings = async (laundryShopId) => {
-    console.log("Ã°Å¸Å¡â‚¬ ~ getSlotBookings ~ laundryShopId:", laundryShopId);
-
+/**
+ * Slot bookings for agent home.
+ * Uses relevantDate by phase (pickup → collection time/date; status >= 8 → delivery time/date).
+ * Optional filterDate (YYYY-MM-DD) scopes slots to that calendar day so Flutter merge
+ * cannot resurface facility-done orders on the wrong day.
+ */
+const getSlotBookings = async (laundryShopId, filterDate) => {
     const slots = [
         "07:00",
         "08:00",
@@ -6082,30 +6108,21 @@ const getSlotBookings = async (laundryShopId) => {
         "18:00",
     ];
 
-    // Use map to iterate over slots and get the booking count and details for each slot
+    let dayStart = null;
+    let dayEnd = null;
+    if (filterDate && moment(filterDate, "YYYY-MM-DD", true).isValid()) {
+        dayStart = moment(filterDate, "YYYY-MM-DD").format("YYYY-MM-DD");
+        dayEnd = moment(filterDate, "YYYY-MM-DD").add(1, "day").format("YYYY-MM-DD");
+    }
+
     const slotBookings = await Promise.all(
         slots.map(async (slot) => {
-            const collectionTimeFrom = slot;
-            const collectionTimeTo = getNextHourTime(slot);
+            const slotFrom = slot;
+            const slotTo = getNextHourTime(slot);
+            const where = agentSlotWhere(laundryShopId, slotFrom, slotTo, dayStart, dayEnd);
 
-            // Fetch the count of bookings for the current slot
-            const bookingCount = await booking.count({
-                where: {
-                    laundryShopId: laundryShopId,
-                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                },
-            });
-            console.log("Ã°Å¸Å¡â‚¬ ~ getSlotBookings ~ bookingCount:", bookingCount);
-
-            // Fetch the booking details for the current slot
             const bookings = await booking.findAll({
-                where: {
-                    laundryShopId: laundryShopId,
-                    collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                    collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                    bookingStatusId: { [Op.notIn]: [1] } // exclude only not-yet-accepted (status 1); show Out for Delivery (13)
-                },
+                where,
                 attributes: [
                     "id",
                     "ordertrackId",
@@ -6126,8 +6143,7 @@ const getSlotBookings = async (laundryShopId) => {
                     {
                         model: bookingStatus,
                         attributes: ['id', 'title', 'description']
-                    }
-                    ,
+                    },
                     {
                         model: addressDb,
                         as: "laundryShop",
@@ -6181,7 +6197,6 @@ const getSlotBookings = async (laundryShopId) => {
                 ],
             });
 
-            // Return the result for each slot
             const enrichedBookings = bookings.map((b) => {
                 const plain = b.toJSON ? b.toJSON() : b;
                 const isPickupFailed =
@@ -6196,8 +6211,6 @@ const getSlotBookings = async (laundryShopId) => {
                 plain.displayStatus = isPickupFailed
                     ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
                     : plain.bookingStatus || null;
-                // Explicit flags for agent app so it can detect failed attempts
-                // even when bookingStatus remains "Awaiting Collection" (status 3).
                 plain.attemptFlags = {
                     hasFailedAttempt: Boolean(failedAttemptType),
                     failedAttemptType,
@@ -6211,8 +6224,8 @@ const getSlotBookings = async (laundryShopId) => {
             });
 
             return {
-                slot: `${collectionTimeFrom} - ${collectionTimeTo}`,
-                bookingCount: bookingCount,
+                slot: `${slotFrom} - ${slotTo}`,
+                bookingCount: enrichedBookings.length,
                 bookings: enrichedBookings,
             };
         })

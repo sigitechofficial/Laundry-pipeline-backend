@@ -724,7 +724,7 @@ class AgentOrderManagementService {
 
         // Slot bookings
         if (filterType === 'slots') {
-            results.slots = await this.getSlotBookings(addressFound.id);
+            results.slots = await this.getSlotBookings(addressFound.id, data.filterDate);
             return {
                 results,
             };
@@ -819,7 +819,16 @@ class AgentOrderManagementService {
      * @param {number} laundryShopId - Laundry shop ID
      * @returns {Array} Slot bookings
      */
-    async getSlotBookings(laundryShopId) {
+    /**
+     * Slot bookings — aligned with controllers/Agent/agents.js getSlotBookings.
+     * Pickup phase (3..7) → collection time/date; facility+ (8..16) → delivery time/date when filterDate set.
+     * Without filterDate, only pickup-phase rows (avoids resurfacing facility-done on wrong day).
+     */
+    async getSlotBookings(laundryShopId, filterDate) {
+        const PICKUP_STATUSES = [3, 4, 5, 6, 7];
+        const POST_PICKUP_STATUSES = [8, 9, 10, 11, 12, 13, 14, 15, 16];
+        const ALL_ACTIVE = [...PICKUP_STATUSES, ...POST_PICKUP_STATUSES];
+
         const slots = [
             "07:00",
             "08:00",
@@ -835,29 +844,45 @@ class AgentOrderManagementService {
             "18:00",
         ];
 
-        // Use map to iterate over slots and get the booking count and details for each slot
+        let dayStart = null;
+        let dayEnd = null;
+        if (filterDate && moment(filterDate, "YYYY-MM-DD", true).isValid()) {
+            dayStart = moment(filterDate, "YYYY-MM-DD").format("YYYY-MM-DD");
+            dayEnd = moment(filterDate, "YYYY-MM-DD").add(1, "day").format("YYYY-MM-DD");
+        }
+
         const slotBookings = await Promise.all(
             slots.map(async (slot) => {
-                const collectionTimeFrom = slot;
-                const collectionTimeTo = this.getNextHourTime(slot);
+                const slotFrom = slot;
+                const slotTo = this.getNextHourTime(slot);
 
-                // Fetch the count of bookings for the current slot
-                const bookingCount = await booking.count({
-                    where: {
-                        laundryShopId: laundryShopId,
-                        collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                        collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                    },
-                });
+                const pickupBranch = {
+                    bookingStatusId: { [Op.in]: PICKUP_STATUSES },
+                    collectionTimeFrom: { [Op.gte]: slotFrom },
+                    collectionTimeTo: { [Op.lte]: slotTo },
+                };
+                let where;
+                if (dayStart && dayEnd) {
+                    pickupBranch.collectionDate = { [Op.gte]: dayStart, [Op.lt]: dayEnd };
+                    where = {
+                        laundryShopId,
+                        bookingStatusId: { [Op.in]: ALL_ACTIVE },
+                        [Op.or]: [
+                            pickupBranch,
+                            {
+                                bookingStatusId: { [Op.in]: POST_PICKUP_STATUSES },
+                                deliveryDate: { [Op.gte]: dayStart, [Op.lt]: dayEnd },
+                                deliveryTimeFrom: { [Op.gte]: slotFrom },
+                                deliveryTimeTo: { [Op.lte]: slotTo },
+                            },
+                        ],
+                    };
+                } else {
+                    where = { laundryShopId, ...pickupBranch };
+                }
 
-                // Fetch the booking details for the current slot
                 const bookings = await booking.findAll({
-                    where: {
-                        laundryShopId: laundryShopId,
-                        collectionTimeFrom: { [Op.gte]: collectionTimeFrom },
-                        collectionTimeTo: { [Op.lte]: collectionTimeTo },
-                        bookingStatusId: { [Op.notIn]: [1, 13] } // exclude status 1 and 3
-                    },
+                    where,
                     attributes: [
                         "id",
                         "ordertrackId",
@@ -929,11 +954,10 @@ class AgentOrderManagementService {
                     ],
                 });
 
-                // Return the result for each slot
                 return {
-                    slot: `${collectionTimeFrom} - ${collectionTimeTo}`,
-                    bookingCount: bookingCount,
-                    bookings: bookings, // Include the actual booking details
+                    slot: `${slotFrom} - ${slotTo}`,
+                    bookingCount: bookings.length,
+                    bookings,
                 };
             })
         );
