@@ -1,0 +1,16 @@
+RewriteEngine On
+
+# AutoSSL / Let's Encrypt — never proxy to Node
+RewriteRule ^\.well-known/ - [L]
+
+# Never proxy these to Node (PHP handled by Apache if present)
+RewriteCond %{REQUEST_URI} ^/(stage-trigger\.php|trigger\.php)$ [NC]
+RewriteRule ^ - [L]
+
+# Serve real files/directories directly
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Everything else -> stage Node (PORT=8083; do not use 8888 — seviPR owns it)
+RewriteRule ^(.*)$ http://127.0.0.1:8083%{REQUEST_URI} [P,L]

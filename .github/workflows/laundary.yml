@@ -96,10 +96,13 @@ jobs:
           ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
           EOF
 
+      # Repo file wins over HTACCESS_CONTENT_STAGE so deploys cannot
+      # accidentally point Apache at the wrong Node port (8888 = seviPR).
       - name: Create .htaccess file
         run: |
-          echo "Creating .htaccess file..."
-          echo "${{ secrets.HTACCESS_CONTENT_STAGE }}" > .htaccess
+          echo "Creating stage .htaccess (proxy -> 127.0.0.1:8083)..."
+          cp deploy/stage.htaccess .htaccess
+          cat .htaccess
 
       - name: Creating firebase.json file
         run: |
@@ -120,14 +123,14 @@ jobs:
             **/node_modules/**
             **/.vscode/**
 
-      # Stage TLS cert is expired (prod is fine). Use -k until renewed.
       # /stage-trigger.php is handled by Express (hosting proxies all traffic to PM2).
+      # Stage cert is Let's Encrypt — verify TLS (no -k).
       - name: Trigger npm install on stage server
         run: |
           echo "Triggering stage deploy via /stage-trigger.php (Express handler)..."
           body=""
-          for attempt in 1 2 3; do
-            body="$(curl -k -sS --max-time 60 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
+          for attempt in 1 2 3 4 5; do
+            body="$(curl -sS --max-time 60 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
             echo "Attempt ${attempt}:"
             echo "$body"
             if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then
@@ -138,8 +141,8 @@ jobs:
             sleep 20
           done
           echo "Stage trigger failed after retries."
-          echo "Ensure PM2 is online, then run once:"
-          echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage"
+          echo "Ensure PM2 is online on PORT=8083, then run once:"
+          echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage --update-env"
           echo "Then re-run this workflow."
           exit 1
         env:

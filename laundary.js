@@ -90,6 +90,33 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// AutoSSL / Let's Encrypt HTTP-01 + cPanel pki-validation (stage/prod safe)
+const path = require('path');
+const fs = require('fs');
+app.get('/.well-known/pki-validation/:file', function (req, res) {
+  const filePath = path.join(
+    __dirname,
+    '.well-known',
+    'pki-validation',
+    path.basename(req.params.file)
+  );
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).type('text').send('Not found');
+  }
+  return res.sendFile(filePath);
+});
+app.get('/.well-known/acme-challenge/:file', function (req, res) {
+  const filePath = path.join(
+    __dirname,
+    '.well-known',
+    'acme-challenge',
+    path.basename(req.params.file)
+  );
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).type('text').send('Not found');
+  }
+  return res.sendFile(filePath);
+});
 
 // ============================================
 // STAGE DEPLOY TRIGGER
@@ -126,7 +153,7 @@ app.get('/stage-trigger.php', function (req, res) {
     'export HOME=/home/sigisolutions',
     'cd /home/sigisolutions/stagelaundry.sigisolutions.net',
     'npm install',
-    'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage',
+    'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage --update-env',
     'pm2 save',
     'rm -f /home/sigisolutions/stagelaundry.sigisolutions.net/.stage-trigger.lock'
   ].join(' && ');
