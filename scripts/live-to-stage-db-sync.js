@@ -52,6 +52,24 @@ function pickConfig(raw, preferredKeys) {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Config is not an object');
   }
+
+  // Prefer laundry-named DBs when present (avoid stale/wrong shared DBs like fomino_*).
+  const laundryKeys = Object.keys(raw).filter(function (key) {
+    const cfg = raw[key];
+    if (!cfg || !cfg.database || isPlaceholder(cfg)) {
+      return false;
+    }
+    return /laundr/i.test(String(cfg.database)) || /laundr/i.test(String(cfg.username || ''));
+  });
+  if (laundryKeys.length) {
+    for (let i = 0; i < preferredKeys.length; i++) {
+      if (laundryKeys.indexOf(preferredKeys[i]) !== -1) {
+        return raw[preferredKeys[i]];
+      }
+    }
+    return raw[laundryKeys[0]];
+  }
+
   for (let i = 0; i < preferredKeys.length; i++) {
     const key = preferredKeys[i];
     if (raw[key] && raw[key].database && !isPlaceholder(raw[key])) {
