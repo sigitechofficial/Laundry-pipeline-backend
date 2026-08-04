@@ -1,14 +1,28 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const admin = require('firebase-admin');
 const { deviceToken } = require('../models');
 const { Op } = require('sequelize');
-const serviceAccount = require('../firebase.json')
 
-// Initialize Firebase Admin SDK (guard prevents "already exists" crash on hot reload)
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+// Initialize Firebase Admin SDK only when a local service-account file exists.
+// Guard prevents "already exists" crash on hot reload.
+const firebaseCredPath = path.join(__dirname, '../firebase.json');
+let firebaseReady = false;
+if (fs.existsSync(firebaseCredPath) && !admin.apps.length) {
+  try {
+    const serviceAccount = require(firebaseCredPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    firebaseReady = true;
+  } catch (err) {
+    console.warn('Firebase Admin not initialized (invalid or missing firebase.json):', err.message);
+  }
+} else if (admin.apps.length) {
+  firebaseReady = true;
+} else {
+  console.warn('Firebase Admin skipped: firebase.json not found (push notifications disabled locally).');
 }
 
 /**
@@ -21,6 +35,21 @@ if (!admin.apps.length) {
 async function sendNotification(userId, title, body, data = {}, options = {}) {
   try {
     const { throwOnFailure = false } = options;
+
+    if (!firebaseReady) {
+      const result = {
+        sent: false,
+        reason: 'FIREBASE_NOT_CONFIGURED',
+        userId,
+        successCount: 0,
+        failureCount: 0,
+        tokenCount: 0
+      };
+      if (throwOnFailure) {
+        throw new Error('Firebase Admin is not configured (missing firebase.json)');
+      }
+      return result;
+    }
 
     // Retrieve device tokens for the user
     const tokens = await deviceToken.findAll({
