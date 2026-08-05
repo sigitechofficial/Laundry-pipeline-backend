@@ -2,6 +2,7 @@ const express=require('express')
 const router =express()
 const customerAuthControllers=require('../controllers/Customer/customerAuth')
 const customerOtherController=require('../controllers/Customer/customerOrders')
+const customerPaymentMethodsController=require('../controllers/Customer/customerPaymentMethods')
 const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
@@ -100,6 +101,38 @@ router.get('/fetchZoneAndCharges',validateAccessTokenOrGuest,asyncMiddleware(cus
 router.get('/bookingSlots',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.getBookingSlots))
 //Create Intent Using Stripe
 router.post('/createIntentUsingStripe',validateAccessToken,asyncMiddleware(customerOtherController.createIntentUsingStripe))
+
+//!----------------------------Payment Methods (saved cards)---------------------//
+// List all cards (multiple shown; one isDefault / active)
+router.get(
+    '/payment-methods',
+    validateAccessToken,
+    asyncMiddleware(customerPaymentMethodsController.listPaymentMethods)
+);
+// SetupIntent clientSecret for adding a new card (no charge)
+router.post(
+    '/payment-methods/setup-intent',
+    validateAccessToken,
+    asyncMiddleware(customerPaymentMethodsController.createPaymentMethodSetupIntent)
+);
+// After SetupIntent confirm: attach + Option A set as active + sync open bookings
+router.post(
+    '/payment-methods',
+    validateAccessToken,
+    asyncMiddleware(customerPaymentMethodsController.addAndActivatePaymentMethod)
+);
+// Switch active card among saved cards
+router.patch(
+    '/payment-methods/default',
+    validateAccessToken,
+    asyncMiddleware(customerPaymentMethodsController.setDefaultPaymentMethod)
+);
+// Remove a saved card (if active, another becomes active if any remain)
+router.delete(
+    '/payment-methods/:paymentMethodId',
+    validateAccessToken,
+    asyncMiddleware(customerPaymentMethodsController.removePaymentMethod)
+);
 // Route to get all on-hold bookings for a given booking ID
 router.get('/getOnHoldBookings/:bookingId', validateAccessToken,asyncMiddleware(customerOtherController.getOnHoldBookings));
 // Route to update customer response for on-hold booking

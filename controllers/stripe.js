@@ -646,7 +646,64 @@ async function attachPaymentMethodToCustomer(customerId, savedPaymentMethodId) {
         });
         return paymentMethod
     } catch (error) {
+        // Already attached to this customer is fine for idempotent add flows
+        if (error && String(error.message || "").includes("already been attached")) {
+            return stripe.paymentMethods.retrieve(savedPaymentMethodId);
+        }
         throw new customError(`${error.message} `, 200)
+    }
+}
+
+/**
+ * List card payment methods for a Stripe customer.
+ */
+async function listCustomerCardPaymentMethods(stripeCustomerId) {
+    try {
+        const result = await stripe.paymentMethods.list({
+            customer: stripeCustomerId,
+            type: "card",
+            limit: 100,
+        });
+        return result.data || [];
+    } catch (error) {
+        throw new customError(`Stripe Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Retrieve a single payment method.
+ */
+async function retrievePaymentMethod(paymentMethodId) {
+    try {
+        return await stripe.paymentMethods.retrieve(paymentMethodId);
+    } catch (error) {
+        throw new customError(`Stripe Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Detach a payment method from its customer.
+ */
+async function detachPaymentMethod(paymentMethodId) {
+    try {
+        return await stripe.paymentMethods.detach(paymentMethodId);
+    } catch (error) {
+        throw new customError(`Stripe Error: ${error.message}`, 400);
+    }
+}
+
+/**
+ * Set Stripe customer's invoice default payment method (active card).
+ */
+async function setStripeCustomerDefaultPaymentMethod(stripeCustomerId, paymentMethodId) {
+    try {
+        return await stripe.customers.update(stripeCustomerId, {
+            invoice_settings: {
+                default_payment_method: paymentMethodId,
+            },
+        });
+    } catch (error) {
+        throw new customError(`Stripe Error: ${error.message}`, 400);
     }
 }
 
@@ -891,6 +948,10 @@ module.exports = {
     refundPaymentIntent,
     createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,
+    listCustomerCardPaymentMethods,
+    retrievePaymentMethod,
+    detachPaymentMethod,
+    setStripeCustomerDefaultPaymentMethod,
     chargeOffSession,
     createStripeConnectAccount,
     createStripeOnboardingLink,

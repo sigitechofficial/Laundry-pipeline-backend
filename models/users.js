@@ -114,6 +114,31 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull:true,
     },
+    /** Stripe PaymentMethod id used for off-session charges (one active card). */
+    defaultPaymentMethodId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    cardBrand: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+    },
+    cardLast4: {
+      type: DataTypes.STRING(4),
+      allowNull: true,
+    },
+    cardExpMonth: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    cardExpYear: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    cardUpdatedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     dvToken: {
       type: DataTypes.STRING,
       allowNull:true,
