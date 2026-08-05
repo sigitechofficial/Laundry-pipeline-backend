@@ -5,7 +5,7 @@ This document explains how to use the admin-specific error handling system in yo
 ## 🎯 **Purpose**
 
 The admin error handling system is designed specifically for admin controllers and provides:
-- ✅ **Admin-specific error types** with proper HTTP status codes
+- ✅ **Admin-specific error types** with proper HTTP status codes changes
 - ✅ **Admin-specific response helpers** for consistent API responses
 - ✅ **Admin-specific logging** with admin context
 - ✅ **Backward compatibility** with existing `customError.js`
