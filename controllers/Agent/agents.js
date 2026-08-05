@@ -1055,8 +1055,15 @@ exports.orderDetailsById = async (req, res) => {
  */
 const AGENT_PICKUP_STATUSES = [3, 4, 5, 6, 7];
 const AGENT_INVOICE_STATUSES = [8, 9, 10];
-const AGENT_PROCESSING_STATUSES = [11, 12, 13, 14, 15, 16];
-const AGENT_POST_PICKUP_STATUSES = [...AGENT_INVOICE_STATUSES, ...AGENT_PROCESSING_STATUSES];
+/** Processing tab only — actively washing. Status 12+ (Complete at Facility → delivery) leave this tab. */
+const AGENT_PROCESSING_STATUSES = [11];
+/** After wash complete through delivered — still active for Orders / day tabs, not Processing tab. */
+const AGENT_POST_FACILITY_STATUSES = [12, 13, 14, 15, 16];
+const AGENT_POST_PICKUP_STATUSES = [
+    ...AGENT_INVOICE_STATUSES,
+    ...AGENT_PROCESSING_STATUSES,
+    ...AGENT_POST_FACILITY_STATUSES,
+];
 const AGENT_ALL_ACTIVE_STATUSES = [...AGENT_PICKUP_STATUSES, ...AGENT_POST_PICKUP_STATUSES];
 
 const agentDayTabWhere = (shopId, dayStart, dayEnd) => ({
