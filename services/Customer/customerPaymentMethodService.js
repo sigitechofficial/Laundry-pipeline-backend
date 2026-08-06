@@ -48,26 +48,34 @@ function mapPaymentMethodCard(pm, defaultPaymentMethodId) {
 
 class CustomerPaymentMethodService {
     async _getCustomerUser(userId) {
-        const user = await users.findOne({
-            where: { id: userId, deletedAt: null },
-            attributes: [
-                "id",
-                "firstName",
-                "lastName",
-                "email",
-                "stripeCustomerId",
-                "defaultPaymentMethodId",
-                "cardBrand",
-                "cardLast4",
-                "cardExpMonth",
-                "cardExpYear",
-                "cardUpdatedAt",
-            ],
-        });
-        if (!user) {
-            throw new NotFoundError("Customer not found");
+        try {
+            const user = await users.findOne({
+                where: { id: userId, deletedAt: null },
+                attributes: [
+                    "id",
+                    "firstName",
+                    "lastName",
+                    "email",
+                    "stripeCustomerId",
+                    "defaultPaymentMethodId",
+                    "cardBrand",
+                    "cardLast4",
+                    "cardExpMonth",
+                    "cardExpYear",
+                    "cardUpdatedAt",
+                ],
+            });
+            if (!user) {
+                throw new NotFoundError("Customer not found");
+            }
+            return user;
+        } catch (err) {
+            console.error(
+                `[paymentMethods] _getCustomerUser failed userId=${userId}:`,
+                err?.parent?.sqlMessage || err?.message || err
+            );
+            throw err;
         }
-        return user;
     }
 
     async _ensureStripeCustomer(user) {

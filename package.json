@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node utils/invoiceLineTotals.test.js",
     "dev": "nodemon laundary.js",
+    "dev:watch": "nodemon --watch . --ext js,json --ignore node_modules --ignore uploads -- laundary.js",
     "tunnel": "lt --port 3010"
   },
   "keywords": [],

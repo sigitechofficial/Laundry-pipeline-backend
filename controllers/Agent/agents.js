@@ -1054,9 +1054,10 @@ exports.orderDetailsById = async (req, res) => {
  * "Done with Today pickup work" = status >= 8 (reachedAtDeliveryShopStatus).
  */
 const AGENT_PICKUP_STATUSES = [3, 4, 5, 6, 7];
-const AGENT_INVOICE_STATUSES = [8, 9, 10];
-/** Processing tab only — actively washing. Status 12+ (Complete at Facility → delivery) leave this tab. */
-const AGENT_PROCESSING_STATUSES = [11];
+/** Invoice tab — at shop / services added. Once invoice is generated (10+) leave this tab. */
+const AGENT_INVOICE_STATUSES = [8, 9];
+/** Processing tab — invoice generated + actively washing. Status 12+ leave this tab. */
+const AGENT_PROCESSING_STATUSES = [10, 11];
 /** After wash complete through delivered — still active for Orders / day tabs, not Processing tab. */
 const AGENT_POST_FACILITY_STATUSES = [12, 13, 14, 15, 16];
 const AGENT_POST_PICKUP_STATUSES = [
@@ -1348,7 +1349,7 @@ exports.agentBookingFilters = async (req, res) => {
         }
     }
 
-    // ── INVOICE — delivered to shop → services added → invoice generated ─────
+    // ── INVOICE — delivered to shop → services added (not yet generated) ─────
     if (!filterType || filterType === "invoice") {
         const rows = await booking.findAll({
             where: {
@@ -1371,7 +1372,7 @@ exports.agentBookingFilters = async (req, res) => {
         }
     }
 
-    // ── PROCESSING — processing → delivery → delivered ───────────────────────
+    // ── PROCESSING — invoice generated + washing ─────────────────────────────
     if (!filterType || filterType === "processing") {
         const rows = await booking.findAll({
             where: {
@@ -2543,8 +2544,12 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
-    if (bookingCheck.bookingStatusId !== 9) {
-        throw new ValidationError("Booking is still not In Transit to Facility");
+    // 8 = Delivered to shop, 9 = services added, 10 = invoice generated (retry / legacy)
+    const allowedForInvoiceGenerate = [8, 9, 10];
+    if (!allowedForInvoiceGenerate.includes(bookingCheck.bookingStatusId)) {
+        throw new ValidationError(
+            "Booking must be at the laundry shop (invoice stage) before generating the invoice"
+        );
     }
 
     const paymentType = normalizePaymentType(bookingCheck.paymentType);

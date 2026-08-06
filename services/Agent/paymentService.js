@@ -58,8 +58,12 @@ class AgentPaymentService {
             throw new NotFoundError("Booking not found");
         }
 
-        if (bookingCheck.bookingStatusId !== 9) {
-            throw new ValidationError("Booking is still not In Transit to Facility");
+        // 8 = Delivered to shop, 9 = services added, 10 = invoice generated (retry / legacy)
+        const allowedForInvoiceGenerate = [8, 9, 10];
+        if (!allowedForInvoiceGenerate.includes(bookingCheck.bookingStatusId)) {
+            throw new ValidationError(
+                "Booking must be at the laundry shop (invoice stage) before generating the invoice"
+            );
         }
 
         await booking.update(

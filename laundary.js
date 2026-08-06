@@ -328,6 +328,52 @@ let syncDb = 0;
 async function startServer() {
   try {
     const env = process.env.NODE_ENV || 'development';
+    const dbConfig = require('./config/config.json')[env] || {};
+
+    // Human-readable env label for ops (development | test | production)
+    let envLabel = 'UNKNOWN';
+    if (env === 'development') envLabel = 'DEVELOPMENT (local)';
+    else if (env === 'test') envLabel = 'TEST / STAGE';
+    else if (env === 'production') envLabel = 'PRODUCTION';
+    else envLabel = `UNKNOWN (${env}) — expected: development | test | production`;
+
+    const passwordLen = typeof dbConfig.password === 'string' ? dbConfig.password.length : 0;
+
+    // Safe DB identity logs (never log password — only length)
+    console.log('\x1b[36m%s\x1b[0m', `
+**********************************************************
+** ENVIRONMENT
+** NODE_ENV:     ${env}
+** ENV LABEL:    ${envLabel}
+** config.json:  using "${env}" block
+**********************************************************
+** DB CONFIG
+** host:           ${dbConfig.host || 'n/a'}
+** port:           ${dbConfig.port || 3306}
+** database:       ${dbConfig.database || 'n/a'}
+** username:       ${dbConfig.username || 'n/a'}
+** passwordLength: ${passwordLen} (value never logged)
+**********************************************************`);
+
+    try {
+      await db.sequelize.authenticate();
+      const [dbRows] = await db.sequelize.query('SELECT DATABASE() AS currentDb');
+      const currentDb = dbRows?.[0]?.currentDb || 'n/a';
+      console.log('\x1b[32m%s\x1b[0m', `** DB CONNECTED OK → SELECT DATABASE() = ${currentDb}`);
+    } catch (dbErr) {
+      console.error('\x1b[31m%s\x1b[0m', `** DB CONNECT FAILED: ${dbErr.message}`);
+      console.error('\x1b[31m%s\x1b[0m', `
+** DB ACCESS HINTS
+** 1) On server, test same creds (interactive password prompt):
+**    mysql -h 127.0.0.1 -P ${dbConfig.port || 3306} -u '${dbConfig.username || ''}' -p '${dbConfig.database || ''}'
+** 2) If CLI fails → cPanel user/password/host is wrong (not Node).
+** 3) If CLI works → config.json password/username mismatch or stale file.
+** 4) MySQL user must exist for @localhost AND/OR @127.0.0.1 (cPanel often needs both).
+** 5) After creating user: confirm Current Privileges shows the DB, then reset password once and paste into the matching config.json block password exactly.
+** 6) Restart only the Node process you are currently using for this app (do not touch other PM2 apps).
+`);
+      throw dbErr;
+    }
 
     if (syncDb) {
       if (env === 'development' || env === 'test') {
@@ -362,10 +408,12 @@ async function startServer() {
 
       const startupMsg = `
 **********************************************************
-** Server running in ${env.toUpperCase()} mode
+** Server running in ${envLabel}
+** NODE_ENV=${env}  (development | test | production)
 ** Server URL: ${baseUrl}
 ** Swagger: ${baseUrl}/api-docs
 ** CORS: Enabled with credentials
+** Active DB: ${dbConfig.database || 'n/a'} (user: ${dbConfig.username || 'n/a'})
 **********************************************************`;
       
       console.log('\x1b[94m%s\x1b[0m', startupMsg);
