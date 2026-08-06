@@ -13,6 +13,7 @@ const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
+const invoicePaymentFailureController = require('../controllers/Admin/invoicePaymentFailureController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 
@@ -482,6 +483,16 @@ router.get('/getAgentAddress/:userId', asyncMiddleware(adminController.getAgentA
 
 //Get Shop Address with Business Info
 router.get('/getShopAddress/:userId', asyncMiddleware(adminController.getShopAddress))
+
+//!-----------------------------------Invoice payment failures (card auto-charge)---------//
+router.get(
+    '/payment-failures',
+    asyncMiddleware(invoicePaymentFailureController.listPaymentFailures)
+)
+router.patch(
+    '/payment-failures/:bookingId/resolve',
+    asyncMiddleware(invoicePaymentFailureController.resolvePaymentFailure)
+)
 
 //!-----------------------------------Agent Settlement------------------------------------//
 router.get(

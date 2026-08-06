@@ -312,6 +312,10 @@ function buildCollectPaymentFlags(options = {}) {
     const hasStatus = Number.isFinite(statusId) && statusId > 0;
     const atCollectStage = hasStatus && CASH_COLLECT_STATUS_IDS.has(statusId);
 
+    // Card balance is auto-charged ~2h after invoice finalize — agent proceeds without collect sheet.
+    const cardAutoChargeFlow =
+        !isCashBooking && balancePaymentMethod === "card";
+
     return {
         paymentType,
         paymentConfirmed: !unpaid && (cashCollected || isBillingPaid),
@@ -319,12 +323,16 @@ function buildCollectPaymentFlags(options = {}) {
         canProceedWithoutPayment:
             isCashBooking ||
             !unpaid ||
-            balancePaymentMethod === "cash",
-        // At invoice/processing: false. At Driver Reached / Complete: true for unpaid cash.
-        // If status unknown (other endpoints), keep collect-eligible so callers aren't blocked.
-        canCollectPaymentNow: collectCashAtDelivery && (!hasStatus || atCollectStage),
-        invoicePaymentWindowApplies: paymentType === "card",
+            balancePaymentMethod === "cash" ||
+            cardAutoChargeFlow,
+        // Card: no collect sheet at invoice (auto-charge). Cash COD: collect at delivery stage.
+        canCollectPaymentNow:
+            !cardAutoChargeFlow &&
+            collectCashAtDelivery &&
+            (!hasStatus || atCollectStage),
+        invoicePaymentWindowApplies: paymentType === "card" && !cardAutoChargeFlow,
         amountDueNow: unpaid ? amountDueNow : 0,
+        collectPaymentSheetAtInvoice: false,
     };
 }
 

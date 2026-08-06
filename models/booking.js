@@ -63,6 +63,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'bookingId',
         as: 'attempts'
       })
+      booking.hasMany(models.invoicePaymentAttempt, {
+        foreignKey: 'bookingId',
+        as: 'invoicePaymentAttempts'
+      })
     }
   }
   booking.init({
@@ -274,6 +278,75 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.INTEGER,
     allowNull: true,
     comment: 'Admin-target shop; pending accept by that laundry shop only',
+  },
+  invoiceFinalizedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  autoChargeStatus: {
+    type: DataTypes.ENUM(
+      'none',
+      'scheduled',
+      'processing',
+      'succeeded',
+      'failed',
+      'cancelled',
+      'skipped'
+    ),
+    allowNull: false,
+    defaultValue: 'none',
+  },
+  autoChargeDueAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  autoChargeAttemptCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
+  autoChargeLastAttemptAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  lastPaymentFailureCode: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+  },
+  lastPaymentFailureMessage: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
+  },
+  lastPaymentFailureAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  paymentDeliveryGate: {
+    type: DataTypes.ENUM(
+      'open',
+      'waiting_admin',
+      'cleared_cash',
+      'cleared_allow'
+    ),
+    allowNull: false,
+    defaultValue: 'open',
+  },
+  ofdAutoRetryDone: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  paymentAdminResolvedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  paymentAdminResolvedBy: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  paymentAdminNotes: {
+    type: DataTypes.STRING(500),
+    allowNull: true,
   },
   }, {
     sequelize,

@@ -389,6 +389,8 @@ async function startServer() {
 
     const { startHeldBookingReleaseJob } = require('./services/bookingHeldReleaseService');
     startHeldBookingReleaseJob();
+    const { startInvoiceAutoChargeJob } = require('./services/Agent/invoiceAutoChargeService');
+    startInvoiceAutoChargeJob();
 
     server.listen(server_port, function (err) {
       if (err) throw err;

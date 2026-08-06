@@ -428,7 +428,11 @@ async function chargeOffSession(
             // Re-throw with clearer message
             throw new customError(`Payment already processed with this idempotency key: ${error.message}`, 400);
         }
-        throw new customError(`Stripe Error: ${error.message}`, 400);
+        const wrapped = new customError(`Stripe Error: ${error.message}`, 400);
+        wrapped.stripeCode = error.code || null;
+        wrapped.declineCode = error.decline_code || null;
+        wrapped.raw = error.raw || error;
+        throw wrapped;
     }
 }
 

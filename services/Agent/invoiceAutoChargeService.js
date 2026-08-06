@@ -1,0 +1,847 @@
+"use strict";
+
+const { Op } = require("sequelize");
+const {
+    booking,
+    billingDetails,
+    users,
+    addressDb,
+    invoicePaymentAttempt,
+} = require("../../models");
+const {
+    normalizePaymentType,
+    resolveBalancePaymentMethod,
+    roundMoney,
+} = require("../../utils/invoicePaymentSummary");
+const invoiceManagementService = require("./invoiceManagementService");
+const { chargeOffSession } = require("../../controllers/stripe");
+const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
+const { sendNotification } = require("../../utils/notification");
+const { creditAgentForPaidBooking } = require("./agentWalletService");
+
+const AUTO_CHARGE_DELAY_MS = Number(
+    process.env.INVOICE_AUTO_CHARGE_DELAY_MS || 2 * 60 * 60 * 1000
+);
+const AUTO_CHARGE_JOB_INTERVAL_MS = Number(
+    process.env.INVOICE_AUTO_CHARGE_JOB_INTERVAL_MS || 60 * 1000
+);
+const MAX_SCHEDULED_ATTEMPTS = Number(
+    process.env.INVOICE_AUTO_CHARGE_MAX_ATTEMPTS || 3
+);
+const SCHEDULED_RETRY_GAP_MS = Number(
+    process.env.INVOICE_AUTO_CHARGE_RETRY_GAP_MS || 30 * 60 * 1000
+);
+
+let autoChargeTimer = null;
+
+function isCardBalanceDue(bookingRow, amountDueNow) {
+    const paymentType = normalizePaymentType(bookingRow.paymentType);
+    if (paymentType !== "card") return false;
+    const balanceMethod = resolveBalancePaymentMethod(bookingRow);
+    if (balanceMethod === "cash") return false;
+    return roundMoney(amountDueNow) > 0.02;
+}
+
+function isBookingPaid(bookingRow, amountDueNow) {
+    if (Boolean(bookingRow.paymentConfirmed)) return true;
+    if (String(bookingRow.billingDetail?.paymentStatus || "").toLowerCase() === "paid") {
+        return true;
+    }
+    return roundMoney(amountDueNow) <= 0.02;
+}
+
+function buildPaymentGateFlags(bookingRow = {}, amountDueNow = 0) {
+    const paymentType = normalizePaymentType(bookingRow.paymentType);
+    const balanceMethod = resolveBalancePaymentMethod(bookingRow);
+    const paid = isBookingPaid(bookingRow, amountDueNow);
+    const gate = bookingRow.paymentDeliveryGate || "open";
+    const failed =
+        !paid &&
+        paymentType === "card" &&
+        balanceMethod === "card" &&
+        (bookingRow.autoChargeStatus === "failed" || gate === "waiting_admin");
+    const waitingAdmin = !paid && gate === "waiting_admin";
+    const clearedCash = gate === "cleared_cash" || balanceMethod === "cash";
+    const clearedAllow = gate === "cleared_allow";
+    const canOutForDelivery =
+        paid ||
+        paymentType === "cash" ||
+        clearedCash ||
+        clearedAllow ||
+        (paymentType === "card" && balanceMethod === "cash");
+
+    return {
+        autoChargeStatus: bookingRow.autoChargeStatus || "none",
+        autoChargeDueAt: bookingRow.autoChargeDueAt || null,
+        paymentFailed: failed,
+        paymentFailureCode: bookingRow.lastPaymentFailureCode || null,
+        paymentFailureReason: bookingRow.lastPaymentFailureMessage || null,
+        paymentFailureAt: bookingRow.lastPaymentFailureAt || null,
+        paymentWaitingAdmin: waitingAdmin,
+        paymentDeliveryGate: gate,
+        paymentAdminNotes: bookingRow.paymentAdminNotes || null,
+        canOutForDelivery,
+        collectPaymentSheetAtInvoice: false,
+    };
+}
+
+/**
+ * Schedule 2h auto-charge after invoice finalize (card balance only).
+ */
+async function scheduleInvoiceAutoCharge(bookingId, options = {}) {
+    const bookingRow = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus", "total"],
+            },
+        ],
+    });
+    if (!bookingRow) return null;
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = paymentSummary?.amountDueNow ?? 0;
+
+    if (!isCardBalanceDue(bookingRow, amountDue)) {
+        await bookingRow.update({
+            invoiceFinalizedAt: bookingRow.invoiceFinalizedAt || new Date(),
+            autoChargeStatus: "skipped",
+            autoChargeDueAt: null,
+            paymentDeliveryGate: "open",
+        });
+        return buildPaymentGateFlags(bookingRow, amountDue);
+    }
+
+    if (
+        bookingRow.autoChargeStatus === "succeeded" ||
+        isBookingPaid(bookingRow, amountDue)
+    ) {
+        return buildPaymentGateFlags(bookingRow, amountDue);
+    }
+
+    if (
+        bookingRow.autoChargeStatus === "scheduled" &&
+        bookingRow.autoChargeDueAt &&
+        !options.forceReschedule
+    ) {
+        return buildPaymentGateFlags(bookingRow, amountDue);
+    }
+
+    const finalizedAt = options.finalizedAt || new Date();
+    const dueAt = new Date(finalizedAt.getTime() + AUTO_CHARGE_DELAY_MS);
+
+    await bookingRow.update({
+        invoiceFinalizedAt: bookingRow.invoiceFinalizedAt || finalizedAt,
+        autoChargeStatus: "scheduled",
+        autoChargeDueAt: dueAt,
+        ofdAutoRetryDone: false,
+        paymentDeliveryGate: "open",
+        lastPaymentFailureCode: null,
+        lastPaymentFailureMessage: null,
+        lastPaymentFailureAt: null,
+    });
+
+    await bookingRow.reload();
+    console.log(
+        `[invoiceAutoCharge] booking ${bookingId} scheduled for ${dueAt.toISOString()}`
+    );
+    return buildPaymentGateFlags(bookingRow, amountDue);
+}
+
+async function resolveStripeCustomerAndPm(bookingRow) {
+    const customer = bookingRow.customer ||
+        (await users.findByPk(bookingRow.customerId, {
+            attributes: [
+                "id",
+                "firstName",
+                "lastName",
+                "email",
+                "stripeCustomerId",
+                "defaultPaymentMethodId",
+            ],
+        }));
+
+    const stripeCustomerId = customer?.stripeCustomerId || null;
+    const paymentMethodId =
+        bookingRow.paymentMethodId ||
+        customer?.defaultPaymentMethodId ||
+        null;
+
+    return { customer, stripeCustomerId, paymentMethodId };
+}
+
+async function resolveAgentUserId(bookingRow) {
+    if (bookingRow.driverId) return bookingRow.driverId;
+    if (!bookingRow.laundryShopId) return null;
+    const shop = await addressDb.findByPk(bookingRow.laundryShopId, {
+        attributes: ["id", "userId"],
+    });
+    return shop?.userId || null;
+}
+
+function extractStripeError(err) {
+    const raw = err?.raw || err?.original || err;
+    const stripeCode =
+        err?.stripeCode ||
+        raw?.code ||
+        err?.code ||
+        null;
+    const declineCode =
+        err?.declineCode ||
+        raw?.decline_code ||
+        null;
+    let message = err?.message || "Payment failed";
+    if (message.startsWith("Stripe Error: ")) {
+        message = message.replace("Stripe Error: ", "");
+    }
+    return {
+        stripeCode: stripeCode ? String(stripeCode).slice(0, 64) : null,
+        declineCode: declineCode ? String(declineCode).slice(0, 64) : null,
+        message: String(message).slice(0, 500),
+    };
+}
+
+async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSummary) {
+    const fullOrderTotal =
+        paymentSummary?.orderSummary?.totalOrderAmount ?? amount;
+
+    await billingDetails.update(
+        {
+            total: fullOrderTotal,
+            paymentStatus: "Paid",
+        },
+        { where: { bookingId: bookingRow.id } }
+    );
+
+    await booking.update(
+        {
+            orderAmount: fullOrderTotal,
+            paymentIntentId: paymentIntent.id,
+            balanceCollectedVia: "card",
+            paymentConfirmed: true,
+            autoChargeStatus: "succeeded",
+            paymentDeliveryGate: "open",
+            lastPaymentFailureCode: null,
+            lastPaymentFailureMessage: null,
+            lastPaymentFailureAt: null,
+            ofdAutoRetryDone: false,
+        },
+        { where: { id: bookingRow.id } }
+    );
+
+    try {
+        await creditAgentForPaidBooking(bookingRow.id);
+    } catch (walletErr) {
+        console.error(
+            `[invoiceAutoCharge] wallet credit failed booking ${bookingRow.id}:`,
+            walletErr.message
+        );
+    }
+}
+
+async function notifyPaymentFailed(bookingRow, failure) {
+    const reason = failure.message || "Card payment failed";
+    const code = failure.declineCode || failure.stripeCode || "payment_failed";
+    const data = {
+        bookingId: String(bookingRow.id),
+        type: "PAYMENT_FAILED",
+        paymentFailureCode: code,
+        paymentFailureReason: reason,
+        orderTrackId: bookingRow.orderTrackId || "",
+    };
+
+    if (bookingRow.customerId) {
+        sendNotification(
+            bookingRow.customerId,
+            "Payment failed",
+            `Payment for order ${bookingRow.orderTrackId || bookingRow.id} failed: ${reason}. Please contact support if you want to pay by cash.`,
+            data
+        ).catch((e) =>
+            console.error("[invoiceAutoCharge] customer notify failed:", e.message)
+        );
+    }
+
+    const agentUserId = await resolveAgentUserId(bookingRow);
+    if (agentUserId) {
+        sendNotification(
+            agentUserId,
+            "Payment failed — waiting for admin",
+            `Order ${bookingRow.orderTrackId || bookingRow.id}: ${reason}. Waiting for admin response before Out for Delivery.`,
+            data
+        ).catch((e) =>
+            console.error("[invoiceAutoCharge] agent notify failed:", e.message)
+        );
+    }
+}
+
+async function notifyPaymentCleared(bookingRow, action) {
+    const agentUserId = await resolveAgentUserId(bookingRow);
+    if (!agentUserId) return;
+    const label =
+        action === "shift_to_cash"
+            ? "Admin shifted balance to cash. You can proceed; collect cash at delivery."
+            : "Admin cleared payment hold. You can proceed to Out for Delivery.";
+    sendNotification(
+        agentUserId,
+        "Payment hold cleared",
+        `Order ${bookingRow.orderTrackId || bookingRow.id}: ${label}`,
+        {
+            bookingId: String(bookingRow.id),
+            type: "PAYMENT_HOLD_CLEARED",
+            action,
+        }
+    ).catch((e) =>
+        console.error("[invoiceAutoCharge] clear notify failed:", e.message)
+    );
+}
+
+/**
+ * Attempt card charge for invoice balance.
+ * @returns {{ ok: boolean, skipped?: boolean, alreadyPaid?: boolean, paymentIntentId?: string, failure?: object }}
+ */
+async function attemptInvoiceCardCharge(bookingId, options = {}) {
+    const attemptType = options.attemptType || "scheduled_auto";
+    const triggeredBy = options.triggeredBy || "system";
+
+    const bookingRow = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: users,
+                as: "customer",
+                attributes: [
+                    "id",
+                    "firstName",
+                    "lastName",
+                    "email",
+                    "stripeCustomerId",
+                    "defaultPaymentMethodId",
+                ],
+            },
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus", "total"],
+            },
+        ],
+    });
+
+    if (!bookingRow) {
+        return { ok: false, skipped: true, failure: { message: "Booking not found" } };
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = roundMoney(paymentSummary?.amountDueNow ?? 0);
+
+    if (isBookingPaid(bookingRow, amountDue)) {
+        if (bookingRow.autoChargeStatus !== "succeeded") {
+            await bookingRow.update({
+                autoChargeStatus: "succeeded",
+                paymentDeliveryGate: "open",
+                paymentConfirmed: true,
+            });
+        }
+        return { ok: true, alreadyPaid: true };
+    }
+
+    if (!isCardBalanceDue(bookingRow, amountDue)) {
+        await invoicePaymentAttempt.create({
+            bookingId,
+            attemptType,
+            attemptNumber: (bookingRow.autoChargeAttemptCount || 0) + 1,
+            status: "skipped",
+            amount: amountDue,
+            errorMessage: "Not a card balance due booking",
+            laundryShopId: bookingRow.laundryShopId,
+            triggeredBy,
+        });
+        return { ok: true, skipped: true };
+    }
+
+    const { customer, stripeCustomerId, paymentMethodId } =
+        await resolveStripeCustomerAndPm(bookingRow);
+
+    const attemptNumber = (bookingRow.autoChargeAttemptCount || 0) + 1;
+    await bookingRow.update({
+        autoChargeStatus: "processing",
+        autoChargeAttemptCount: attemptNumber,
+        autoChargeLastAttemptAt: new Date(),
+    });
+
+    if (!stripeCustomerId || !paymentMethodId) {
+        const failure = {
+            stripeCode: "missing_payment_method",
+            declineCode: null,
+            message: !stripeCustomerId
+                ? "Stripe customer missing"
+                : "No saved payment method on file",
+        };
+        await persistFailure(bookingRow, failure, {
+            attemptType,
+            attemptNumber,
+            amountDue,
+            paymentMethodId,
+            triggeredBy,
+            notify: options.notifyOnFailure !== false,
+        });
+        return { ok: false, failure };
+    }
+
+    const idempotencyKey =
+        options.idempotencyKey ||
+        `booking_${bookingId}_${attemptType}_${attemptNumber}`;
+
+    try {
+        const stripePresentation = buildStripeChargePresentation({
+            chargeType: "delivery_balance",
+            bookingId,
+            orderTrackId: bookingRow.orderTrackId,
+            amount: amountDue,
+            currency: "GBP",
+            paymentType: bookingRow.paymentType || "card",
+            customer: customer || { id: bookingRow.customerId },
+            agent: { id: options.agentUserId || null },
+            billing: {
+                totalOrderAmount: paymentSummary?.orderSummary?.totalOrderAmount,
+            },
+            zoneId: bookingRow.zoneId,
+            laundryShopId: bookingRow.laundryShopId,
+            extra: {
+                auto_charge_attempt: String(attemptNumber),
+                auto_charge_type: attemptType,
+            },
+        });
+
+        const paymentIntent = await chargeOffSession(
+            amountDue,
+            stripeCustomerId,
+            paymentMethodId,
+            idempotencyKey,
+            stripePresentation
+        );
+
+        if (paymentIntent.status !== "succeeded") {
+            throw Object.assign(new Error(`Payment status: ${paymentIntent.status}`), {
+                stripeCode: paymentIntent.status,
+            });
+        }
+
+        await markChargeSuccess(bookingRow, paymentIntent, amountDue, paymentSummary);
+
+        await invoicePaymentAttempt.create({
+            bookingId,
+            attemptType,
+            attemptNumber,
+            status: "succeeded",
+            amount: amountDue,
+            paymentMethodId,
+            paymentIntentId: paymentIntent.id,
+            laundryShopId: bookingRow.laundryShopId,
+            agentUserId: options.agentUserId || null,
+            triggeredBy,
+        });
+
+        console.log(
+            `[invoiceAutoCharge] booking ${bookingId} charged OK via ${attemptType}`
+        );
+        return { ok: true, paymentIntentId: paymentIntent.id };
+    } catch (err) {
+        const failure = extractStripeError(err);
+        await persistFailure(bookingRow, failure, {
+            attemptType,
+            attemptNumber,
+            amountDue,
+            paymentMethodId,
+            triggeredBy,
+            notify: options.notifyOnFailure !== false,
+        });
+        return { ok: false, failure };
+    }
+}
+
+async function persistFailure(bookingRow, failure, ctx) {
+    const shouldSoftRetry =
+        ctx.attemptType === "scheduled_auto" &&
+        ctx.attemptNumber < MAX_SCHEDULED_ATTEMPTS &&
+        isRecoverableDecline(failure);
+
+    const nextDue = shouldSoftRetry
+        ? new Date(Date.now() + SCHEDULED_RETRY_GAP_MS)
+        : bookingRow.autoChargeDueAt;
+
+    await booking.update(
+        {
+            autoChargeStatus: "failed",
+            autoChargeDueAt: nextDue,
+            lastPaymentFailureCode: failure.declineCode || failure.stripeCode,
+            lastPaymentFailureMessage: failure.message,
+            lastPaymentFailureAt: new Date(),
+            paymentDeliveryGate: shouldSoftRetry ? "open" : "waiting_admin",
+        },
+        { where: { id: bookingRow.id } }
+    );
+
+    await invoicePaymentAttempt.create({
+        bookingId: bookingRow.id,
+        attemptType: ctx.attemptType,
+        attemptNumber: ctx.attemptNumber,
+        status: "failed",
+        amount: ctx.amountDue,
+        paymentMethodId: ctx.paymentMethodId || null,
+        stripeErrorCode: failure.stripeCode,
+        stripeDeclineCode: failure.declineCode,
+        errorMessage: failure.message,
+        laundryShopId: bookingRow.laundryShopId,
+        agentUserId: ctx.agentUserId || null,
+        triggeredBy: ctx.triggeredBy,
+        metadata: shouldSoftRetry
+            ? { softRetryScheduled: true, nextDue }
+            : { awaitingAdmin: true },
+    });
+
+    if (ctx.notify && !shouldSoftRetry) {
+        const fresh = await booking.findByPk(bookingRow.id);
+        await notifyPaymentFailed(fresh || bookingRow, failure);
+    }
+}
+
+function isRecoverableDecline(failure = {}) {
+    const code = String(failure.declineCode || failure.stripeCode || "").toLowerCase();
+    const recoverable = new Set([
+        "insufficient_funds",
+        "card_decline_rate_limit_exceeded",
+        "try_again_later",
+        "processing_error",
+        "temporary_failure",
+    ]);
+    return recoverable.has(code);
+}
+
+/**
+ * Cron: charge bookings whose autoChargeDueAt has passed.
+ */
+async function processDueInvoiceAutoCharges() {
+    const now = new Date();
+    const stuckProcessingBefore = new Date(now.getTime() - 5 * 60 * 1000);
+    const dueBookings = await booking.findAll({
+        where: {
+            paymentType: "card",
+            invoiceStatus: "finalized",
+            paymentDeliveryGate: "open",
+            bookingStatusId: { [Op.between]: [9, 16] },
+            [Op.or]: [
+                {
+                    autoChargeStatus: { [Op.in]: ["scheduled", "failed"] },
+                    autoChargeDueAt: { [Op.lte]: now },
+                },
+                {
+                    // Recover crashed mid-charge
+                    autoChargeStatus: "processing",
+                    autoChargeLastAttemptAt: { [Op.lte]: stuckProcessingBefore },
+                },
+            ],
+        },
+        attributes: ["id", "autoChargeAttemptCount", "autoChargeStatus"],
+        limit: 50,
+        order: [["autoChargeDueAt", "ASC"]],
+    });
+
+    let charged = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const row of dueBookings) {
+        if ((row.autoChargeAttemptCount || 0) >= MAX_SCHEDULED_ATTEMPTS) {
+            if (row.autoChargeStatus !== "failed") {
+                await booking.update(
+                    { autoChargeStatus: "failed", paymentDeliveryGate: "waiting_admin" },
+                    { where: { id: row.id } }
+                );
+            }
+            skipped += 1;
+            continue;
+        }
+
+        const result = await attemptInvoiceCardCharge(row.id, {
+            attemptType: "scheduled_auto",
+            triggeredBy: "system",
+            notifyOnFailure: true,
+        });
+
+        if (result.ok) charged += 1;
+        else if (result.skipped) skipped += 1;
+        else failed += 1;
+    }
+
+    if (dueBookings.length) {
+        console.log(
+            `[invoiceAutoCharge] job done charged=${charged} failed=${failed} skipped=${skipped}`
+        );
+    }
+    return { charged, failed, skipped, scanned: dueBookings.length };
+}
+
+/**
+ * Gate Out for Delivery for card unpaid bookings.
+ * Auto-retries once at OFD, then blocks until admin clears.
+ */
+async function assertCanOutForDelivery(bookingId, options = {}) {
+    const bookingRow = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus", "total"],
+            },
+            {
+                model: users,
+                as: "customer",
+                attributes: [
+                    "id",
+                    "stripeCustomerId",
+                    "defaultPaymentMethodId",
+                    "firstName",
+                    "lastName",
+                    "email",
+                ],
+            },
+        ],
+    });
+
+    if (!bookingRow) {
+        const err = new Error("Booking not found");
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = roundMoney(paymentSummary?.amountDueNow ?? 0);
+    const paymentType = normalizePaymentType(bookingRow.paymentType);
+    const balanceMethod = resolveBalancePaymentMethod(bookingRow);
+    const flags = buildPaymentGateFlags(bookingRow, amountDue);
+
+    if (paymentType === "cash" || balanceMethod === "cash") {
+        return { allowed: true, flags, paymentSummary };
+    }
+
+    if (isBookingPaid(bookingRow, amountDue)) {
+        return { allowed: true, flags: buildPaymentGateFlags(bookingRow, 0), paymentSummary };
+    }
+
+    if (
+        bookingRow.paymentDeliveryGate === "cleared_allow" ||
+        bookingRow.paymentDeliveryGate === "cleared_cash"
+    ) {
+        return { allowed: true, flags, paymentSummary };
+    }
+
+    // OFD automatic retry (once)
+    if (!bookingRow.ofdAutoRetryDone) {
+        await bookingRow.update({ ofdAutoRetryDone: true });
+        const result = await attemptInvoiceCardCharge(bookingId, {
+            attemptType: "ofd_retry",
+            triggeredBy: "system",
+            agentUserId: options.agentUserId,
+            notifyOnFailure: true,
+            idempotencyKey: `booking_${bookingId}_ofd_retry`,
+        });
+
+        if (result.ok) {
+            const paidSummary =
+                await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+            const fresh = await booking.findByPk(bookingId);
+            return {
+                allowed: true,
+                chargedOnOfd: true,
+                flags: buildPaymentGateFlags(fresh, 0),
+                paymentSummary: paidSummary,
+            };
+        }
+    }
+
+    const fresh = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["paymentStatus"],
+            },
+        ],
+    });
+
+    if (fresh.paymentDeliveryGate !== "waiting_admin") {
+        await fresh.update({ paymentDeliveryGate: "waiting_admin" });
+    }
+
+    const blockedFlags = buildPaymentGateFlags(
+        { ...fresh.get({ plain: true }), paymentDeliveryGate: "waiting_admin" },
+        amountDue
+    );
+
+    const err = new Error(
+        blockedFlags.paymentFailureReason
+            ? `Payment failed: ${blockedFlags.paymentFailureReason}. Waiting for admin response.`
+            : "Payment failed. Waiting for admin response before Out for Delivery."
+    );
+    err.statusCode = 402;
+    err.code = "PAYMENT_WAITING_ADMIN";
+    err.paymentFlags = blockedFlags;
+    throw err;
+}
+
+async function listPaymentFailures(options = {}) {
+    const limit = Math.min(Number(options.limit) || 100, 200);
+    const rows = await booking.findAll({
+        where: {
+            paymentType: "card",
+            paymentDeliveryGate: "waiting_admin",
+            bookingStatusId: { [Op.lt]: 17 },
+        },
+        include: [
+            {
+                model: users,
+                as: "customer",
+                attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+            },
+            {
+                model: billingDetails,
+                as: "billingDetail",
+                required: false,
+                attributes: ["total", "paymentStatus"],
+            },
+            {
+                model: invoicePaymentAttempt,
+                as: "invoicePaymentAttempts",
+                separate: true,
+                limit: 5,
+                order: [["id", "DESC"]],
+            },
+        ],
+        order: [["lastPaymentFailureAt", "DESC"]],
+        limit,
+    });
+
+    return rows.map((row) => {
+        const plain = row.get({ plain: true });
+        return {
+            ...plain,
+            paymentFlags: buildPaymentGateFlags(
+                plain,
+                plain.billingDetail?.paymentStatus === "Paid"
+                    ? 0
+                    : plain.orderAmount || 0
+            ),
+        };
+    });
+}
+
+async function resolvePaymentFailure(bookingId, action, adminUserId, notes = null) {
+    const allowed = new Set(["shift_to_cash", "allow_proceed", "keep_waiting"]);
+    if (!allowed.has(action)) {
+        const err = new Error(
+            "action must be shift_to_cash | allow_proceed | keep_waiting"
+        );
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const bookingRow = await booking.findByPk(bookingId);
+    if (!bookingRow) {
+        const err = new Error("Booking not found");
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const noteText = notes ? String(notes).slice(0, 500) : null;
+
+    if (action === "keep_waiting") {
+        await bookingRow.update({
+            paymentDeliveryGate: "waiting_admin",
+            paymentAdminNotes: noteText,
+            paymentAdminResolvedAt: new Date(),
+            paymentAdminResolvedBy: adminUserId,
+        });
+        return { bookingId, action, paymentDeliveryGate: "waiting_admin" };
+    }
+
+    if (action === "shift_to_cash") {
+        await bookingRow.update({
+            balancePaymentMethod: "cash",
+            paymentDeliveryGate: "cleared_cash",
+            autoChargeStatus:
+                bookingRow.autoChargeStatus === "succeeded"
+                    ? "succeeded"
+                    : "cancelled",
+            autoChargeDueAt: null,
+            paymentAdminNotes: noteText,
+            paymentAdminResolvedAt: new Date(),
+            paymentAdminResolvedBy: adminUserId,
+        });
+        await notifyPaymentCleared(bookingRow, action);
+        return { bookingId, action, paymentDeliveryGate: "cleared_cash" };
+    }
+
+    // allow_proceed
+    await bookingRow.update({
+        paymentDeliveryGate: "cleared_allow",
+        autoChargeStatus:
+            bookingRow.autoChargeStatus === "succeeded"
+                ? "succeeded"
+                : "cancelled",
+        autoChargeDueAt: null,
+        paymentAdminNotes: noteText,
+        paymentAdminResolvedAt: new Date(),
+        paymentAdminResolvedBy: adminUserId,
+    });
+    await notifyPaymentCleared(bookingRow, action);
+    return { bookingId, action, paymentDeliveryGate: "cleared_allow" };
+}
+
+function cancelAutoChargeForBooking(bookingId, reason = "cancelled") {
+    return booking.update(
+        {
+            autoChargeStatus: "cancelled",
+            autoChargeDueAt: null,
+            paymentAdminNotes: reason,
+        },
+        { where: { id: bookingId, autoChargeStatus: { [Op.in]: ["scheduled", "failed", "processing"] } } }
+    );
+}
+
+function startInvoiceAutoChargeJob() {
+    if (autoChargeTimer) return;
+
+    const run = () => {
+        processDueInvoiceAutoCharges().catch((err) => {
+            console.error("[invoiceAutoCharge] job error:", err.message);
+        });
+    };
+
+    run();
+    autoChargeTimer = setInterval(run, AUTO_CHARGE_JOB_INTERVAL_MS);
+    console.log(
+        `[invoiceAutoCharge] scheduled every ${AUTO_CHARGE_JOB_INTERVAL_MS / 1000}s (delay ${AUTO_CHARGE_DELAY_MS / 60000}m)`
+    );
+}
+
+module.exports = {
+    AUTO_CHARGE_DELAY_MS,
+    scheduleInvoiceAutoCharge,
+    attemptInvoiceCardCharge,
+    processDueInvoiceAutoCharges,
+    assertCanOutForDelivery,
+    listPaymentFailures,
+    resolvePaymentFailure,
+    cancelAutoChargeForBooking,
+    buildPaymentGateFlags,
+    startInvoiceAutoChargeJob,
+    isCardBalanceDue,
+    isBookingPaid,
+};

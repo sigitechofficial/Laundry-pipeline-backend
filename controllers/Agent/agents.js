@@ -172,6 +172,7 @@ const agentOrderManagementService = require('../../services/Agent/orderManagemen
 const agentWalletService = require('../../services/Agent/agentWalletService');
 const agentSettlementService = require('../../services/Agent/agentSettlementService');
 const agentWithdrawalService = require('../../services/Agent/agentWithdrawalService');
+const invoiceAutoChargeService = require('../../services/Agent/invoiceAutoChargeService');
 
 async function tryCreditAgentWallet(bookingId, options = {}) {
     try {
@@ -2272,6 +2273,12 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
             orderAmount: fullOrderTotal,
             paymentIntentId: paymentIntent.id,
             balanceCollectedVia: "card",
+            paymentConfirmed: true,
+            autoChargeStatus: "succeeded",
+            paymentDeliveryGate: "open",
+            lastPaymentFailureCode: null,
+            lastPaymentFailureMessage: null,
+            lastPaymentFailureAt: null,
         },
         { where: { id: bookingId } }
     );
@@ -2280,12 +2287,18 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
 
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const refreshed = await booking.findByPk(bookingId);
+    const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+        refreshed,
+        0
+    );
 
     return ResponseHelper.success(res, "Balance payment charged successfully", {
         bookingId,
         paymentIntentId: paymentIntent.id,
         chargeAmount,
         paymentSummary: updatedPaymentSummary,
+        ...paymentGateFlags,
     });
 };
 
@@ -2340,15 +2353,41 @@ exports.setBalancePaymentMethod = async (req, res) => {
         );
     }
 
-    await bookingRow.update({ balancePaymentMethod: normalized });
+    const updatePayload = { balancePaymentMethod: normalized };
+    if (normalized === "cash") {
+        updatePayload.autoChargeStatus =
+            bookingRow.autoChargeStatus === "succeeded"
+                ? "succeeded"
+                : "cancelled";
+        updatePayload.autoChargeDueAt = null;
+        updatePayload.paymentDeliveryGate = "cleared_cash";
+    } else if (normalized === "card") {
+        updatePayload.paymentDeliveryGate = "open";
+    }
+    await bookingRow.update(updatePayload);
+
+    if (normalized === "card") {
+        await invoiceAutoChargeService.scheduleInvoiceAutoCharge(bookingId, {
+            forceReschedule: true,
+        });
+    }
 
     const updatedPaymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const refreshed = await booking.findByPk(bookingId);
+    const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+        refreshed,
+        updatedPaymentSummary?.amountDueNow ?? 0
+    );
 
     return ResponseHelper.success(res, "Balance payment method updated", {
         bookingId: Number(bookingId),
         balancePaymentMethod: normalized,
-        paymentSummary: updatedPaymentSummary,
+        paymentSummary: {
+            ...updatedPaymentSummary,
+            ...paymentGateFlags,
+        },
+        ...paymentGateFlags,
     });
 };
 
@@ -2517,9 +2556,9 @@ exports.recordCashPayment = async (req, res) => {
 
 
 /*
- *   Laundry Status Updated Invoice Generated and Status goes to In-Procesing
+ *   Laundry Status Updated Invoice Generated and Status goes to In-Processing.
  *   Cash COD: proceed unpaid (collect after delivery via recordCashPayment).
- *   Card: require full payment first (unless balance method is cash).
+ *   Card: proceed unpaid — balance auto-charged ~2h after finalize; OFD gated on payment/admin.
  */
 exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     const { bookingId } = req.params;
@@ -2553,7 +2592,6 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     }
 
     const paymentType = normalizePaymentType(bookingCheck.paymentType);
-    const isCashBooking = paymentType === "cash";
     const balanceMethod = resolveBalancePaymentMethod(bookingCheck);
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
@@ -2561,18 +2599,13 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     const billingPaid = bookingCheck.billingDetail?.paymentStatus === "Paid";
     const isFullyPaid = billingPaid || amountDue <= 0.02;
 
-    // Card with card balance: payment must be collected before processing
-    if (!isCashBooking && amountDue > 0.02 && balanceMethod !== "cash") {
-        throw new ValidationError(
-            "Payment required before processing. Collect card payment first, or set balance method to cash for pay-after-delivery."
-        );
-    }
-
     if (isFullyPaid) {
         await booking.update(
             {
                 bookingStatusId: 11,
                 paymentConfirmed: true,
+                autoChargeStatus: "succeeded",
+                paymentDeliveryGate: "open",
             },
             { where: { id: bookingId } }
         );
@@ -2586,7 +2619,7 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
 
         await tryCreditAgentWallet(bookingId);
     } else {
-        // Cash COD (or card + cash balance): advance without marking Paid
+        // Card auto-charge OR cash COD: advance to Processing without collecting now
         await booking.update(
             { bookingStatusId: 11 },
             { where: { id: bookingId } }
@@ -2598,6 +2631,8 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
                 { where: { bookingId } }
             );
         }
+
+        await invoiceAutoChargeService.scheduleInvoiceAutoCharge(bookingId);
     }
 
     const statusId = [10, 11];
@@ -2628,13 +2663,21 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
         bookingStatusId: 11,
     });
 
+    const refreshed = await booking.findByPk(bookingId);
+    const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+        refreshed,
+        isFullyPaid ? 0 : amountDue
+    );
+
     return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {
         bookingId: Number(bookingId),
         bookingStatusId: 11,
         ...paymentFlags,
+        ...paymentGateFlags,
         paymentSummary: {
             ...paymentSummary,
             ...paymentFlags,
+            ...paymentGateFlags,
             paymentType: paymentFlags.paymentType,
         },
     });
@@ -2698,6 +2741,7 @@ exports.laundryWashCompleted = async (req, res) => {
 
 /*
  *   Laundry Status Updated That Laundry is Out for Delivery to Customer
+ *   Card unpaid: OFD auto-retry once; on fail block until admin clears.
  */
 exports.laundryDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
@@ -2711,6 +2755,29 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
     assertBookingNotCancelledForAgent(bookingCheck);
+
+    let ofdGate = null;
+    try {
+        ofdGate = await invoiceAutoChargeService.assertCanOutForDelivery(
+            bookingId,
+            { agentUserId: agentId }
+        );
+    } catch (gateErr) {
+        if (gateErr.code === "PAYMENT_WAITING_ADMIN" || gateErr.statusCode === 402) {
+            throw new ValidationError(
+                gateErr.message ||
+                    "Payment failed. Waiting for admin response before Out for Delivery.",
+                {
+                    code: "PAYMENT_WAITING_ADMIN",
+                    ...(gateErr.paymentFlags || {}),
+                }
+            );
+        }
+        if (gateErr.statusCode === 404) {
+            throw new NotFoundError(gateErr.message);
+        }
+        throw gateErr;
+    }
 
     if (driverId) {
         await booking.update(
@@ -2730,14 +2797,6 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         );
     }
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    const currentDate = new Date().toISOString().split("T")[0];
-
     await bookingHistory.create({
         date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
         time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
@@ -2745,16 +2804,27 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         bookingStatusId: 13,
     });
 
-    // const customerId=bookingCheck.customerId;
-    // let title="Driver Out for Deliver Laundry to Customer";
-    // let body="Your driver is out for deliver laundry to customer";
-    // let data={
-    //     bookingId:bookingId,
-    //     driverId:bookingCheck.driverId,
-    // }
-    // sendNotification(customerId,title,body,data);
+    const customerId = bookingCheck.customerId;
+    sendNotification(
+        customerId,
+        "Out for delivery",
+        "Your laundry is out for delivery",
+        {
+            bookingId: String(bookingId),
+            type: "OUT_FOR_DELIVERY",
+            driverId: String(driverId || agentId),
+        }
+    ).catch(() => {});
 
-    return ResponseHelper.success(res, "Driver updated and out for Deliver Laundry to Customer", {});
+    return ResponseHelper.success(
+        res,
+        "Driver updated and out for Deliver Laundry to Customer",
+        {
+            bookingStatusId: 13,
+            chargedOnOfd: Boolean(ofdGate?.chargedOnOfd),
+            ...(ofdGate?.flags || {}),
+        }
+    );
 }
 
 /*
@@ -3075,9 +3145,22 @@ exports.driverAddSerivces = async (req, res) => {
             bookingStatusId: 9,
             subTotal,
             invoiceStatus: "finalized",
+            invoiceFinalizedAt: new Date(),
         },
         { where: { id: bookingId } }
     );
+
+    // Schedule 2h card auto-charge (no-op for cash / already paid)
+    try {
+        await invoiceAutoChargeService.scheduleInvoiceAutoCharge(bookingId, {
+            finalizedAt: new Date(),
+        });
+    } catch (scheduleErr) {
+        console.error(
+            `[invoiceAutoCharge] schedule after AgentAddServices failed booking ${bookingId}:`,
+            scheduleErr.message
+        );
+    }
 
     const customerId = bookings.customerId;
     let title = "Agent/Driver Added Detail";
@@ -3155,12 +3238,19 @@ exports.driverAddSerivces = async (req, res) => {
         bookingStatusId: 9,
     });
 
+    const refreshedBooking = await booking.findByPk(bookingId);
+    const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+        refreshedBooking,
+        paymentSummary?.amountDueNow ?? 0
+    );
+
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
         bookingId,
         invoiceStatus: "finalized",
         paymentSummary: {
             ...paymentSummary,
             ...paymentFlags,
+            ...paymentGateFlags,
             paymentType: paymentFlags.paymentType,
         },
         servicesSubtotal,
@@ -3168,6 +3258,7 @@ exports.driverAddSerivces = async (req, res) => {
         total: discountedTotal,
         orderAmount: discountedTotal,
         ...paymentFlags,
+        ...paymentGateFlags,
     });
 }
 
@@ -3597,6 +3688,11 @@ exports.invoiceCreation = async (req, res) => {
         bookingStatusId: bookingData.bookingStatusId,
     });
 
+    const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+        bookingData,
+        paymentSummary?.amountDueNow ?? 0
+    );
+
     // Stable COD fields on invoiceDetails (app reads this across statuses)
     bookingData.paymentType = paymentFlags.paymentType;
     bookingData.paymentConfirmed = paymentFlags.paymentConfirmed;
@@ -3607,6 +3703,7 @@ exports.invoiceCreation = async (req, res) => {
     bookingData.invoicePaymentWindowApplies =
         paymentFlags.invoicePaymentWindowApplies;
     bookingData.amountDueNow = paymentFlags.amountDueNow;
+    Object.assign(bookingData, paymentGateFlags);
 
     if (bookingData.billingDetail) {
         bookingData.billingDetail = {
@@ -3628,6 +3725,7 @@ exports.invoiceCreation = async (req, res) => {
         canCollectPaymentNow: paymentFlags.canCollectPaymentNow,
         invoicePaymentWindowApplies: paymentFlags.invoicePaymentWindowApplies,
         amountDueNow: paymentSummary?.amountDueNow ?? paymentFlags.amountDueNow,
+        ...paymentGateFlags,
     };
 
     return ResponseHelper.success(res, "Invoice Details", {
@@ -3639,6 +3737,7 @@ exports.invoiceCreation = async (req, res) => {
         customerHasResponded,
         amountDueNow: paymentSummaryWithFlags.amountDueNow,
         ...paymentFlags,
+        ...paymentGateFlags,
     });
 }
 
