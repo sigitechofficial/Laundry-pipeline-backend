@@ -18,6 +18,9 @@ const { chargeOffSession } = require("../../controllers/stripe");
 const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
 const { sendNotification } = require("../../utils/notification");
 const { creditAgentForPaidBooking } = require("./agentWalletService");
+const {
+    formatPaymentFailureReason,
+} = require("../../utils/paymentFailureLabels");
 
 const AUTO_CHARGE_DELAY_MS = Number(
     process.env.INVOICE_AUTO_CHARGE_DELAY_MS || 2 * 60 * 60 * 1000
@@ -71,12 +74,18 @@ function buildPaymentGateFlags(bookingRow = {}, amountDueNow = 0) {
         clearedAllow ||
         (paymentType === "card" && balanceMethod === "cash");
 
+    const failureCode = bookingRow.lastPaymentFailureCode || null;
+    const rawFailureMessage = bookingRow.lastPaymentFailureMessage || null;
+
     return {
         autoChargeStatus: bookingRow.autoChargeStatus || "none",
         autoChargeDueAt: bookingRow.autoChargeDueAt || null,
         paymentFailed: failed,
-        paymentFailureCode: bookingRow.lastPaymentFailureCode || null,
-        paymentFailureReason: bookingRow.lastPaymentFailureMessage || null,
+        paymentFailureCode: failureCode,
+        paymentFailureReason: failed
+            ? formatPaymentFailureReason(failureCode, rawFailureMessage)
+            : null,
+        paymentFailureRawMessage: rawFailureMessage,
         paymentFailureAt: bookingRow.lastPaymentFailureAt || null,
         paymentWaitingAdmin: waitingAdmin,
         paymentDeliveryGate: gate,
@@ -301,8 +310,8 @@ async function notifyPaymentSucceeded(bookingRow, amount) {
 }
 
 async function notifyPaymentFailed(bookingRow, failure) {
-    const reason = failure.message || "Card payment failed";
     const code = failure.declineCode || failure.stripeCode || "payment_failed";
+    const reason = formatPaymentFailureReason(code, failure.message);
     const data = {
         bookingId: String(bookingRow.id),
         type: "PAYMENT_FAILED",
@@ -786,16 +795,35 @@ async function listPaymentFailures(options = {}) {
         limit,
     });
 
+    const statusLabels = {
+        9: "Services added",
+        10: "Invoice generated",
+        11: "Processing",
+        12: "Ready for delivery",
+        13: "Out for delivery",
+        14: "Driver reached",
+        15: "Delivery failed",
+        16: "Delivered",
+    };
+
     return rows.map((row) => {
         const plain = row.get({ plain: true });
+        const flags = buildPaymentGateFlags(
+            plain,
+            plain.billingDetail?.paymentStatus === "Paid"
+                ? 0
+                : plain.orderAmount || 0
+        );
         return {
             ...plain,
-            paymentFlags: buildPaymentGateFlags(
-                plain,
-                plain.billingDetail?.paymentStatus === "Paid"
-                    ? 0
-                    : plain.orderAmount || 0
+            paymentFlags: flags,
+            failureReasonDisplay: formatPaymentFailureReason(
+                plain.lastPaymentFailureCode,
+                plain.lastPaymentFailureMessage
             ),
+            bookingStatusLabel:
+                statusLabels[plain.bookingStatusId] ||
+                `Status ${plain.bookingStatusId}`,
         };
     });
 }
