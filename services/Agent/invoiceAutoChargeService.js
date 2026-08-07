@@ -42,11 +42,12 @@ function isCardBalanceDue(bookingRow, amountDueNow) {
     return roundMoney(amountDueNow) > 0.02;
 }
 
-function isBookingPaid(bookingRow, amountDueNow) {
-    if (Boolean(bookingRow.paymentConfirmed)) return true;
-    if (String(bookingRow.billingDetail?.paymentStatus || "").toLowerCase() === "paid") {
-        return true;
-    }
+/**
+ * Invoice balance settlement only — trust server-calculated amountDueNow.
+ * Do NOT use booking.paymentConfirmed here: that flag is often set true after
+ * pickup auth hold / upfront while the invoice balance is still due.
+ */
+function isBookingPaid(_bookingRow, amountDueNow) {
     return roundMoney(amountDueNow) <= 0.02;
 }
 
@@ -115,11 +116,26 @@ async function scheduleInvoiceAutoCharge(bookingId, options = {}) {
         return buildPaymentGateFlags(bookingRow, amountDue);
     }
 
-    if (
-        bookingRow.autoChargeStatus === "succeeded" ||
-        isBookingPaid(bookingRow, amountDue)
-    ) {
+    if (bookingRow.autoChargeStatus === "succeeded" || isBookingPaid(bookingRow, amountDue)) {
+        if (
+            isBookingPaid(bookingRow, amountDue) &&
+            bookingRow.autoChargeStatus !== "succeeded" &&
+            bookingRow.autoChargeStatus !== "skipped"
+        ) {
+            await bookingRow.update({
+                autoChargeStatus: "skipped",
+                autoChargeDueAt: null,
+            });
+        }
         return buildPaymentGateFlags(bookingRow, amountDue);
+    }
+
+    // Upfront/hold may have left paymentConfirmed=true while balance remains —
+    // still schedule invoice auto-charge (upfront flow unchanged).
+    if (Boolean(bookingRow.paymentConfirmed) && amountDue > 0.02) {
+        console.log(
+            `[invoiceAutoCharge] booking ${bookingId} has paymentConfirmed=true but amountDue=${amountDue} — scheduling balance charge`
+        );
     }
 
     if (

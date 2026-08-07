@@ -13,6 +13,14 @@
 
 Cash / COD bookings are unchanged.
 
+### Upfront / auth hold
+
+Pickup upfront (or auth hold capture) still sets `paymentConfirmed` as before — **that flow is unchanged**.
+
+Auto-charge scheduling uses **`amountDueNow`**, not `paymentConfirmed`. So a booking can have:
+- upfront already captured (`paymentConfirmed = true`)
+- invoice balance still due → auto-charge **still schedules** and charges the remaining balance.
+
 ## Env
 
 | Variable | Default | Meaning |
