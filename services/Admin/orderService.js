@@ -97,12 +97,21 @@ class OrderService {
             }
         });
 
+        const paymentFailuresCount = await booking.count({
+            where: {
+                paymentType: "card",
+                paymentDeliveryGate: "waiting_admin",
+                bookingStatusId: { [Op.lt]: 17 },
+            },
+        });
+
         return {
             allOrderCount: allOrderCount,
             completedOrders: completedOrder,
             onHoldOrders: onHoldOrders,
             cancelledOrders: cancelledOrders,
-            pendingOrders: pendingOrders
+            pendingOrders: pendingOrders,
+            paymentFailuresCount: paymentFailuresCount,
         };
     }
 
