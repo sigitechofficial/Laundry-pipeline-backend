@@ -15,6 +15,7 @@ const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
 const invoicePaymentFailureController = require('../controllers/Admin/invoicePaymentFailureController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
+const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 
 
@@ -667,6 +668,20 @@ router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.get
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))
+
+//!-----------------------------------Admin Push Notifications (broadcast / targeted)------------------------------------>>>>
+router.get(
+  '/notifications/recipients/search',
+  asyncMiddleware(adminPushNotificationController.searchRecipients)
+)
+router.post(
+  '/notifications/preview',
+  asyncMiddleware(adminPushNotificationController.previewAudience)
+)
+router.post(
+  '/notifications/send',
+  asyncMiddleware(adminPushNotificationController.sendNotification)
+)
 
 //!-----------------------------------Service Comparison (customer original vs agent invoice)------------------------------------>>>>
 router.get('/bookings/:bookingId/service-comparison', asyncMiddleware(serviceComparisonController.getServiceComparison))
