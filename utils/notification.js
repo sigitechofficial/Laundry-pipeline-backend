@@ -7,31 +7,58 @@ const { Op } = require('sequelize');
 
 // Initialize Firebase Admin SDK only when a local service-account file exists.
 // Guard prevents "already exists" crash on hot reload.
+// Use readFileSync+JSON.parse (not require) so a fixed firebase.json can be
+// picked up without relying on Node's require cache after a bad boot.
 const firebaseCredPath = path.join(__dirname, '../firebase.json');
 let firebaseReady = false;
 let firebaseInitError = null;
-if (fs.existsSync(firebaseCredPath) && !admin.apps.length) {
+
+function ensureFirebaseReady() {
+  if (firebaseReady && admin.apps.length) {
+    return true;
+  }
+  if (admin.apps.length) {
+    firebaseReady = true;
+    firebaseInitError = null;
+    return true;
+  }
+  if (!fs.existsSync(firebaseCredPath)) {
+    firebaseReady = false;
+    firebaseInitError = 'firebase.json not found';
+    return false;
+  }
   try {
-    const serviceAccount = require(firebaseCredPath);
+    const serviceAccount = JSON.parse(fs.readFileSync(firebaseCredPath, 'utf8'));
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
     });
     firebaseReady = true;
+    firebaseInitError = null;
+    console.log(
+      '[Firebase] Admin initialized OK project_id=%s',
+      serviceAccount.project_id || '?'
+    );
+    return true;
   } catch (err) {
+    firebaseReady = false;
     firebaseInitError = err.message;
-    console.warn('Firebase Admin not initialized (invalid or missing firebase.json):', err.message);
+    console.warn(
+      'Firebase Admin not initialized (invalid or missing firebase.json):',
+      err.message
+    );
+    return false;
   }
-} else if (admin.apps.length) {
-  firebaseReady = true;
-} else {
-  firebaseInitError = 'firebase.json not found';
-  console.warn('Firebase Admin skipped: firebase.json not found (push notifications disabled locally).');
 }
+
+ensureFirebaseReady();
 
 /**
  * Safe diagnostics for firebase.json + Admin SDK (no secrets leaked).
  */
 function getFirebaseDiagnostics() {
+  // Retry init if file was fixed after a failed boot (common on stage deploys).
+  ensureFirebaseReady();
+
   const fileExists = fs.existsSync(firebaseCredPath);
   let parseOk = false;
   let parseError = null;
@@ -130,6 +157,7 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
     .map((t) => (typeof t === 'string' ? t.trim() : ''))
     .filter(Boolean);
 
+  ensureFirebaseReady();
   const diag = getFirebaseDiagnostics();
   console.log(`${logPrefix} send start`, {
     tokenCount: tokenList.length,
@@ -152,12 +180,12 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
     };
   }
 
-  if (!firebaseReady) {
+  if (!ensureFirebaseReady()) {
     console.error(`${logPrefix} Firebase not ready — aborting send`, diag);
     return {
       sent: false,
       reason: 'FIREBASE_NOT_CONFIGURED',
-      diagnostics: diag,
+      diagnostics: getFirebaseDiagnostics(),
       durationMs: Date.now() - startedAt
     };
   }
@@ -234,14 +262,15 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
   try {
     const { throwOnFailure = false } = options;
 
-    if (!firebaseReady) {
+    if (!ensureFirebaseReady()) {
       const result = {
         sent: false,
         reason: 'FIREBASE_NOT_CONFIGURED',
         userId,
         successCount: 0,
         failureCount: 0,
-        tokenCount: 0
+        tokenCount: 0,
+        diagnostics: getFirebaseDiagnostics()
       };
       if (throwOnFailure) {
         throw new Error('Firebase Admin is not configured (missing firebase.json)');

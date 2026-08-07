@@ -140,8 +140,16 @@ app.get('/stage-trigger.php', function (req, res) {
     .send('NPM install completed successfully.<br>PM2 command scheduled.<br>');
 
   try {
+    // Clear stale locks (npm/pm2 can die mid-run and block every later deploy).
     if (fs.existsSync(lockPath)) {
-      return;
+      const ageMs = Date.now() - Number(fs.readFileSync(lockPath, 'utf8') || 0);
+      if (!Number.isFinite(ageMs) || ageMs > 5 * 60 * 1000) {
+        fs.unlinkSync(lockPath);
+        console.warn('[stage-trigger] cleared stale lock (ageMs=%s)', ageMs);
+      } else {
+        console.warn('[stage-trigger] skip — deploy already in progress');
+        return;
+      }
     }
     fs.writeFileSync(lockPath, String(Date.now()));
   } catch (e) {
