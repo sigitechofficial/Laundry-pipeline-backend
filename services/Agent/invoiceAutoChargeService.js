@@ -256,6 +256,48 @@ async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSumma
             walletErr.message
         );
     }
+
+    await notifyPaymentSucceeded(bookingRow, amount);
+}
+
+async function notifyPaymentSucceeded(bookingRow, amount) {
+    const orderLabel = bookingRow.orderTrackId || bookingRow.id;
+    const amountLabel = Number(amount || 0).toFixed(2);
+    const data = {
+        bookingId: String(bookingRow.id),
+        type: "PAYMENT_SUCCEEDED",
+        orderTrackId: String(bookingRow.orderTrackId || ""),
+        amount: String(amountLabel),
+    };
+
+    if (bookingRow.customerId) {
+        sendNotification(
+            bookingRow.customerId,
+            "Payment successful",
+            `Payment of £${amountLabel} for order ${orderLabel} was successful.`,
+            data
+        ).catch((e) =>
+            console.error(
+                "[invoiceAutoCharge] customer success notify failed:",
+                e.message
+            )
+        );
+    }
+
+    const agentUserId = await resolveAgentUserId(bookingRow);
+    if (agentUserId) {
+        sendNotification(
+            agentUserId,
+            "Payment received",
+            `Card payment of £${amountLabel} received for order ${orderLabel}.`,
+            data
+        ).catch((e) =>
+            console.error(
+                "[invoiceAutoCharge] agent success notify failed:",
+                e.message
+            )
+        );
+    }
 }
 
 async function notifyPaymentFailed(bookingRow, failure) {

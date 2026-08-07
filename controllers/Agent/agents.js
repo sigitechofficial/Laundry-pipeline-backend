@@ -2583,6 +2583,40 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
+    // Already moved to Processing by AgentAddSerivces — Proceed is idempotent
+    if (bookingCheck.bookingStatusId === 11 || bookingCheck.bookingStatusId === 12) {
+        const paymentType = normalizePaymentType(bookingCheck.paymentType);
+        const balanceMethod = resolveBalancePaymentMethod(bookingCheck);
+        const paymentSummary =
+            await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+        const amountDue = Number(paymentSummary?.amountDueNow ?? 0);
+        const paymentFlags = buildCollectPaymentFlags({
+            paymentType,
+            paymentConfirmed: Boolean(bookingCheck.paymentConfirmed),
+            amountDueNow: amountDue,
+            balancePaymentMethod: balanceMethod,
+            balanceCollectedVia: bookingCheck.balanceCollectedVia,
+            billingPaymentStatus:
+                bookingCheck.billingDetail?.paymentStatus || "Pending",
+            bookingStatusId: bookingCheck.bookingStatusId,
+        });
+        const paymentGateFlags = invoiceAutoChargeService.buildPaymentGateFlags(
+            bookingCheck,
+            amountDue
+        );
+        return ResponseHelper.success(res, "Booking already in processing", {
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingCheck.bookingStatusId,
+            ...paymentFlags,
+            ...paymentGateFlags,
+            paymentSummary: {
+                ...paymentSummary,
+                ...paymentFlags,
+                ...paymentGateFlags,
+            },
+        });
+    }
+
     // 8 = Delivered to shop, 9 = services added, 10 = invoice generated (retry / legacy)
     const allowedForInvoiceGenerate = [8, 9, 10];
     if (!allowedForInvoiceGenerate.includes(bookingCheck.bookingStatusId)) {
@@ -3132,17 +3166,18 @@ exports.driverAddSerivces = async (req, res) => {
         { where: { bookingId: bookingId } }
     );
 
-    await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: 9,
-    });
+    const wall = agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone);
+    // Invoice finalize → Processing immediately (leave Invoice tab; no separate Proceed required)
+    await bookingHistory.bulkCreate([
+        { date: wall.date, time: wall.time, bookingId, bookingStatusId: 9 },
+        { date: wall.date, time: wall.time, bookingId, bookingStatusId: 10 },
+        { date: wall.date, time: wall.time, bookingId, bookingStatusId: 11 },
+    ]);
 
     await booking.update(
         {
             orderAmount: discountedTotal,
-            bookingStatusId: 9,
+            bookingStatusId: 11,
             subTotal,
             invoiceStatus: "finalized",
             invoiceFinalizedAt: new Date(),
@@ -3163,13 +3198,16 @@ exports.driverAddSerivces = async (req, res) => {
     }
 
     const customerId = bookings.customerId;
-    let title = "Agent/Driver Added Detail";
-    let body = "Your agent/driver has added detail";
-    let data = {
-        bookingId: bookingId,
-        driverId: bookings.driverId,
-    }
-    sendNotification(customerId, title, body, data);
+    sendNotification(
+        customerId,
+        "Laundry Invoice Generated",
+        "Your laundry invoice has been generated and is now being processed",
+        {
+            bookingId: bookingId,
+            driverId: bookings.driverId,
+            type: "INVOICE_GENERATED",
+        }
+    );
 
     // Send invoice ready email to customer + order invoice email to agent (non-blocking)
     try {
@@ -3235,7 +3273,7 @@ exports.driverAddSerivces = async (req, res) => {
         balancePaymentMethod: bookings.balancePaymentMethod,
         balanceCollectedVia: bookings.balanceCollectedVia,
         billingPaymentStatus: "Pending",
-        bookingStatusId: 9,
+        bookingStatusId: 11,
     });
 
     const refreshedBooking = await booking.findByPk(bookingId);
@@ -3246,6 +3284,7 @@ exports.driverAddSerivces = async (req, res) => {
 
     return ResponseHelper.success(res, "Agent/Driver Added Detail", {
         bookingId,
+        bookingStatusId: 11,
         invoiceStatus: "finalized",
         paymentSummary: {
             ...paymentSummary,
