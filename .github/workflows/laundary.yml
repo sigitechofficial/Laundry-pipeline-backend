@@ -48,10 +48,19 @@ jobs:
         run: |
           printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
 
+      # Use env + printf (not echo) so multiline private_key / JSON survives.
+      # Fail the job if secret is not valid JSON — never deploy a broken firebase.json.
       - name: Creating firebase.json file
+        env:
+          FIREBASE_CONTENT: ${{ secrets.FIREBASE_CONTENT_PROD }}
         run: |
           echo "Creating firebase.json..."
-          echo "${{ secrets.FIREBASE_CONTENT_PROD }}" > firebase.json
+          if [ -z "$FIREBASE_CONTENT" ]; then
+            echo "::error::FIREBASE_CONTENT_PROD secret is empty"
+            exit 1
+          fi
+          printf '%s\n' "$FIREBASE_CONTENT" > firebase.json
+          node -e "const j=JSON.parse(require('fs').readFileSync('firebase.json','utf8')); if(!j.project_id||!j.private_key){throw new Error('missing project_id/private_key')}; console.log('firebase.json OK project_id='+j.project_id)"
 
       - name: 🚀 Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
@@ -104,10 +113,19 @@ jobs:
           cp deploy/stage.htaccess .htaccess
           cat .htaccess
 
+      # Use env + printf (not echo) so multiline private_key / JSON survives.
+      # Fail the job if secret is not valid JSON — never deploy a broken firebase.json.
       - name: Creating firebase.json file
+        env:
+          FIREBASE_CONTENT: ${{ secrets.FIREBASE_CONTENT_STAGE }}
         run: |
           echo "Creating firebase.json..."
-          echo "${{ secrets.FIREBASE_CONTENT_STAGE }}" > firebase.json
+          if [ -z "$FIREBASE_CONTENT" ]; then
+            echo "::error::FIREBASE_CONTENT_STAGE secret is empty"
+            exit 1
+          fi
+          printf '%s\n' "$FIREBASE_CONTENT" > firebase.json
+          node -e "const j=JSON.parse(require('fs').readFileSync('firebase.json','utf8')); if(!j.project_id||!j.private_key){throw new Error('missing project_id/private_key')}; console.log('firebase.json OK project_id='+j.project_id)"
 
       - name: 🚀 Deploy via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
