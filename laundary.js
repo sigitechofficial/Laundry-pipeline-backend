@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('./utils/ensureNodeCompat');
 // pipeline-smoke-test: 2026-08-04 stage deploy verification
 const express = require('express');
 const db = require('./models/index');
@@ -156,23 +157,25 @@ app.get('/stage-trigger.php', function (req, res) {
     // proceed even if lock file cannot be written
   }
 
+  // Prefer Node 20/18 (firebase-admin / google-auth need global Headers/fetch).
+  // Fall back to whatever nvm default is if newer versions are not installed.
   const script = [
     'source /home/sigisolutions/.nvm/nvm.sh',
     'export HOME=/home/sigisolutions',
     'cd /home/sigisolutions/stagelaundry.sigisolutions.net',
+    'nvm use 20 >/dev/null 2>&1 || nvm use 18 >/dev/null 2>&1 || nvm use 16 >/dev/null 2>&1 || true',
+    'echo "[stage-trigger] node=$(command -v node) version=$(node -v)"',
     'npm install',
-    'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage --update-env',
+    'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage --interpreter "$(command -v node)" --update-env',
     'pm2 save',
     'rm -f /home/sigisolutions/stagelaundry.sigisolutions.net/.stage-trigger.lock'
   ].join(' && ');
 
   const child = spawn('/bin/bash', ['-lc', script], {
     cwd: workingDir,
+    // Do not hardcode Node 16 in PATH — nvm use 20/18/16 runs inside the script.
     env: Object.assign({}, process.env, {
-      HOME: '/home/sigisolutions',
-      PATH:
-        '/home/sigisolutions/.nvm/versions/node/v16.20.2/bin:' +
-        (process.env.PATH || '')
+      HOME: '/home/sigisolutions'
     }),
     detached: true,
     stdio: 'ignore'

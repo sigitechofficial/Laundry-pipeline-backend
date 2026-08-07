@@ -83,6 +83,9 @@ function getFirebaseDiagnostics() {
     }
   }
 
+  const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]);
+  const nodeTooOld = nodeMajor > 0 && nodeMajor < 18;
+
   return {
     firebaseReady,
     firebaseInitError,
@@ -95,11 +98,19 @@ function getFirebaseDiagnostics() {
     clientEmail,
     privateKeyLooksValid,
     filePreview,
+    nodeVersion: process.version,
+    nodeMajor,
+    nodeTooOld,
+    firebaseAdminHint: nodeTooOld
+      ? 'Node < 18 causes app/invalid-credential "Headers is not defined". Use Node 20 for PM2 (or firebase-admin@12.x).'
+      : null,
     hint: !parseOk
       ? 'firebase.json is invalid JSON (keys/values must be quoted). Fix FIREBASE_CONTENT_STAGE secret or replace the file on the server.'
       : !firebaseReady
         ? 'JSON parses but Admin SDK is not ready — check private_key newlines and restart PM2.'
-        : 'Firebase Admin looks ready.'
+        : nodeTooOld
+          ? 'Firebase initialized, but Node is too old for current google-auth/fetch APIs. Upgrade PM2 to Node 20.'
+          : 'Firebase Admin looks ready.'
   };
 }
 
