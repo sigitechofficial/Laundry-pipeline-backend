@@ -193,6 +193,76 @@ grep '\[HEALTH\]' /tmp/laundry-local-backend.log
 
 ---
 
+## View MySQL and Redis locally
+
+### MySQL (browser — like cPanel phpMyAdmin)
+
+1. Start MAMP Apache + MySQL (see start script above).
+2. Open **http://localhost:8888/phpMyAdmin/**
+3. Login:
+   - Server: `localhost` / `127.0.0.1`
+   - Username: `root`
+   - Password: `root`
+4. Select database **`laundry_pipeline`**
+
+Also available: **http://localhost:8888/adminer/** (same MAMP stack).
+
+MAMP start page: **http://localhost:8888/MAMP/**
+
+### MySQL (Terminal)
+
+```bash
+/Applications/MAMP/Library/bin/mysql80/bin/mysql -h127.0.0.1 -P8889 -uroot -proot laundry_pipeline
+```
+
+Useful checks:
+
+```bash
+# list tables
+/Applications/MAMP/Library/bin/mysql80/bin/mysql -h127.0.0.1 -P8889 -uroot -proot laundry_pipeline -e "SHOW TABLES;"
+
+# migration status table
+/Applications/MAMP/Library/bin/mysql80/bin/mysql -h127.0.0.1 -P8889 -uroot -proot laundry_pipeline -e "SELECT COUNT(*) AS migrations FROM SequelizeMeta;"
+```
+
+Connection used by the API (`config/config.json`):
+
+| Setting | Local MAMP value |
+|---------|------------------|
+| Host | `127.0.0.1` |
+| Port | `8889` |
+| User | `root` |
+| Password | `root` |
+| Database | `laundry_pipeline` |
+
+### Redis (Terminal)
+
+Redis has no built-in browser UI in this setup. Inspect it with `redis-cli`:
+
+```bash
+# is it up?
+redis-cli ping
+# → PONG
+
+# see keys (dev only; can be noisy)
+redis-cli KEYS '*'
+
+# inspect one key
+redis-cli GET '<key-name>'
+
+# how many keys
+redis-cli DBSIZE
+
+# monitor live commands (Ctrl+C to stop)
+redis-cli MONITOR
+```
+
+Redis defaults used by this app (`redis/redis.js`): host `localhost`, port **`6379`**.
+
+Optional health probe via API: **http://localhost:3010/health/redis**
+
+---
+
 ## Stop
 
 - Backend terminal: `Ctrl + C`
