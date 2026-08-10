@@ -1,6 +1,6 @@
 "use strict";
 
-const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+const { addColumnIfMissing, removeColumnIfExists } = require('../utils/migrationHelpers');
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {

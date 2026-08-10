@@ -1,6 +1,6 @@
 "use strict";
 
-const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+const { addColumnIfMissing, removeColumnIfExists } = require('../utils/migrationHelpers');
 
 const SHORT_NAME_TZ = {
   GB: "Europe/London",

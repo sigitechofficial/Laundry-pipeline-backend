@@ -5,7 +5,7 @@
  * Without these, greenfield `db:migrate` produces a bookings table the app cannot use
  * and later data migrations fail (e.g. b.zoneId).
  */
-const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+const { addColumnIfMissing, removeColumnIfExists } = require('../utils/migrationHelpers');
 
 const COLUMNS = [
   ['customerId', (Sequelize) => ({ type: Sequelize.INTEGER, allowNull: true })],

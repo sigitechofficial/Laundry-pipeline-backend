@@ -87,6 +87,6 @@ Resets `laundry_pipeline_fresh` and migrates until success. Use before merging m
 ## Rules
 
 1. Schema changes = new file under `migrations/` only.  
-2. Shared helpers live in `lib/migrationHelpers.js` (not inside `migrations/`).  
+2. Shared helpers live in `utils/migrationHelpers.js` (not inside `migrations/`).  
 3. Migrations must be greenfield-safe (idempotent column adds where needed).  
 4. Do not use `sequelize.sync({ alter: true })` as the source of truth on shared environments.
