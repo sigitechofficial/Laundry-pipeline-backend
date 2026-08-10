@@ -260,6 +260,54 @@ function main() {
       );
     }
 
+    // Live dump overwrites SequelizeMeta with live's (often incomplete) history.
+    // Reconcile meta with tables that already exist, then apply any migrations
+    // that stage/repo has ahead of live. This is the durable fix — not one-off patches.
+    writeStatus({ phase: 'repair_sequelize_meta' });
+    console.log('>> repair SequelizeMeta against restored schema');
+    const repair = spawnSync(
+      process.execPath,
+      [path.join(ROOT, 'scripts', 'repair-sequelize-meta.js'), '--apply'],
+      {
+        cwd: ROOT,
+        env: process.env,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024 * 16
+      }
+    );
+    if (repair.stdout) process.stdout.write(repair.stdout);
+    if (repair.stderr) process.stderr.write(repair.stderr);
+    if (repair.status !== 0) {
+      throw new Error(
+        'SequelizeMeta repair failed after live→stage restore (status ' +
+          repair.status +
+          ')'
+      );
+    }
+
+    writeStatus({ phase: 'db_migrate' });
+    console.log('>> sequelize db:migrate (apply migrations ahead of live)');
+    const migrate = spawnSync(
+      'npx',
+      ['sequelize-cli', 'db:migrate'],
+      {
+        cwd: ROOT,
+        env: process.env,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024 * 16
+      }
+    );
+    if (migrate.stdout) process.stdout.write(migrate.stdout);
+    if (migrate.stderr) process.stderr.write(migrate.stderr);
+    if (migrate.status !== 0) {
+      throw new Error(
+        'db:migrate failed after live→stage restore (status ' +
+          migrate.status +
+          '). Stage backup: ' +
+          stageBackup
+      );
+    }
+
     const liveTables = countTables(mysql, prod);
     const stageTables = countTables(mysql, stage);
 
@@ -271,6 +319,8 @@ function main() {
       liveDump: liveDump,
       liveTableCount: liveTables,
       stageTableCount: stageTables,
+      metaRepaired: true,
+      migrated: true,
       error: null
     });
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -35,7 +37,7 @@ module.exports = {
 
     const addOnServicesTable = await queryInterface.describeTable('addOnServices');
     if (!addOnServicesTable.addOnCategoryId) {
-      await queryInterface.addColumn('addOnServices', 'addOnCategoryId', {
+      await addColumnIfMissing(queryInterface, 'addOnServices', 'addOnCategoryId', {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: { model: 'addOnCategories', key: 'id' },
@@ -48,7 +50,7 @@ module.exports = {
   async down(queryInterface) {
     const addOnServicesTable = await queryInterface.describeTable('addOnServices');
     if (addOnServicesTable.addOnCategoryId) {
-      await queryInterface.removeColumn('addOnServices', 'addOnCategoryId');
+      await removeColumnIfExists(queryInterface, 'addOnServices', 'addOnCategoryId');
     }
     await queryInterface.dropTable('addOnCategories');
   }

@@ -1,12 +1,14 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
     const table = await queryInterface.describeTable("bookings");
 
     if (!table.invoiceStatus) {
-      await queryInterface.addColumn("bookings", "invoiceStatus", {
+      await addColumnIfMissing(queryInterface, "bookings", "invoiceStatus", {
         type: Sequelize.ENUM("none", "draft", "finalized"),
         allowNull: false,
         defaultValue: "none",
@@ -14,7 +16,7 @@ module.exports = {
     }
 
     if (!table.invoiceDraftSavedAt) {
-      await queryInterface.addColumn("bookings", "invoiceDraftSavedAt", {
+      await addColumnIfMissing(queryInterface, "bookings", "invoiceDraftSavedAt", {
         type: Sequelize.DATE,
         allowNull: true,
       });
@@ -25,11 +27,11 @@ module.exports = {
     const table = await queryInterface.describeTable("bookings");
 
     if (table.invoiceDraftSavedAt) {
-      await queryInterface.removeColumn("bookings", "invoiceDraftSavedAt");
+      await removeColumnIfExists(queryInterface, "bookings", "invoiceDraftSavedAt");
     }
 
     if (table.invoiceStatus) {
-      await queryInterface.removeColumn("bookings", "invoiceStatus");
+      await removeColumnIfExists(queryInterface, "bookings", "invoiceStatus");
     }
   },
 };

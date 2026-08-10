@@ -1,19 +1,21 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
     async up(queryInterface, Sequelize) {
         const table = await queryInterface.describeTable("wallets");
 
         if (!table.stripeTransferId) {
-            await queryInterface.addColumn("wallets", "stripeTransferId", {
+            await addColumnIfMissing(queryInterface, "wallets", "stripeTransferId", {
                 type: Sequelize.STRING(255),
                 allowNull: true,
             });
         }
 
         if (!table.failureReason) {
-            await queryInterface.addColumn("wallets", "failureReason", {
+            await addColumnIfMissing(queryInterface, "wallets", "failureReason", {
                 type: Sequelize.STRING(500),
                 allowNull: true,
             });
@@ -45,10 +47,10 @@ module.exports = {
         }
 
         if (table.failureReason) {
-            await queryInterface.removeColumn("wallets", "failureReason");
+            await removeColumnIfExists(queryInterface, "wallets", "failureReason");
         }
         if (table.stripeTransferId) {
-            await queryInterface.removeColumn("wallets", "stripeTransferId");
+            await removeColumnIfExists(queryInterface, "wallets", "stripeTransferId");
         }
     },
 };

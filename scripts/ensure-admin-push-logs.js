@@ -1,6 +1,7 @@
 /**
- * Safe one-off: create admin_push_logs if missing + mark migration in SequelizeMeta.
- * Use this on stage/prod when full `db:migrate` is unsafe (empty/out-of-sync SequelizeMeta).
+ * LEGACY containment only — do not use for new local/server setup.
+ * Prefer: npm run db:setup  (or npx sequelize-cli db:migrate on an empty DB).
+ * For drifted stage/live meta: docs/SEQUELIZE_META_AND_MIGRATIONS.md
  *
  *   node scripts/ensure-admin-push-logs.js
  */

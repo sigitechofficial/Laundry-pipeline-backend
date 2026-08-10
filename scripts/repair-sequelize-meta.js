@@ -15,6 +15,11 @@
  *   node scripts/repair-sequelize-meta.js              # dry-run
  *   node scripts/repair-sequelize-meta.js --apply      # write safe marks
  *   node scripts/repair-sequelize-meta.js --apply --mark-non-create
+ *   node scripts/repair-sequelize-meta.js --apply --baseline --i-know-schema-matches-repo
+ *
+ * --baseline: mark EVERY migration file on disk as applied. Use once when the
+ * DB schema already matches the repo (typical after years of sync/ensure scripts).
+ * After baseline, normal `db:migrate` only runs truly new migrations.
  */
 'use strict';
 
@@ -25,6 +30,8 @@ const mysql = require('mysql2/promise');
 
 const APPLY = process.argv.includes('--apply');
 const MARK_NON_CREATE = process.argv.includes('--mark-non-create');
+const BASELINE = process.argv.includes('--baseline');
+const BASELINE_OK = process.argv.includes('--i-know-schema-matches-repo');
 
 function loadDbConfig() {
   const cfgPath = path.join(__dirname, '../config/config.json');
@@ -73,6 +80,12 @@ async function main() {
     throw new Error('DB config missing');
   }
 
+  if (BASELINE && !BASELINE_OK) {
+    throw new Error(
+      '--baseline requires --i-know-schema-matches-repo (confirms DB already matches repo schema)'
+    );
+  }
+
   const files = listMigrationFiles();
   const conn = await mysql.createConnection(cfg);
 
@@ -86,8 +99,40 @@ async function main() {
     console.log('migration files on disk:', files.length);
     console.log('SequelizeMeta rows:', meta.size);
     console.log('missing from meta:', missing.length);
-    console.log('mode:', APPLY ? 'APPLY' : 'DRY-RUN');
+    console.log(
+      'mode:',
+      APPLY ? 'APPLY' : 'DRY-RUN',
+      BASELINE ? '+ BASELINE' : '',
+      MARK_NON_CREATE ? '+ MARK_NON_CREATE' : ''
+    );
     console.log('');
+
+    if (BASELINE) {
+      console.log(
+        `BASELINE: mark all ${missing.length} missing migration files as applied.`
+      );
+      if (!APPLY) {
+        missing.slice(0, 30).forEach((f) => console.log('  +', f));
+        if (missing.length > 30) console.log(`  ... +${missing.length - 30} more`);
+        console.log('\nDry-run only. To apply baseline:');
+        console.log(
+          '  node scripts/repair-sequelize-meta.js --apply --baseline --i-know-schema-matches-repo'
+        );
+        return;
+      }
+      let inserted = 0;
+      for (const name of missing) {
+        const [result] = await conn.query(
+          'INSERT IGNORE INTO SequelizeMeta (name) VALUES (?)',
+          [name]
+        );
+        if (result.affectedRows > 0) inserted += 1;
+      }
+      const [after] = await conn.query('SELECT COUNT(*) AS c FROM SequelizeMeta');
+      console.log(`\nBaseline inserted ${inserted}. SequelizeMeta now: ${after[0].c}`);
+      console.log('Root cause addressed: meta now matches disk. Use db:migrate for NEW migrations only.');
+      return;
+    }
 
     const markSafe = [];
     const needsReview = [];
@@ -156,8 +201,10 @@ async function main() {
 
     if (!APPLY) {
       console.log('\nDry-run only. Re-run with --apply to write SequelizeMeta.');
-      console.log('Recommended first apply:');
-      console.log('  node scripts/repair-sequelize-meta.js --apply');
+      console.log('If this DB already matches the repo schema (usual for stage), baseline once:');
+      console.log(
+        '  node scripts/repair-sequelize-meta.js --apply --baseline --i-know-schema-matches-repo'
+      );
       return;
     }
 
@@ -174,7 +221,7 @@ async function main() {
     console.log(`\nInserted ${inserted} meta rows. SequelizeMeta now: ${after[0].c}`);
     console.log(
       needsReview.length
-        ? `Still pending review: ${needsReview.length} (do NOT blind db:migrate until reviewed).`
+        ? `Still pending review: ${needsReview.length}. Prefer --baseline if schema already matches repo.`
         : 'No pending review items — db:migrate should only run truly new migrations.'
     );
   } finally {

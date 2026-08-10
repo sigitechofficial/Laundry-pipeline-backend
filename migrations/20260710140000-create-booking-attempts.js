@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
     async up(queryInterface, Sequelize) {
@@ -114,35 +116,35 @@ module.exports = {
         const bookingTable = await queryInterface.describeTable('bookings');
 
         if (!bookingTable.pickupAttemptCount) {
-            await queryInterface.addColumn('bookings', 'pickupAttemptCount', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'pickupAttemptCount', {
                 type: Sequelize.INTEGER,
                 allowNull: false,
                 defaultValue: 0,
             });
         }
         if (!bookingTable.deliveryAttemptCount) {
-            await queryInterface.addColumn('bookings', 'deliveryAttemptCount', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'deliveryAttemptCount', {
                 type: Sequelize.INTEGER,
                 allowNull: false,
                 defaultValue: 0,
             });
         }
         if (!bookingTable.maxPickupAttempts) {
-            await queryInterface.addColumn('bookings', 'maxPickupAttempts', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'maxPickupAttempts', {
                 type: Sequelize.INTEGER,
                 allowNull: false,
                 defaultValue: 3,
             });
         }
         if (!bookingTable.noShowFeeAccrued) {
-            await queryInterface.addColumn('bookings', 'noShowFeeAccrued', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'noShowFeeAccrued', {
                 type: Sequelize.DECIMAL(10, 2),
                 allowNull: false,
                 defaultValue: 0,
             });
         }
         if (!bookingTable.noShowPolicyId) {
-            await queryInterface.addColumn('bookings', 'noShowPolicyId', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'noShowPolicyId', {
                 type: Sequelize.INTEGER,
                 allowNull: true,
                 references: { model: 'policies', key: 'id' },
@@ -151,7 +153,7 @@ module.exports = {
             });
         }
         if (!bookingTable.cancellationPolicyId) {
-            await queryInterface.addColumn('bookings', 'cancellationPolicyId', {
+            await addColumnIfMissing(queryInterface, 'bookings', 'cancellationPolicyId', {
                 type: Sequelize.INTEGER,
                 allowNull: true,
                 references: { model: 'policies', key: 'id' },
@@ -174,7 +176,7 @@ module.exports = {
         ];
         for (const col of cols) {
             if (bookingTable[col]) {
-                await queryInterface.removeColumn('bookings', col);
+                await removeColumnIfExists(queryInterface, 'bookings', col);
             }
         }
     },

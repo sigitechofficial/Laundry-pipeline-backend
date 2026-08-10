@@ -1,40 +1,42 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn("users", "defaultPaymentMethodId", {
+    await addColumnIfMissing(queryInterface, "users", "defaultPaymentMethodId", {
       type: Sequelize.STRING,
       allowNull: true,
     });
-    await queryInterface.addColumn("users", "cardBrand", {
+    await addColumnIfMissing(queryInterface, "users", "cardBrand", {
       type: Sequelize.STRING(32),
       allowNull: true,
     });
-    await queryInterface.addColumn("users", "cardLast4", {
+    await addColumnIfMissing(queryInterface, "users", "cardLast4", {
       type: Sequelize.STRING(4),
       allowNull: true,
     });
-    await queryInterface.addColumn("users", "cardExpMonth", {
+    await addColumnIfMissing(queryInterface, "users", "cardExpMonth", {
       type: Sequelize.INTEGER,
       allowNull: true,
     });
-    await queryInterface.addColumn("users", "cardExpYear", {
+    await addColumnIfMissing(queryInterface, "users", "cardExpYear", {
       type: Sequelize.INTEGER,
       allowNull: true,
     });
-    await queryInterface.addColumn("users", "cardUpdatedAt", {
+    await addColumnIfMissing(queryInterface, "users", "cardUpdatedAt", {
       type: Sequelize.DATE,
       allowNull: true,
     });
   },
 
   async down(queryInterface) {
-    await queryInterface.removeColumn("users", "cardUpdatedAt");
-    await queryInterface.removeColumn("users", "cardExpYear");
-    await queryInterface.removeColumn("users", "cardExpMonth");
-    await queryInterface.removeColumn("users", "cardLast4");
-    await queryInterface.removeColumn("users", "cardBrand");
-    await queryInterface.removeColumn("users", "defaultPaymentMethodId");
+    await removeColumnIfExists(queryInterface, "users", "cardUpdatedAt");
+    await removeColumnIfExists(queryInterface, "users", "cardExpYear");
+    await removeColumnIfExists(queryInterface, "users", "cardExpMonth");
+    await removeColumnIfExists(queryInterface, "users", "cardLast4");
+    await removeColumnIfExists(queryInterface, "users", "cardBrand");
+    await removeColumnIfExists(queryInterface, "users", "defaultPaymentMethodId");
   },
 };

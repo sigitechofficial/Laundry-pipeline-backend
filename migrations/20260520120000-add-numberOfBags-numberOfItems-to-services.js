@@ -1,14 +1,16 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('services', 'numberOfBags', {
+    await addColumnIfMissing(queryInterface, 'services', 'numberOfBags', {
       type: Sequelize.BOOLEAN,
       allowNull: false,
       defaultValue: false,
     });
-    await queryInterface.addColumn('services', 'numberOfItems', {
+    await addColumnIfMissing(queryInterface, 'services', 'numberOfItems', {
       type: Sequelize.BOOLEAN,
       allowNull: false,
       defaultValue: false,
@@ -16,7 +18,7 @@ module.exports = {
   },
 
   async down(queryInterface) {
-    await queryInterface.removeColumn('services', 'numberOfItems');
-    await queryInterface.removeColumn('services', 'numberOfBags');
+    await removeColumnIfExists(queryInterface, 'services', 'numberOfItems');
+    await removeColumnIfExists(queryInterface, 'services', 'numberOfBags');
   },
 };

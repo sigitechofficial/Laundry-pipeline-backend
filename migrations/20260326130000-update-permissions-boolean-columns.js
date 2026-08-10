@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -7,7 +9,7 @@ module.exports = {
 
     // Add new boolean columns
     if (!tableDefinition.create) {
-      await queryInterface.addColumn('permissions', 'create', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'create', {
         type: Sequelize.BOOLEAN,
         allowNull: false,
         defaultValue: false,
@@ -15,7 +17,7 @@ module.exports = {
     }
 
     if (!tableDefinition.update) {
-      await queryInterface.addColumn('permissions', 'update', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'update', {
         type: Sequelize.BOOLEAN,
         allowNull: false,
         defaultValue: false,
@@ -23,7 +25,7 @@ module.exports = {
     }
 
     if (!tableDefinition.delete) {
-      await queryInterface.addColumn('permissions', 'delete', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'delete', {
         type: Sequelize.BOOLEAN,
         allowNull: false,
         defaultValue: false,
@@ -32,11 +34,11 @@ module.exports = {
 
     // Drop legacy columns
     if (tableDefinition.permissionType) {
-      await queryInterface.removeColumn('permissions', 'permissionType');
+      await removeColumnIfExists(queryInterface, 'permissions', 'permissionType');
     }
 
     if (tableDefinition.write) {
-      await queryInterface.removeColumn('permissions', 'write');
+      await removeColumnIfExists(queryInterface, 'permissions', 'write');
     }
   },
 
@@ -44,29 +46,29 @@ module.exports = {
     const tableDefinition = await queryInterface.describeTable('permissions');
 
     if (!tableDefinition.permissionType) {
-      await queryInterface.addColumn('permissions', 'permissionType', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'permissionType', {
         type: Sequelize.STRING,
         allowNull: true,
       });
     }
 
     if (!tableDefinition.write) {
-      await queryInterface.addColumn('permissions', 'write', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'write', {
         type: Sequelize.BOOLEAN,
         defaultValue: false,
       });
     }
 
     if (tableDefinition.create) {
-      await queryInterface.removeColumn('permissions', 'create');
+      await removeColumnIfExists(queryInterface, 'permissions', 'create');
     }
 
     if (tableDefinition.update) {
-      await queryInterface.removeColumn('permissions', 'update');
+      await removeColumnIfExists(queryInterface, 'permissions', 'update');
     }
 
     if (tableDefinition.delete) {
-      await queryInterface.removeColumn('permissions', 'delete');
+      await removeColumnIfExists(queryInterface, 'permissions', 'delete');
     }
   }
 };

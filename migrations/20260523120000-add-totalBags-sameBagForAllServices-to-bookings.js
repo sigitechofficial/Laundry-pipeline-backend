@@ -1,19 +1,21 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
     const table = await queryInterface.describeTable("bookings");
 
     if (!table.totalBags) {
-      await queryInterface.addColumn("bookings", "totalBags", {
+      await addColumnIfMissing(queryInterface, "bookings", "totalBags", {
         type: Sequelize.INTEGER,
         allowNull: true,
       });
     }
 
     if (!table.sameBagForAllServices) {
-      await queryInterface.addColumn("bookings", "sameBagForAllServices", {
+      await addColumnIfMissing(queryInterface, "bookings", "sameBagForAllServices", {
         type: Sequelize.BOOLEAN,
         allowNull: false,
         defaultValue: true,
@@ -33,10 +35,10 @@ module.exports = {
     const table = await queryInterface.describeTable("bookings");
 
     if (table.sameBagForAllServices) {
-      await queryInterface.removeColumn("bookings", "sameBagForAllServices");
+      await removeColumnIfExists(queryInterface, "bookings", "sameBagForAllServices");
     }
     if (table.totalBags) {
-      await queryInterface.removeColumn("bookings", "totalBags");
+      await removeColumnIfExists(queryInterface, "bookings", "totalBags");
     }
   },
 };

@@ -1,12 +1,14 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
     async up(queryInterface, Sequelize) {
         const table = await queryInterface.describeTable("wallets");
 
         if (!table.userId) {
-            await queryInterface.addColumn("wallets", "userId", {
+            await addColumnIfMissing(queryInterface, "wallets", "userId", {
                 type: Sequelize.INTEGER,
                 allowNull: true,
                 references: { model: "users", key: "id" },
@@ -16,7 +18,7 @@ module.exports = {
         }
 
         if (!table.bookingId) {
-            await queryInterface.addColumn("wallets", "bookingId", {
+            await addColumnIfMissing(queryInterface, "wallets", "bookingId", {
                 type: Sequelize.INTEGER,
                 allowNull: true,
                 references: { model: "bookings", key: "id" },
@@ -26,7 +28,7 @@ module.exports = {
         }
 
         if (!table.referenceType) {
-            await queryInterface.addColumn("wallets", "referenceType", {
+            await addColumnIfMissing(queryInterface, "wallets", "referenceType", {
                 type: Sequelize.STRING(64),
                 allowNull: true,
                 defaultValue: "",
@@ -75,13 +77,13 @@ module.exports = {
         }
 
         if (table.referenceType) {
-            await queryInterface.removeColumn("wallets", "referenceType");
+            await removeColumnIfExists(queryInterface, "wallets", "referenceType");
         }
         if (table.bookingId) {
-            await queryInterface.removeColumn("wallets", "bookingId");
+            await removeColumnIfExists(queryInterface, "wallets", "bookingId");
         }
         if (table.userId) {
-            await queryInterface.removeColumn("wallets", "userId");
+            await removeColumnIfExists(queryInterface, "wallets", "userId");
         }
     },
 };

@@ -1,8 +1,22 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Local secrets / env (never commit real credentials)
 .env
+.env.local
+.env.*.local
+!.env.example
+
+# Local Firebase service account (contains private key)
 firebase.json
+
+# Local DB configs (may contain passwords)
 config/config.json
 config/config.prod.sync.json
+
+# Runtime artifacts
 backups/
 logs/
+uploads/
 *.log
+.DS_Store

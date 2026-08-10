@@ -1,16 +1,17 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('subCategories', 'unitCount', {
+    await addColumnIfMissing(queryInterface, 'subCategories', 'unitCount', {
       type: Sequelize.INTEGER,
       allowNull: true,
       defaultValue: null
     });
   },
-
-  async down(queryInterface, Sequelize) {
-    await queryInterface.removeColumn('subCategories', 'unitCount');
-  }
+  async down(queryInterface) {
+    await removeColumnIfExists(queryInterface, 'subCategories', 'unitCount');
+  },
 };

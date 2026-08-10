@@ -5,6 +5,8 @@ info:
 servers:
   - url: http://localhost:3010
 tags:
+  - name: Health
+    description: Liveness and dependency readiness checks (MySQL, Redis, Firebase, Stripe, ZeptoMail). Search server logs for prefix [HEALTH].
   - name: Customer
   - name: Customer > Auth
   - name: Customer > User Profile
@@ -38,6 +40,103 @@ tags:
   - name: Agent > Agent Put Booking On Hold
   - name: Agent > Agent Business
 paths:
+  /health:
+    get:
+      summary: Liveness check
+      description: |
+        Confirms the Node process is up. Does not probe MySQL/Redis/Stripe/etc.
+        Useful for quick "is the API running?" checks locally and on cPanel/PM2.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: '1'
+                  message:
+                    type: string
+                    example: Server is alive
+                  data:
+                    type: object
+                    properties:
+                      alive:
+                        type: boolean
+                        example: true
+                      nodeEnv:
+                        type: string
+                        example: development
+                      uptimeSec:
+                        type: integer
+                        example: 120
+                      serverTime:
+                        type: string
+                        format: date-time
+                      pid:
+                        type: integer
+                        example: 2509
+
+  /health/ready:
+    get:
+      summary: Full dependency readiness check
+      description: |
+        Probes MySQL, Redis, Firebase, Stripe, and ZeptoMail.
+        - Critical deps (must pass for ready=true): mysql, redis
+        - Optional deps (degraded if failing): firebase, stripe, zeptomail
+        Returns `fixHints` with actionable guidance. Server logs use prefix `[HEALTH]`.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Core deps healthy (overall may be ok or degraded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReadyResponse'
+        '503':
+          description: Core dependency failure (MySQL and/or Redis)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthReadyResponse'
+
+  /health/{dependency}:
+    get:
+      summary: Single dependency health check
+      description: |
+        Run one probe only. Path values:
+        `mysql` | `redis` | `firebase` | `stripe` | `zeptomail`
+      tags:
+        - Health
+      parameters:
+        - in: path
+          name: dependency
+          required: true
+          schema:
+            type: string
+            enum: [mysql, redis, firebase, stripe, zeptomail]
+          description: Dependency to probe
+      responses:
+        '200':
+          description: Dependency is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthSingleResponse'
+        '404':
+          description: Unknown dependency name
+        '503':
+          description: Dependency check failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthSingleResponse'
+
   /customer/registerCustomer:
     post:
       summary: Register a new customer and send OTP
@@ -9346,3 +9445,122 @@ paths:
                 status: "0"
                 message: "Shop not found"
                 data: {}
+
+
+components:
+  schemas:
+    HealthReadyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "1"
+        message:
+          type: string
+          example: All dependency checks passed
+        data:
+          type: object
+          properties:
+            overall:
+              type: string
+              enum: [ok, degraded, down]
+              example: ok
+            ready:
+              type: boolean
+              example: true
+            checkedAt:
+              type: string
+              format: date-time
+            totalLatencyMs:
+              type: integer
+              example: 1200
+            criticalDeps:
+              type: array
+              items:
+                type: string
+              example: [mysql, redis]
+            optionalDeps:
+              type: array
+              items:
+                type: string
+              example: [firebase, stripe, zeptomail]
+            summary:
+              type: object
+              properties:
+                ok:
+                  type: array
+                  items:
+                    type: string
+                fail:
+                  type: array
+                  items:
+                    type: string
+            checks:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, fail]
+                  message:
+                    type: string
+                  critical:
+                    type: boolean
+                  checkType:
+                    type: string
+                  latencyMs:
+                    type: integer
+                  hint:
+                    type: string
+                    nullable: true
+            fixHints:
+              type: array
+              items:
+                type: object
+                properties:
+                  dependency:
+                    type: string
+                  message:
+                    type: string
+                  hint:
+                    type: string
+                  errorCode:
+                    type: string
+                    nullable: true
+            howToUseLogs:
+              type: string
+              example: Search server/local logs for prefix [HEALTH]. Failed deps include message + hint + errorCode.
+
+    HealthSingleResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "1"
+        message:
+          type: string
+          example: MySQL connected and queryable
+        data:
+          type: object
+          properties:
+            dependency:
+              type: string
+              enum: [mysql, redis, firebase, stripe, zeptomail]
+            status:
+              type: string
+              enum: [ok, fail]
+            message:
+              type: string
+            critical:
+              type: boolean
+            checkType:
+              type: string
+            latencyMs:
+              type: integer
+            hint:
+              type: string
+              nullable: true
+            serverTime:
+              type: string
+              format: date-time

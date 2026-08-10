@@ -1,12 +1,14 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
     const tableDefinition = await queryInterface.describeTable('permissions');
 
     if (!tableDefinition.featureId) {
-      await queryInterface.addColumn('permissions', 'featureId', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'featureId', {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: {
@@ -19,7 +21,7 @@ module.exports = {
     }
 
     if (!tableDefinition.roleId) {
-      await queryInterface.addColumn('permissions', 'roleId', {
+      await addColumnIfMissing(queryInterface, 'permissions', 'roleId', {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: {
@@ -37,10 +39,10 @@ module.exports = {
     const tableDefinition = await queryInterface.describeTable('permissions');
 
     if (tableDefinition.roleId) {
-      await queryInterface.removeColumn('permissions', 'roleId');
+      await removeColumnIfExists(queryInterface, 'permissions', 'roleId');
     }
     if (tableDefinition.featureId) {
-      await queryInterface.removeColumn('permissions', 'featureId');
+      await removeColumnIfExists(queryInterface, 'permissions', 'featureId');
     }
   }
 };

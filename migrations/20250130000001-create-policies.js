@@ -32,15 +32,11 @@ module.exports = {
         type: Sequelize.TEXT,
         allowNull: true
       },
+      // FK to zones added after zones table exists (see 20250204064152-add-policies-zone-fk).
+      // Creating the FK here breaks greenfield migrate because zones is created later.
       zoneId: {
         type: Sequelize.INTEGER,
-        allowNull: true,
-        references: {
-          model: 'zones',
-          key: 'id'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'SET NULL'
+        allowNull: true
       },
       createdBy: {
         type: Sequelize.INTEGER,

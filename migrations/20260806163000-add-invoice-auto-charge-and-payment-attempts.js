@@ -1,13 +1,15 @@
 "use strict";
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
     async up(queryInterface, Sequelize) {
-        await queryInterface.addColumn("bookings", "invoiceFinalizedAt", {
+        await addColumnIfMissing(queryInterface, "bookings", "invoiceFinalizedAt", {
             type: Sequelize.DATE,
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "autoChargeStatus", {
+        await addColumnIfMissing(queryInterface, "bookings", "autoChargeStatus", {
             type: Sequelize.ENUM(
                 "none",
                 "scheduled",
@@ -20,32 +22,32 @@ module.exports = {
             allowNull: false,
             defaultValue: "none",
         });
-        await queryInterface.addColumn("bookings", "autoChargeDueAt", {
+        await addColumnIfMissing(queryInterface, "bookings", "autoChargeDueAt", {
             type: Sequelize.DATE,
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "autoChargeAttemptCount", {
+        await addColumnIfMissing(queryInterface, "bookings", "autoChargeAttemptCount", {
             type: Sequelize.INTEGER,
             allowNull: false,
             defaultValue: 0,
         });
-        await queryInterface.addColumn("bookings", "autoChargeLastAttemptAt", {
+        await addColumnIfMissing(queryInterface, "bookings", "autoChargeLastAttemptAt", {
             type: Sequelize.DATE,
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "lastPaymentFailureCode", {
+        await addColumnIfMissing(queryInterface, "bookings", "lastPaymentFailureCode", {
             type: Sequelize.STRING(64),
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "lastPaymentFailureMessage", {
+        await addColumnIfMissing(queryInterface, "bookings", "lastPaymentFailureMessage", {
             type: Sequelize.STRING(500),
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "lastPaymentFailureAt", {
+        await addColumnIfMissing(queryInterface, "bookings", "lastPaymentFailureAt", {
             type: Sequelize.DATE,
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "paymentDeliveryGate", {
+        await addColumnIfMissing(queryInterface, "bookings", "paymentDeliveryGate", {
             type: Sequelize.ENUM(
                 "open",
                 "waiting_admin",
@@ -55,23 +57,23 @@ module.exports = {
             allowNull: false,
             defaultValue: "open",
         });
-        await queryInterface.addColumn("bookings", "ofdAutoRetryDone", {
+        await addColumnIfMissing(queryInterface, "bookings", "ofdAutoRetryDone", {
             type: Sequelize.BOOLEAN,
             allowNull: false,
             defaultValue: false,
         });
-        await queryInterface.addColumn("bookings", "paymentAdminResolvedAt", {
+        await addColumnIfMissing(queryInterface, "bookings", "paymentAdminResolvedAt", {
             type: Sequelize.DATE,
             allowNull: true,
         });
-        await queryInterface.addColumn("bookings", "paymentAdminResolvedBy", {
+        await addColumnIfMissing(queryInterface, "bookings", "paymentAdminResolvedBy", {
             type: Sequelize.INTEGER,
             allowNull: true,
             references: { model: "users", key: "id" },
             onUpdate: "CASCADE",
             onDelete: "SET NULL",
         });
-        await queryInterface.addColumn("bookings", "paymentAdminNotes", {
+        await addColumnIfMissing(queryInterface, "bookings", "paymentAdminNotes", {
             type: Sequelize.STRING(500),
             allowNull: true,
         });
@@ -207,7 +209,7 @@ module.exports = {
             "paymentAdminNotes",
         ];
         for (const col of bookingCols) {
-            await queryInterface.removeColumn("bookings", col).catch(() => {});
+            await removeColumnIfExists(queryInterface, "bookings", col).catch(() => {});
         }
     },
 };

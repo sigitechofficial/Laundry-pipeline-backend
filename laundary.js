@@ -166,6 +166,12 @@ app.get('/stage-trigger.php', function (req, res) {
     'nvm use 20 >/dev/null 2>&1 || nvm use 18 >/dev/null 2>&1 || nvm use 16 >/dev/null 2>&1 || true',
     'echo "[stage-trigger] node=$(command -v node) version=$(node -v)"',
     'npm install',
+    // Empty / healthy DBs: db:migrate alone is enough (see docs/LOCAL_DATABASE_SETUP.md).
+    // repair --apply only marks safe missing create-* rows on drifted meta; it is a no-op when already clean.
+    // If migrate still fails on a legacy DB, one-time baseline:
+    //   node scripts/repair-sequelize-meta.js --apply --baseline --i-know-schema-matches-repo
+    'node scripts/repair-sequelize-meta.js --apply || true',
+    'npx sequelize-cli db:migrate || echo "[stage-trigger] db:migrate failed — drifted meta? see docs/SEQUELIZE_META_AND_MIGRATIONS.md (new servers: docs/LOCAL_DATABASE_SETUP.md)"',
     'pm2 restart laundary-stage --update-env || pm2 start laundary.js --name laundary-stage --interpreter "$(command -v node)" --update-env',
     'pm2 save',
     'rm -f /home/sigisolutions/stagelaundry.sigisolutions.net/.stage-trigger.lock'
@@ -312,6 +318,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 // ============================================
 // ROUTES
 // ============================================
+app.use('/health', require('./routes/health'));
 app.use('/customer', customerRouter);
 app.use('/admin', adminRouter);
 app.use('/driver', driverRouter);

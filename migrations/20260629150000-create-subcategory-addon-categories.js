@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -59,14 +61,14 @@ module.exports = {
       `);
 
       // 3. Drop the now-redundant single FK column.
-      await queryInterface.removeColumn('subCategories', 'addOnCategoryId');
+      await removeColumnIfExists(queryInterface, 'subCategories', 'addOnCategoryId');
     }
   },
 
   async down(queryInterface, Sequelize) {
     const subCatColumns = await queryInterface.describeTable('subCategories');
     if (!subCatColumns.addOnCategoryId) {
-      await queryInterface.addColumn('subCategories', 'addOnCategoryId', {
+      await addColumnIfMissing(queryInterface, 'subCategories', 'addOnCategoryId', {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: { model: 'addOnCategories', key: 'id' },

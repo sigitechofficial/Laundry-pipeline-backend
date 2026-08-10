@@ -1,9 +1,11 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.addColumn('services', 'washBleedDisclaimerEnabled', {
+    await addColumnIfMissing(queryInterface, 'services', 'washBleedDisclaimerEnabled', {
       type: Sequelize.BOOLEAN,
       allowNull: false,
       defaultValue: false,
@@ -11,8 +13,7 @@ module.exports = {
         'When true, customer sees colour-bleed disclaimer for mixed wash on this service',
     });
   },
-
   async down(queryInterface) {
-    await queryInterface.removeColumn('services', 'washBleedDisclaimerEnabled');
+    await removeColumnIfExists(queryInterface, 'services', 'washBleedDisclaimerEnabled');
   },
 };

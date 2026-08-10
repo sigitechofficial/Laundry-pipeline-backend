@@ -1,5 +1,7 @@
 'use strict';
 
+const { addColumnIfMissing, removeColumnIfExists } = require('../lib/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -47,21 +49,35 @@ module.exports = {
     const addOnCols = await queryInterface.describeTable('customerSelectedServiceAddOns');
 
     if (!addOnCols.customerSelectedServiceLineId) {
-      await queryInterface.addColumn(
+      // No inline references — MySQL would generate an identifier > 64 chars.
+      await addColumnIfMissing(
+        queryInterface,
         'customerSelectedServiceAddOns',
         'customerSelectedServiceLineId',
         {
           type: Sequelize.INTEGER,
           allowNull: true,
-          references: { model: 'customerSelectedServiceLines', key: 'id' },
-          onUpdate: 'CASCADE',
-          onDelete: 'CASCADE'
         }
       );
+      try {
+        await queryInterface.addConstraint('customerSelectedServiceAddOns', {
+          fields: ['customerSelectedServiceLineId'],
+          type: 'foreign key',
+          name: 'cssao_line_id_fkey',
+          references: {
+            table: 'customerSelectedServiceLines',
+            field: 'id',
+          },
+          onUpdate: 'CASCADE',
+          onDelete: 'CASCADE',
+        });
+      } catch (_) {
+        // constraint may already exist on older DBs
+      }
     }
 
     if (!addOnCols.instructions) {
-      await queryInterface.addColumn('customerSelectedServiceAddOns', 'instructions', {
+      await addColumnIfMissing(queryInterface, 'customerSelectedServiceAddOns', 'instructions', {
         type: Sequelize.TEXT,
         allowNull: true
       });
@@ -71,13 +87,12 @@ module.exports = {
   async down(queryInterface) {
     const addOnCols = await queryInterface.describeTable('customerSelectedServiceAddOns');
     if (addOnCols.customerSelectedServiceLineId) {
-      await queryInterface.removeColumn(
-        'customerSelectedServiceAddOns',
+      await removeColumnIfExists(queryInterface, 'customerSelectedServiceAddOns',
         'customerSelectedServiceLineId'
       );
     }
     if (addOnCols.instructions) {
-      await queryInterface.removeColumn('customerSelectedServiceAddOns', 'instructions');
+      await removeColumnIfExists(queryInterface, 'customerSelectedServiceAddOns', 'instructions');
     }
     await queryInterface.dropTable('customerSelectedServiceLines');
   }
