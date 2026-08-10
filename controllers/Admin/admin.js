@@ -310,7 +310,8 @@ async function addDriverByLaundryShop(req, res) {
  *  All Orders Counts
 */
 async function ordersCount(req, res) {
-        const outObj = await orderService.getOrderCount();
+        const filters = buildOrderListFilters(req);
+        const outObj = await orderService.getOrderCount(filters);
         return ResponseHelper.success(res, "All Order Count", outObj);
 }
 
@@ -318,15 +319,21 @@ async function ordersCount(req, res) {
 /*
   * All Order Details - Optimized Version
 */
+function buildOrderListFilters(req) {
+    const filters = {};
+    if (req.query.zoneId) filters.zoneId = req.query.zoneId;
+    if (req.query.status) filters.status = req.query.status;
+    if (req.query.startDate) filters.startDate = req.query.startDate;
+    if (req.query.endDate) filters.endDate = req.query.endDate;
+    if (req.query.date) filters.date = req.query.date;
+    if (req.query.search) filters.search = String(req.query.search).trim();
+    return filters;
+}
+
 async function allOrderDetails(req, res) {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
-        const statusFilter = req.query.status;
-        const dateFilter = req.query.date;
-
-        const filters = {};
-        if (statusFilter) filters.status = statusFilter;
-        if (dateFilter) filters.date = dateFilter;
+        const filters = buildOrderListFilters(req);
 
         const outObj = await orderService.getAllOrderDetails(filters, page, limit);
         return ResponseHelper.success(res, "All booking Details Fetched", outObj);
@@ -340,7 +347,8 @@ async function allOrderDetails(req, res) {
 async function pendingOrders(req, res) {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
-        const outObj = await orderService.getPendingOrders(page, limit);
+        const filters = buildOrderListFilters(req);
+        const outObj = await orderService.getPendingOrders(page, limit, filters);
         return ResponseHelper.success(res, "All Pending Orders", outObj);
 }
 
@@ -353,7 +361,8 @@ async function pendingOrders(req, res) {
 async function allCancelOrders(req, res) {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const result = await orderService.getCancelledOrders(page, limit);
+    const filters = buildOrderListFilters(req);
+    const result = await orderService.getCancelledOrders(page, limit, filters);
     return ResponseHelper.success(res, "All Cancel Orders Details", result);
 }
 
@@ -366,7 +375,8 @@ async function allCancelOrders(req, res) {
 async function completeOrders(req, res) {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const result = await orderService.getCompletedOrders(page, limit);
+    const filters = buildOrderListFilters(req);
+    const result = await orderService.getCompletedOrders(page, limit, filters);
     return ResponseHelper.success(res, "All Completed Orders", result);
 }
 
@@ -2347,8 +2357,11 @@ async function getOnHoldCustomerOptions(req, res) {
   * Get All On Hold Bookings
 */
 async function getOnHoldBookings(req, res) {
-    const optionsFound = await orderService.getOnHoldBookings();
-    return ResponseHelper.success(res, "All Options Fetched", optionsFound);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const filters = buildOrderListFilters(req);
+    const outObj = await orderService.getOnHoldBookings(page, limit, filters);
+    return ResponseHelper.success(res, "All on hold bookings fetched", outObj);
 }
 
 //!===================================================Recurring functions=======================================//

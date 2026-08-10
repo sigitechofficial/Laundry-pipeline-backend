@@ -62,47 +62,190 @@ function adminWallClockDateTime(timeZone, clientTimeZone) {
 }
 
 class OrderService {
+    _applyZoneFilter(whereClause, filters = {}) {
+        if (filters.zoneId == null || String(filters.zoneId).trim() === "") {
+            return;
+        }
+        const zoneId = parseInt(filters.zoneId, 10);
+        if (!Number.isNaN(zoneId)) {
+            whereClause.zoneId = zoneId;
+        }
+    }
+
+    _applyPlacedDateRangeFilter(whereClause, filters = {}) {
+        const { startDate, endDate, date } = filters;
+        if (startDate && endDate) {
+            const start = new Date(`${startDate}T00:00:00.000`);
+            const end = new Date(`${endDate}T23:59:59.999`);
+            whereClause.createdAt = {
+                [Op.gte]: start,
+                [Op.lte]: end,
+            };
+            return;
+        }
+        if (date) {
+            whereClause.createdAt = {
+                [Op.gte]: new Date(date),
+                [Op.lt]: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000),
+            };
+        }
+    }
+
+    _buildWhereWithSearch(baseWhere, searchRaw) {
+        const term = String(searchRaw || "")
+            .trim()
+            .replace(/^#+/, "")
+            .trim();
+        if (!term) {
+            return { where: baseWhere, searchActive: false };
+        }
+
+        const like = `%${term}%`;
+        const bookingOr = [{ orderTrackId: { [Op.like]: like } }];
+        if (/^\d+$/.test(term)) {
+            bookingOr.push({ id: parseInt(term, 10) });
+        }
+
+        const searchOr = {
+            [Op.or]: [
+                ...bookingOr,
+                { "$customer.firstName$": { [Op.like]: like } },
+                { "$customer.lastName$": { [Op.like]: like } },
+                { "$customer.email$": { [Op.like]: like } },
+                { "$customer.phone$": { [Op.like]: like } },
+            ],
+        };
+
+        const baseKeys = Object.keys(baseWhere || {});
+        if (baseKeys.length === 0) {
+            return { where: searchOr, searchActive: true };
+        }
+        return {
+            where: { [Op.and]: [baseWhere, searchOr] },
+            searchActive: true,
+        };
+    }
+
+    _bookingListIncludes(includeCustomer = false) {
+        const includes = [
+            {
+                model: customerSelectedService,
+                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                include: [
+                    {
+                        model: service,
+                        attributes: ['id', 'name', 'status']
+                    },
+                    {
+                        model: categories,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: OnHoldConfirmation,
+                required: false,
+                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
+            },
+            {
+                model: addressDb,
+                as: 'laundryShop',
+                include: {
+                    model: bussinessInformation,
+                    attributes: ['shopName']
+                },
+                attributes: ['id']
+            },
+            {
+                model: bookingStatus,
+                attributes: ['title', 'description']
+            }
+        ];
+        if (includeCustomer) {
+            includes.push({
+                model: users,
+                as: 'customer',
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phone'],
+                required: false,
+            });
+        }
+        return includes;
+    }
+
     /**
-     * Get order count statistics
+     * @param {Object} [filters] - Optional zone/date scope (same as order lists)
      * @returns {Object} Order count metrics
      */
-    async getOrderCount() {
-        const allOrderCount = await booking.count();
+    async getOrderCount(filters = {}) {
+        const scoped = {};
+        this._applyZoneFilter(scoped, filters);
+        this._applyPlacedDateRangeFilter(scoped, filters);
+
+        const countWhere = (extra = {}) => ({ ...scoped, ...extra });
+
+        const allOrderCount = await booking.count({ where: scoped });
 
         const completedOrder = await booking.count({
-            where: {
-                bookingStatusId: 17
-            }
+            where: countWhere({ bookingStatusId: 17 }),
         });
 
         const onHoldOrders = await booking.count({
-            where: {
+            where: countWhere({
                 bookingStatusId: {
-                    [Op.or]: [18, 24]
-                }
-            }
+                    [Op.or]: [18, 24],
+                },
+            }),
         });
 
         const cancelledOrders = await booking.count({
-            where: {
-                bookingStatusId: 19
-            }
+            where: countWhere({ bookingStatusId: 19 }),
         });
 
         const pendingOrders = await booking.count({
-            where: {
+            where: countWhere({
                 bookingStatusId: {
-                    [Op.notIn]: [17, 18, 19, 24] // Not completed, on hold, or cancelled
-                }
-            }
+                    [Op.notIn]: [17, 18, 19, 24],
+                },
+            }),
         });
 
+        const newOrders = await booking.count({
+            where: countWhere({ bookingStatusId: 1 }),
+        });
+
+        const activeOrders = await booking.count({
+            where: countWhere({
+                bookingStatusId: {
+                    [Op.notIn]: [1, 17, 18, 19, 24],
+                },
+            }),
+        });
+
+        const repeatCustomerRows = await booking.findAll({
+            attributes: ['customerId'],
+            where: countWhere({ customerId: { [Op.ne]: null } }),
+            group: ['customerId'],
+            having: sequelize.literal('COUNT(customerId) > 1'),
+            raw: true,
+        });
+        const repeatCustomerIds = repeatCustomerRows
+            .map((row) => row.customerId)
+            .filter(Boolean);
+        const repeatOrders =
+            repeatCustomerIds.length > 0
+                ? await booking.count({
+                      where: countWhere({
+                          customerId: { [Op.in]: repeatCustomerIds },
+                      }),
+                  })
+                : 0;
+
         const paymentFailuresCount = await booking.count({
-            where: {
+            where: countWhere({
                 paymentType: "card",
                 paymentDeliveryGate: "waiting_admin",
                 bookingStatusId: { [Op.lt]: 17 },
-            },
+            }),
         });
 
         return {
@@ -111,6 +254,10 @@ class OrderService {
             onHoldOrders: onHoldOrders,
             cancelledOrders: cancelledOrders,
             pendingOrders: pendingOrders,
+            newOrders,
+            NewOrders: newOrders,
+            activeOrders,
+            repeatOrders,
             paymentFailuresCount: paymentFailuresCount,
         };
     }
@@ -122,49 +269,32 @@ class OrderService {
      * @param {number} limit - Records per page
      * @returns {Object} Bookings with pagination info
      */
-    async getOptimizedBookings(whereClause, page = 1, limit = 50) {
+    async getOptimizedBookings(whereClause, page = 1, limit = 50, search = '') {
         const offset = (page - 1) * limit;
+        const { where, searchActive } = this._buildWhereWithSearch(whereClause, search);
+        const includes = this._bookingListIncludes(searchActive);
 
-        // Get total count
-        const totalCount = await booking.count({ where: whereClause });
+        const countIncludes = searchActive
+            ? [
+                  {
+                      model: users,
+                      as: 'customer',
+                      attributes: [],
+                      required: false,
+                  },
+              ]
+            : [];
 
-        // Get bookings with optimized includes
+        const totalCount = await booking.count({
+            where,
+            include: countIncludes,
+            distinct: true,
+            col: 'id',
+        });
+
         const bookings = await booking.findAll({
-            where: whereClause,
-            include: [
-                {
-                    model: customerSelectedService,
-                    attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
-                    include: [
-                        {
-                            model: service,
-                            attributes: ['id', 'name', 'status']
-                        },
-                        {
-                            model: categories,
-                            attributes: ['id', 'name']
-                        }
-                    ]
-                },
-                {
-                    model: OnHoldConfirmation,
-                    required: false,
-                    attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
-                },
-                {
-                    model: addressDb,
-                    as: 'laundryShop',
-                    include: {
-                        model: bussinessInformation,
-                        attributes: ['shopName']
-                    },
-                    attributes: ['id']
-                },
-                {
-                    model: bookingStatus,
-                    attributes: ['title', 'description']
-                }
-            ],
+            where,
+            include: includes,
             order: [['id', 'DESC']],
             limit: limit,
             offset: offset,
@@ -172,7 +302,8 @@ class OrderService {
                 exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
             },
             logging: false,
-            benchmark: false
+            benchmark: false,
+            subQuery: searchActive ? false : undefined,
         });
 
         // Calculate pagination info
@@ -208,16 +339,15 @@ class OrderService {
         let whereClause = {};
 
         if (filters.status) {
-            whereClause.bookingStatusId = filters.status;
+            const statusId = parseInt(filters.status, 10);
+            if (!Number.isNaN(statusId)) {
+                whereClause.bookingStatusId = statusId;
+            }
         }
-        if (filters.date) {
-            whereClause.createdAt = {
-                [Op.gte]: new Date(filters.date),
-                [Op.lt]: new Date(new Date(filters.date).getTime() + 24 * 60 * 60 * 1000)
-            };
-        }
+        this._applyPlacedDateRangeFilter(whereClause, filters);
+        this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit);
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
 
         return {
             orderDetails: result.bookings,
@@ -231,14 +361,19 @@ class OrderService {
      * @param {number} limit - Records per page
      * @returns {Object} Pending orders with pagination
      */
-    async getPendingOrders(page = 1, limit = 20) {
-        const whereClause = {
-            bookingStatusId: {
-                [Op.ne]: [17, 23]
-            }
-        };
+    async getPendingOrders(page = 1, limit = 20, filters = {}) {
+        const statusId = filters.status ? parseInt(filters.status, 10) : NaN;
+        const whereClause = !Number.isNaN(statusId)
+            ? { bookingStatusId: statusId }
+            : {
+                bookingStatusId: {
+                    [Op.ne]: [17, 23],
+                },
+            };
+        this._applyPlacedDateRangeFilter(whereClause, filters);
+        this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit);
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
 
         return {
             orderDetails: result.bookings,
@@ -253,14 +388,16 @@ class OrderService {
      * @param {number} limit - Records per page
      * @returns {Object} Cancelled orders with pagination
      */
-    async getCancelledOrders(page = 1, limit = 20) {
+    async getCancelledOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
             bookingStatusId: {
                 [Op.eq]: [19]
             }
         };
+        this._applyPlacedDateRangeFilter(whereClause, filters);
+        this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit);
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
 
         return {
             cancelOrders: result.bookings,
@@ -275,14 +412,16 @@ class OrderService {
      * @param {number} limit - Records per page
      * @returns {Object} Completed orders with pagination
      */
-    async getCompletedOrders(page = 1, limit = 20) {
+    async getCompletedOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
             bookingStatusId: {
                 [Op.eq]: [17]
             }
         };
+        this._applyPlacedDateRangeFilter(whereClause, filters);
+        this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit);
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
 
         return {
             allCompletedOrders: result.bookings,
@@ -1030,21 +1169,26 @@ class OrderService {
         return findZone;
     }
     /**
-     * Get all on hold bookings
-     * @returns {Object} All on hold bookings
+     * Get on-hold bookings (paginated)
+     * @param {number} page
+     * @param {number} limit
+     * @returns {Object}
      */
-    async getOnHoldBookings() {
-        const onHoldBookings = await booking.findAll({
-            where:
-            {
-                bookingStatusId: {
-                    [Op.or]: [18, 24]
-                }
-            }
-        });
+    async getOnHoldBookings(page = 1, limit = 25, filters = {}) {
+        const whereClause = {
+            bookingStatusId: {
+                [Op.or]: [18, 24],
+            },
+        };
+        this._applyPlacedDateRangeFilter(whereClause, filters);
+        this._applyZoneFilter(whereClause, filters);
+
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+
         return {
-            message: "All on hold bookings retrieved successfully",
-            data: { onHoldBookings }
+            onHoldBookings: result.bookings,
+            onHoldOrdersCount: result.totalCount,
+            pagination: result.pagination,
         };
     }
 
