@@ -75,6 +75,7 @@ jobs:
             **/.git*/**
             **/node_modules/**
             **/.vscode/**
+            **/lib/**
 
       - name: Trigger npm install on server
         run: |
@@ -140,6 +141,7 @@ jobs:
             **/.git*/**
             **/node_modules/**
             **/.vscode/**
+            **/lib/**
 
       # /stage-trigger.php is handled by Express (hosting proxies all traffic to PM2).
       # Stage cert is Let's Encrypt — verify TLS (no -k).
