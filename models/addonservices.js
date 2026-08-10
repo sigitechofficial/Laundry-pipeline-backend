@@ -38,6 +38,12 @@ module.exports = (sequelize, DataTypes) => {
         model: 'addOnCategories',
         key: 'id'
       }
+    },
+    sortOrder: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      comment: 'Display order within an add-on category (lower = first)',
     }
   }, {
     sequelize,

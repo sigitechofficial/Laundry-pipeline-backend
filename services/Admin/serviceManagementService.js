@@ -27,6 +27,15 @@ function normalizeAddOnCategoryIds(value) {
     return [...new Set(ids)];
 }
 
+function sortBySortOrder(rows = []) {
+    return [...rows].sort((a, b) => {
+        const ao = Number(a?.sortOrder ?? 0);
+        const bo = Number(b?.sortOrder ?? 0);
+        if (ao !== bo) return ao - bo;
+        return Number(a?.id ?? 0) - Number(b?.id ?? 0);
+    });
+}
+
 function parseServiceBoolean(value) {
     if (value === undefined || value === null || value === '') return undefined;
     return value === true || value === 'true' || value === 1 || value === '1';
@@ -110,16 +119,21 @@ class ServiceManagementService {
                 serviceId: numericServiceId,
                 status: true,
             },
-            attributes: ['id', 'name', 'description', 'serviceId'],
+            attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
             include: [
                 {
                     model: subCategories,
-                    attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount'],
+                    attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
                     where: { status: true },
                     required: false,
                 },
             ],
-            order: [['name', 'ASC']],
+            order: [
+                ['sortOrder', 'ASC'],
+                ['id', 'ASC'],
+                [subCategories, 'sortOrder', 'ASC'],
+                [subCategories, 'id', 'ASC'],
+            ],
         });
 
         const junctionRows = await serviceCategories.findAll({
@@ -129,16 +143,20 @@ class ServiceManagementService {
                     model: categories,
                     where: { status: true },
                     required: true,
-                    attributes: ['id', 'name', 'description', 'serviceId'],
+                    attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
                     include: [
                         {
                             model: subCategories,
-                            attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount'],
+                            attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
                             where: { status: true },
                             required: false,
                         },
                     ],
                 },
+            ],
+            order: [
+                [{ model: categories }, 'sortOrder', 'ASC'],
+                [{ model: categories }, 'id', 'ASC'],
             ],
         });
 
@@ -157,7 +175,8 @@ class ServiceManagementService {
                     id: cat.id,
                     name: cat.name,
                     description: cat.description,
-                    subCategories: cat.subCategories || [],
+                    sortOrder: cat.sortOrder ?? 0,
+                    subCategories: sortBySortOrder(cat.subCategories || []),
                 },
             });
         }
@@ -183,10 +202,18 @@ class ServiceManagementService {
                     id: cat.id,
                     name: cat.name,
                     description: cat.description,
-                    subCategories: cat.subCategories || [],
+                    sortOrder: cat.sortOrder ?? 0,
+                    subCategories: sortBySortOrder(cat.subCategories || []),
                 },
             });
         }
+
+        result.sort((a, b) => {
+            const ao = Number(a.category?.sortOrder ?? 0);
+            const bo = Number(b.category?.sortOrder ?? 0);
+            if (ao !== bo) return ao - bo;
+            return Number(a.categoryId) - Number(b.categoryId);
+        });
 
         return result;
     }
@@ -249,7 +276,11 @@ class ServiceManagementService {
                 where: {
                     categoryId: categoryId
                 },
-                attributes: ['id', 'name', 'price', 'status']
+                attributes: ['id', 'name', 'price', 'status', 'sortOrder'],
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                ],
             });
 
             return {
@@ -358,7 +389,10 @@ class ServiceManagementService {
                         required: false,
                     },
                 ],
-                order: [['name', 'ASC']],
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                ],
             });
     }
 
@@ -376,7 +410,7 @@ class ServiceManagementService {
         }
 
         const payload = {};
-        const allowedFields = ['name', 'description', 'image', 'serviceId', 'status'];
+        const allowedFields = ['name', 'description', 'image', 'serviceId', 'status', 'sortOrder'];
         allowedFields.forEach((field) => {
             if (categoryData[field] === undefined) return;
             if (field === 'serviceId' && categoryData[field] === '') return;
@@ -428,7 +462,11 @@ class ServiceManagementService {
                     as: 'addOnCategories',
                     attributes: ['id', 'name'],
                     through: { attributes: [] }
-                }]
+                }],
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                ],
             });
             return getSubcategories;
     }
@@ -486,6 +524,14 @@ class ServiceManagementService {
                     categoryData.status !== undefined ? categoryData.status : true,
                 serviceId,
             };
+
+            const maxSort = await categories.max('sortOrder', {
+                where: { serviceId },
+            });
+            payload.sortOrder =
+                categoryData.sortOrder != null && !Number.isNaN(Number(categoryData.sortOrder))
+                    ? Number(categoryData.sortOrder)
+                    : (Number(maxSort) || 0) + 1;
 
             const categoryCreate = await categories.create(payload);
             await this.syncServiceCategoryLink(serviceId, categoryCreate.id);
@@ -672,6 +718,48 @@ class ServiceManagementService {
     }
 
     /**
+     * Update sort order for multiple categories at once
+     * @param {Array} items - Array of { categoryId, sortOrder }
+     */
+    async updateCategoriesSortOrder(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new ValidationError('Provide an array of { categoryId, sortOrder }');
+        }
+
+        await Promise.all(
+            items.map(({ categoryId, sortOrder }) =>
+                categories.update(
+                    { sortOrder: Number(sortOrder) },
+                    { where: { id: categoryId } }
+                )
+            )
+        );
+
+        return { updated: items.length };
+    }
+
+    /**
+     * Update sort order for multiple sub-categories at once
+     * @param {Array} items - Array of { subCategoryId, sortOrder }
+     */
+    async updateSubCategoriesSortOrder(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new ValidationError('Provide an array of { subCategoryId, sortOrder }');
+        }
+
+        await Promise.all(
+            items.map(({ subCategoryId, sortOrder }) =>
+                subCategories.update(
+                    { sortOrder: Number(sortOrder) },
+                    { where: { id: subCategoryId } }
+                )
+            )
+        );
+
+        return { updated: items.length };
+    }
+
+    /**
      * Assign services to categories
      * @param {number} serviceId - Service ID
      * @param {Array} categoryIds - Array of category IDs
@@ -785,16 +873,33 @@ class ServiceManagementService {
      * @returns {Array} Created subcategories
      */
     async addSubCategoriesWithBarcode(subCategoryData, generateBarcodeFunction) {
+            const maxByCategory = new Map();
+            for (const cat of subCategoryData) {
+                const categoryId = Number(cat.categoryId);
+                if (!categoryId || maxByCategory.has(categoryId)) continue;
+                const maxSort = await subCategories.max('sortOrder', {
+                    where: { categoryId },
+                });
+                maxByCategory.set(categoryId, Number(maxSort) || 0);
+            }
+
             const processedData = subCategoryData.map((cat) => {
                 const fileName = `barcode-${Date.now()}-${Math.floor(Math.random() * 10000)}.png`;
                 const barcodePath = generateBarcodeFunction(cat.name, cat.price, fileName);
+                const categoryId = Number(cat.categoryId);
+                const nextSort = (maxByCategory.get(categoryId) || 0) + 1;
+                if (categoryId) maxByCategory.set(categoryId, nextSort);
 
                 // eslint-disable-next-line no-unused-vars
                 const { addOnCategoryIds, ...rest } = cat;
                 return {
                     ...rest,
                     status: true,
-                    barCode: barcodePath
+                    barCode: barcodePath,
+                    sortOrder:
+                        cat.sortOrder != null && !Number.isNaN(Number(cat.sortOrder))
+                            ? Number(cat.sortOrder)
+                            : nextSort,
                 };
             });
 

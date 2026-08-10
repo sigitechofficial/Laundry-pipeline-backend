@@ -67,7 +67,13 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: null,
       comment: 'Units count for item-based subcategories'
-    }
+    },
+    sortOrder: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      comment: 'Display order within a category (lower = first)',
+    },
   }, {
     sequelize,
     modelName: 'subCategories',

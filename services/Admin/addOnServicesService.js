@@ -78,10 +78,20 @@ class AddOnServicesService {
         const created = await addOnServices.create({
             name: trimmedName,
             price: numericPrice,
-            addOnCategoryId: categoryId
+            addOnCategoryId: categoryId,
+            sortOrder: await this._nextSortOrder(categoryId),
         });
 
         return this.getAddOnServiceById(created.id);
+    }
+
+    async _nextSortOrder(addOnCategoryId) {
+        const where =
+            addOnCategoryId == null
+                ? { addOnCategoryId: null }
+                : { addOnCategoryId };
+        const maxSort = await addOnServices.max('sortOrder', { where });
+        return (Number(maxSort) || 0) + 1;
     }
 
     /**
@@ -102,7 +112,10 @@ class AddOnServicesService {
         const rows = await addOnServices.findAll({
             where,
             include: [CATEGORY_INCLUDE_WITH_LINKS],
-            order: [['createdAt', 'DESC']]
+            order: [
+                ['sortOrder', 'ASC'],
+                ['id', 'ASC'],
+            ],
         });
 
         // Flatten the linked items so the frontend can filter add-on services
@@ -214,6 +227,26 @@ class AddOnServicesService {
         await row.destroy();
 
         return { message: 'Add-on service deleted successfully' };
+    }
+
+    /**
+     * @param {Array<{ addOnServiceId: number|string, sortOrder: number }>} items
+     */
+    async updateAddOnServicesSortOrder(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new ValidationError('Provide an array of { addOnServiceId, sortOrder }');
+        }
+
+        await Promise.all(
+            items.map(({ addOnServiceId, sortOrder }) =>
+                addOnServices.update(
+                    { sortOrder: Number(sortOrder) },
+                    { where: { id: addOnServiceId } }
+                )
+            )
+        );
+
+        return { updated: items.length };
     }
 }
 

@@ -65,6 +65,12 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id',
       },
     },
+    sortOrder: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      comment: 'Display order within a service (lower = first)',
+    },
   }, {
     sequelize,
     modelName: 'categories',

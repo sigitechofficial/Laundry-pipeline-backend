@@ -27,9 +27,11 @@ class AddOnCategoryService {
             throw new ConflictError('Add-on category with this name already exists');
         }
 
+        const maxSort = await addOnCategory.max('sortOrder');
         const created = await addOnCategory.create({
             name: trimmedName,
-            status: status === undefined ? true : Boolean(status)
+            status: status === undefined ? true : Boolean(status),
+            sortOrder: (Number(maxSort) || 0) + 1,
         });
 
         return created;
@@ -48,14 +50,25 @@ class AddOnCategoryService {
                     model: addOnServices,
                     as: 'addOnServices',
                     required: false,
-                    attributes: ['id', 'name', 'price', 'addOnCategoryId']
+                    attributes: ['id', 'name', 'price', 'addOnCategoryId', 'sortOrder'],
                 }
             ]
             : [];
 
+        const order = [
+            ['sortOrder', 'ASC'],
+            ['id', 'ASC'],
+        ];
+        if (includeServices) {
+            order.push(
+                [{ model: addOnServices, as: 'addOnServices' }, 'sortOrder', 'ASC'],
+                [{ model: addOnServices, as: 'addOnServices' }, 'id', 'ASC']
+            );
+        }
+
         const rows = await addOnCategory.findAll({
             include,
-            order: [['name', 'ASC']]
+            order,
         });
 
         return rows;
@@ -72,9 +85,13 @@ class AddOnCategoryService {
                     model: addOnServices,
                     as: 'addOnServices',
                     required: false,
-                    attributes: ['id', 'name', 'price', 'addOnCategoryId']
+                    attributes: ['id', 'name', 'price', 'addOnCategoryId', 'sortOrder'],
                 }
-            ]
+            ],
+            order: [
+                [{ model: addOnServices, as: 'addOnServices' }, 'sortOrder', 'ASC'],
+                [{ model: addOnServices, as: 'addOnServices' }, 'id', 'ASC'],
+            ],
         });
 
         if (!row) {
@@ -89,7 +106,7 @@ class AddOnCategoryService {
      * @param {{ name?: string, status?: boolean }} data
      */
     async updateCategory(categoryId, data) {
-        const { name, status } = data;
+        const { name, status, sortOrder } = data;
 
         if (!categoryId) {
             throw new ValidationError('Category ID is required');
@@ -117,13 +134,38 @@ class AddOnCategoryService {
             }
         }
 
-        await row.update({
+        const payload = {
             name: nextName,
-            status: status === undefined ? row.status : Boolean(status)
-        });
+            status: status === undefined ? row.status : Boolean(status),
+        };
+        if (sortOrder !== undefined && !Number.isNaN(Number(sortOrder))) {
+            payload.sortOrder = Number(sortOrder);
+        }
+
+        await row.update(payload);
 
         await row.reload();
         return row;
+    }
+
+    /**
+     * @param {Array<{ addOnCategoryId: number|string, sortOrder: number }>} items
+     */
+    async updateCategoriesSortOrder(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            throw new ValidationError('Provide an array of { addOnCategoryId, sortOrder }');
+        }
+
+        await Promise.all(
+            items.map(({ addOnCategoryId, sortOrder }) =>
+                addOnCategory.update(
+                    { sortOrder: Number(sortOrder) },
+                    { where: { id: addOnCategoryId } }
+                )
+            )
+        );
+
+        return { updated: items.length };
     }
 
     async deleteCategory(categoryId) {

@@ -257,6 +257,10 @@ router.patch('/editCategories/:categoryId', uploadcategoryImage.single('Category
 router.get('/getServices', asyncMiddleware(adminController.getAllServices))
 //Update Services Sort Order
 router.patch('/updateServicesSortOrder', asyncMiddleware(adminController.updateServicesSortOrder))
+//Update Categories Sort Order
+router.patch('/updateCategoriesSortOrder', asyncMiddleware(adminController.updateCategoriesSortOrder))
+//Update SubCategories Sort Order
+router.patch('/updateSubCategoriesSortOrder', asyncMiddleware(adminController.updateSubCategoriesSortOrder))
 //get SubCategories
 router.get('/getSubcategories', asyncMiddleware(adminController.getSubcategories))
 //Edit SubCategories
@@ -295,6 +299,7 @@ router.post('/createAddOnCategory', asyncMiddleware(adminController.createAddOnC
 router.get('/getAllAddOnCategories', asyncMiddleware(adminController.getAllAddOnCategories))
 router.get('/getAddOnCategoryById/:addOnCategoryId', asyncMiddleware(adminController.getAddOnCategoryById))
 router.patch('/updateAddOnCategory/:addOnCategoryId', asyncMiddleware(adminController.updateAddOnCategory))
+router.patch('/updateAddOnCategoriesSortOrder', asyncMiddleware(adminController.updateAddOnCategoriesSortOrder))
 router.delete('/deleteAddOnCategory/:addOnCategoryId', asyncMiddleware(adminController.deleteAddOnCategory))
 
 //!-------------------------Add-On Services------------------------------------------------------------------//
@@ -302,6 +307,7 @@ router.post('/createAddOnService', asyncMiddleware(adminController.createAddOnSe
 router.get('/getAllAddOnServices', asyncMiddleware(adminController.getAllAddOnServices))
 router.get('/getAddOnServiceById/:addOnServiceId', asyncMiddleware(adminController.getAddOnServiceById))
 router.patch('/updateAddOnService/:addOnServiceId', asyncMiddleware(adminController.updateAddOnService))
+router.patch('/updateAddOnServicesSortOrder', asyncMiddleware(adminController.updateAddOnServicesSortOrder))
 router.delete('/deleteAddOnService/:addOnServiceId', asyncMiddleware(adminController.deleteAddOnService))
 
 //!-------------------------Account Preferences------------------------------------------------------------------//

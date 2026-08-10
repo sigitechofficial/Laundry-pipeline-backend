@@ -1754,6 +1754,18 @@ async function updateServicesSortOrder(req, res) {
     return ResponseHelper.success(res, "Services Sort Order Updated Successfully", result);
 }
 
+async function updateCategoriesSortOrder(req, res) {
+    const { categories: items } = req.body;
+    const result = await serviceManagementService.updateCategoriesSortOrder(items);
+    return ResponseHelper.success(res, "Categories Sort Order Updated Successfully", result);
+}
+
+async function updateSubCategoriesSortOrder(req, res) {
+    const { subCategories: items } = req.body;
+    const result = await serviceManagementService.updateSubCategoriesSortOrder(items);
+    return ResponseHelper.success(res, "Sub-categories Sort Order Updated Successfully", result);
+}
+
 
 /*
   * Add Categories
@@ -2095,6 +2107,12 @@ async function updateAddOnService(req, res) {
     return ResponseHelper.success(res, "Add-on service updated successfully", updated);
 }
 
+async function updateAddOnServicesSortOrder(req, res) {
+    const { addOnServices: items } = req.body;
+    const result = await addOnServicesService.updateAddOnServicesSortOrder(items);
+    return ResponseHelper.success(res, "Add-on services sort order updated successfully", result);
+}
+
 async function deleteAddOnService(req, res) {
     const { addOnServiceId } = req.params;
     await addOnServicesService.deleteAddOnService(addOnServiceId);
@@ -2123,6 +2141,12 @@ async function updateAddOnCategory(req, res) {
     const { addOnCategoryId } = req.params;
     const updated = await addOnCategoryService.updateCategory(addOnCategoryId, req.body);
     return ResponseHelper.success(res, "Add-on category updated successfully", updated);
+}
+
+async function updateAddOnCategoriesSortOrder(req, res) {
+    const { addOnCategories: items } = req.body;
+    const result = await addOnCategoryService.updateCategoriesSortOrder(items);
+    return ResponseHelper.success(res, "Add-on categories sort order updated successfully", result);
 }
 
 async function deleteAddOnCategory(req, res) {
@@ -2792,6 +2816,8 @@ module.exports = {
     deleteServices,
     editServices,
     updateServicesSortOrder,
+    updateCategoriesSortOrder,
+    updateSubCategoriesSortOrder,
     //!-------------Units--------//
     getUnitsDistanceAndCurrency,
     getAllUnits,
@@ -2817,11 +2843,13 @@ module.exports = {
     getAllAddOnServices,
     getAddOnServiceById,
     updateAddOnService,
+    updateAddOnServicesSortOrder,
     deleteAddOnService,
     createAddOnCategory,
     getAllAddOnCategories,
     getAddOnCategoryById,
     updateAddOnCategory,
+    updateAddOnCategoriesSortOrder,
     deleteAddOnCategory,
     //!------------Account Preferences-----------//
     editPreferenceType,
