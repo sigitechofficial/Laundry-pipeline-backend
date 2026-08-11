@@ -448,9 +448,13 @@ class AgentInvoiceManagementService {
             );
         }
 
+        // Soft-deactivate only agent-priced / subcategory lines that were removed.
+        // Keep customer booking context rows (service-level, no subcategory) active so
+        // the agent app can still show green ticks + customer-selected services.
         const deactivateWhere = {
             bookingId,
             status: true,
+            subCategoryId: { [Op.ne]: null },
         };
 
         if (keptActiveIds.length > 0) {
