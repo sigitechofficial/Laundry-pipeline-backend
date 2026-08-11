@@ -46,6 +46,9 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
+const {
+    ensureCustomerDeclaredSnapshot,
+} = require("./customerDeclaredServicesService");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -385,6 +388,9 @@ class AgentInvoiceManagementService {
         currentDate,
         currentTime,
     }) {
+        // Freeze customer booking intent BEFORE agent lines replace live CSS.
+        await ensureCustomerDeclaredSnapshot(bookingId);
+
         const keptActiveIds = [];
 
         for (const serviceLine of services) {
@@ -448,13 +454,10 @@ class AgentInvoiceManagementService {
             );
         }
 
-        // Soft-deactivate only agent-priced / subcategory lines that were removed.
-        // Keep customer booking context rows (service-level, no subcategory) active so
-        // the agent app can still show green ticks + customer-selected services.
+        // Agent invoice lines only — customer intent lives in original snapshots.
         const deactivateWhere = {
             bookingId,
             status: true,
-            subCategoryId: { [Op.ne]: null },
         };
 
         if (keptActiveIds.length > 0) {
