@@ -84,6 +84,7 @@ rollback_files() {
     --exclude=".htaccess" \
     --exclude=".well-known" \
     --exclude="uploads" \
+    --exclude="Public" \
     --exclude="node_modules" \
     --exclude="config/config.json" \
     --exclude="firebase.json" \
@@ -146,6 +147,7 @@ tar \
   --exclude="./node_modules" \
   --exclude="./.git" \
   --exclude="./uploads" \
+  --exclude="./Public" \
   --exclude="./backups" \
   --exclude="./.env" \
   --exclude="./.env.*" \
@@ -180,13 +182,14 @@ test -s "$DB_BACKUP_FILE"
 chmod 600 "$DB_BACKUP_FILE"
 ls -lh "$DB_BACKUP_FILE"
 
-echo "Syncing release to live (preserving secrets/uploads)..."
+echo "Syncing release to live (preserving secrets/uploads/Public)..."
 rsync -az --delete \
   --exclude=".env" \
   --exclude=".env.*" \
   --exclude=".htaccess" \
   --exclude=".well-known" \
   --exclude="uploads" \
+  --exclude="Public" \
   --exclude="node_modules" \
   --exclude="config/config.json" \
   --exclude="firebase.json" \

@@ -63,26 +63,33 @@ jobs:
       - name: Package release (no node_modules / secrets)
         run: |
           set -euo pipefail
-          tar -czf laundry-api-release.tar.gz \
-            --exclude='node_modules' \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='uploads' \
-            --exclude='backups' \
-            --exclude='.env' \
-            --exclude='.env.*' \
-            --exclude='config/config.json' \
-            --exclude='firebase.json' \
-            --exclude='examples' \
-            --exclude='graphify-out' \
-            --exclude='.careflow-review' \
-            --exclude='*.log' \
-            .
+          # Write outside the tree so GNU tar does not fail with
+          # "file changed as we read it" while packing `.`.
+          # Exclude Public (user media, ~300MB in git) — preserved on VPS via rsync.
+          tar -czf /tmp/laundry-api-release.tar.gz \
+            --exclude='./node_modules' \
+            --exclude='./.git' \
+            --exclude='./.github' \
+            --exclude='./uploads' \
+            --exclude='./Public' \
+            --exclude='./backups' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./config/config.json' \
+            --exclude='./firebase.json' \
+            --exclude='./examples' \
+            --exclude='./graphify-out' \
+            --exclude='./.careflow-review' \
+            --exclude='./*.log' \
+            --exclude='./*.tar.gz' \
+            -C "$GITHUB_WORKSPACE" .
+          mv /tmp/laundry-api-release.tar.gz "$GITHUB_WORKSPACE/laundry-api-release.tar.gz"
           test -s laundry-api-release.tar.gz
           ls -lh laundry-api-release.tar.gz
-          # sanity: entrypoint inside archive
-          tar -tzf laundry-api-release.tar.gz | grep -E '(^|/)laundary\.js$' | head
-          tar -tzf laundry-api-release.tar.gz | grep -E 'scripts/remote-deploy-api\.sh$' | head
+          # sanity: entrypoint + deploy script inside archive (no | head — pipefail/SIGPIPE)
+          tar -tzf laundry-api-release.tar.gz | grep -E '(^|/)laundary\.js$' >/dev/null
+          tar -tzf laundry-api-release.tar.gz | grep -E '(^|/)scripts/remote-deploy-api\.sh$' >/dev/null
+          echo "Package OK ($(du -h laundry-api-release.tar.gz | cut -f1))"
 
       - uses: actions/upload-artifact@v4
         with:
