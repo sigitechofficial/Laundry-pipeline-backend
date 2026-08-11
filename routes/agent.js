@@ -11,6 +11,10 @@ const multer = require("multer");
 const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
 const {
+    requireShopOwner,
+    requireShopManagerOrOwner,
+} = require("../middlewares/requireShopOwner");
+const {
     postcodeAutocompleteRateLimit,
     postcodeValidateRateLimit,
 } = require("../middlewares/postcodeRateLimit");
@@ -243,6 +247,14 @@ router.patch(
     checkPermissions,
     asyncMiddleware(agentController.driverStatusArrived)
 );
+// Live map tracking publisher bootstrap (Firebase RTDB custom token)
+const liveTrackingController = require("../controllers/liveTrackingController");
+router.get(
+    "/live-tracking/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.getAgentLiveTracking)
+);
 // Pickup/delivery attempt options after Arrived (grace, fail, unattended)
 router.get(
     "/booking/:bookingId/attempt-options",
@@ -431,11 +443,38 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.agnetDrivers)
 );
-//Agent Assign Order To Driver
+//Agent Assign Order To Driver (legacy path — pickup assign, no forced status 13)
 router.patch(
     "/agentAssignBookingToLaundryDriver",
     validateAccessToken,
     asyncMiddleware(agentController.agentAssignBookingToLaundryDriver)
+);
+// Assign pickup or delivery staff
+router.patch(
+    "/assignBookingStaff",
+    validateAccessToken,
+    requireShopManagerOrOwner,
+    asyncMiddleware(agentController.assignBookingStaff)
+);
+// Unassign staff (return to shop owner)
+router.patch(
+    "/unassignBookingStaff",
+    validateAccessToken,
+    requireShopManagerOrOwner,
+    asyncMiddleware(agentController.unassignBookingStaff)
+);
+// Reassign staff
+router.patch(
+    "/reassignBookingStaff",
+    validateAccessToken,
+    requireShopManagerOrOwner,
+    asyncMiddleware(agentController.reassignBookingStaff)
+);
+// Staff jobs monitor board
+router.get(
+    "/staffJobs",
+    validateAccessToken,
+    asyncMiddleware(agentController.getStaffJobs)
 );
 //Agent Assign Order to Self
 router.patch(
@@ -491,6 +530,7 @@ router.get(
 router.post(
     "/addEmployee",
     validateAccessToken,
+    requireShopManagerOrOwner,
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.addEmployee)
 );
@@ -498,6 +538,7 @@ router.post(
 router.patch(
     "/updateEmployee",
     validateAccessToken,
+    requireShopManagerOrOwner,
     checkPermissions,
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.updateEmployee)
@@ -506,13 +547,22 @@ router.patch(
 router.patch(
     "/updateEmployeeStatus",
     validateAccessToken,
+    requireShopManagerOrOwner,
     checkPermissions,
     asyncMiddleware(agentController.changeEmployeeStatus)
+);
+// Soft-delete employee
+router.delete(
+    "/deleteEmployee/:employeeId",
+    validateAccessToken,
+    requireShopManagerOrOwner,
+    asyncMiddleware(agentController.deleteEmployee)
 );
 //Get All Employees
 router.get(
     "/getAllEmployees",
     validateAccessToken,
+    requireShopManagerOrOwner,
     checkPermissions,
     asyncMiddleware(agentController.getAllEmployees)
 );
@@ -663,26 +713,31 @@ router.get(
 router.get(
     "/wallet",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentWallet)
 );
 router.get(
     "/wallet/transactions",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentWalletTransactions)
 );
 router.post(
     "/wallet/withdraw",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.withdrawAgentWallet)
 );
 router.get(
     "/settlement",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentSettlement)
 );
 router.post(
     "/cash-remittance",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.submitCashRemittance)
 );
 

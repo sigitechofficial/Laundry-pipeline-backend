@@ -13,6 +13,17 @@ const firebaseCredPath = path.join(__dirname, '../firebase.json');
 let firebaseReady = false;
 let firebaseInitError = null;
 
+/**
+ * RTDB URL — set FIREBASE_DATABASE_URL in env after enabling Realtime Database
+ * in the Firebase console (e.g. https://laundry-app-bf43c-default-rtdb.firebaseio.com).
+ */
+function getFirebaseDatabaseUrl() {
+  const fromEnv = (process.env.FIREBASE_DATABASE_URL || '').trim();
+  if (fromEnv) return fromEnv;
+  // Sensible default for project laundry-app-bf43c; override via env if region differs.
+  return 'https://laundry-app-bf43c-default-rtdb.firebaseio.com';
+}
+
 function ensureFirebaseReady() {
   if (firebaseReady && admin.apps.length) {
     return true;
@@ -29,14 +40,17 @@ function ensureFirebaseReady() {
   }
   try {
     const serviceAccount = JSON.parse(fs.readFileSync(firebaseCredPath, 'utf8'));
+    const databaseURL = getFirebaseDatabaseUrl();
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
+      databaseURL,
     });
     firebaseReady = true;
     firebaseInitError = null;
     console.log(
-      '[Firebase] Admin initialized OK project_id=%s',
-      serviceAccount.project_id || '?'
+      '[Firebase] Admin initialized OK project_id=%s databaseURL=%s',
+      serviceAccount.project_id || '?',
+      databaseURL
     );
     return true;
   } catch (err) {
@@ -91,6 +105,7 @@ function getFirebaseDiagnostics() {
     firebaseInitError,
     appsInitialized: admin.apps.length,
     credPath: firebaseCredPath,
+    databaseURL: getFirebaseDatabaseUrl(),
     fileExists,
     parseOk,
     parseError,
@@ -382,5 +397,7 @@ module.exports = {
   sendNotification,
   sendNotificationToTokens,
   getFirebaseDiagnostics,
+  getFirebaseDatabaseUrl,
+  ensureFirebaseReady,
   isFirebaseReady: () => firebaseReady
 }; 

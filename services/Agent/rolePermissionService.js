@@ -16,6 +16,9 @@ const {
 /** `featureOf` values used by the agent app (shop / employees). Not Admin-only. */
 const AGENT_APP_FEATURE_OF = ['Agent', 'Agent Employee', 'both'];
 
+/** Always offered in agent app when creating team members (even before permissions are customized). */
+const SHOP_STAFF_ROLE_IDS = [6, 8]; // Driver, Manager
+
 /**
  * Role names that must never appear in the agent app role list (admin / zone portal).
  * They may still have permissions on `both` features — exclude explicitly.
@@ -165,14 +168,28 @@ class AgentRolePermissionService {
             (id) => id && !roleIdsWithAdminFeature.has(id)
         );
 
-        if (agentOnlyRoleIds.length === 0) {
+        const roleIdSet = new Set([
+            ...agentOnlyRoleIds,
+            ...SHOP_STAFF_ROLE_IDS,
+        ]);
+
+        // Never surface admin-portal roles via hardcoded ids
+        for (const adminId of roleIdsWithAdminFeature) {
+            if (!SHOP_STAFF_ROLE_IDS.includes(adminId)) {
+                roleIdSet.delete(adminId);
+            }
+        }
+
+        const roleIds = [...roleIdSet];
+
+        if (roleIds.length === 0) {
             return { getRoles: [] };
         }
 
         const roleRows = await roles.findAll({
             where: {
                 status: true,
-                id: { [Op.in]: agentOnlyRoleIds },
+                id: { [Op.in]: roleIds },
             },
             attributes: ['id', 'name', 'status'],
             order: [['name', 'ASC']],

@@ -17,6 +17,13 @@ module.exports = {
         status:1,
         createdAt:new Date(),
         updatedAt:new Date()
+      },
+      {
+        id:8,
+        name:'Laundry Shop Manager',
+        status:1,
+        createdAt:new Date(),
+        updatedAt:new Date()
       }
     ])
   },

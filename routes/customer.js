@@ -76,6 +76,9 @@ router.get('/allBookings',validateAccessToken,asyncMiddleware(customerOtherContr
 router.get('/bookingDetailsById',validateAccessToken,asyncMiddleware(customerOtherController.bookingDetailsById))
 //Customer detailed track order timeline
 router.get('/trackOrder',validateAccessToken,asyncMiddleware(customerOtherController.trackOrder))
+// Live map tracking bootstrap (Firebase RTDB custom token)
+const liveTrackingController = require('../controllers/liveTrackingController')
+router.get('/live-tracking/:bookingId',validateAccessToken,asyncMiddleware(liveTrackingController.getCustomerLiveTracking))
 //Custome Response Update and Evemt Sent To Agent
 router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(customerOtherController.customerResponseUpdate))
 

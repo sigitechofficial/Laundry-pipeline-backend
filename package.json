@@ -15,7 +15,8 @@
     "db:setup": "node scripts/db-setup-local.js",
     "db:setup:reset": "node scripts/db-setup-local.js --reset",
     "db:migrate:verify": "node scripts/run-fresh-migrate-until-clean.js",
-    "db:seed": "sequelize-cli db:seed:all"
+    "db:seed": "sequelize-cli db:seed:all",
+    "demo:live-tracking": "node scripts/demoLiveTrackingStream.js"
   },
   "keywords": [],
   "author": "",

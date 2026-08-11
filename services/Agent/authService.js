@@ -1704,6 +1704,14 @@ class AgentAuthService {
 
         this._assertAgentApprovalForLogin(agentData);
 
+        const shopAddress = await addressDb.findOne({
+            where: {
+                userId: employeeData.employeeOff,
+                addressType: 'LaundaryShopAddress',
+            },
+            attributes: ['id', 'zoneId'],
+        });
+
         // Get permissions for the employee's role — only Agent/Agent Employee/both features
         const permissionData = await permissions.findAll({
             where: { roleId: employeeData.roleId },
@@ -1742,6 +1750,7 @@ class AgentAuthService {
 
         return {
             id: employeeData.id,
+            userId: String(employeeData.id),
             firstName: employeeData.firstName,
             lastName: employeeData.lastName,
             email: employeeData.email,
@@ -1752,6 +1761,17 @@ class AgentAuthService {
             role: roleData,
             classifiedAsId: employeeData.classifiedAsId,
             employeeOff: employeeData.employeeOff,
+            addressId: shopAddress ? String(shopAddress.id) : null,
+            isEmployee: true,
+            isManager: Number(employeeData.roleId) === 8,
+            isDriver: Number(employeeData.roleId) === 6,
+            capabilities: {
+                canManageShopOps: Number(employeeData.roleId) === 8,
+                canManageFinance: false,
+                canAcceptOrders: Number(employeeData.roleId) === 8,
+                canAssignStaff: Number(employeeData.roleId) === 8,
+                canManageTeam: Number(employeeData.roleId) === 8,
+            },
             agentInfo: agentData,
             permissions: permissionData,
             accessToken

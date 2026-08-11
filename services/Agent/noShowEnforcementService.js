@@ -32,6 +32,13 @@ const DELIVERY_FAILED_STATUS = 15;
 const READY_FOR_DELIVERY_STATUS = 12;
 const CANCELLED_STATUS = 19;
 
+function syncLiveTrackingSafe(bookingId, bookingStatusId, reason) {
+    try {
+        const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
+        syncLiveTrackingForBookingStatus(bookingId, bookingStatusId, { reason }).catch(() => {});
+    } catch (_) { /* ignore */ }
+}
+
 const PICKUP_INSTRUCTION_UNATTENDED = new Set([
     'Collect from Outside',
     'Collect from reception/Porter',
@@ -707,6 +714,7 @@ class NoShowEnforcementService {
                     },
                     { where: { id: bookingId } }
                 );
+                syncLiveTrackingSafe(bookingId, CANCELLED_STATUS, 'pickup_attempts_exhausted');
                 if (historyDate && historyTime) {
                     await this._appendHistory(bookingId, CANCELLED_STATUS, historyDate, historyTime);
                 }
@@ -747,6 +755,7 @@ class NoShowEnforcementService {
                 },
                 { where: { id: bookingId } }
             );
+            syncLiveTrackingSafe(bookingId, AWAITING_COLLECTION_STATUS, 'pickup_failed_reschedule');
             if (historyDate && historyTime) {
                 await this._appendHistory(
                     bookingId,
@@ -792,6 +801,7 @@ class NoShowEnforcementService {
             },
             { where: { id: bookingId } }
         );
+        syncLiveTrackingSafe(bookingId, DELIVERY_FAILED_STATUS, 'delivery_failed');
         if (historyDate && historyTime) {
             await this._appendHistory(bookingId, DELIVERY_FAILED_STATUS, historyDate, historyTime);
         }
@@ -895,6 +905,7 @@ class NoShowEnforcementService {
             { bookingStatusId: nextStatus },
             { where: { id: bookingId } }
         );
+        syncLiveTrackingSafe(bookingId, nextStatus, 'unattended_complete');
 
         if (historyDate && historyTime) {
             if (normalizedType === 'pickup') {

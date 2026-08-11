@@ -6,6 +6,7 @@ const {
     driverInZones,
     roles,
     permissions,
+    booking,
     sequelize,
 } = require('../../models');
 const { Op } = require('sequelize');
@@ -20,6 +21,7 @@ const path = require('path');
 
 /** Seeded id for "Laundry Shop Driver" — also matched by role name (case-insensitive). */
 const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
+const LAUNDRY_SHOP_MANAGER_ROLE_ID = 8;
 
 function parsePermissionRole(raw) {
     if (raw == null || raw === '') {
@@ -63,6 +65,17 @@ function isLaundryShopDriverRole(roleRecord) {
     return (
         name === 'laundry shop driver' ||
         roleRecord.id === LAUNDRY_SHOP_DRIVER_ROLE_ID
+    );
+}
+
+function isLaundryShopManagerRole(roleRecord) {
+    if (!roleRecord) {
+        return false;
+    }
+    const name = (roleRecord.name || '').trim().toLowerCase();
+    return (
+        name === 'laundry shop manager' ||
+        roleRecord.id === LAUNDRY_SHOP_MANAGER_ROLE_ID
     );
 }
 
@@ -267,7 +280,24 @@ class AgentEmployeeManagementService {
      * @param {string} profileImg - Profile image path
      * @returns {Object} Update result
      */
-    async updateEmployee(data, profileImg) {
+    async _assertOwnedEmployee(agentId, employeeId) {
+        if (!employeeId) {
+            throw new ValidationError('Employee ID is required');
+        }
+        const employee = await users.findOne({
+            where: {
+                id: employeeId,
+                classifiedAsId: 1,
+                employeeOff: agentId,
+            },
+        });
+        if (!employee) {
+            throw new NotFoundError('Employee not found in your shop');
+        }
+        return employee;
+    }
+
+    async updateEmployee(data, profileImg, agentId) {
         const {
             firstName,
             lastName,
@@ -277,6 +307,8 @@ class AgentEmployeeManagementService {
             updatePassword,
             employeeId
         } = data;
+
+        await this._assertOwnedEmployee(agentId, employeeId);
 
         if (email) {
             const userExists = await users.findOne({
@@ -313,7 +345,7 @@ class AgentEmployeeManagementService {
         }
 
         const result = await users.update(updatedFields, {
-            where: { id: employeeId },
+            where: { id: employeeId, employeeOff: agentId, classifiedAsId: 1 },
         });
 
         return {
@@ -326,20 +358,62 @@ class AgentEmployeeManagementService {
      * @param {Object} data - Status change data
      * @param {number} data.employeeId - Employee ID
      * @param {boolean} data.status - New status
+     * @param {number} agentId - Shop owner id
      * @returns {Object} Status update result
      */
-    async changeEmployeeStatus(data) {
+    async changeEmployeeStatus(data, agentId) {
         const { employeeId, status } = data;
+
+        await this._assertOwnedEmployee(agentId, employeeId);
 
         const result = await users.update(
             { status },
             {
-                where: { id: employeeId }
+                where: { id: employeeId, employeeOff: agentId, classifiedAsId: 1 },
             }
         );
 
         return {
             result,
+            message: status ? 'Employee activated' : 'Employee deactivated',
+        };
+    }
+
+    /**
+     * Soft-delete an employee belonging to this shop.
+     * Active job assignments are returned to the shop owner.
+     */
+    async deleteEmployee(employeeId, agentId) {
+        await this._assertOwnedEmployee(agentId, employeeId);
+
+        await booking.update(
+            { driverId: agentId },
+            { where: { driverId: employeeId } }
+        );
+        await booking.update(
+            { deliveryDriverId: agentId },
+            { where: { deliveryDriverId: employeeId } }
+        );
+
+        await driverInZones.destroy({
+            where: { driverId: employeeId },
+        });
+
+        const result = await users.destroy({
+            where: {
+                id: employeeId,
+                employeeOff: agentId,
+                classifiedAsId: 1,
+            },
+        });
+
+        if (!result) {
+            throw new NotFoundError('Employee not found or already deleted');
+        }
+
+        return {
+            message: 'Employee removed successfully',
+            employeeId: Number(employeeId),
         };
     }
 

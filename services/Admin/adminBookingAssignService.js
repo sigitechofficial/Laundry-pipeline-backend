@@ -200,6 +200,14 @@ class AdminBookingAssignService {
             { where: { id: bookingId } }
         );
 
+        try {
+            const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
+            // Close any active trip tracking when admin reassigns shop/driver.
+            syncLiveTrackingForBookingStatus(bookingId, 3, {
+                reason: 'admin_reassign',
+            }).catch(() => {});
+        } catch (_) { /* ignore */ }
+
         if (Number(bookingRow.bookingStatusId) === 1) {
             await bookingHistory.bulkCreate(
                 [2, 3].map((statusId) => ({

@@ -51,7 +51,8 @@ const {
     ValidationError,
     NotFoundError,
     ConflictError,
-    UnauthorizedError
+    UnauthorizedError,
+    ForbiddenError,
 } = require('../../middlewares/universalErrorHandler');
 const otpMail = require("../../helper/otpMail");
 const error = require("../../middlewares/error");
@@ -102,6 +103,27 @@ const {
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
+
+function syncLiveTrackingSafe(bookingId, bookingStatusId, extras = {}) {
+    try {
+        const {
+            syncLiveTrackingForBookingStatus,
+        } = require("../../utils/liveTrackingRtdb");
+        Promise.resolve(
+            syncLiveTrackingForBookingStatus(bookingId, bookingStatusId, extras)
+        ).catch((err) => {
+            console.error(
+                `[liveTracking] async sync failed booking=${bookingId}:`,
+                err.message
+            );
+        });
+    } catch (err) {
+        console.error(
+            `[liveTracking] sync import/call failed booking=${bookingId}:`,
+            err.message
+        );
+    }
+}
 
 /**
  * Wall-clock date/time for agent actions (invoice lines, history).
@@ -167,12 +189,33 @@ const activePoliciesService = require('../../services/Admin/activePoliciesServic
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
+const agentDriverManagementService = require('../../services/Agent/driverManagementService');
 const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
 const agentOrderManagementService = require('../../services/Agent/orderManagementService');
 const agentWalletService = require('../../services/Agent/agentWalletService');
 const agentSettlementService = require('../../services/Agent/agentSettlementService');
 const agentWithdrawalService = require('../../services/Agent/agentWithdrawalService');
 const invoiceAutoChargeService = require('../../services/Agent/invoiceAutoChargeService');
+const {
+    resolveShopAgentId,
+    resolveActorUserId,
+    canManageShopOps,
+} = require('../../utils/shopAgentContext');
+
+function shopAgentIdFromReq(req) {
+    return req.shopAgentId ?? resolveShopAgentId(req.user);
+}
+
+function actorUserIdFromReq(req) {
+    return req.actorUserId ?? resolveActorUserId(req.user);
+}
+
+function actorCanManageShopOps(req) {
+    if (typeof req.canManageShopOps === 'boolean') {
+        return req.canManageShopOps;
+    }
+    return canManageShopOps(req.user);
+}
 
 async function tryCreditAgentWallet(bookingId, options = {}) {
     try {
@@ -455,7 +498,7 @@ exports.getShopAddress = async (req, res) => {
  */
 
 exports.getBookingHome = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     const userData = await users.findOne({
         where: {
@@ -764,7 +807,12 @@ exports.getBookingHome = async (req, res) => {
 }
 
 exports.agentRejectOrder = async (req, res) => {
-    const agentId = req.user.id;
+    if (!actorCanManageShopOps(req)) {
+        throw new ForbiddenError(
+            'Only the shop owner or manager can decline new orders'
+        );
+    }
+    const agentId = shopAgentIdFromReq(req);
     const { bookingId } = req.body;
 
     if (!bookingId) {
@@ -781,7 +829,12 @@ exports.agentRejectOrder = async (req, res) => {
 };
 
 exports.agentAcceptOrder = async (req, res) => {
-    const agentId = req.user.id;
+    if (!actorCanManageShopOps(req)) {
+        throw new ForbiddenError(
+            'Only the shop owner or manager can accept new orders. Ask them to assign jobs to you.'
+        );
+    }
+    const agentId = shopAgentIdFromReq(req);
     const { bookingId } = req.body;
 
     if (!bookingId) {
@@ -801,7 +854,7 @@ exports.agentAcceptOrder = async (req, res) => {
  * Get ALl Order of Agent
  */
 exports.getAgentOrder = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     const getShopAddress = await addressDb.findOne({
         where: {
@@ -1122,7 +1175,18 @@ const agentSlotWhere = (laundryShopId, slotFrom, slotTo, dayStart, dayEnd) => {
 };
 
 exports.agentBookingFilters = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
+    const actorId = actorUserIdFromReq(req);
+    // Drivers only see jobs assigned to them; owner/manager see the full shop board.
+    const employeeStaffScope =
+        req.isShopEmployee && !actorCanManageShopOps(req)
+            ? {
+                  [Op.or]: [
+                      { driverId: actorId },
+                      { deliveryDriverId: actorId },
+                  ],
+              }
+            : null;
     const { filterType, filterDate } = req.query;
 
     // ── Shop address ────────────────────────────────────────────────────────
@@ -1137,6 +1201,9 @@ exports.agentBookingFilters = async (req, res) => {
 
     const shopId  = addressFound.id;
     const zoneId  = addressFound.zoneId;
+
+    const withStaffScope = (where) =>
+        employeeStaffScope ? { ...where, ...employeeStaffScope } : where;
 
     // ── Slots shortcut ───────────────────────────────────────────────────────
     if (filterType === "slots") {
@@ -1288,14 +1355,19 @@ exports.agentBookingFilters = async (req, res) => {
     const results = {};
 
     // ── NEW — unaccepted bookings in agent's zone ────────────────────────────
+    // Drivers do not accept from the broadcast pool — owner/manager do.
     if (!filterType || filterType === "new") {
-        const rows = await booking.findAll({
-            where: newOrdersWhere,
-            order: [["id", "DESC"]],
-            attributes: BOOKING_ATTRS,
-            include: makeIncludes(),
-        });
-        results.New = addDisplayStatus(rows);
+        if (req.isShopEmployee && !actorCanManageShopOps(req)) {
+            results.New = [];
+        } else {
+            const rows = await booking.findAll({
+                where: newOrdersWhere,
+                order: [["id", "DESC"]],
+                attributes: BOOKING_ATTRS,
+                include: makeIncludes(),
+            });
+            results.New = addDisplayStatus(rows);
+        }
         if (filterType === "new") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "New bookings fetched", results);
@@ -1305,7 +1377,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── TODAY — pickup phase by collectionDate OR facility+ by deliveryDate ─
     if (!filterType || filterType === "today") {
         const rows = await booking.findAll({
-            where: agentDayTabWhere(shopId, todayStr, tomorrowStr),
+            where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1320,7 +1392,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── TOMORROW — same relevantDate rules for tomorrow's calendar day ───────
     if (!filterType || filterType === "tomorrow") {
         const rows = await booking.findAll({
-            where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr),
+            where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1335,10 +1407,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── ORDERS — all active bookings (master list) ───────────────────────────
     if (!filterType || filterType === "orders") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
-            },
+            }),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1353,10 +1425,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── INVOICE — delivered to shop → services added (not yet generated) ─────
     if (!filterType || filterType === "invoice") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: INVOICE_STATUSES },
-            },
+            }),
             order: [
                 [literal("deliveryDate IS NULL"), "ASC"],
                 ["deliveryDate", "ASC"],
@@ -1376,10 +1448,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── PROCESSING — invoice generated + washing ─────────────────────────────
     if (!filterType || filterType === "processing") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: PROCESSING_STATUSES },
-            },
+            }),
             order: [
                 [literal("deliveryDate IS NULL"), "ASC"],
                 ["deliveryDate", "ASC"],
@@ -1637,6 +1709,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             { bookingId, driverId: bookingfind.driverId }
         );
 
+        syncLiveTrackingSafe(bookingId, 4, {
+            agentId: bookingfind.driverId,
+            customerId,
+            bookingRow: bookingfind,
+        });
+
         return ResponseHelper.success(res, "Booking status updated (cash — no pickup charge)", {
             bookingId,
             paymentType: "cash",
@@ -1700,6 +1778,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 bookingStatusId: 4,
             });
         }
+
+        syncLiveTrackingSafe(bookingId, 4, {
+            agentId: bookingfind.driverId,
+            customerId: bookingfind.customerId,
+            bookingRow: bookingfind,
+        });
 
         return res.status(200).json({
             status: "1",
@@ -1835,6 +1919,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         }
     );
 
+    syncLiveTrackingSafe(bookingId, 4, {
+        agentId: bookingfind.driverId,
+        customerId,
+        bookingRow: bookingfind,
+    });
+
     return ResponseHelper.success(res, "Booking status updated and payment captured", {
         paymentIntentId: paymentIntent.id,
         paymentStatus: "succeeded",
@@ -1934,6 +2024,8 @@ exports.driverStatusArrived = async (req, res) => {
     } catch (emailError) {
         console.error('⚠️ Failed to send driver arrived email (non-blocking):', emailError.message);
     }
+
+    syncLiveTrackingSafe(bookingId, 5, { reason: 'pickup_arrived' });
 
     return ResponseHelper.success(res, "Booking Status Updated to Driver Arrived", {});
 }
@@ -2850,6 +2942,12 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         }
     ).catch(() => {});
 
+    syncLiveTrackingSafe(bookingId, 13, {
+        agentId: driverId || agentId,
+        customerId,
+        bookingRow: bookingCheck,
+    });
+
     return ResponseHelper.success(
         res,
         "Driver updated and out for Deliver Laundry to Customer",
@@ -2952,6 +3050,8 @@ exports.driverReachedForDelivery = async (req, res) => {
             err.message
         );
     }
+
+    syncLiveTrackingSafe(bookingId, 14, { reason: 'delivery_arrived' });
 
     return ResponseHelper.success(res, "Driver reached for delivery", {
         bookingId: Number(bookingId),
@@ -4147,133 +4247,93 @@ exports.agentIssueResolved = async (req, res) => {
  *     All Agent Laundry Drivers
  */
 exports.agnetDrivers = async (req, res) => {
-    const agentId = req.user.id;
-
-    const laundryShopFound = await bussinessInformation.findOne({
-        where: {
-            agentId: agentId,
-        },
-    });
-    console.log("ðŸš€ ~ agnetDrivers ~ laundryShopFound:", laundryShopFound);
-    //return res.json(laundryShopFound)
-    const driverFound = await driverInZones.findAll({
-        where: {
-            laundaryShopId: 1,
-        },
-        include: [
-            {
-                model: users,
-                as: "driverInZone",
-                where: {
-                    classifiedAsId: 1,
-                    roleId: 6,
-                },
-                attributes: ["id", "firstName", "lastName", "email"],
-            },
-            {
-                model: bussinessInformation,
-                as: "laundaryDriver",
-                attributes: ["shopAddressId"],
-                include: [
-                    {
-                        model: addressDb,
-                        where: {
-                            addressType: "LaundaryShopAddress",
-                        },
-                        attributes: [
-                            "streetAddress",
-                            "province",
-                            "lat",
-                            "lng",
-                            "addressType",
-                        ],
-                    },
-                ],
-            },
-        ],
-        attributes: ["id", "status", "cityId", "countryId", "zoneId"],
-    });
-    console.log("ðŸš€ ~ agnetDrivers ~ driverFound:", driverFound);
-    return res.json(
-        responsefunc(
-            "1",
-            "All Drivers Fetched for this Laundry Shop",
-            driverFound,
-            " "
-        )
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.agnetDrivers(agentId);
+    return ResponseHelper.success(
+        res,
+        "All Drivers Fetched for this Laundry Shop",
+        result
     );
 }
 
 /*
- *     Agent Assign Booking To Laundry Driver
+ *     Agent Assign Booking To Laundry Driver (pickup; does not force Out for Delivery)
  */
 exports.agentAssignBookingToLaundryDriver = async (req, res) => {
-    const { driverId, bookingId } = req.body;
-
-    const orderAssign = await booking.update(
-        {
-            driverId: driverId,
-            bookingStatusId: 13,
-        },
-        {
-            where: {
-                id: bookingId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.agentAssignBookingToLaundryDriver(
+        req.body,
+        agentId
     );
+    return ResponseHelper.success(res, result.message || "Order assigned to laundry driver", result);
+}
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
+/*
+ * Assign pickup or delivery staff
+ * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery' }
+ */
+exports.assignBookingStaff = async (req, res) => {
+    if (!actorCanManageShopOps(req)) {
+        throw new ForbiddenError('Only the shop owner or manager can assign staff to jobs');
+    }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.assignBookingStaff(req.body, agentId);
+    return ResponseHelper.success(res, result.message, result);
+}
 
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log(currentDate); // Example: "2025-01-28"
+/*
+ * Unassign staff — return job to shop owner
+ * Body: { bookingId, assignmentType?: 'pickup'|'delivery' }
+ */
+exports.unassignBookingStaff = async (req, res) => {
+    if (!actorCanManageShopOps(req)) {
+        throw new ForbiddenError('Only the shop owner or manager can unassign staff');
+    }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.unassignBookingStaff(req.body, agentId);
+    return ResponseHelper.success(res, result.message, result);
+}
 
-    await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: 13,
-    });
-    return ResponseHelper.success(res, "Order Assign to Laundry Driver", {});
+/*
+ * Reassign staff (same as assign with new staffId)
+ */
+exports.reassignBookingStaff = async (req, res) => {
+    if (!actorCanManageShopOps(req)) {
+        throw new ForbiddenError('Only the shop owner or manager can reassign staff');
+    }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.reassignBookingStaff(req.body, agentId);
+    return ResponseHelper.success(res, result.message || "Staff reassigned", result);
+}
+
+/*
+ * Monitor board — staff jobs for this shop
+ * Query: employeeId?, assignmentType?, statusGroup?
+ */
+exports.getStaffJobs = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    // Drivers may only monitor their own jobs; owner/manager see all
+    const query = { ...req.query };
+    if (req.isShopEmployee && !actorCanManageShopOps(req)) {
+        query.employeeId = actorUserIdFromReq(req);
+    }
+    const result = await agentDriverManagementService.getStaffJobs(agentId, query);
+    return ResponseHelper.success(res, "Staff jobs fetched", result);
 }
 
 /*
  * Agent pickup order BySelf
  */
 exports.agentPickupOrderBySelf = async (req, res) => {
-    const agentId = req.user.id;
-    const { bookingId } = req.query.bookingId;
-
-    const agentByselfPickup = await bookingHistory.update(
-        {
-            bookingStatusId: 13,
-            driverId: agentId,
-        },
-        {
-            where: {
-                id: bookingId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const bookingId = req.body?.bookingId ?? req.query?.bookingId;
+    // Employees assign themselves as actor; owners use shop agent id
+    const selfId = req.isShopEmployee ? actorUserIdFromReq(req) : agentId;
+    const result = await agentDriverManagementService.agentPickupOrderBySelf(
+        { ...req.body, bookingId, staffId: selfId },
+        agentId
     );
-
-    const currentDate = new Date.toISOString().split("T")[0];
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: 13,
-    });
-
-    return ResponseHelper.success(res, "Agent Assigned To PickUp Order", {});
+    return ResponseHelper.success(res, result.message || "Agent assigned to pick up order", result);
 }
 
 //!-----------------------------------Agent Cancel Booking------------------------------------//
@@ -4509,7 +4569,7 @@ exports.getFeatures = async (req, res) => {
  */
 
 exports.addEmployee = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     let profileImg = null;
     if (req.file) {
@@ -4530,56 +4590,15 @@ exports.addEmployee = async (req, res) => {
  * Update Employee
  */
 exports.updateEmployee = async (req, res) => {
-    const {
-        firstName,
-        lastName,
-        email,
-        phoneNum,
-        roleId,
-        updatePassword,
-        employeeId
-    } = req.body;
+    const agentId = shopAgentIdFromReq(req);
 
-
-    if (email) {
-        const userExists = await users.findOne({
-            where: {
-                email: email,
-                id: { [Op.not]: employeeId },
-                classifiedAs: 1,
-            },
-        });
-
-        if (userExists) {
-            throw new ConflictError("Employee with the following email exists. Please try another email");
-        }
-    }
-
-
-    const updatedFields = {};
-
-    if (firstName !== undefined) updatedFields.firstName = firstName;
-    if (lastName !== undefined) updatedFields.lastName = lastName;
-    if (email !== undefined) updatedFields.email = email;
-    if (phoneNum !== undefined) updatedFields.phoneNum = phoneNum;
-    if (roleId !== undefined) updatedFields.roleId = roleId;
-
-
-    if (updatePassword && updatePassword.trim() !== '') {
-        const hashedPassword = await bcrypt.hash(updatePassword, 10);
-        updatedFields.password = hashedPassword;
-    }
-
-
+    let profileImg = null;
     if (req.file) {
         const tempProfileImg = req.file.path;
-        const profileImage = path.join('Public', 'Profile', path.basename(tempProfileImg));
-        updatedFields.image = profileImage.replace(/\\/g, "/");
+        profileImg = tempProfileImg.replace(/\\/g, '/');
     }
-    await users.update(updatedFields, {
-        where: { id: employeeId },
-    });
 
+    await agentEmployeeManagementService.updateEmployee(req.body, profileImg, agentId);
     return ResponseHelper.success(res, "Employee Updated Successfully", {});
 }
 
@@ -4587,42 +4606,31 @@ exports.updateEmployee = async (req, res) => {
  * Change Employee status
  */
 exports.changeEmployeeStatus = async (req, res) => {
-    const { status, employeeId } = req.body;
-
-    users.update(
-        {
-            status,
-        },
-        {
-            where: {
-                id: employeeId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentEmployeeManagementService.changeEmployeeStatus(
+        req.body,
+        agentId
     );
+    return ResponseHelper.success(res, result.message || "Employee Status Updated", {});
+}
 
-    return ResponseHelper.success(res, "Employee Status Updated", {});
+/*
+ * Soft-delete employee belonging to this shop
+ */
+exports.deleteEmployee = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId || req.body.employeeId;
+    const result = await agentEmployeeManagementService.deleteEmployee(employeeId, agentId);
+    return ResponseHelper.success(res, result.message, result);
 }
 
 /*
  * Get All Employee
  */
 exports.getAllEmployees = async (req, res) => {
-
-    const agentId = req.user.id
-    const agentEmployee = await users.findAll({
-        where: {
-            classifiedAsId: 1,
-            employeeOff: agentId
-        },
-        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image'],
-        include: [
-            {
-                model: roles,
-                attributes: ["id", "name"],
-            },
-        ],
-    });
-    return ResponseHelper.success(res, "All Employee Fetched", { agentEmployee });
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentEmployeeManagementService.getAllEmployees(agentId);
+    return ResponseHelper.success(res, "All Employee Fetched", result);
 }
 
 /*

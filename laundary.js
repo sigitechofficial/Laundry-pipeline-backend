@@ -410,6 +410,8 @@ async function startServer() {
     startHeldBookingReleaseJob();
     const { startInvoiceAutoChargeJob } = require('./services/Agent/invoiceAutoChargeService');
     startInvoiceAutoChargeJob();
+    const { startLiveTrackingCleanupJob } = require('./services/liveTrackingCleanupService');
+    startLiveTrackingCleanupJob();
 
     server.listen(server_port, function (err) {
       if (err) throw err;
