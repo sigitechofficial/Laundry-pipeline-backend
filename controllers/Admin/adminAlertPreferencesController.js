@@ -53,3 +53,31 @@ exports.updatePreferences = async (req, res) => {
     const data = await adminAlertService.updatePreferencesForAdmin(adminUserId, toggles);
     return ResponseHelper.success(res, 'Notification preferences updated', data);
 };
+
+/**
+ * POST /admin/notification-preferences/demo
+ * Body: { alertType?: string, alertTypes?: string[], force?: boolean }
+ * Sends demo push(es) only to the logged-in admin so they can verify flags/FCM.
+ */
+exports.sendDemo = async (req, res) => {
+    const adminUserId = req.user?.id;
+    if (!adminUserId) {
+        throw new ValidationError('Admin user required');
+    }
+
+    const body = req.body || {};
+    let alertTypes = [];
+    if (body.alertType && isValidAlertType(body.alertType)) {
+        alertTypes = [body.alertType];
+    } else if (Array.isArray(body.alertTypes)) {
+        alertTypes = body.alertTypes.filter(isValidAlertType);
+    }
+
+    const data = await adminAlertService.sendDemoAlerts(adminUserId, {
+        alertTypes,
+        force: Boolean(body.force),
+    });
+
+    const msg = `Demo alerts: ${data.successCount} sent, ${data.skippedCount} skipped, ${data.failedCount} failed`;
+    return ResponseHelper.success(res, msg, data);
+};

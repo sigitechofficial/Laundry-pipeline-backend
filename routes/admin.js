@@ -706,6 +706,11 @@ router.patch(
   validateAccessToken,
   asyncMiddleware(adminAlertPreferencesController.updatePreferences)
 )
+router.post(
+  '/notification-preferences/demo',
+  validateAccessToken,
+  asyncMiddleware(adminAlertPreferencesController.sendDemo)
+)
 
 //!-----------------------------------Service Comparison (customer original vs agent invoice)------------------------------------>>>>
 router.get('/bookings/:bookingId/service-comparison', asyncMiddleware(serviceComparisonController.getServiceComparison))

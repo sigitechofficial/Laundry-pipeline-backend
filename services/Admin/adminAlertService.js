@@ -5,6 +5,7 @@ const { sendNotification, sendNotificationToTokens } = require('../../utils/noti
 const {
     ADMIN_ALERT_TYPES,
     ADMIN_ALERT_TYPE_KEYS,
+    DEMO_ALERT_SAMPLES,
     isValidAlertType,
     inferAlertType,
 } = require('../../constants/adminAlertTypes');
@@ -246,8 +247,118 @@ async function sendAdminAlert({
     };
 }
 
+/**
+ * Demo push for one or more alert types — only to the requesting admin.
+ * @param {number} adminUserId
+ * @param {{ alertTypes?: string[], force?: boolean }} options
+ *   force=true sends even if the preference toggle is Off (to verify FCM).
+ */
+async function sendDemoAlerts(adminUserId, options = {}) {
+    const force = Boolean(options.force);
+    let types = Array.isArray(options.alertTypes) ? options.alertTypes.filter(isValidAlertType) : [];
+    if (!types.length) {
+        types = [...ADMIN_ALERT_TYPE_KEYS];
+    }
+
+    const prefMap = await getPreferenceMapForAdmin(adminUserId);
+    const results = [];
+
+    for (const alertType of types) {
+        const meta = ADMIN_ALERT_TYPES[alertType] || {};
+        const sample = DEMO_ALERT_SAMPLES[alertType] || {
+            title: `[DEMO] ${meta.label || alertType}`,
+            body: meta.description || `Demo alert for ${alertType}`,
+        };
+        const preferenceEnabled = prefMap[alertType] !== false;
+
+        if (!force && !preferenceEnabled) {
+            results.push({
+                alertType,
+                label: meta.label || alertType,
+                success: false,
+                skipped: true,
+                reason: 'ALERT_DISABLED',
+                message:
+                    'Toggle is Off — enable it (or use Force demo) to receive this push.',
+                preferenceEnabled: false,
+            });
+            continue;
+        }
+
+        const sendResult = await sendAdminAlert({
+            alertType,
+            title: sample.title,
+            body: sample.body,
+            data: {
+                demo: true,
+                alertType,
+                type: alertType,
+                orderTrackId: 'DEMO-1001',
+                bookingId: '0',
+            },
+            adminId: adminUserId,
+        });
+
+        // When force=true but preference is off, sendAdminAlert still skips —
+        // so push directly for demo verification.
+        let direct = null;
+        if (force && !preferenceEnabled && sendResult.skippedCount > 0) {
+            const admins = await resolveAdmins({ adminId: adminUserId });
+            const admin = admins[0];
+            if (admin) {
+                direct = await sendToAdminUser(admin, sample.title, sample.body, {
+                    demo: true,
+                    alertType,
+                    type: alertType,
+                    forceDemo: true,
+                    orderTrackId: 'DEMO-1001',
+                    bookingId: '0',
+                    priority: meta.priority || 'normal',
+                });
+            }
+        }
+
+        const sent =
+            (direct && direct.sent) ||
+            sendResult.successCount > 0;
+
+        results.push({
+            alertType,
+            label: meta.label || alertType,
+            success: Boolean(sent),
+            skipped: false,
+            preferenceEnabled,
+            forced: force && !preferenceEnabled,
+            reason: sent
+                ? null
+                : direct?.reason ||
+                  sendResult.results?.[0]?.result?.reason ||
+                  sendResult.results?.[0]?.reason ||
+                  'SEND_FAILED',
+            message: sent
+                ? force && !preferenceEnabled
+                    ? 'Demo sent (forced while toggle is Off).'
+                    : 'Demo push sent to your devices.'
+                : 'Push failed — check browser notification permission and re-login to refresh FCM token.',
+            sendResult,
+            direct,
+        });
+    }
+
+    return {
+        adminUserId,
+        force,
+        total: results.length,
+        successCount: results.filter((r) => r.success).length,
+        skippedCount: results.filter((r) => r.skipped).length,
+        failedCount: results.filter((r) => !r.success && !r.skipped).length,
+        results,
+    };
+}
+
 module.exports = {
     sendAdminAlert,
+    sendDemoAlerts,
     getPreferencesForAdmin,
     updatePreferencesForAdmin,
     getPreferenceMapForAdmin,

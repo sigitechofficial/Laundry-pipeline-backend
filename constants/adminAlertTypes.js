@@ -176,10 +176,71 @@ function inferAlertType({ title = '', body = '', data = {}, bookingStatusId = nu
     return 'agent_assistance';
 }
 
+/** Sample copy for demo pushes — does not create real bookings. */
+const DEMO_ALERT_SAMPLES = {
+    pickup_late: {
+        title: '[DEMO] Pickup Late',
+        body: 'Order #DEMO-1001: driver is more than 15 minutes late for pickup.',
+    },
+    delivery_late: {
+        title: '[DEMO] Delivery Late',
+        body: 'Order #DEMO-1001: driver is more than 15 minutes late for delivery.',
+    },
+    driver_arrived: {
+        title: '[DEMO] Driver Arrived',
+        body: 'Order #DEMO-1001: driver has arrived at the customer location.',
+    },
+    agent_assistance: {
+        title: '[DEMO] Agent Assistance Needed',
+        body: 'Order #DEMO-1001: agent requested office help.',
+    },
+    payment_failed: {
+        title: '[DEMO] Payment Failed',
+        body: 'Order #DEMO-1001: card charge failed. Resolve in Payment Failures.',
+    },
+    pickup_failed: {
+        title: '[DEMO] Pickup Failed',
+        body: 'Order #DEMO-1001: pickup attempt failed. Customer must reschedule.',
+    },
+    pickup_cancelled: {
+        title: '[DEMO] Pickup Cancelled',
+        body: 'Order #DEMO-1001 cancelled after max failed pickup attempts.',
+    },
+    delivery_failed: {
+        title: '[DEMO] Delivery Failed',
+        body: 'Order #DEMO-1001: delivery attempt failed. Customer must reschedule.',
+    },
+    no_eligible_agent: {
+        title: '[DEMO] Manual Assignment Needed',
+        body: 'Order #DEMO-1001 has no agent offering all selected services.',
+    },
+    new_order: {
+        title: '[DEMO] New Order',
+        body: 'Order #DEMO-1001 was just placed and may need attention.',
+    },
+    order_on_hold: {
+        title: '[DEMO] Order On Hold',
+        body: 'Order #DEMO-1001 is on hold — customer or agent action required.',
+    },
+    order_cancelled: {
+        title: '[DEMO] Order Cancelled',
+        body: 'Order #DEMO-1001 was cancelled.',
+    },
+    refund_requested: {
+        title: '[DEMO] Refund / Issue',
+        body: 'Order #DEMO-1001 moved to a refund or issue state.',
+    },
+    agent_approval_pending: {
+        title: '[DEMO] Agent Approval Pending',
+        body: 'A new agent registration is waiting for admin approval.',
+    },
+};
+
 module.exports = {
     ADMIN_ALERT_TYPES,
     ADMIN_ALERT_TYPE_KEYS,
     LEGACY_TYPE_MAP,
+    DEMO_ALERT_SAMPLES,
     isValidAlertType,
     inferAlertType,
 };
