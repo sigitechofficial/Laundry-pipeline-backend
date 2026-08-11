@@ -315,6 +315,7 @@ async function notifyPaymentFailed(bookingRow, failure) {
     const data = {
         bookingId: String(bookingRow.id),
         type: "PAYMENT_FAILED",
+        alertType: "payment_failed",
         paymentFailureCode: code,
         paymentFailureReason: reason,
         orderTrackId: bookingRow.orderTrackId || "",
@@ -342,6 +343,17 @@ async function notifyPaymentFailed(bookingRow, failure) {
             console.error("[invoiceAutoCharge] agent notify failed:", e.message)
         );
     }
+
+    const { sendAdminAlert } = require("../Admin/adminAlertService");
+    sendAdminAlert({
+        alertType: "payment_failed",
+        title: "Payment failed — action required",
+        body: `Order ${bookingRow.orderTrackId || bookingRow.id}: ${reason}. Resolve in Payment Failures before delivery.`,
+        data,
+        bookingId: bookingRow.id,
+    }).catch((e) =>
+        console.error("[invoiceAutoCharge] admin notify failed:", e.message)
+    );
 }
 
 async function notifyPaymentCleared(bookingRow, action) {

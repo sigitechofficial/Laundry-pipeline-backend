@@ -23,6 +23,23 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDriverWithinCustomerRadius, getDriverGeofenceStatus } = require('../../utils/driverGeofence');
 
+function notifyAdminAttemptEvent({ alertType, bookingData, title, body, extra = {} }) {
+    try {
+        const { sendAdminAlert } = require('../Admin/adminAlertService');
+        sendAdminAlert({
+            alertType,
+            title,
+            body,
+            data: { attemptType: extra.attemptType, ...extra },
+            bookingId: bookingData.id,
+        }).catch((err) =>
+            console.error(`[noShow] admin alert ${alertType} failed:`, err?.message || err)
+        );
+    } catch (err) {
+        console.error(`[noShow] admin alert ${alertType} setup failed:`, err?.message || err);
+    }
+}
+
 const PICKUP_ARRIVED_STATUS = 5;
 const PICKUP_SUCCESS_STATUS = 7;
 const AWAITING_COLLECTION_STATUS = 3;
@@ -733,6 +750,15 @@ class NoShowEnforcementService {
                     maxAttemptsReached: true,
                 });
 
+                const orderRef = bookingData.orderTrackId || bookingData.id;
+                notifyAdminAttemptEvent({
+                    alertType: 'pickup_cancelled',
+                    bookingData,
+                    title: 'Pickup cancelled — max attempts',
+                    body: `Order #${orderRef} cancelled after ${maxAttempts} failed pickup attempts.`,
+                    extra: { attemptType: 'pickup', pickupAttemptCount: newPickupCount },
+                });
+
                 return {
                     outcome: 'cancelled',
                     attemptId: openAttempt.id,
@@ -779,6 +805,19 @@ class NoShowEnforcementService {
                 maxAttemptsReached: false,
             });
 
+            const orderRefPickup = bookingData.orderTrackId || bookingData.id;
+            notifyAdminAttemptEvent({
+                alertType: 'pickup_failed',
+                bookingData,
+                title: 'Pickup failed — reschedule needed',
+                body: `Order #${orderRefPickup}: pickup attempt ${newPickupCount}/${maxAttempts} failed. Customer must reschedule.`,
+                extra: {
+                    attemptType: 'pickup',
+                    pickupAttemptCount: newPickupCount,
+                    maxPickupAttempts: maxAttempts,
+                },
+            });
+
             return {
                 outcome: 'reschedule_required',
                 attemptId: openAttempt.id,
@@ -818,6 +857,18 @@ class NoShowEnforcementService {
             feeAmount: feeResult.feeAmount,
             feeCurrency: feeResult.currency || 'GBP',
             maxAttemptsReached: false,
+        });
+
+        const orderRefDelivery = bookingData.orderTrackId || bookingData.id;
+        notifyAdminAttemptEvent({
+            alertType: 'delivery_failed',
+            bookingData,
+            title: 'Delivery failed — reschedule needed',
+            body: `Order #${orderRefDelivery}: delivery attempt failed. Customer must reschedule delivery.`,
+            extra: {
+                attemptType: 'delivery',
+                deliveryAttemptCount: newDeliveryCount,
+            },
         });
 
         return {

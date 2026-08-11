@@ -16,6 +16,7 @@ const agentSettlementController = require('../controllers/Admin/agentSettlementC
 const invoicePaymentFailureController = require('../controllers/Admin/invoicePaymentFailureController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
+const adminAlertPreferencesController = require('../controllers/Admin/adminAlertPreferencesController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 
 
@@ -687,6 +688,23 @@ router.post(
 router.post(
   '/notifications/send',
   asyncMiddleware(adminPushNotificationController.sendNotification)
+)
+
+//!-----------------------------------Admin Alert Preferences (automated ops notifications)------------------------------------>>>>
+router.get(
+  '/notification-preferences/catalog',
+  validateAccessToken,
+  asyncMiddleware(adminAlertPreferencesController.getCatalog)
+)
+router.get(
+  '/notification-preferences',
+  validateAccessToken,
+  asyncMiddleware(adminAlertPreferencesController.getPreferences)
+)
+router.patch(
+  '/notification-preferences',
+  validateAccessToken,
+  asyncMiddleware(adminAlertPreferencesController.updatePreferences)
 )
 
 //!-----------------------------------Service Comparison (customer original vs agent invoice)------------------------------------>>>>

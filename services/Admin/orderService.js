@@ -25,6 +25,7 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
+const invoiceManagementService = require('../Agent/invoiceManagementService');
 const {
     resolveAgentCommissionPercent,
     resolveAgentCommissionBase,
@@ -518,6 +519,16 @@ class OrderService {
             countryCtx.ianaTimeZone,
             0
         );
+
+        try {
+            enriched.paymentSummary =
+                await invoiceManagementService.getPaymentSummaryForBooking(orderId);
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] paymentSummary unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
 
         return enriched;
     }
@@ -1051,6 +1062,7 @@ class OrderService {
             if (billingData.pickupDriverEarning !== undefined) billingUpdateData.pickupDriverEarning = billingData.pickupDriverEarning;
             if (billingData.deliveryDriverEarning !== undefined) billingUpdateData.deliveryDriverEarning = billingData.deliveryDriverEarning;
             if (billingData.paymentStatus !== undefined) billingUpdateData.paymentStatus = billingData.paymentStatus;
+            if (billingData.total !== undefined) orderUpdateData.orderAmount = billingData.total;
 
             const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
 

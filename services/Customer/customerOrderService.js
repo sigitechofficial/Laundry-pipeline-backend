@@ -744,6 +744,7 @@ async function notifyAdminNoEligibleAgent(bookingId, zoneId) {
                 bookingId: Number(bookingId),
                 zoneId: zoneId != null ? Number(zoneId) : null,
                 type: "no_eligible_agent_for_services",
+                alertType: "no_eligible_agent",
             }
         );
         console.log(

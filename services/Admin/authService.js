@@ -1,4 +1,4 @@
-const { users, features, zone, permissions } = require('../../models');
+const { users, features, zone, permissions, deviceToken } = require('../../models');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
@@ -39,9 +39,15 @@ class AuthService {
                 throw new UnauthorizedError('Invalid credentials. Please enter the correct password.');
             }
 
-            // Update device token if provided
+            // Update device token if provided (users.dvToken + deviceTokens for FCM delivery)
             if (dvToken) {
                 await users.update({ dvToken }, { where: { id: adminData.id } });
+                await deviceToken.destroy({ where: { userId: adminData.id } });
+                await deviceToken.create({
+                    tokenId: dvToken,
+                    status: true,
+                    userId: adminData.id,
+                });
             }
 
             // Get admin features

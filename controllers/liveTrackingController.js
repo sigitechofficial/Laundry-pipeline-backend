@@ -2,23 +2,23 @@
  * Customer + Agent live-tracking bootstrap endpoints.
  */
 
-const { booking } = require('../../models');
-const ResponseHelper = require('../../utils/responseHelper');
+const { booking } = require('../models');
+const ResponseHelper = require('../utils/responseHelper');
 const {
   ValidationError,
   NotFoundError,
   ForbiddenError,
   UniversalHttpError,
-} = require('../../middlewares/universalErrorHandler');
+} = require('../middlewares/universalErrorHandler');
 const {
   LIVE_TRACKING_ROOT,
   ACTIVE_STATUS_PICKUP,
   ACTIVE_STATUS_DELIVERY,
   getLiveTrackingSnapshot,
   openLiveTrackingSession,
-} = require('../../utils/liveTrackingRtdb');
-const { createLiveTrackingCustomToken } = require('../../utils/liveTrackingAuth');
-const { getFirebaseDatabaseUrl } = require('../../utils/notification');
+} = require('../utils/liveTrackingRtdb');
+const { createLiveTrackingCustomToken } = require('../utils/liveTrackingAuth');
+const { getFirebaseDatabaseUrl } = require('../utils/notification');
 const { StatusCodes } = require('http-status-codes');
 
 function isLiveTrackableStatus(statusId) {
