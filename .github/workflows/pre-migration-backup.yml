@@ -2,7 +2,7 @@
 # BEFORE switching Laundry to Careflow-style deploy.
 #
 # Does NOT modify live code or databases (read-only dumps + tar).
-# Uses appleboy/ssh-action + password secrets (same as sync-live-to-stage-db).
+# Uses appleboy/ssh-action with SSH_PRIVATE_KEY (password auth is broken on VPS).
 name: Pre-migration full backup (stage+prod)
 
 on:
@@ -56,7 +56,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 75m
           envs: SCRIPT_B64
           script: |
