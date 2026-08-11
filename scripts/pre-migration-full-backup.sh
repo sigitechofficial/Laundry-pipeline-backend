@@ -481,4 +481,3 @@ echo "  Code:  tar -xzf $OUT/code/prod-backend.tar.gz -C $PROD_ROOT"
 echo "  Code:  tar -xzf $OUT/code/stage-backend.tar.gz -C $STAGE_ROOT"
 echo "  DB:    gunzip -c $OUT/db/prod.sql.gz | mysql -u... -p... DBNAME"
 echo "  DB:    gunzip -c $OUT/db/stage.sql.gz | mysql -u... -p... DBNAME"
-)
