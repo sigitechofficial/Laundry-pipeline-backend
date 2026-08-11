@@ -255,6 +255,18 @@ router.get(
     checkPermissions,
     asyncMiddleware(liveTrackingController.getAgentLiveTracking)
 );
+router.post(
+    "/live-tracking/:bookingId/demo-stream",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.startDemoLiveTrackingStream)
+);
+router.delete(
+    "/live-tracking/:bookingId/demo-stream",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.stopDemoLiveTrackingStream)
+);
 // Pickup/delivery attempt options after Arrived (grace, fail, unattended)
 router.get(
     "/booking/:bookingId/attempt-options",

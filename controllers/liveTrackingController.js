@@ -213,3 +213,118 @@ exports.getAgentLiveTracking = async (req, res) => {
     reason: enabled ? null : 'not_in_transit',
   });
 };
+
+/**
+ * POST /agent/live-tracking/:bookingId/demo-stream
+ * Body: { loop?: boolean, intervalMs?: number, steps?: number }
+ * Starts an in-process fake GPS stream for customer Live map QA.
+ */
+exports.startDemoLiveTrackingStream = async (req, res) => {
+  const bookingId = parseInt(req.params.bookingId, 10);
+  const agentId = req.user?.id;
+
+  if (!Number.isFinite(bookingId)) {
+    throw new ValidationError('bookingId is required');
+  }
+
+  const bookingRow = await booking.findByPk(bookingId, {
+    attributes: [
+      'id',
+      'customerId',
+      'driverId',
+      'deliveryDriverId',
+      'bookingStatusId',
+      'pickupAddresId',
+      'dropOffAddressId',
+      'orderTrackId',
+    ],
+  });
+
+  if (!bookingRow) {
+    throw new NotFoundError(`Booking ${bookingId} not found`);
+  }
+
+  const statusId = Number(bookingRow.bookingStatusId);
+  const assignedDriverId =
+    statusId === ACTIVE_STATUS_DELIVERY
+      ? bookingRow.deliveryDriverId || bookingRow.driverId
+      : bookingRow.driverId;
+
+  if (!assignedDriverId || Number(assignedDriverId) !== Number(agentId)) {
+    throw new ForbiddenError('You are not the assigned driver for this booking');
+  }
+
+  const {
+    startDemoStream,
+  } = require('../services/demoLiveTrackingStreamService');
+
+  const loop = req.body?.loop !== false && req.body?.loop !== 'false';
+  const intervalMs = Math.max(
+    500,
+    parseInt(req.body?.intervalMs, 10) || 2000
+  );
+  const steps = Math.max(5, parseInt(req.body?.steps, 10) || 40);
+
+  try {
+    const result = await startDemoStream({
+      bookingId,
+      bookingRow,
+      agentId,
+      intervalMs,
+      steps,
+      loop,
+    });
+    return ResponseHelper.success(res, 'Demo live tracking stream started', result);
+  } catch (err) {
+    if (err.code === 'NOT_IN_TRANSIT') {
+      throw new ValidationError(err.message);
+    }
+    throw new UniversalHttpError(
+      err.message || 'Could not start demo stream',
+      StatusCodes.SERVICE_UNAVAILABLE,
+      { code: err.code || 'DEMO_STREAM_FAILED' }
+    );
+  }
+};
+
+/**
+ * DELETE /agent/live-tracking/:bookingId/demo-stream
+ */
+exports.stopDemoLiveTrackingStream = async (req, res) => {
+  const bookingId = parseInt(req.params.bookingId, 10);
+  const agentId = req.user?.id;
+
+  if (!Number.isFinite(bookingId)) {
+    throw new ValidationError('bookingId is required');
+  }
+
+  const bookingRow = await booking.findByPk(bookingId, {
+    attributes: ['id', 'driverId', 'deliveryDriverId', 'bookingStatusId'],
+  });
+  if (!bookingRow) {
+    throw new NotFoundError(`Booking ${bookingId} not found`);
+  }
+
+  const statusId = Number(bookingRow.bookingStatusId);
+  const assignedDriverId =
+    statusId === ACTIVE_STATUS_DELIVERY
+      ? bookingRow.deliveryDriverId || bookingRow.driverId
+      : bookingRow.driverId;
+
+  if (!assignedDriverId || Number(assignedDriverId) !== Number(agentId)) {
+    throw new ForbiddenError('You are not the assigned driver for this booking');
+  }
+
+  const {
+    stopDemoStream,
+    isDemoStreamRunning,
+  } = require('../services/demoLiveTrackingStreamService');
+
+  const wasRunning = isDemoStreamRunning(bookingId);
+  stopDemoStream(bookingId);
+
+  return ResponseHelper.success(res, 'Demo live tracking stream stopped', {
+    bookingId,
+    stopped: wasRunning,
+  });
+};
