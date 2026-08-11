@@ -12,7 +12,7 @@ const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
 const {
     requireShopOwner,
-    requireShopManagerOrOwner,
+    requireCapability,
 } = require("../middlewares/requireShopOwner");
 const {
     postcodeAutocompleteRateLimit,
@@ -212,12 +212,14 @@ router.get(
 router.post(
     "/acceptOrder",
     validateAccessToken,
+    requireCapability("canAcceptOrders"),
     asyncMiddleware(agentController.agentAcceptOrder)
 );
 //Agent reject/decline incoming booking (hidden from this agent only)
 router.post(
     "/rejectOrder",
     validateAccessToken,
+    requireCapability("canAcceptOrders"),
     checkPermissions,
     asyncMiddleware(agentController.agentRejectOrder)
 );
@@ -225,6 +227,11 @@ router.post(
 // router.get('/agentInvoiceMake',validateAccessToken,asyncMiddleware(agentController.orderDetailsforInvoice))
 //Get All Services
 router.get("/getAllServices", asyncMiddleware(adminController.getAllServices));
+// Agent/admin support contact (zone-aware). Call button uses this — not customer phone.
+router.get("/supportContact", validateAccessToken, asyncMiddleware(async (req, res) => {
+    req.query.audience = "agent";
+    return adminController.getSupportContact(req, res);
+}));
 //Agent upload proof Images
 router.post(
     "/AddPickupDeliveryProof",
@@ -459,52 +466,57 @@ router.get(
 router.patch(
     "/agentAssignBookingToLaundryDriver",
     validateAccessToken,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.agentAssignBookingToLaundryDriver)
 );
 // Assign pickup or delivery staff
 router.patch(
     "/assignBookingStaff",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.assignBookingStaff)
 );
 // Unassign staff (return to shop owner)
 router.patch(
     "/unassignBookingStaff",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.unassignBookingStaff)
 );
 // Reassign staff
 router.patch(
     "/reassignBookingStaff",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.reassignBookingStaff)
 );
 // Staff jobs monitor board
 router.get(
     "/staffJobs",
     validateAccessToken,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.getStaffJobs)
 );
 //Agent Assign Order to Self
 router.patch(
     "/agentPickupOrderBySelf",
     validateAccessToken,
+    requireCapability("canRunAssignedJobs"),
     asyncMiddleware(agentController.agentPickupOrderBySelf)
 );
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
-//Add Roles
+//Add Roles (owner only — system roles 6/8 must not be casually mutated)
 router.post(
     "/AddLaundryRoles",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addRole)
 );
 //Update Roles
 router.patch(
     "/updateRoles",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.updateRoles)
 );
 //Get Roles
@@ -517,6 +529,7 @@ router.get(
 router.post(
     "/addClassifiedAs",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addClassifiedAs)
 );
 //Get ClassifiedAs
@@ -529,6 +542,7 @@ router.get(
 router.post(
     "/addfeatures",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addfeatures)
 );
 //Get Features
@@ -542,7 +556,7 @@ router.get(
 router.post(
     "/addEmployee",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canManageTeam"),
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.addEmployee)
 );
@@ -550,7 +564,7 @@ router.post(
 router.patch(
     "/updateEmployee",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canManageTeam"),
     checkPermissions,
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.updateEmployee)
@@ -559,7 +573,7 @@ router.patch(
 router.patch(
     "/updateEmployeeStatus",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canManageTeam"),
     checkPermissions,
     asyncMiddleware(agentController.changeEmployeeStatus)
 );
@@ -567,14 +581,14 @@ router.patch(
 router.delete(
     "/deleteEmployee/:employeeId",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canManageTeam"),
     asyncMiddleware(agentController.deleteEmployee)
 );
 //Get All Employees
 router.get(
     "/getAllEmployees",
     validateAccessToken,
-    requireShopManagerOrOwner,
+    requireCapability("canManageTeam"),
     checkPermissions,
     asyncMiddleware(agentController.getAllEmployees)
 );

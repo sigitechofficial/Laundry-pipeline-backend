@@ -5,7 +5,6 @@ const {
     bussinessInformation,
     driverInZones,
     roles,
-    permissions,
     booking,
     sequelize,
 } = require('../../models');
@@ -18,44 +17,13 @@ const {
     ValidationError,
 } = require('../../middlewares/universalErrorHandler');
 const path = require('path');
-
-/** Seeded id for "Laundry Shop Driver" — also matched by role name (case-insensitive). */
-const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
-const LAUNDRY_SHOP_MANAGER_ROLE_ID = 8;
-
-function parsePermissionRole(raw) {
-    if (raw == null || raw === '') {
-        return [];
-    }
-    if (Array.isArray(raw)) {
-        return raw;
-    }
-    if (typeof raw === 'string') {
-        try {
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
-        } catch {
-            return [];
-        }
-    }
-    return [];
-}
-
-function buildPermissionRows(permissionRole, roleId) {
-    return (permissionRole || [])
-        .filter((ele) => ele?.id)
-        .map((ele) => {
-            const perms = ele?.permissions || {};
-            return {
-                featureId: ele.id,
-                roleId,
-                create: perms.create === true || perms.write === true,
-                read: perms.read === true,
-                update: perms.update === true || perms.write === true,
-                delete: perms.delete === true || perms.write === true,
-            };
-        });
-}
+const {
+    LAUNDRY_SHOP_DRIVER_ROLE_ID,
+    LAUNDRY_SHOP_MANAGER_ROLE_ID,
+} = require('../../utils/shopAgentContext');
+const {
+    CLASSIFIED_AS,
+} = require('../../constants/systemRoles');
 
 function isLaundryShopDriverRole(roleRecord) {
     if (!roleRecord) {
@@ -64,7 +32,7 @@ function isLaundryShopDriverRole(roleRecord) {
     const name = (roleRecord.name || '').trim().toLowerCase();
     return (
         name === 'laundry shop driver' ||
-        roleRecord.id === LAUNDRY_SHOP_DRIVER_ROLE_ID
+        Number(roleRecord.id) === LAUNDRY_SHOP_DRIVER_ROLE_ID
     );
 }
 
@@ -75,7 +43,7 @@ function isLaundryShopManagerRole(roleRecord) {
     const name = (roleRecord.name || '').trim().toLowerCase();
     return (
         name === 'laundry shop manager' ||
-        roleRecord.id === LAUNDRY_SHOP_MANAGER_ROLE_ID
+        Number(roleRecord.id) === LAUNDRY_SHOP_MANAGER_ROLE_ID
     );
 }
 
@@ -100,8 +68,7 @@ class AgentEmployeeManagementService {
      * @param {string} data.password - Password
      * @param {string} data.phoneNum - Phone number
      * @param {string} data.countryCode - Country code
-     * @param {number} data.roleId - Role ID
-     * @param {Array|string} [data.permissionRole] - Optional: sync role permissions (feature id + permissions); JSON string ok for multipart
+     * @param {number} data.roleId - Role ID (6 Driver or 8 Manager only)
      * @param {string} profileImg - Profile image path
      * @param {number} agentId - Agent ID
      * @returns {Object} Employee creation result (no password in payload)
@@ -115,7 +82,6 @@ class AgentEmployeeManagementService {
             phoneNum,
             countryCode,
             roleId,
-            permissionRole: permissionRoleRaw,
         } = data;
 
         if (
@@ -137,8 +103,8 @@ class AgentEmployeeManagementService {
             throw new ValidationError('roleId must be a valid number');
         }
 
-        const permissionRole = parsePermissionRole(permissionRoleRaw);
-        const permissionRows = buildPermissionRows(permissionRole, numericRoleId);
+        // permissionRole on add-employee is ignored — shared role permissions (6/8)
+        // must not be overwritten per shop. Use admin role-permission tools instead.
 
         const t = await sequelize.transaction();
 
@@ -152,10 +118,19 @@ class AgentEmployeeManagementService {
                 throw new ValidationError('Invalid or inactive role');
             }
 
+            if (
+                !isLaundryShopDriverRole(roleRecord) &&
+                !isLaundryShopManagerRole(roleRecord)
+            ) {
+                throw new ValidationError(
+                    'Employees must use Laundry Shop Driver or Laundry Shop Manager role'
+                );
+            }
+
             const existingSameShop = await users.findOne({
                 where: {
                     email: email.trim(),
-                    classifiedAsId: 1,
+                    classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                     employeeOff: agentId,
                 },
                 transaction: t,
@@ -190,7 +165,7 @@ class AgentEmployeeManagementService {
                     phoneNum,
                     roleId: numericRoleId,
                     status: true,
-                    classifiedAsId: 1,
+                    classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                     image: profileImg,
                     countryCode,
                     verifiedAt: Date.now(),
@@ -229,16 +204,6 @@ class AgentEmployeeManagementService {
                 );
             }
 
-            let permissionsUpdated = false;
-            if (permissionRows.length > 0) {
-                await permissions.destroy({
-                    where: { roleId: numericRoleId },
-                    transaction: t,
-                });
-                await permissions.bulkCreate(permissionRows, { transaction: t });
-                permissionsUpdated = true;
-            }
-
             await t.commit();
 
             const fresh = await users.findByPk(user.id, {
@@ -257,7 +222,7 @@ class AgentEmployeeManagementService {
                 message: 'Employee added successfully',
                 data: {
                     employee: fresh ? toPublicEmployee(fresh) : toPublicEmployee(user),
-                    permissionsUpdated,
+                    permissionsUpdated: false,
                     roleId: numericRoleId,
                 },
             };
@@ -287,7 +252,7 @@ class AgentEmployeeManagementService {
         const employee = await users.findOne({
             where: {
                 id: employeeId,
-                classifiedAsId: 1,
+                classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                 employeeOff: agentId,
             },
         });
@@ -310,12 +275,33 @@ class AgentEmployeeManagementService {
 
         await this._assertOwnedEmployee(agentId, employeeId);
 
+        if (roleId !== undefined && roleId !== null && roleId !== '') {
+            const numericRoleId = parseInt(roleId, 10);
+            if (Number.isNaN(numericRoleId)) {
+                throw new ValidationError('roleId must be a valid number');
+            }
+            const roleRecord = await roles.findByPk(numericRoleId, {
+                attributes: ['id', 'name', 'status'],
+            });
+            if (!roleRecord || !roleRecord.status) {
+                throw new ValidationError('Invalid or inactive role');
+            }
+            if (
+                !isLaundryShopDriverRole(roleRecord) &&
+                !isLaundryShopManagerRole(roleRecord)
+            ) {
+                throw new ValidationError(
+                    'Employees must use Laundry Shop Driver or Laundry Shop Manager role'
+                );
+            }
+        }
+
         if (email) {
             const userExists = await users.findOne({
                 where: {
                     email: email,
                     id: { [Op.not]: employeeId },
-                    classifiedAsId: 1,
+                    classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                 },
             });
 
@@ -345,7 +331,7 @@ class AgentEmployeeManagementService {
         }
 
         const result = await users.update(updatedFields, {
-            where: { id: employeeId, employeeOff: agentId, classifiedAsId: 1 },
+            where: { id: employeeId, employeeOff: agentId, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE },
         });
 
         return {
@@ -369,7 +355,7 @@ class AgentEmployeeManagementService {
         const result = await users.update(
             { status },
             {
-                where: { id: employeeId, employeeOff: agentId, classifiedAsId: 1 },
+                where: { id: employeeId, employeeOff: agentId, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE },
             }
         );
 
@@ -403,7 +389,7 @@ class AgentEmployeeManagementService {
             where: {
                 id: employeeId,
                 employeeOff: agentId,
-                classifiedAsId: 1,
+                classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
             },
         });
 
@@ -425,7 +411,7 @@ class AgentEmployeeManagementService {
     async getAllEmployees(agentId) {
         const agentEmployee = await users.findAll({
             where: {
-                classifiedAsId: 1,
+                classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                 employeeOff: agentId
             },
             attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image'],

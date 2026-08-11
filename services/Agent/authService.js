@@ -20,6 +20,11 @@ const {
     parseTimeZoneFromBody,
     resolveAgentTimeZone,
 } = require('../../utils/agentTimeZone');
+const {
+    getShopCapabilities,
+    LAUNDRY_SHOP_DRIVER_ROLE_ID,
+    LAUNDRY_SHOP_MANAGER_ROLE_ID,
+} = require('../../utils/shopAgentContext');
 
 /**
  * Replaces all existing device tokens for a user with a single new one.
@@ -1174,6 +1179,11 @@ class AgentAuthService {
         }
 
         const connectAccountId = agentInfo?.[0]?.connectAccountId || null;
+        const ownerCapabilities = getShopCapabilities({
+            id: userFind.id,
+            classifiedAsId: userFind.classifiedAsId,
+            roleId: userFind.roleId,
+        });
 
         return {
             userId: String(userFind.id),
@@ -1190,6 +1200,12 @@ class AgentAuthService {
             features: featureData,
             isConnectAccountConnected,
             connectAccountId,
+            isEmployee: false,
+            isManager: false,
+            isDriver: false,
+            roleId: userFind.roleId ?? null,
+            classifiedAsId: userFind.classifiedAsId ?? null,
+            capabilities: ownerCapabilities,
             ianaTimeZone: resolveAgentTimeZone(data, userFind.ianaTimeZone),
             ...this._buildAgentApprovalConnectMeta({
                 agentApprovalStatus: userFind.agentApprovalStatus || 'approved',
@@ -1748,6 +1764,8 @@ class AgentAuthService {
 
         await redisCli.hSet(`id-${employeeData.id}`, { [dvToken]: accessToken });
 
+        const capabilities = getShopCapabilities(employeeData);
+
         return {
             id: employeeData.id,
             userId: String(employeeData.id),
@@ -1763,15 +1781,9 @@ class AgentAuthService {
             employeeOff: employeeData.employeeOff,
             addressId: shopAddress ? String(shopAddress.id) : null,
             isEmployee: true,
-            isManager: Number(employeeData.roleId) === 8,
-            isDriver: Number(employeeData.roleId) === 6,
-            capabilities: {
-                canManageShopOps: Number(employeeData.roleId) === 8,
-                canManageFinance: false,
-                canAcceptOrders: Number(employeeData.roleId) === 8,
-                canAssignStaff: Number(employeeData.roleId) === 8,
-                canManageTeam: Number(employeeData.roleId) === 8,
-            },
+            isManager: Number(employeeData.roleId) === LAUNDRY_SHOP_MANAGER_ROLE_ID,
+            isDriver: Number(employeeData.roleId) === LAUNDRY_SHOP_DRIVER_ROLE_ID,
+            capabilities,
             agentInfo: agentData,
             permissions: permissionData,
             accessToken

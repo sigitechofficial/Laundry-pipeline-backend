@@ -63,7 +63,17 @@ module.exports = (sequelize, DataTypes) => {
     type:DataTypes.JSON,
     allowNull:true,
     defaultValue:null
-  }
+  },
+  agentSupportPhone: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: 'Optional zone override for agent → admin support phone',
+  },
+  customerSupportPhone: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: 'Optional zone override for customer → support phone',
+  },
   }, {
     sequelize,
     modelName: 'zone',

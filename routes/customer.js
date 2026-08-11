@@ -93,7 +93,10 @@ router.get('/allServices',asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail (registered or guest)
 router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
 // Public support contact (email, phone, help URL, hours) — from DB
-router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
+router.get('/supportContact', asyncMiddleware(async (req, res) => {
+    req.query.audience = req.query.audience || 'customer';
+    return adminController.getSupportContact(req, res);
+}))
 router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.getAccountDeletionReasons))
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
