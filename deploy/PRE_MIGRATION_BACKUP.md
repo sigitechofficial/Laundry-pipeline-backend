@@ -36,14 +36,37 @@ Symlink / pointer:
 
 Requires existing secrets used by Live→Stage sync: `SSH_HOST`, `SSH_USER`, `SSH_PORT`, `SSH_PASSWORD`, `STAGE_FTP_USERNAME`, `STAGE_FTP_PASSWORD`.
 
-## How to run (SSH on VPS)
+## How to run (cPanel Terminal / SSH on VPS) — preferred if Actions SSH fails
+
+If GitHub Actions shows `ssh: unable to authenticate`, update repo secrets
+`SSH_HOST` / `SSH_USER` / `SSH_PORT` / `SSH_PASSWORD` (or switch to an SSH key like Careflow),
+**or** run this once in **cPanel → Terminal** as user `sigisolutions`:
 
 ```bash
 export HOME=/home/sigisolutions
-bash /home/sigisolutions/stagelaundry.sigisolutions.net/scripts/pre-migration-full-backup.sh
-# or after first Actions run:
-bash /home/sigisolutions/deployments/laundry-pre-migration-backups/pre-migration-full-backup.sh
+mkdir -p /home/sigisolutions/deployments/laundry-pre-migration-backups
+cd /home/sigisolutions/deployments/laundry-pre-migration-backups
+
+# Paste/upload scripts/pre-migration-full-backup.sh here, then:
+chmod +x pre-migration-full-backup.sh
+bash pre-migration-full-backup.sh
 ```
+
+Or download the script from the repo on a machine that has git access, upload via cPanel File Manager to:
+
+```text
+/home/sigisolutions/deployments/laundry-pre-migration-backups/pre-migration-full-backup.sh
+```
+
+Then run the `bash` command above.
+
+After success you must see:
+
+```text
+BACKUP COMPLETE
+```
+
+and non-empty `db_prod` / `db_stage` lines in `MANIFEST.txt`.
 
 ## Restore code (example: prod)
 
