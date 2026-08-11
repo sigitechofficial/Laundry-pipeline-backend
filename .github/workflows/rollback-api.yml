@@ -1,0 +1,150 @@
+name: Rollback Laundry API
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, production]
+      rollback_type:
+        description: 'Rollback action'
+        required: true
+        type: choice
+        options:
+          - list-available
+          - previous-release
+          - specific-release
+          - latest-file-backup
+          - specific-file-backup
+      target:
+        description: 'Required for specific-release or specific-file-backup'
+        required: false
+        type: string
+      confirmation:
+        description: 'Type ROLLBACK to confirm (not required for list-available)'
+        required: false
+        type: string
+
+concurrency:
+  group: laundry-api-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    timeout-minutes: 45
+    steps:
+      - name: Validate
+        run: |
+          if [ "${{ github.event.inputs.rollback_type }}" != "list-available" ] && \
+             [ "${{ github.event.inputs.confirmation }}" != "ROLLBACK" ]; then
+            echo "Type ROLLBACK to confirm"
+            exit 1
+          fi
+
+      - name: Run rollback on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          ENV_NAME: ${{ github.event.inputs.environment }}
+          ROLLBACK_TYPE: ${{ github.event.inputs.rollback_type }}
+          TARGET: ${{ github.event.inputs.target }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 40m
+          envs: ENV_NAME,ROLLBACK_TYPE,TARGET
+          script: |
+            set -euo pipefail
+            export HOME=/home/sigisolutions
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+
+            if [ "$ENV_NAME" = "production" ]; then
+              LIVE_PATH=/home/sigisolutions/prodlaundry.sigisolutions.net
+              APP_URL=https://prodlaundry.sigisolutions.net/
+              PM2_APP_NAME=laundary
+              DEPLOY_ROOT=/home/sigisolutions/deployments/laundry-api
+            else
+              LIVE_PATH=/home/sigisolutions/stagelaundry.sigisolutions.net
+              APP_URL=https://stagelaundry.sigisolutions.net/
+              PM2_APP_NAME=laundary-stage
+              DEPLOY_ROOT=/home/sigisolutions/deployments/laundry-api-stage
+            fi
+
+            RELEASES_DIR="$DEPLOY_ROOT/releases"
+            BACKUPS_DIR="$DEPLOY_ROOT/backups"
+            CURRENT_FILE="$DEPLOY_ROOT/current-release.txt"
+            mkdir -p "$RELEASES_DIR" "$BACKUPS_DIR" "$DEPLOY_ROOT/logs"
+
+            if [ "$ROLLBACK_TYPE" = "list-available" ]; then
+              echo "Current:"; cat "$CURRENT_FILE" 2>/dev/null || echo "(none)"
+              echo "Releases:"; ls -1dt "$RELEASES_DIR"/* 2>/dev/null | sed 's#.*/##' | head -15 || true
+              echo "File backups:"; ls -1t "$BACKUPS_DIR"/file-before-*.tar.gz 2>/dev/null | sed 's#.*/##' | head -15 || true
+              exit 0
+            fi
+
+            PRE="$BACKUPS_DIR/pre-rollback-file-$(date -u +%Y%m%d-%H%M%SZ).tar.gz"
+            tar --exclude=node_modules --exclude=uploads --exclude=.git -czf "$PRE" -C "$LIVE_PATH" .
+            chmod 600 "$PRE"
+
+            SOURCE_TYPE=; SOURCE_PATH=
+            if [ "$ROLLBACK_TYPE" = "previous-release" ]; then
+              CURRENT="$(cat "$CURRENT_FILE" 2>/dev/null || true)"
+              for d in $(ls -1dt "$RELEASES_DIR"/* 2>/dev/null || true); do
+                [ "$(basename "$d")" != "$CURRENT" ] || continue
+                SOURCE_TYPE=release; SOURCE_PATH="$d"; break
+              done
+            elif [ "$ROLLBACK_TYPE" = "specific-release" ]; then
+              SOURCE_TYPE=release; SOURCE_PATH="$RELEASES_DIR/$TARGET"
+            elif [ "$ROLLBACK_TYPE" = "latest-file-backup" ]; then
+              SOURCE_TYPE=backup
+              SOURCE_PATH="$(ls -1t "$BACKUPS_DIR"/file-before-*.tar.gz 2>/dev/null | head -1 || true)"
+            elif [ "$ROLLBACK_TYPE" = "specific-file-backup" ]; then
+              SOURCE_TYPE=backup; SOURCE_PATH="$BACKUPS_DIR/$TARGET"
+            else
+              echo "Invalid rollback_type"; exit 1
+            fi
+
+            test -n "${SOURCE_PATH:-}"
+            TMP="$DEPLOY_ROOT/manual-rollback-temp"
+            rm -rf "$TMP"; mkdir -p "$TMP"
+            if [ "$SOURCE_TYPE" = "backup" ]; then
+              tar -xzf "$SOURCE_PATH" -C "$TMP"
+              DEPLOY_SOURCE="$TMP"
+            else
+              DEPLOY_SOURCE="$SOURCE_PATH"
+            fi
+            test -f "$DEPLOY_SOURCE/laundary.js"
+
+            rsync -az --delete \
+              --exclude=".env" --exclude=".env.*" --exclude=".htaccess" \
+              --exclude="uploads" --exclude="node_modules" \
+              --exclude="config/config.json" --exclude="firebase.json" \
+              "$DEPLOY_SOURCE/" "$LIVE_PATH/"
+
+            cd "$LIVE_PATH"
+            npm ci --omit=dev || npm install --production
+            if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
+              pm2 reload "$PM2_APP_NAME" --update-env
+            else
+              pm2 start "$LIVE_PATH/laundary.js" --name "$PM2_APP_NAME" --cwd "$LIVE_PATH" --update-env
+            fi
+            pm2 save
+
+            if [ "$SOURCE_TYPE" = "release" ]; then
+              basename "$SOURCE_PATH" > "$CURRENT_FILE"
+            else
+              echo "rollback-from-$(basename "$SOURCE_PATH")" > "$CURRENT_FILE"
+            fi
+
+            curl -fsS --retry 3 "$APP_URL" >/dev/null
+            echo "Rollback completed from $SOURCE_PATH"
+            echo "DB was NOT restored — use Restore Laundry API Database if needed."

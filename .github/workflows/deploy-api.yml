@@ -1,0 +1,196 @@
+# Careflow-style SSH deploy for Laundry API (no FTP).
+# main  → prodlaundry + PM2 laundary
+# stage → stagelaundry + PM2 laundary-stage
+name: Deploy Laundry API
+
+on:
+  # Auto-deploy stage on push. Prod = workflow_dispatch until you add `main` here (Careflow uses push main).
+  push:
+    branches: [stage]
+    paths-ignore:
+      - '.github/workflows/sync-live-to-stage-db.yml'
+      - '.github/workflows/pre-migration-backup.yml'
+      - '.github/workflows/pre-migration-backup-ftp.yml'
+      - 'deploy/PRE_MIGRATION_BACKUP.md'
+  workflow_dispatch:
+
+concurrency:
+  group: laundry-api-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package API release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Validate package
+        run: |
+          set -euo pipefail
+          test -f laundary.js
+          test -f package.json
+          test -f package-lock.json
+          test -d migrations
+          test -d models
+          test -d controllers
+          test -f scripts/remote-deploy-api.sh
+          test -f scripts/run-deploy-seeds.sh
+          chmod +x scripts/remote-deploy-api.sh scripts/run-deploy-seeds.sh
+
+      - name: Create release metadata
+        run: |
+          cat > release.json <<EOF
+          {
+            "app": "laundry-api",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "deployedBy": "${{ github.actor }}",
+            "runId": "${{ github.run_id }}",
+            "runNumber": "${{ github.run_number }}",
+            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+      - name: Package release (no node_modules / secrets)
+        run: |
+          set -euo pipefail
+          tar -czf laundry-api-release.tar.gz \
+            --exclude='node_modules' \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='uploads' \
+            --exclude='backups' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='config/config.json' \
+            --exclude='firebase.json' \
+            --exclude='examples' \
+            --exclude='graphify-out' \
+            --exclude='.careflow-review' \
+            --exclude='*.log' \
+            .
+          test -s laundry-api-release.tar.gz
+          ls -lh laundry-api-release.tar.gz
+          # sanity: entrypoint inside archive
+          tar -tzf laundry-api-release.tar.gz | grep -E '(^|/)laundary\.js$' | head
+          tar -tzf laundry-api-release.tar.gz | grep -E 'scripts/remote-deploy-api\.sh$' | head
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laundry-api-release
+          path: |
+            laundry-api-release.tar.gz
+            scripts/remote-deploy-api.sh
+          retention-days: 7
+
+  deploy:
+    name: Deploy via SSH
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 60
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: laundry-api-release
+
+      - name: Resolve target env
+        id: target
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "live_path=/home/sigisolutions/prodlaundry.sigisolutions.net" >> "$GITHUB_OUTPUT"
+            echo "app_url=https://prodlaundry.sigisolutions.net/" >> "$GITHUB_OUTPUT"
+            echo "pm2=laundary" >> "$GITHUB_OUTPUT"
+            echo "deploy_root=/home/sigisolutions/deployments/laundry-api" >> "$GITHUB_OUTPUT"
+            echo "app_name=laundry-api" >> "$GITHUB_OUTPUT"
+          else
+            echo "live_path=/home/sigisolutions/stagelaundry.sigisolutions.net" >> "$GITHUB_OUTPUT"
+            echo "app_url=https://stagelaundry.sigisolutions.net/" >> "$GITHUB_OUTPUT"
+            echo "pm2=laundary-stage" >> "$GITHUB_OUTPUT"
+            echo "deploy_root=/home/sigisolutions/deployments/laundry-api-stage" >> "$GITHUB_OUTPUT"
+            echo "app_name=laundry-api-stage" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload release + deploy script (SCP)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 30m
+          source: laundry-api-release.tar.gz,scripts/remote-deploy-api.sh
+          target: ${{ steps.target.outputs.deploy_root }}/incoming/
+          overwrite: true
+          strip_components: 0
+
+      - name: Rename incoming package + run remote deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          RELEASE_ID: ${{ github.sha }}
+          LIVE_PATH: ${{ steps.target.outputs.live_path }}
+          APP_URL: ${{ steps.target.outputs.app_url }}
+          PM2_APP_NAME: ${{ steps.target.outputs.pm2 }}
+          DEPLOY_ROOT: ${{ steps.target.outputs.deploy_root }}
+          APP_NAME: ${{ steps.target.outputs.app_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 55m
+          envs: RELEASE_ID,LIVE_PATH,APP_URL,PM2_APP_NAME,DEPLOY_ROOT,APP_NAME,GITHUB_RUN_NUMBER,GITHUB_RUN_ID,GITHUB_ACTOR,GITHUB_REF_NAME
+          script: |
+            set -euo pipefail
+            export HOME=/home/sigisolutions
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+
+            mkdir -p "$DEPLOY_ROOT/incoming" "$DEPLOY_ROOT/releases" "$DEPLOY_ROOT/backups" "$DEPLOY_ROOT/db-backups" "$DEPLOY_ROOT/logs"
+
+            # scp may drop files with nested path; normalize to incoming/<sha>.tar.gz
+            if [ -f "$DEPLOY_ROOT/incoming/laundry-api-release.tar.gz" ]; then
+              mv -f "$DEPLOY_ROOT/incoming/laundry-api-release.tar.gz" "$DEPLOY_ROOT/incoming/${RELEASE_ID}.tar.gz"
+            elif [ -f "$DEPLOY_ROOT/incoming/${RELEASE_ID}.tar.gz" ]; then
+              true
+            else
+              # search one level down
+              found="$(find "$DEPLOY_ROOT/incoming" -name 'laundry-api-release.tar.gz' | head -n1 || true)"
+              if [ -n "$found" ]; then
+                mv -f "$found" "$DEPLOY_ROOT/incoming/${RELEASE_ID}.tar.gz"
+              else
+                echo "Release tarball not found under $DEPLOY_ROOT/incoming"
+                find "$DEPLOY_ROOT/incoming" -maxdepth 3 -type f | head
+                exit 1
+              fi
+            fi
+
+            SCRIPT="$(find "$DEPLOY_ROOT/incoming" -name 'remote-deploy-api.sh' | head -n1 || true)"
+            if [ -z "$SCRIPT" ]; then
+              SCRIPT="$DEPLOY_ROOT/remote-deploy-api.sh"
+            fi
+            if [ ! -f "$SCRIPT" ]; then
+              echo "remote-deploy-api.sh missing"
+              exit 1
+            fi
+            cp "$SCRIPT" "$DEPLOY_ROOT/remote-deploy-api.sh"
+            chmod +x "$DEPLOY_ROOT/remote-deploy-api.sh"
+
+            export RELEASE_ID LIVE_PATH APP_URL PM2_APP_NAME DEPLOY_ROOT APP_NAME
+            export GITHUB_RUN_NUMBER GITHUB_RUN_ID GITHUB_ACTOR GITHUB_REF_NAME
+            bash "$DEPLOY_ROOT/remote-deploy-api.sh"
