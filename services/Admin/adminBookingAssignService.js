@@ -4,6 +4,7 @@ const {
     bussinessInformation,
     bookingHistory,
     proofOfDeliveries,
+    zone,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
@@ -53,6 +54,16 @@ class AdminBookingAssignService {
             throw new NotFoundError("Booking not found");
         }
 
+        if (bookingRow.zoneId == null) {
+            throw new ValidationError(
+                "This order has no zone. Assign a zone before selecting a shop."
+            );
+        }
+
+        const zoneRow = await zone.findByPk(bookingRow.zoneId, {
+            attributes: ["id", "name"],
+        });
+
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         const assignBlockedReason = getAdminAssignBlockedReason(bookingRow);
         if (assignBlockedReason) {
@@ -66,16 +77,21 @@ class AdminBookingAssignService {
         );
         const todayDayOfWeek = wallClock.dayOfWeek;
 
+        // Strict zone filter — only laundry shops that belong to this booking's zone.
         const shops = await addressDb.findAll({
             where: {
-                zoneId: bookingRow.zoneId,
+                zoneId: Number(bookingRow.zoneId),
                 addressType: "LaundaryShopAddress",
+                status: true,
             },
-            attributes: ["id", "userId", "zoneId"],
+            attributes: ["id", "userId", "zoneId", "status"],
         });
 
         const shopList = [];
         for (const shop of shops) {
+            if (Number(shop.zoneId) !== Number(bookingRow.zoneId)) {
+                continue;
+            }
             const ownerId = shop.userId;
             const openNow = await isShopScheduleOpenNow(
                 ownerId,
@@ -95,6 +111,7 @@ class AdminBookingAssignService {
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
+                zoneId: Number(shop.zoneId),
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
@@ -106,18 +123,27 @@ class AdminBookingAssignService {
             });
         }
 
+        shopList.sort((a, b) =>
+            String(a.shopName).localeCompare(String(b.shopName), undefined, {
+                sensitivity: "base",
+            })
+        );
+
         const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 
         return {
             bookingId: bookingRow.id,
             orderTrackId: bookingRow.orderTrackId,
             invoiceStatus: bookingRow.invoiceStatus,
+            zoneId: Number(bookingRow.zoneId),
+            zoneName: zoneRow?.name || null,
             currentLaundryShopId: bookingRow.laundryShopId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
             collectionDate: bookingRow.collectionDate,
             collectionTimeFrom: bookingRow.collectionTimeFrom,
             collectionTimeTo: bookingRow.collectionTimeTo,
+            shopCount: shopList.length,
             shops: shopList,
         };
     }
@@ -135,11 +161,18 @@ class AdminBookingAssignService {
             );
         }
 
+        if (bookingRow.zoneId == null) {
+            throw new ValidationError(
+                "This order has no zone. Assign a zone before selecting a shop."
+            );
+        }
+
         const shop = await addressDb.findOne({
             where: {
                 id: laundryShopId,
                 addressType: "LaundaryShopAddress",
-                zoneId: bookingRow.zoneId,
+                zoneId: Number(bookingRow.zoneId),
+                status: true,
             },
             attributes: ["id", "userId", "zoneId"],
         });
