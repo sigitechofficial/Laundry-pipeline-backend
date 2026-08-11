@@ -303,6 +303,15 @@ class OrderService {
         const metrics = metricsRow?.[0] || {};
         const newOrders = this._toInt(metrics.newOrders);
 
+        let actionRequiredCount = 0;
+        try {
+            const actionRequiredOrdersService = require('./actionRequiredOrdersService');
+            const ar = await actionRequiredOrdersService.countActionRequiredOrders(filters);
+            actionRequiredCount = this._toInt(ar.actionRequiredCount);
+        } catch (e) {
+            console.warn('[getOrderCount] actionRequiredCount failed:', e.message);
+        }
+
         return {
             allOrderCount: this._toInt(metrics.allOrderCount),
             completedOrders: this._toInt(metrics.completedOrders),
@@ -314,6 +323,7 @@ class OrderService {
             activeOrders: this._toInt(metrics.activeOrders),
             repeatOrders,
             paymentFailuresCount: this._toInt(metrics.paymentFailuresCount),
+            actionRequiredCount,
         };
     }
 

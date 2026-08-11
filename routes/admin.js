@@ -14,6 +14,7 @@ const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
 const invoicePaymentFailureController = require('../controllers/Admin/invoicePaymentFailureController');
+const actionRequiredOrdersController = require('../controllers/Admin/actionRequiredOrdersController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
 const adminAlertPreferencesController = require('../controllers/Admin/adminAlertPreferencesController');
@@ -500,6 +501,13 @@ router.get(
 router.patch(
     '/payment-failures/:bookingId/resolve',
     asyncMiddleware(invoicePaymentFailureController.resolvePaymentFailure)
+)
+
+//!-----------------------------------Action required (admin attention feed)---------//
+router.get(
+    '/action-required-orders',
+    validateAccessToken,
+    asyncMiddleware(actionRequiredOrdersController.listActionRequired)
 )
 
 //!-----------------------------------Agent Settlement------------------------------------//
