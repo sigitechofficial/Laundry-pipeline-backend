@@ -291,26 +291,145 @@ JS
   return 0
 }
 
+# Prefer explicit laundry env vars on the server when config.json is polluted (e.g. fomino).
+dump_db_from_env_file() {
+  local label="$1"
+  local env_path="$2"
+  local out_sql="$3"
+
+  if [ ! -f "$env_path" ]; then
+    return 1
+  fi
+
+  echo "Trying DB dump for $label from env file $env_path"
+  node <<JS
+const fs = require('fs');
+const { spawnSync } = require('child_process');
+const text = fs.readFileSync('$env_path', 'utf8');
+const env = {};
+for (const line of text.split(/\\r?\\n/)) {
+  const t = line.trim();
+  if (!t || t.startsWith('#')) continue;
+  const i = t.indexOf('=');
+  if (i < 0) continue;
+  let k = t.slice(0, i).trim();
+  let v = t.slice(i + 1).trim().replace(/^['"]|['"]$/g, '');
+  env[k] = v;
+}
+
+function pick() {
+  const database =
+    env.DB_NAME || env.MYSQL_DATABASE || env.DATABASE_NAME || env.DB_DATABASE || '';
+  const user =
+    env.DB_USER || env.MYSQL_USER || env.DATABASE_USER || env.DB_USERNAME || '';
+  const pass =
+    env.DB_PASSWORD || env.MYSQL_PASSWORD || env.DATABASE_PASSWORD || env.DB_PASS || '';
+  const host =
+    env.DB_HOST || env.MYSQL_HOST || env.DATABASE_HOST || '127.0.0.1';
+  const port =
+    env.DB_PORT || env.MYSQL_PORT || env.DATABASE_PORT || '3306';
+  return { database, user, pass, host, port };
+}
+
+const cfg = pick();
+const textId = (cfg.database + ' ' + cfg.user).toLowerCase();
+console.log('Env DB candidate:', {
+  label: '$label',
+  host: cfg.host,
+  port: cfg.port,
+  user: cfg.user || '(empty)',
+  database: cfg.database || '(empty)',
+  password: 'hidden',
+});
+if (!cfg.database || !cfg.user) process.exit(3);
+if (/fomino/.test(textId)) {
+  console.error('Env DB looks like fomino — skipping');
+  process.exit(4);
+}
+if (!/laundr|laundry/.test(textId)) {
+  console.error('Env DB does not look like laundry — skipping');
+  process.exit(5);
+}
+
+function runDump(args) {
+  const out = fs.openSync('$out_sql', 'w');
+  const r = spawnSync('mysqldump', args, {
+    env: Object.assign({}, process.env, { MYSQL_PWD: cfg.pass }),
+    stdio: ['ignore', out, 'pipe'],
+    encoding: 'utf8',
+  });
+  fs.closeSync(out);
+  return r;
+}
+
+let r = runDump([
+  '-h', cfg.host,
+  '-P', String(cfg.port),
+  '-u', cfg.user,
+  '--single-transaction',
+  '--routines',
+  '--triggers',
+  '--events',
+  cfg.database,
+]);
+if (r.status !== 0) {
+  console.warn((r.stderr || '').slice(0, 500));
+  r = runDump([
+    '-h', cfg.host,
+    '-P', String(cfg.port),
+    '-u', cfg.user,
+    '--single-transaction',
+    cfg.database,
+  ]);
+}
+if (r.status !== 0) {
+  console.error(r.stderr || 'mysqldump failed');
+  process.exit(r.status || 1);
+}
+const st = fs.statSync('$out_sql');
+if (!st.size) process.exit(1);
+console.log('Dump bytes:', st.size);
+JS
+
+  gzip -f "$out_sql"
+  local gz="${out_sql}.gz"
+  [ -s "$gz" ] || return 1
+  chmod 600 "$gz"
+  local size sha
+  size="$(du -h "$gz" | awk '{print $1}')"
+  sha="$(sha256sum "$gz" | awk '{print $1}')"
+  echo "OK $gz ($size) sha256=$sha"
+  echo "db_${label}=$gz size=$size sha256=$sha source=env:$env_path" >> "$MANIFEST"
+  return 0
+}
+
 # --- Database dumps (laundry credentials only; never fall back to fomino) ---
 DB_OK=1
 export REQUIRE_LAUNDRY=1
 
-if ! dump_db_from_config "prod" "$PROD_ROOT/config/config.json" "$OUT/db/prod.sql"; then
-  echo "Prod config.json had no usable laundry DB — trying stage sync config / alternate paths"
-  if [ -f "$STAGE_ROOT/config/config.prod.sync.json" ] && \
-     dump_db_from_config "prod" "$STAGE_ROOT/config/config.prod.sync.json" "$OUT/db/prod.sql"; then
-    echo "Prod DB dumped via stage config.prod.sync.json"
-  elif [ -f "$PROD_ROOT/config/config.production.json" ] && \
-     dump_db_from_config "prod" "$PROD_ROOT/config/config.production.json" "$OUT/db/prod.sql"; then
-    echo "Prod DB dumped via config.production.json"
-  else
-    echo "ERROR: could not dump prod laundry database"
-    echo "db_prod=FAILED" >> "$MANIFEST"
-    DB_OK=0
-  fi
+dump_prod() {
+  dump_db_from_config "prod" "$PROD_ROOT/config/config.json" "$OUT/db/prod.sql" && return 0
+  [ -f "$STAGE_ROOT/config/config.prod.sync.json" ] && \
+    dump_db_from_config "prod" "$STAGE_ROOT/config/config.prod.sync.json" "$OUT/db/prod.sql" && return 0
+  [ -f "$PROD_ROOT/config/config.production.json" ] && \
+    dump_db_from_config "prod" "$PROD_ROOT/config/config.production.json" "$OUT/db/prod.sql" && return 0
+  dump_db_from_env_file "prod" "$PROD_ROOT/.env" "$OUT/db/prod.sql" && return 0
+  return 1
+}
+
+dump_stage() {
+  dump_db_from_config "stage" "$STAGE_ROOT/config/config.json" "$OUT/db/stage.sql" && return 0
+  dump_db_from_env_file "stage" "$STAGE_ROOT/.env" "$OUT/db/stage.sql" && return 0
+  return 1
+}
+
+if ! dump_prod; then
+  echo "ERROR: could not dump prod laundry database"
+  echo "db_prod=FAILED" >> "$MANIFEST"
+  DB_OK=0
 fi
 
-if ! dump_db_from_config "stage" "$STAGE_ROOT/config/config.json" "$OUT/db/stage.sql"; then
+if ! dump_stage; then
   echo "ERROR: could not dump stage laundry database"
   echo "db_stage=FAILED" >> "$MANIFEST"
   DB_OK=0

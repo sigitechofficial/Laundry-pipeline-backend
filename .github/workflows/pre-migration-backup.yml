@@ -58,6 +58,7 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           command_timeout: 75m
+          timeout: 60s
           envs: SCRIPT_B64
           script: |
             set -euo pipefail
