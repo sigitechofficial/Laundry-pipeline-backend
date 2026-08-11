@@ -140,7 +140,7 @@ dump_db_from_config() {
   fi
 
   echo "Dumping MySQL for $label using $config_path"
-  node <<JS
+  if ! node <<JS
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 
@@ -151,9 +151,10 @@ function isPlaceholder(cfg) {
 }
 
 function isLaundry(cfg) {
+  // Project historically uses "laundary" (typo) as well as "laundry".
   const text = (String(cfg.database || '') + ' ' + String(cfg.username || '')).toLowerCase();
   if (/fomino/.test(text)) return false;
-  return /laundr|laundry/.test(text);
+  return /laund/.test(text);
 }
 
 function summarize(raw) {
@@ -275,6 +276,17 @@ if (!st.size) {
 }
 console.log('Dump bytes:', st.size);
 JS
+  then
+    :
+  else
+    echo "ERROR: mysqldump/node failed for $label ($config_path)"
+    return 1
+  fi
+
+  if [ ! -s "$out_sql" ]; then
+    echo "ERROR: dump sql missing/empty for $label"
+    return 1
+  fi
 
   gzip -f "$out_sql"
   local gz="${out_sql}.gz"
@@ -346,7 +358,7 @@ if (/fomino/.test(textId)) {
   console.error('Env DB looks like fomino — skipping');
   process.exit(4);
 }
-if (!/laundr|laundry/.test(textId)) {
+if (!/laund/.test(textId)) {
   console.error('Env DB does not look like laundry — skipping');
   process.exit(5);
 }
