@@ -2,7 +2,7 @@
 # BEFORE switching Laundry to Careflow-style deploy.
 #
 # Does NOT modify live code or databases (read-only dumps + tar).
-# Uses SSH only (no FTP) — same transport style as Careflow.
+# Uses appleboy/ssh-action + password secrets (same as sync-live-to-stage-db).
 name: Pre-migration full backup (stage+prod)
 
 on:
@@ -37,26 +37,28 @@ jobs:
       - name: Checkout (backup script)
         uses: actions/checkout@v4
 
-      - name: Upload backup script over SCP
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          source: scripts/pre-migration-full-backup.sh
-          target: /home/sigisolutions/deployments/laundry-pre-migration-backups/
-          overwrite: true
-          strip_components: 1
+      - name: Encode backup script for SSH transfer
+        id: payload
+        run: |
+          set -euo pipefail
+          {
+            echo 'SCRIPT_B64<<ENDOFFILE'
+            base64 -w0 scripts/pre-migration-full-backup.sh
+            echo
+            echo 'ENDOFFILE'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run full backup over SSH
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          SCRIPT_B64: ${{ steps.payload.outputs.SCRIPT_B64 }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           password: ${{ secrets.SSH_PASSWORD }}
           command_timeout: 75m
+          envs: SCRIPT_B64
           script: |
             set -euo pipefail
             export HOME=/home/sigisolutions
@@ -68,7 +70,13 @@ jobs:
             SCRIPT="$BACKUP_ROOT/pre-migration-full-backup.sh"
 
             mkdir -p "$BACKUP_ROOT" "$STAGE_ROOT/scripts" "$PROD_ROOT/scripts"
-            test -f "$SCRIPT"
+
+            if [ -z "${SCRIPT_B64:-}" ]; then
+              echo "SCRIPT_B64 is empty — cannot write backup script"
+              exit 1
+            fi
+
+            echo "$SCRIPT_B64" | base64 -d > "$SCRIPT"
             chmod +x "$SCRIPT"
             cp "$SCRIPT" "$STAGE_ROOT/scripts/pre-migration-full-backup.sh"
             cp "$SCRIPT" "$PROD_ROOT/scripts/pre-migration-full-backup.sh"
@@ -77,6 +85,7 @@ jobs:
             ls -ld "$PROD_ROOT" "$STAGE_ROOT" || true
             ls -ld /home/sigisolutions/*laundry* 2>/dev/null || true
             ls -lh "$SCRIPT"
+            head -5 "$SCRIPT"
 
             bash "$SCRIPT"
 
