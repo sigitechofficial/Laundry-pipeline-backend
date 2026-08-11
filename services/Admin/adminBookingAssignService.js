@@ -268,41 +268,20 @@ class AdminBookingAssignService {
     }
 
     /**
-     * Enrich order list with assign flags using each booking zone's country timezone.
+     * Enrich order list with assign flags.
+     * Admin list UI only needs canAdminAssign — skip per-zone timezone + decline
+     * queries (those were unused by the panel and added multi-hundred-ms latency).
      */
     async enrichBookingsForAdminList(bookingInstances) {
-        const zoneIds = [
-            ...new Set(
-                bookingInstances
-                    .map((row) => {
-                        const plain = row.get ? row.get({ plain: true }) : row;
-                        return plain.zoneId;
-                    })
-                    .filter(Boolean)
-            ),
-        ];
-
-        const tzByZone = new Map();
-        await Promise.all(
-            zoneIds.map(async (zoneId) => {
-                const ctx = await getCountryContextFromZoneId(zoneId);
-                tzByZone.set(zoneId, ctx.ianaTimeZone);
-            })
-        );
-
-        const bookingIds = bookingInstances.map((row) => {
-            const plain = row.get ? row.get({ plain: true }) : row;
-            return plain.id;
-        });
-        const declineCountByBooking =
-            await agentBookingDeclineService.getDeclineCountByBookingIds(bookingIds);
-
         return bookingInstances.map((row) => {
             const plain = row.get ? row.get({ plain: true }) : row;
-            const tz =
-                tzByZone.get(plain.zoneId) || BUSINESS_TIME_ZONE;
-            const declineCount = declineCountByBooking.get(plain.id) || 0;
-            return this.enrichBookingForAdmin(plain, tz, declineCount);
+            return {
+                ...plain,
+                canAdminAssign: canAdminAssignOrReassignBooking(plain),
+                agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
+                agentAcceptExpired: false,
+                agentDeclineCount: 0,
+            };
         });
     }
 }

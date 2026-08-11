@@ -427,6 +427,20 @@ class OrderService {
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
 
+        const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
+
+        if (includeCounts) {
+            const [result, counts] = await Promise.all([
+                this.getOptimizedBookings(whereClause, page, limit, filters.search),
+                this.getOrderCount(filters),
+            ]);
+            return {
+                orderDetails: result.bookings,
+                pagination: result.pagination,
+                counts,
+            };
+        }
+
         const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
 
         return {
@@ -453,12 +467,24 @@ class OrderService {
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+        const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
+        const bookingsPromise = this.getOptimizedBookings(
+            whereClause,
+            page,
+            limit,
+            filters.search
+        );
+        const result = includeCounts
+            ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
+                  ([list, counts]) => ({ ...list, counts })
+              )
+            : await bookingsPromise;
 
         return {
             orderDetails: result.bookings,
             pendingOrdersCount: result.totalCount,
-            pagination: result.pagination
+            pagination: result.pagination,
+            ...(result.counts ? { counts: result.counts } : {}),
         };
     }
 
@@ -475,12 +501,24 @@ class OrderService {
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+        const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
+        const bookingsPromise = this.getOptimizedBookings(
+            whereClause,
+            page,
+            limit,
+            filters.search
+        );
+        const result = includeCounts
+            ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
+                  ([list, counts]) => ({ ...list, counts })
+              )
+            : await bookingsPromise;
 
         return {
             cancelOrders: result.bookings,
             cancelBookingCount: result.totalCount,
-            pagination: result.pagination
+            pagination: result.pagination,
+            ...(result.counts ? { counts: result.counts } : {}),
         };
     }
 
@@ -497,12 +535,24 @@ class OrderService {
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+        const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
+        const bookingsPromise = this.getOptimizedBookings(
+            whereClause,
+            page,
+            limit,
+            filters.search
+        );
+        const result = includeCounts
+            ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
+                  ([list, counts]) => ({ ...list, counts })
+              )
+            : await bookingsPromise;
 
         return {
             allCompletedOrders: result.bookings,
             completedOrdersCount: result.totalCount,
-            pagination: result.pagination
+            pagination: result.pagination,
+            ...(result.counts ? { counts: result.counts } : {}),
         };
     }
 
@@ -1270,12 +1320,24 @@ class OrderService {
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+        const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
+        const bookingsPromise = this.getOptimizedBookings(
+            whereClause,
+            page,
+            limit,
+            filters.search
+        );
+        const result = includeCounts
+            ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
+                  ([list, counts]) => ({ ...list, counts })
+              )
+            : await bookingsPromise;
 
         return {
             onHoldBookings: result.bookings,
             onHoldOrdersCount: result.totalCount,
             pagination: result.pagination,
+            ...(result.counts ? { counts: result.counts } : {}),
         };
     }
 
