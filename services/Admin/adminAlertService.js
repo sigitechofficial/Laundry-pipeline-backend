@@ -2,6 +2,7 @@
 
 const { users, booking, adminNotificationPreference } = require('../../models');
 const { sendNotification, sendNotificationToTokens } = require('../../utils/notification');
+const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 const {
     ADMIN_ALERT_TYPES,
     ADMIN_ALERT_TYPE_KEYS,
@@ -104,7 +105,7 @@ async function isAlertEnabledForAdmin(adminUserId, alertType) {
 }
 
 /**
- * Send push to admin using deviceTokens, falling back to users.dvToken.
+ * Send push to admin using deviceTokens, falling back to users.dvToken (real FCM only).
  */
 async function sendToAdminUser(admin, title, body, data) {
     const result = await sendNotification(admin.id, title, body, data);
@@ -112,13 +113,37 @@ async function sendToAdminUser(admin, title, body, data) {
         return { ...result, adminId: admin.id, usedFallback: false };
     }
 
+    // If deviceTokens had a placeholder like "no-fcm-token", treat as no token
+    const failedAsInvalid =
+        Array.isArray(result.failedTokens) &&
+        result.failedTokens.some(
+            (f) =>
+                f.code === 'messaging/invalid-argument' ||
+                f.code === 'messaging/invalid-registration-token'
+        );
+    if (failedAsInvalid || result.reason === 'NO_TOKENS') {
+        const { deviceToken } = require('../../models');
+        const { Op } = require('sequelize');
+        await deviceToken
+            .destroy({
+                where: {
+                    userId: admin.id,
+                    tokenId: { [Op.in]: ['no-fcm-token'] },
+                },
+            })
+            .catch(() => {});
+    }
+
     const dvToken = typeof admin.dvToken === 'string' ? admin.dvToken.trim() : '';
-    if (!dvToken) {
+    if (!isValidFcmRegistrationToken(dvToken)) {
         return {
             sent: false,
             adminId: admin.id,
-            reason: result.reason || 'NO_TOKENS',
+            reason: 'NO_VALID_FCM_TOKEN',
+            message:
+                'No valid FCM token for this admin. Use Refresh FCM on Alert Settings (or re-login after allowing notifications).',
             usedFallback: false,
+            priorResult: result,
         };
     }
 
@@ -339,7 +364,11 @@ async function sendDemoAlerts(adminUserId, options = {}) {
                 ? force && !preferenceEnabled
                     ? 'Demo sent (forced while toggle is Off).'
                     : 'Demo push sent to your devices.'
-                : 'Push failed — check browser notification permission and re-login to refresh FCM token.',
+                : (direct?.reason === 'NO_VALID_FCM_TOKEN' ||
+                    sendResult.results?.[0]?.result?.reason === 'NO_VALID_FCM_TOKEN' ||
+                    sendResult.results?.[0]?.result?.reason === 'NO_TOKENS')
+                  ? 'No valid FCM token. Click “Refresh FCM token” on Alert Settings (allow notifications), then Demo again.'
+                  : 'Push failed — check browser notification permission and re-login to refresh FCM token.',
             sendResult,
             direct,
         });

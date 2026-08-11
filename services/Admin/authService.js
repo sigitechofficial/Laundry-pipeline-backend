@@ -2,6 +2,8 @@ const { users, features, zone, permissions, deviceToken } = require('../../model
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
+const { Op } = require('sequelize');
+const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 
 // Universal error handling
 const { 
@@ -10,6 +12,30 @@ const {
     UnauthorizedError, 
     ConflictError 
 } = require('../../middlewares/universalErrorHandler');
+
+/**
+ * Persist FCM registration for push. Session/redis may still use a placeholder dvToken.
+ */
+async function upsertAdminFcmToken(userId, dvToken) {
+    const trimmed = typeof dvToken === 'string' ? dvToken.trim() : '';
+    if (!isValidFcmRegistrationToken(trimmed)) {
+        await deviceToken.destroy({
+            where: {
+                userId,
+                tokenId: { [Op.in]: ['no-fcm-token', trimmed].filter(Boolean) },
+            },
+        }).catch(() => {});
+        return false;
+    }
+    await users.update({ dvToken: trimmed }, { where: { id: userId } });
+    await deviceToken.destroy({ where: { userId } });
+    await deviceToken.create({
+        tokenId: trimmed,
+        status: true,
+        userId,
+    });
+    return true;
+}
 
 class AuthService {
     /**
@@ -39,15 +65,9 @@ class AuthService {
                 throw new UnauthorizedError('Invalid credentials. Please enter the correct password.');
             }
 
-            // Update device token if provided (users.dvToken + deviceTokens for FCM delivery)
+            // Only store real FCM tokens for push; placeholders stay session-only (Redis)
             if (dvToken) {
-                await users.update({ dvToken }, { where: { id: adminData.id } });
-                await deviceToken.destroy({ where: { userId: adminData.id } });
-                await deviceToken.create({
-                    tokenId: dvToken,
-                    status: true,
-                    userId: adminData.id,
-                });
+                await upsertAdminFcmToken(adminData.id, dvToken);
             }
 
             // Get admin features
@@ -79,7 +99,7 @@ class AuthService {
             // Generate access token
             const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
 
-            // Store token in Redis
+            // Store token in Redis (session key — may be placeholder)
             if (dvToken) {
                 await redisCli.hSet(`tsh${adminData.id}`, { [dvToken]: accessToken });
             }
@@ -92,7 +112,8 @@ class AuthService {
                 accessToken,
                 userName: adminData.companyName,
                 featureData: featureData,
-                zoneId: zoneId
+                zoneId: zoneId,
+                fcmRegistered: isValidFcmRegistrationToken(dvToken),
             };
 
             return output;
@@ -203,6 +224,27 @@ class AuthService {
         }
     }
 
+    /**
+     * Register / refresh FCM token for an already-logged-in admin (Alert Settings).
+     */
+    async registerFcmToken(adminId, dvToken) {
+        if (!adminId) {
+            throw new ValidationError('Admin id required');
+        }
+        if (!isValidFcmRegistrationToken(dvToken)) {
+            throw new ValidationError(
+                'No valid FCM token. Allow browser notifications, open the site over HTTPS, then try again.'
+            );
+        }
+        const ok = await upsertAdminFcmToken(adminId, dvToken);
+        return {
+            registered: ok,
+            tokenPreview: `${String(dvToken).trim().slice(0, 12)}…${String(dvToken).trim().slice(-8)}`,
+        };
+    }
+
 }
 
 module.exports = new AuthService();
+module.exports.upsertAdminFcmToken = upsertAdminFcmToken;
+module.exports.isValidFcmRegistrationToken = isValidFcmRegistrationToken;

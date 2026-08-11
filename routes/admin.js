@@ -711,6 +711,11 @@ router.post(
   validateAccessToken,
   asyncMiddleware(adminAlertPreferencesController.sendDemo)
 )
+router.post(
+  '/notification-preferences/register-fcm',
+  validateAccessToken,
+  asyncMiddleware(adminAlertPreferencesController.registerFcm)
+)
 
 //!-----------------------------------Service Comparison (customer original vs agent invoice)------------------------------------>>>>
 router.get('/bookings/:bookingId/service-comparison', asyncMiddleware(serviceComparisonController.getServiceComparison))

@@ -81,3 +81,15 @@ exports.sendDemo = async (req, res) => {
     const msg = `Demo alerts: ${data.successCount} sent, ${data.skippedCount} skipped, ${data.failedCount} failed`;
     return ResponseHelper.success(res, msg, data);
 };
+
+/**
+ * POST /admin/notification-preferences/register-fcm
+ * Body: { dvToken: string } — refresh FCM token without re-login
+ */
+exports.registerFcm = async (req, res) => {
+    const adminUserId = req.user?.id;
+    const dvToken = req.body?.dvToken || req.body?.token;
+    const authService = require('../../services/Admin/authService');
+    const data = await authService.registerFcmToken(adminUserId, dvToken);
+    return ResponseHelper.success(res, 'FCM token registered for admin alerts', data);
+};
