@@ -22,6 +22,10 @@ const T = {
     zones:                 zone.getTableName(),
     addressDb:             addressDb.getTableName(),
     bussinessInformation:  bussinessInformation.getTableName(),
+    shopReviews:           'shopReviews',
+    shopReviewReasons:     'shopReviewReasons',
+    reviewReasonCodes:     'reviewReasonCodes',
+    shopReviewStats:       'shopReviewStats',
 };
 
 // ---------------------------------------------------------------------------
@@ -483,6 +487,181 @@ async function getDailyEarningByShopReport(filters = {}) {
     }));
 }
 
+// ---------------------------------------------------------------------------
+// 9. Shop Ratings Performance Report
+// ---------------------------------------------------------------------------
+async function getShopRatingsReport(filters = {}) {
+    const { page, limit, minReviews = 1, sort = 'avg_desc' } = filters;
+    const { offset, limit: lim } = _paginate(page, limit);
+    const minN = Math.max(1, parseInt(minReviews) || 1);
+
+    let orderBy = 's.avgRating DESC, s.publishedCount DESC';
+    if (sort === 'avg_asc') orderBy = 's.avgRating ASC, s.publishedCount DESC';
+    if (sort === 'low_pct_desc') {
+        orderBy =
+            '((s.rating1 + s.rating2) / NULLIF(s.publishedCount, 0)) DESC, s.publishedCount DESC';
+    }
+    if (sort === 'count_desc') orderBy = 's.publishedCount DESC, s.avgRating DESC';
+
+    const [rows] = await sequelize.query(`
+        SELECT
+            bi.id AS shopId,
+            bi.shopName,
+            s.avgRating,
+            s.publishedCount,
+            s.ratingCount,
+            s.rating1,
+            s.rating2,
+            s.rating3,
+            s.rating4,
+            s.rating5,
+            s.topPositiveReasonCode,
+            s.topNegativeReasonCode,
+            ROUND(
+              ((s.rating1 + s.rating2) / NULLIF(s.publishedCount, 0)) * 100,
+              1
+            ) AS lowRatingPercent
+        FROM \`${T.shopReviewStats}\` s
+        JOIN \`${T.bussinessInformation}\` bi ON bi.id = s.businessInfoId
+        WHERE bi.deletedAt IS NULL
+          AND s.publishedCount >= ${minN}
+          ${filters.search ? `AND bi.shopName LIKE '%${filters.search.replace(/'/g, "''")}%'` : ''}
+        ORDER BY ${orderBy}
+        LIMIT ${lim} OFFSET ${offset}
+    `);
+
+    return rows.map((r, idx) => {
+        const avg = parseFloat(r.avgRating || 0);
+        const lowPct = parseFloat(r.lowRatingPercent || 0);
+        let performance = 'good';
+        if (avg < 3.5 || lowPct >= 25) performance = 'poor';
+        else if (avg < 4.0 || lowPct >= 15) performance = 'fair';
+
+        return {
+            sl: offset + idx + 1,
+            shopId: r.shopId,
+            shopName: r.shopName,
+            avgRating: avg.toFixed(2),
+            publishedCount: parseInt(r.publishedCount) || 0,
+            ratingCount: parseInt(r.ratingCount) || 0,
+            lowRatingPercent: lowPct.toFixed(1),
+            performance,
+            histogram: {
+                1: parseInt(r.rating1) || 0,
+                2: parseInt(r.rating2) || 0,
+                3: parseInt(r.rating3) || 0,
+                4: parseInt(r.rating4) || 0,
+                5: parseInt(r.rating5) || 0,
+            },
+            topPositiveReasonCode: r.topPositiveReasonCode || null,
+            topNegativeReasonCode: r.topNegativeReasonCode || null,
+        };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 10. Platform Reason Insights
+// ---------------------------------------------------------------------------
+async function getReviewReasonInsights(filters = {}) {
+    const dateCond =
+        filters.period && filters.period !== 'all'
+            ? _rawDateCondition(filters, 'sr.submittedAt')
+            : '';
+
+    const [rows] = await sequelize.query(`
+        SELECT
+            rc.id AS reasonId,
+            rc.code,
+            rc.label,
+            rc.sentiment,
+            COUNT(srr.id) AS selectionCount,
+            COUNT(DISTINCT sr.businessInfoId) AS shopCount,
+            COUNT(DISTINCT sr.id) AS reviewCount
+        FROM \`${T.reviewReasonCodes}\` rc
+        LEFT JOIN \`${T.shopReviewReasons}\` srr ON srr.reasonCodeId = rc.id
+        LEFT JOIN \`${T.shopReviews}\` sr
+          ON sr.id = srr.shopReviewId
+          AND sr.deletedAt IS NULL
+          AND sr.visibility = 'published'
+          ${dateCond}
+          ${filters.zoneId ? `AND EXISTS (
+              SELECT 1 FROM \`${T.bookings}\` b
+              WHERE b.id = sr.bookingId AND b.zoneId = ${parseInt(filters.zoneId)}
+            )` : ''}
+        WHERE rc.status = 1
+          ${filters.sentiment === 'positive' || filters.sentiment === 'negative'
+            ? `AND rc.sentiment = '${filters.sentiment}'`
+            : ''}
+        GROUP BY rc.id
+        ORDER BY selectionCount DESC, rc.sentiment ASC, rc.sortOrder ASC
+    `);
+
+    const positives = [];
+    const negatives = [];
+    for (const r of rows) {
+        const item = {
+            reasonId: r.reasonId,
+            code: r.code,
+            label: r.label,
+            sentiment: r.sentiment,
+            selectionCount: parseInt(r.selectionCount) || 0,
+            shopCount: parseInt(r.shopCount) || 0,
+            reviewCount: parseInt(r.reviewCount) || 0,
+        };
+        if (r.sentiment === 'positive') positives.push(item);
+        else negatives.push(item);
+    }
+
+    return {
+        positives,
+        negatives,
+        topPositive: positives[0] || null,
+        topNegative: negatives[0] || null,
+    };
+}
+
+// ---------------------------------------------------------------------------
+ // 11. Shops driving a specific reason code
+// ---------------------------------------------------------------------------
+async function getReasonShopBreakdown(filters = {}) {
+    const code = String(filters.reasonCode || '').trim().toUpperCase();
+    if (!code) return [];
+
+    const { page, limit } = filters;
+    const { offset, limit: lim } = _paginate(page, limit);
+    const dateCond =
+        filters.period && filters.period !== 'all'
+            ? _rawDateCondition(filters, 'sr.submittedAt')
+            : '';
+
+    const [rows] = await sequelize.query(`
+        SELECT
+            bi.id AS shopId,
+            bi.shopName,
+            COUNT(srr.id) AS selectionCount,
+            AVG(sr.rating) AS avgRatingInSubset
+        FROM \`${T.shopReviewReasons}\` srr
+        JOIN \`${T.reviewReasonCodes}\` rc ON rc.id = srr.reasonCodeId
+        JOIN \`${T.shopReviews}\` sr ON sr.id = srr.shopReviewId
+        JOIN \`${T.bussinessInformation}\` bi ON bi.id = sr.businessInfoId
+        WHERE sr.deletedAt IS NULL
+          AND sr.visibility = 'published'
+          AND rc.code = '${code.replace(/'/g, "''")}'
+          ${dateCond}
+        GROUP BY bi.id
+        ORDER BY selectionCount DESC
+        LIMIT ${lim} OFFSET ${offset}
+    `);
+
+    return rows.map((r, idx) => ({
+        sl: offset + idx + 1,
+        shopId: r.shopId,
+        shopName: r.shopName,
+        selectionCount: parseInt(r.selectionCount) || 0,
+        avgRatingInSubset: parseFloat(r.avgRatingInSubset || 0).toFixed(2),
+    }));
+}
+
 module.exports = {
     getTopServicesReport,
     getHourlyReport,
@@ -491,5 +670,8 @@ module.exports = {
     getTopShopsReport,
     getDailyEarningReport,
     getDailyEarningByZoneReport,
-    getDailyEarningByShopReport
+    getDailyEarningByShopReport,
+    getShopRatingsReport,
+    getReviewReasonInsights,
+    getReasonShopBreakdown,
 };

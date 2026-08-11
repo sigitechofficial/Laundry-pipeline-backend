@@ -4,6 +4,7 @@ const router = express();
 const agentAuthController = require("../controllers/Agent/authController");
 const agentController = require("../controllers/Agent/agents");
 const bookingAttemptController = require("../controllers/Agent/bookingAttemptController");
+const shopReviewAgentController = require("../controllers/Agent/shopReviewController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
@@ -822,6 +823,13 @@ router.post(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.sendNotificationToMultiple)
+);
+
+//!----------------------------Shop Reviews Summary---------------------//
+router.get(
+    '/shopReviews/summary',
+    validateAccessToken,
+    asyncMiddleware(shopReviewAgentController.getShopReviewSummary)
 );
 
 module.exports = router;

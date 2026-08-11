@@ -91,6 +91,34 @@ async function getDailyEarningByShopReport(req, res) {
     return ResponseHelper.success(res, 'Daily Earning Report by Shop', { filters, data });
 }
 
+async function getShopRatingsReport(req, res) {
+    const filters = {
+        ...extractFilters(req),
+        minReviews: req.query.minReviews,
+        sort: req.query.sort,
+    };
+    const data = await reportService.getShopRatingsReport(filters);
+    return ResponseHelper.success(res, 'Shop Ratings Performance Report', { filters, data });
+}
+
+async function getReviewReasonInsights(req, res) {
+    const filters = {
+        ...extractFilters(req),
+        sentiment: req.query.sentiment,
+    };
+    const data = await reportService.getReviewReasonInsights(filters);
+    return ResponseHelper.success(res, 'Review Reason Insights', { filters, data });
+}
+
+async function getReasonShopBreakdown(req, res) {
+    const filters = {
+        ...extractFilters(req),
+        reasonCode: req.query.reasonCode || req.params.reasonCode,
+    };
+    const data = await reportService.getReasonShopBreakdown(filters);
+    return ResponseHelper.success(res, 'Reason Shop Breakdown', { filters, data });
+}
+
 module.exports = {
     getTopServicesReport,
     getHourlyReport,
@@ -99,5 +127,8 @@ module.exports = {
     getTopShopsReport,
     getDailyEarningReport,
     getDailyEarningByZoneReport,
-    getDailyEarningByShopReport
+    getDailyEarningByShopReport,
+    getShopRatingsReport,
+    getReviewReasonInsights,
+    getReasonShopBreakdown,
 };

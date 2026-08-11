@@ -19,6 +19,7 @@ const notifyLogsController = require('../controllers/Admin/notifyLogsController'
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
 const adminAlertPreferencesController = require('../controllers/Admin/adminAlertPreferencesController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
+const shopReviewController = require('../controllers/Admin/shopReviewController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -295,6 +296,18 @@ router.get('/getAccountDeletionReasons', asyncMiddleware(adminController.getAcco
 router.post('/createAccountDeletionReason', asyncMiddleware(adminController.createAccountDeletionReason))
 router.patch('/updateAccountDeletionReason/:id', asyncMiddleware(adminController.updateAccountDeletionReason))
 router.delete('/deleteAccountDeletionReason/:id', asyncMiddleware(adminController.deleteAccountDeletionReason))
+
+//!-------------------------Shop Review Reason Codes--------------------------------------------------------//
+router.get('/getReviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
+router.post('/createReviewReasonCode', asyncMiddleware(shopReviewController.createReviewReasonCode))
+router.patch('/updateReviewReasonCode/:id', asyncMiddleware(shopReviewController.updateReviewReasonCode))
+router.delete('/deleteReviewReasonCode/:id', asyncMiddleware(shopReviewController.deleteReviewReasonCode))
+
+//!-------------------------Shop Reviews (moderation inbox)-------------------------------------------------//
+router.get('/shopReviews', asyncMiddleware(shopReviewController.listShopReviews))
+router.get('/shopReviews/:id', asyncMiddleware(shopReviewController.getShopReviewById))
+router.patch('/shopReviews/:id/hide', asyncMiddleware(shopReviewController.hideShopReview))
+router.patch('/shopReviews/:id/unhide', asyncMiddleware(shopReviewController.unhideShopReview))
 
 //!-------------------------Add-On Categories------------------------------------------------------------------//
 router.post('/createAddOnCategory', asyncMiddleware(adminController.createAddOnCategory))
@@ -680,6 +693,12 @@ router.get('/reports/daily-earnings', asyncMiddleware(reportsController.getDaily
 router.get('/reports/daily-earnings/zone', asyncMiddleware(reportsController.getDailyEarningByZoneReport))
 // 8. Daily Earning Report by Shop
 router.get('/reports/daily-earnings/shop', asyncMiddleware(reportsController.getDailyEarningByShopReport))
+// 9. Shop Ratings Performance
+router.get('/reports/shop-ratings', asyncMiddleware(reportsController.getShopRatingsReport))
+// 10. Review Reason Insights
+router.get('/reports/review-reason-insights', asyncMiddleware(reportsController.getReviewReasonInsights))
+// 11. Reason × Shop breakdown
+router.get('/reports/review-reason-shops', asyncMiddleware(reportsController.getReasonShopBreakdown))
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))

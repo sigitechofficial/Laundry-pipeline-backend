@@ -3,6 +3,7 @@ const router =express()
 const customerAuthControllers=require('../controllers/Customer/customerAuth')
 const customerOtherController=require('../controllers/Customer/customerOrders')
 const customerPaymentMethodsController=require('../controllers/Customer/customerPaymentMethods')
+const shopReviewController=require('../controllers/Customer/shopReviewController')
 const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
@@ -98,6 +99,13 @@ router.get('/supportContact', asyncMiddleware(async (req, res) => {
     return adminController.getSupportContact(req, res);
 }))
 router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.getAccountDeletionReasons))
+
+//!----------------------------Shop Reviews---------------------//
+router.get('/reviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
+router.get('/bookings/:bookingId/reviewEligibility', validateAccessToken, asyncMiddleware(shopReviewController.getReviewEligibility))
+router.post('/shopReviews', validateAccessToken, asyncMiddleware(shopReviewController.createShopReview))
+router.get('/shops/:businessInfoId/reviews', asyncMiddleware(shopReviewController.getShopReviews))
+
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 
