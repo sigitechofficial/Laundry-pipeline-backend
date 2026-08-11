@@ -1,0 +1,121 @@
+# One-shot (or repeatable) full backup of stage+prod code and MySQL
+# BEFORE switching Laundry to Careflow-style deploy.
+#
+# Does NOT modify live code or databases (read-only dumps + tar).
+name: Pre-migration full backup (stage+prod)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type BACKUP to confirm'
+        required: true
+        type: string
+
+concurrency:
+  group: laundry-pre-migration-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Snapshot stage + prod code and DBs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "BACKUP" ]; then
+            echo "Blocked. Type BACKUP in the confirmation field."
+            exit 1
+          fi
+
+      - name: Checkout (backup script)
+        uses: actions/checkout@v4
+
+      - name: Upload backup script to stage via FTP
+        env:
+          STAGE_FTP_USERNAME: ${{ secrets.STAGE_FTP_USERNAME }}
+          STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from ftplib import FTP, error_perm
+          import os, time
+
+          def connect():
+              last = None
+              for i in range(1, 6):
+                  try:
+                      ftp = FTP()
+                      ftp.connect('sigisolutions.net', 21, timeout=90)
+                      ftp.login(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'])
+                      ftp.set_pasv(True)
+                      return ftp
+                  except Exception as e:
+                      last = e
+                      print('FTP retry', i, e)
+                      time.sleep(5 * i)
+              raise last
+
+          def upload(local, remote):
+              ftp = connect()
+              parts = remote.split('/')[:-1]
+              cur = ''
+              for p in parts:
+                  cur = (cur + '/' + p) if cur else p
+                  try:
+                      ftp.mkd(cur)
+                  except error_perm:
+                      pass
+              with open(local, 'rb') as fh:
+                  ftp.storbinary('STOR ' + remote, fh)
+              ftp.quit()
+              print('Uploaded', remote)
+
+          upload('scripts/pre-migration-full-backup.sh', 'scripts/pre-migration-full-backup.sh')
+          PY
+
+      - name: Run full backup over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          command_timeout: 75m
+          script: |
+            set -euo pipefail
+            export HOME=/home/sigisolutions
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+
+            PROD_ROOT=/home/sigisolutions/prodlaundry.sigisolutions.net
+            STAGE_ROOT=/home/sigisolutions/stagelaundry.sigisolutions.net
+            BACKUP_ROOT=/home/sigisolutions/deployments/laundry-pre-migration-backups
+
+            mkdir -p "$BACKUP_ROOT" "$STAGE_ROOT/scripts" "$PROD_ROOT/scripts"
+
+            # Prefer script on stage (just uploaded); also copy to prod scripts for local use
+            SCRIPT="$STAGE_ROOT/scripts/pre-migration-full-backup.sh"
+            test -f "$SCRIPT"
+            chmod +x "$SCRIPT"
+            cp "$SCRIPT" "$PROD_ROOT/scripts/pre-migration-full-backup.sh" || true
+            cp "$SCRIPT" "$BACKUP_ROOT/pre-migration-full-backup.sh" || true
+
+            echo "Paths:"
+            ls -ld "$PROD_ROOT" "$STAGE_ROOT" || true
+            ls -ld /home/sigisolutions/*laundry* 2>/dev/null || true
+
+            bash "$SCRIPT"
+
+            echo "==== LATEST POINTER ===="
+            cat "$BACKUP_ROOT/LATEST.txt"
+            LATEST="$(cat "$BACKUP_ROOT/LATEST.txt")"
+            echo "==== MANIFEST ===="
+            cat "$BACKUP_ROOT/$LATEST/MANIFEST.txt"
+            echo "==== FILE SIZES ===="
+            du -sh "$BACKUP_ROOT/$LATEST"/* || true
+            find "$BACKUP_ROOT/$LATEST" -type f -exec ls -lh {} \;

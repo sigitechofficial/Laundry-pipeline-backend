@@ -4520,14 +4520,11 @@ exports.addClassifiedAs = async (req, res) => {
 }
 
 /*
- * Get ClassifiedAs
+ * Get ClassifiedAs — agent app: Laundry Shop Employee only (not Admin Employee)
  */
 exports.getClassifiedAs = async (req, res) => {
-    const findData = await classifiedAs.findAll({
-        attributes: ["id", "name"],
-    });
-
-    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
+    const { getClassifiedAs } = await agentRolePermissionService.getClassifiedAs();
+    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", getClassifiedAs);
 }
 
 /*

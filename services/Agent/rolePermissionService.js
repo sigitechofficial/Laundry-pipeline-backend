@@ -126,81 +126,22 @@ class AgentRolePermissionService {
     }
 
     /**
-     * Roles for the agent app only:
-     * - Always include Driver (6) + Manager (8)
-     * - Never include Zone Admin (7) or Admin-only permission roles
+     * Roles for the agent app team picker:
+     * Only system shop staff — Driver (6) + Manager (8).
+     * Never Zone Admin / Admin Employee roles / leftover custom admin-ish roles.
      */
     async getAllRoles() {
-        const [adminFeatureRows, agentFeatureRows] = await Promise.all([
-            permissions.findAll({
-                attributes: ['roleId'],
-                include: [
-                    {
-                        model: features,
-                        required: true,
-                        where: { featureOf: 'Admin' },
-                        attributes: [],
-                    },
-                ],
-                raw: true,
-            }),
-            permissions.findAll({
-                attributes: ['roleId'],
-                include: [
-                    {
-                        model: features,
-                        required: true,
-                        where: { featureOf: { [Op.in]: [...AGENT_APP_FEATURE_OF] } },
-                        attributes: [],
-                    },
-                ],
-                raw: true,
-            }),
-        ]);
-
-        const roleIdsWithAdminFeature = new Set(
-            adminFeatureRows.map((r) => r.roleId).filter(Boolean)
-        );
-        const roleIdsWithAgentAppFeature = new Set(
-            agentFeatureRows.map((r) => r.roleId).filter(Boolean)
-        );
-
-        const agentOnlyRoleIds = [...roleIdsWithAgentAppFeature].filter(
-            (id) => id && !roleIdsWithAdminFeature.has(id)
-        );
-
-        const roleIdSet = new Set([
-            ...agentOnlyRoleIds,
-            ...AGENT_SHOP_STAFF_ROLE_IDS,
-        ]);
-
-        // Never surface admin-portal roles
-        roleIdSet.delete(SYSTEM_ROLES.ZONE_ADMIN);
-        for (const adminId of roleIdsWithAdminFeature) {
-            if (!AGENT_SHOP_STAFF_ROLE_IDS.includes(adminId)) {
-                roleIdSet.delete(adminId);
-            }
-        }
-
-        const roleIds = [...roleIdSet];
-
-        if (roleIds.length === 0) {
-            return { getRoles: [] };
-        }
-
         const roleRows = await roles.findAll({
             where: {
                 status: true,
-                id: { [Op.in]: roleIds },
+                id: { [Op.in]: [...AGENT_SHOP_STAFF_ROLE_IDS] },
             },
             attributes: ['id', 'name', 'status'],
-            order: [['name', 'ASC']],
+            order: [['id', 'ASC']],
         });
 
-        const getRoles = roleRows.filter((r) => !isAdminPortalRoleName(r.name));
-
         return {
-            getRoles,
+            getRoles: roleRows.filter((r) => !isAdminPortalRoleName(r.name)),
         };
     }
 
