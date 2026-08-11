@@ -637,6 +637,11 @@ class OrderService {
                     as: 'tips',
                     required: false,
                     attributes: ['id', 'bookingId', 'amount']
+                },
+                {
+                    model: zone,
+                    attributes: ['id', 'name'],
+                    required: false,
                 }
             ]
         });
@@ -648,6 +653,7 @@ class OrderService {
         const plain = orderDetails.get
             ? orderDetails.get({ plain: true })
             : orderDetails;
+        plain.zoneName = plain.zone?.name || null;
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,

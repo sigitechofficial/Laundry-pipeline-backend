@@ -5,6 +5,7 @@ const {
     bookingHistory,
     proofOfDeliveries,
     zone,
+    sequelize,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
@@ -48,6 +49,14 @@ class AdminBookingAssignService {
                 "collectionTimeFrom",
                 "collectionTimeTo",
             ],
+            include: [
+                {
+                    model: zone,
+                    attributes: ["id", "name"],
+                    required: false,
+                    paranoid: false,
+                },
+            ],
         });
 
         if (!bookingRow) {
@@ -60,9 +69,31 @@ class AdminBookingAssignService {
             );
         }
 
-        const zoneRow = await zone.findByPk(bookingRow.zoneId, {
-            attributes: ["id", "name"],
-        });
+        const orderZoneId = Number(bookingRow.zoneId);
+        let zoneRow = bookingRow.zone || null;
+        if (!zoneRow?.name) {
+            zoneRow = await zone.findByPk(orderZoneId, {
+                attributes: ["id", "name"],
+                paranoid: false,
+            });
+        }
+        let zoneName =
+            (zoneRow?.name && String(zoneRow.name).trim()) || null;
+        if (!zoneName) {
+            try {
+                const rows = await sequelize.query(
+                    "SELECT id, name FROM zones WHERE id = :id LIMIT 1",
+                    {
+                        replacements: { id: orderZoneId },
+                        type: sequelize.QueryTypes.SELECT,
+                    }
+                );
+                const row = Array.isArray(rows) ? rows[0] : rows;
+                if (row?.name) zoneName = String(row.name).trim();
+            } catch (_) {
+                /* ignore — UI can still resolve name from getZones */
+            }
+        }
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         const assignBlockedReason = getAdminAssignBlockedReason(bookingRow);
@@ -80,7 +111,7 @@ class AdminBookingAssignService {
         // Strict zone filter — only laundry shops that belong to this booking's zone.
         const shops = await addressDb.findAll({
             where: {
-                zoneId: Number(bookingRow.zoneId),
+                zoneId: orderZoneId,
                 addressType: "LaundaryShopAddress",
                 status: true,
             },
@@ -89,7 +120,7 @@ class AdminBookingAssignService {
 
         const shopList = [];
         for (const shop of shops) {
-            if (Number(shop.zoneId) !== Number(bookingRow.zoneId)) {
+            if (Number(shop.zoneId) !== orderZoneId) {
                 continue;
             }
             const ownerId = shop.userId;
@@ -111,7 +142,8 @@ class AdminBookingAssignService {
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
-                zoneId: Number(shop.zoneId),
+                zoneId: orderZoneId,
+                zoneName,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
@@ -135,8 +167,8 @@ class AdminBookingAssignService {
             bookingId: bookingRow.id,
             orderTrackId: bookingRow.orderTrackId,
             invoiceStatus: bookingRow.invoiceStatus,
-            zoneId: Number(bookingRow.zoneId),
-            zoneName: zoneRow?.name || null,
+            zoneId: orderZoneId,
+            zoneName,
             currentLaundryShopId: bookingRow.laundryShopId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
@@ -167,17 +199,18 @@ class AdminBookingAssignService {
             );
         }
 
+        const orderZoneId = Number(bookingRow.zoneId);
         const shop = await addressDb.findOne({
             where: {
                 id: laundryShopId,
                 addressType: "LaundaryShopAddress",
-                zoneId: Number(bookingRow.zoneId),
+                zoneId: orderZoneId,
                 status: true,
             },
             attributes: ["id", "userId", "zoneId"],
         });
 
-        if (!shop) {
+        if (!shop || Number(shop.zoneId) !== orderZoneId) {
             throw new NotFoundError(
                 "Shop not found in this booking zone or invalid shop address."
             );
