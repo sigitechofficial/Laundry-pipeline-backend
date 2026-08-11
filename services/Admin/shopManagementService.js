@@ -54,126 +54,253 @@ class ShopManagementService {
             };
     }
 
+    _buildShopListFilters(filters = {}) {
+        const shopWhere = {};
+        const addressWhere = {};
+        const userWhere = {};
+        let addressRequired = false;
+        let userRequired = false;
+        let searchActive = false;
+
+        if (filters.zoneId != null && String(filters.zoneId).trim() !== '') {
+            const zoneId = parseInt(filters.zoneId, 10);
+            if (!Number.isNaN(zoneId)) {
+                addressWhere.zoneId = zoneId;
+                addressRequired = true;
+            }
+        }
+
+        if (filters.status != null && String(filters.status).trim() !== '') {
+            const raw = String(filters.status).trim().toLowerCase();
+            if (raw === '1' || raw === 'true' || raw === 'active') {
+                addressWhere.status = true;
+                addressRequired = true;
+            } else if (raw === '0' || raw === 'false' || raw === 'inactive' || raw === 'block') {
+                addressWhere.status = false;
+                addressRequired = true;
+            }
+        }
+
+        if (filters.startDate && filters.endDate) {
+            shopWhere.createdAt = {
+                [Op.gte]: new Date(`${filters.startDate}T00:00:00.000`),
+                [Op.lte]: new Date(`${filters.endDate}T23:59:59.999`),
+            };
+        } else if (filters.date) {
+            const day = new Date(filters.date);
+            shopWhere.createdAt = {
+                [Op.gte]: day,
+                [Op.lt]: new Date(day.getTime() + 24 * 60 * 60 * 1000),
+            };
+        }
+
+        const term = String(filters.search || '').trim();
+        if (term) {
+            searchActive = true;
+            const like = `%${term}%`;
+            const or = [
+                { shopName: { [Op.like]: like } },
+                { '$businessInfo.email$': { [Op.like]: like } },
+                { '$businessInfo.phoneNum$': { [Op.like]: like } },
+                { '$addressDb.streetAddress$': { [Op.like]: like } },
+                { '$addressDb.district$': { [Op.like]: like } },
+                { '$addressDb.province$': { [Op.like]: like } },
+            ];
+            if (/^\d+$/.test(term)) {
+                or.push({ id: parseInt(term, 10) });
+            }
+            shopWhere[Op.or] = or;
+            addressRequired = true;
+            userRequired = true;
+        }
+
+        return { shopWhere, addressWhere, userWhere, addressRequired, userRequired, searchActive };
+    }
+
     /**
      * Get all shops data with detailed information
-     * @returns {Array} List of all shops with business information
+     * @param {Object} [filters] - zoneId, search, startDate, endDate, status, page, limit
+     * @returns {Object} Paginated shops + top performers
      */
-    async getShopsData() {
-            const getShopData = await bussinessInformation.findAll({
+    async getShopsData(filters = {}) {
+            // Paginate only when client asks (shops list UI). Other callers expect full list.
+            const wantsPagination =
+                Object.prototype.hasOwnProperty.call(filters, 'page') ||
+                Object.prototype.hasOwnProperty.call(filters, 'limit');
+            const page = Math.max(1, parseInt(filters.page, 10) || 1);
+            const limit = Math.min(100, Math.max(1, parseInt(filters.limit, 10) || 25));
+            const offset = (page - 1) * limit;
+
+            const {
+                shopWhere,
+                addressWhere,
+                addressRequired,
+                userRequired,
+                searchActive,
+            } = this._buildShopListFilters(filters);
+
+            const addressInclude = {
+                model: addressDb,
+                required: addressRequired,
+                where: Object.keys(addressWhere).length ? addressWhere : undefined,
+                attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId', 'zoneId', 'status',
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalBookingCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (12))`
+                        ),
+                        'PendingBookingCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'TotalRevenue',
+                    ]
+                ],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName', 'image', 'status']
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name', 'status']
+                    },
+                    {
+                        model: zone,
+                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                    }
+                ]
+            };
+
+            const businessInfoInclude = {
+                model: users,
+                as: 'businessInfo',
+                required: userRequired,
+                attributes: [
+                    'firstName',
+                    'lastName',
+                    'email',
+                    'phoneNum',
+                    'userTypeId',
+                    [
+                        sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
+                        'TotalEmployees',
+                    ]
+                ],
+                include: [
+                    {
+                        model: bussinessWorkingHours,
+                        required: false,
+                        where: {
+                            status: true
+                        },
+                        attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
+                    }
+                ]
+            };
+
+            const listOptions = {
+                where: shopWhere,
+                include: [businessInfoInclude, addressInclude],
+                attributes: ['id', 'shopName', 'matchProfileOptions', 'otherText', 'shopAddressId', 'agentId', 'createdAt'],
+                order: [['id', 'DESC']],
+                distinct: true,
+                col: 'id',
+                subQuery: searchActive ? false : undefined,
+            };
+            if (wantsPagination) {
+                listOptions.limit = limit;
+                listOptions.offset = offset;
+            }
+
+            const { rows: getShopData, count } = await bussinessInformation.findAndCountAll(listOptions);
+            let total = 0;
+            if (typeof count === 'number') {
+                total = count;
+            } else if (typeof count === 'string' && count.trim() !== '') {
+                total = Number(count) || 0;
+            } else if (Array.isArray(count)) {
+                // distinct + includes can return grouped rows; prefer length of unique ids
+                total = count.length;
+            } else if (count != null && typeof count === 'object' && count.count != null) {
+                total = Number(count.count) || 0;
+            }
+            if (!Number.isFinite(total) || total < 0) total = 0;
+            // If count collapsed to 0 but we have rows, never show empty footer
+            if (total === 0 && getShopData.length > 0 && !wantsPagination) {
+                total = getShopData.length;
+            }
+            if (total === 0 && getShopData.length > 0 && wantsPagination) {
+                // Paginated page with broken count: at least cover current offset + rows
+                total = offset + getShopData.length;
+            }
+
+            // Top 5 performers — same zone/date/search/status scope
+            const topAddressInclude = {
+                model: addressDb,
+                required: addressRequired,
+                where: Object.keys(addressWhere).length ? addressWhere : undefined,
+                attributes: [
+                    'id',
+                    'streetAddress',
+                    'province',
+                    'district',
+                    [
+                        sequelize.literal(
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'orderCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                        ),
+                        'totalRevenue',
+                    ]
+                ],
+                include: [
+                    {
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            };
+
+            const topPerformingShops = await bussinessInformation.findAll({
+                where: shopWhere,
                 include: [
                     {
                         model: users,
                         as: 'businessInfo',
-                        attributes: [
-                            'firstName',
-                            'lastName',
-                            'email',
-                            'phoneNum',
-                            'userTypeId',
-                            [
-                                sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
-                                'TotalEmployees',
-                            ]
-                        ],
-                        include: [
-                            {
-                                model: bussinessWorkingHours,
-                                where: {
-                                    status: true
-                                },
-                                attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
-                            }
-                        ]
+                        required: userRequired,
+                        attributes: ['id', 'email', 'phoneNum'],
                     },
-                    {
-                        model: addressDb,
-                        attributes: ['streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
-                            [
-                                sequelize.literal(
-                                    `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                                ),
-                                'TotalBookingCount',
-                            ],
-                            [
-                                sequelize.literal(
-                                    `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (12))`
-                                ),
-                                'PendingBookingCount',
-                            ],
-                            [
-                                sequelize.literal(
-                                    `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                                ),
-                                'TotalRevenue',
-                            ]
-                        ],
-                        include: [
-                            {
-                                model: countries,
-                                attributes: ['id', 'name', 'shortName', 'image', 'status']
-                            },
-                            {
-                                model: cities,
-                                attributes: ['id', 'name', 'status']
-                            },
-                            {
-                                model: zone,
-                                attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
-                            }
-                        ]
-                    }
-                ],
-                attributes: ['id', 'shopName', 'matchProfileOptions', "otherText", 'shopAddressId', 'agentId']
-            });
-
-            // Get top 5 most performing shops (based on revenue)
-            const topPerformingShops = await bussinessInformation.findAll({
-                include: [
-                    {
-                        model: addressDb,
-                        attributes: [
-                            'id',
-                            'streetAddress',
-                            'province',
-                            'district',
-                            [
-                                sequelize.literal(
-                                    `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                                ),
-                                'orderCount',
-                            ],
-                            [
-                                sequelize.literal(
-                                    `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
-                                ),
-                                'totalRevenue',
-                            ]
-                        ],
-                        include: [
-                            {
-                                model: cities,
-                                attributes: ['id', 'name']
-                            }
-                        ]
-                    }
+                    topAddressInclude,
                 ],
                 attributes: [
-                    'id', 
-                    'shopName', 
+                    'id',
+                    'shopName',
                     'agentId'
                 ],
                 order: [
                     [
                         sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = \`addressDb\`.\`id\`)`
                         ),
                         'DESC'
                     ]
                 ],
-                limit: 5
+                limit: 5,
+                subQuery: searchActive ? false : undefined,
             });
 
-            // Format top performing shops with minimal details
             const formattedTopShops = topPerformingShops.map(shop => {
                 const shopData = shop.toJSON();
                 return {
@@ -192,7 +319,17 @@ class ShopManagementService {
 
             return {
                 AllShopsData: getShopData,
-                topPerformingShops: formattedTopShops
+                topPerformingShops: formattedTopShops,
+                total,
+                page: wantsPagination ? page : 1,
+                limit: wantsPagination ? limit : total,
+                pagination: {
+                    total,
+                    totalRecords: total,
+                    page: wantsPagination ? page : 1,
+                    limit: wantsPagination ? limit : total,
+                    totalPages: wantsPagination ? (Math.ceil(total / limit) || 1) : 1,
+                },
             };
     }
 

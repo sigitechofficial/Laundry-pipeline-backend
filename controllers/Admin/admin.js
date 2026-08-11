@@ -1016,11 +1016,23 @@ async function getShopInformation(req, res) {
 /*
    * All Shops Data
 */
+function buildShopListFilters(req) {
+    const filters = {};
+    if (req.query.zoneId) filters.zoneId = req.query.zoneId;
+    if (req.query.status) filters.status = req.query.status;
+    if (req.query.startDate) filters.startDate = req.query.startDate;
+    if (req.query.endDate) filters.endDate = req.query.endDate;
+    if (req.query.date) filters.date = req.query.date;
+    if (req.query.search) filters.search = String(req.query.search).trim();
+    if (req.query.page) filters.page = req.query.page;
+    if (req.query.limit) filters.limit = req.query.limit;
+    return filters;
+}
+
 async function shopsData(req, res) {
-
-        const outObj = await shopManagementService.getShopsData();
+        const filters = buildShopListFilters(req);
+        const outObj = await shopManagementService.getShopsData(filters);
         return ResponseHelper.success(res, "Shop Information Data", outObj);
-
 }
 
 /*
