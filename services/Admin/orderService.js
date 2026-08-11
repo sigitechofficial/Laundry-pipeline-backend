@@ -112,7 +112,7 @@ class OrderService {
                 { "$customer.firstName$": { [Op.like]: like } },
                 { "$customer.lastName$": { [Op.like]: like } },
                 { "$customer.email$": { [Op.like]: like } },
-                { "$customer.phone$": { [Op.like]: like } },
+                { "$customer.phoneNum$": { [Op.like]: like } },
             ],
         };
 
@@ -130,50 +130,89 @@ class OrderService {
         const includes = [
             {
                 model: customerSelectedService,
-                attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
+                attributes: ['id', 'serviceId'],
                 include: [
                     {
                         model: service,
-                        attributes: ['id', 'name', 'status']
+                        attributes: ['id', 'name'],
                     },
-                    {
-                        model: categories,
-                        attributes: ['id', 'name']
-                    }
-                ]
+                ],
             },
             {
                 model: OnHoldConfirmation,
                 required: false,
-                attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId']
+                attributes: ['id', 'bookingId'],
             },
             {
                 model: addressDb,
                 as: 'laundryShop',
+                required: false,
+                attributes: ['id'],
                 include: {
                     model: bussinessInformation,
-                    attributes: ['shopName']
+                    attributes: ['shopName'],
+                    required: false,
                 },
-                attributes: ['id']
             },
             {
                 model: bookingStatus,
-                attributes: ['title', 'description']
-            }
+                attributes: ['id', 'title'],
+            },
+            {
+                model: users,
+                as: 'driver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName'],
+            },
+            {
+                model: users,
+                as: 'deliveryDriver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName'],
+            },
         ];
         if (includeCustomer) {
             includes.push({
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phone'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
                 required: false,
             });
         }
         return includes;
     }
 
+    _listBookingAttributes() {
+        return [
+            'id',
+            'orderTrackId',
+            'createdAt',
+            'bookingStatusId',
+            'zoneId',
+            'collectionDate',
+            'deliveryDate',
+            'totalItems',
+            'orderAmount',
+            'laundryShopId',
+            'adminAssignedShopId',
+            'invoiceStatus',
+            'agentBroadcastHeld',
+            'agentVisibleAt',
+            'orderExpireTime',
+            'placedOutsidePlatformHours',
+            'driverId',
+            'deliveryDriverId',
+            'customerId',
+        ];
+    }
+
+    _toInt(value, fallback = 0) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
     /**
-     * @param {Object} [filters] - Optional zone/date scope (same as order lists)
+     * @param {Object} [filters] - Optional zone/date/status/search scope (same as order lists)
      * @returns {Object} Order count metrics
      */
     async getOrderCount(filters = {}) {
@@ -181,85 +220,128 @@ class OrderService {
         this._applyZoneFilter(scoped, filters);
         this._applyPlacedDateRangeFilter(scoped, filters);
 
-        const countWhere = (extra = {}) => ({ ...scoped, ...extra });
+        if (filters.status) {
+            const statusId = parseInt(filters.status, 10);
+            if (!Number.isNaN(statusId)) {
+                scoped.bookingStatusId = statusId;
+            }
+        }
 
-        const allOrderCount = await booking.count({ where: scoped });
+        const { where, searchActive } = this._buildWhereWithSearch(
+            scoped,
+            filters.search
+        );
+        const countIncludes = searchActive
+            ? [
+                  {
+                      model: users,
+                      as: 'customer',
+                      attributes: [],
+                      required: false,
+                  },
+              ]
+            : [];
 
-        const completedOrder = await booking.count({
-            where: countWhere({ bookingStatusId: 17 }),
-        });
-
-        const onHoldOrders = await booking.count({
-            where: countWhere({
-                bookingStatusId: {
-                    [Op.or]: [18, 24],
-                },
+        const [metricsRow, repeatOrders] = await Promise.all([
+            booking.findAll({
+                where,
+                include: countIncludes,
+                attributes: [
+                    [
+                        sequelize.fn('COUNT', sequelize.col('booking.id')),
+                        'allOrderCount',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 17 THEN 1 ELSE 0 END)'
+                        ),
+                        'completedOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` IN (18, 24) THEN 1 ELSE 0 END)'
+                        ),
+                        'onHoldOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 19 THEN 1 ELSE 0 END)'
+                        ),
+                        'cancelledOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` NOT IN (17, 18, 19, 24) THEN 1 ELSE 0 END)'
+                        ),
+                        'pendingOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 1 THEN 1 ELSE 0 END)'
+                        ),
+                        'newOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            'SUM(CASE WHEN `booking`.`bookingStatusId` NOT IN (1, 17, 18, 19, 24) THEN 1 ELSE 0 END)'
+                        ),
+                        'activeOrders',
+                    ],
+                    [
+                        sequelize.literal(
+                            "SUM(CASE WHEN `booking`.`paymentType` = 'card' AND `booking`.`paymentDeliveryGate` = 'waiting_admin' AND `booking`.`bookingStatusId` < 17 THEN 1 ELSE 0 END)"
+                        ),
+                        'paymentFailuresCount',
+                    ],
+                ],
+                raw: true,
+                subQuery: false,
             }),
-        });
+            this._countRepeatOrders(where, countIncludes),
+        ]);
 
-        const cancelledOrders = await booking.count({
-            where: countWhere({ bookingStatusId: 19 }),
-        });
-
-        const pendingOrders = await booking.count({
-            where: countWhere({
-                bookingStatusId: {
-                    [Op.notIn]: [17, 18, 19, 24],
-                },
-            }),
-        });
-
-        const newOrders = await booking.count({
-            where: countWhere({ bookingStatusId: 1 }),
-        });
-
-        const activeOrders = await booking.count({
-            where: countWhere({
-                bookingStatusId: {
-                    [Op.notIn]: [1, 17, 18, 19, 24],
-                },
-            }),
-        });
-
-        const repeatCustomerRows = await booking.findAll({
-            attributes: ['customerId'],
-            where: countWhere({ customerId: { [Op.ne]: null } }),
-            group: ['customerId'],
-            having: sequelize.literal('COUNT(customerId) > 1'),
-            raw: true,
-        });
-        const repeatCustomerIds = repeatCustomerRows
-            .map((row) => row.customerId)
-            .filter(Boolean);
-        const repeatOrders =
-            repeatCustomerIds.length > 0
-                ? await booking.count({
-                      where: countWhere({
-                          customerId: { [Op.in]: repeatCustomerIds },
-                      }),
-                  })
-                : 0;
-
-        const paymentFailuresCount = await booking.count({
-            where: countWhere({
-                paymentType: "card",
-                paymentDeliveryGate: "waiting_admin",
-                bookingStatusId: { [Op.lt]: 17 },
-            }),
-        });
+        const metrics = metricsRow?.[0] || {};
+        const newOrders = this._toInt(metrics.newOrders);
 
         return {
-            allOrderCount: allOrderCount,
-            completedOrders: completedOrder,
-            onHoldOrders: onHoldOrders,
-            cancelledOrders: cancelledOrders,
-            pendingOrders: pendingOrders,
+            allOrderCount: this._toInt(metrics.allOrderCount),
+            completedOrders: this._toInt(metrics.completedOrders),
+            onHoldOrders: this._toInt(metrics.onHoldOrders),
+            cancelledOrders: this._toInt(metrics.cancelledOrders),
+            pendingOrders: this._toInt(metrics.pendingOrders),
             newOrders,
             NewOrders: newOrders,
-            activeOrders,
+            activeOrders: this._toInt(metrics.activeOrders),
             repeatOrders,
-            paymentFailuresCount: paymentFailuresCount,
+            paymentFailuresCount: this._toInt(metrics.paymentFailuresCount),
         };
+    }
+
+    /**
+     * Count bookings belonging to customers who have more than one booking
+     * (scoped to the same filters). One grouped query — no giant IN list.
+     */
+    async _countRepeatOrders(where, countIncludes = []) {
+        const rows = await booking.findAll({
+            where: {
+                ...where,
+                customerId: { [Op.ne]: null },
+            },
+            include: countIncludes,
+            attributes: [
+                'customerId',
+                [sequelize.fn('COUNT', sequelize.col('booking.id')), 'orderCount'],
+            ],
+            group: ['booking.customerId'],
+            having: sequelize.literal('COUNT(`booking`.`id`) > 1'),
+            raw: true,
+            subQuery: false,
+        });
+
+        return rows.reduce(
+            (sum, row) => sum + this._toInt(row.orderCount),
+            0
+        );
     }
 
     /**
@@ -285,28 +367,26 @@ class OrderService {
               ]
             : [];
 
-        const totalCount = await booking.count({
-            where,
-            include: countIncludes,
-            distinct: true,
-            col: 'id',
-        });
+        const [totalCount, bookings] = await Promise.all([
+            booking.count({
+                where,
+                include: countIncludes,
+                distinct: true,
+                col: 'id',
+            }),
+            booking.findAll({
+                where,
+                include: includes,
+                order: [['id', 'DESC']],
+                limit: limit,
+                offset: offset,
+                attributes: this._listBookingAttributes(),
+                logging: false,
+                benchmark: false,
+                subQuery: searchActive ? false : undefined,
+            }),
+        ]);
 
-        const bookings = await booking.findAll({
-            where,
-            include: includes,
-            order: [['id', 'DESC']],
-            limit: limit,
-            offset: offset,
-            attributes: {
-                exclude: ['updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId']
-            },
-            logging: false,
-            benchmark: false,
-            subQuery: searchActive ? false : undefined,
-        });
-
-        // Calculate pagination info
         const totalPages = Math.ceil(totalCount / limit);
         const hasNextPage = page < totalPages;
         const hasPrevPage = page > 1;
@@ -367,7 +447,7 @@ class OrderService {
             ? { bookingStatusId: statusId }
             : {
                 bookingStatusId: {
-                    [Op.ne]: [17, 23],
+                    [Op.notIn]: [17, 23],
                 },
             };
         this._applyPlacedDateRangeFilter(whereClause, filters);
@@ -390,9 +470,7 @@ class OrderService {
      */
     async getCancelledOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
-            bookingStatusId: {
-                [Op.eq]: [19]
-            }
+            bookingStatusId: 19,
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
@@ -414,9 +492,7 @@ class OrderService {
      */
     async getCompletedOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
-            bookingStatusId: {
-                [Op.eq]: [17]
-            }
+            bookingStatusId: 17,
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);

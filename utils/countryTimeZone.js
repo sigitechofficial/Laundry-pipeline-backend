@@ -6,6 +6,11 @@ const {
 } = require("../models");
 const { BUSINESS_TIME_ZONE } = require("./bookingTimeZone");
 
+const ZONE_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const zoneContextCache = new Map();
+let defaultCountryContextCache = null;
+let defaultCountryContextCachedAt = 0;
+
 const zoneCountryInclude = [
   {
     model: cities,
@@ -22,22 +27,33 @@ const zoneCountryInclude = [
 ];
 
 async function getDefaultCountryContext() {
+  const now = Date.now();
+  if (
+    defaultCountryContextCache &&
+    now - defaultCountryContextCachedAt < ZONE_CONTEXT_TTL_MS
+  ) {
+    return defaultCountryContextCache;
+  }
+
   const row = await countries.findOne({
     attributes: ["id", "name", "shortName", "ianaTimeZone"],
     order: [["id", "ASC"]],
   });
-  if (!row) {
-    return {
-      countryId: 1,
-      countryName: null,
-      ianaTimeZone: BUSINESS_TIME_ZONE,
-    };
-  }
-  return {
-    countryId: row.id,
-    countryName: row.name,
-    ianaTimeZone: row.ianaTimeZone || BUSINESS_TIME_ZONE,
-  };
+  const ctx = !row
+    ? {
+        countryId: 1,
+        countryName: null,
+        ianaTimeZone: BUSINESS_TIME_ZONE,
+      }
+    : {
+        countryId: row.id,
+        countryName: row.name,
+        ianaTimeZone: row.ianaTimeZone || BUSINESS_TIME_ZONE,
+      };
+
+  defaultCountryContextCache = ctx;
+  defaultCountryContextCachedAt = now;
+  return ctx;
 }
 
 function contextFromCountryRow(countryRow) {
@@ -61,6 +77,13 @@ async function getCountryContextById(countryId) {
 async function getCountryContextFromZoneId(zoneId) {
   if (!zoneId) return getDefaultCountryContext();
 
+  const cacheKey = String(zoneId);
+  const cached = zoneContextCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.at < ZONE_CONTEXT_TTL_MS) {
+    return cached.value;
+  }
+
   const row = await zone.findOne({
     where: { id: zoneId },
     attributes: ["id"],
@@ -68,7 +91,10 @@ async function getCountryContextFromZoneId(zoneId) {
   });
 
   const countryRow = row?.city?.country;
-  return contextFromCountryRow(countryRow) || getDefaultCountryContext();
+  const value =
+    contextFromCountryRow(countryRow) || (await getDefaultCountryContext());
+  zoneContextCache.set(cacheKey, { at: now, value });
+  return value;
 }
 
 async function getCountryContextFromShopUserId(shopUserId) {
