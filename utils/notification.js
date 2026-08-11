@@ -165,7 +165,7 @@ function buildMulticastMessage({ title, body, data = {}, tokens, tagPrefix = 'de
       notification: {
         title,
         body,
-        icon: '/icons/icon-192x192.png'
+        icon: '/images/logo.png'
       }
     },
     tokens
