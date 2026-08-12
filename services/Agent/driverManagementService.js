@@ -196,15 +196,20 @@ class AgentDriverManagementService {
     }
 
     /**
-     * Pickup (default) also assigns delivery to the same staff.
-     * Use assignmentType=delivery for delivery-only.
-     * assignmentType=both is explicit alias for pickup+delivery.
+     * assignmentType maps to booking fields:
+     * - pickup → driverId only
+     * - delivery → deliveryDriverId only
+     * - both → both legs (same staff)
+     * Opt-in: alsoAssignDelivery=true with pickup also assigns delivery.
      */
-    _legsToAssign(assignmentType) {
+    _legsToAssign(assignmentType, { alsoAssignDelivery } = {}) {
         const type = String(assignmentType || 'pickup').toLowerCase();
         if (type === 'delivery') return ['delivery'];
-        if (type === 'both' || type === 'pickup') return ['pickup', 'delivery'];
-        return ['pickup', 'delivery'];
+        if (type === 'both') return ['pickup', 'delivery'];
+        if (type === 'pickup' && alsoAssignDelivery === true) {
+            return ['pickup', 'delivery'];
+        }
+        return ['pickup'];
     }
 
     async listStaffUnassignReasons() {
@@ -308,8 +313,8 @@ class AgentDriverManagementService {
 
     /**
      * Assign pickup or delivery staff. Does NOT jump booking to Out for Delivery.
-     * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery'|'both' }
-     * Default pickup also assigns the same staff to delivery.
+     * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery'|'both', alsoAssignDelivery?: boolean }
+     * Pickup and delivery are independent unless type=both or alsoAssignDelivery=true.
      * @param {number|null} [actorUserId] - user who performed the action (defaults to agentId)
      */
     async assignBookingStaff(data, agentId, actorUserId = null) {
@@ -333,14 +338,7 @@ class AgentDriverManagementService {
         const staff = await this._assertAssignableStaff(agentId, targetStaffId);
         const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
 
-        let legs = this._legsToAssign(assignmentType);
-        // Explicit opt-out: pickup only
-        if (
-            String(assignmentType || 'pickup').toLowerCase() === 'pickup' &&
-            alsoAssignDelivery === false
-        ) {
-            legs = ['pickup'];
-        }
+        const legs = this._legsToAssign(assignmentType, { alsoAssignDelivery });
 
         const results = [];
         for (const leg of legs) {
@@ -358,7 +356,7 @@ class AgentDriverManagementService {
             );
         }
 
-        // Live tracking follows pickup assignee when both change; else the leg we set.
+        // Live tracking follows the assignee of the leg(s) we just set.
         await this._syncLiveTrackingAssignee(bookingId, staff.id);
 
         const labels = results.map((r) => r.label);
@@ -504,7 +502,7 @@ class AgentDriverManagementService {
     }
 
     /**
-     * Owner takes the job themselves (pickup by default → also delivery).
+     * Owner takes the job themselves for the requested leg (pickup or delivery).
      */
     async agentPickupOrderBySelf(data, agentId, actorUserId = null) {
         const {

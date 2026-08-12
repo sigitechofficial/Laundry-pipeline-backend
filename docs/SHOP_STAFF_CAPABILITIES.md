@@ -60,9 +60,11 @@ Unassign / Return / Unassign me requires:
 - `GET /agent/staffUnassignReasons` — pick a reason
 - `PATCH /agent/unassignBookingStaff` body: `{ bookingId, assignmentType, reasonId, note? }` (`note` required when reason `isOther`)
 
-## Assign pickup → delivery by default
+## Assign pickup / delivery (independent)
 
-`PATCH /assignBookingStaff` with `assignmentType: "pickup"` (default) also sets **delivery** to the same staff. Use `assignmentType: "delivery"` for delivery-only, or `alsoAssignDelivery: false` to assign pickup only.
+`PATCH /assignBookingStaff` with `assignmentType: "pickup"` sets **pickup only**.  
+`assignmentType: "delivery"` sets **delivery only**.  
+Use `assignmentType: "both"` or `alsoAssignDelivery: true` only when you want the same staff on both legs.
 
 Assign / unassign / auto-assign notify the affected staff via socket + FCM (`staffJobAssigned` / `staffJobUnassigned`).
 
