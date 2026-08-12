@@ -10,6 +10,7 @@ const {
   logCheck,
   logLine
 } = require('../services/healthCheckService');
+const { getDeploymentInfo } = require('../services/deploymentInfoService');
 
 const SINGLE_CHECKS = {
   mysql: checkMysql,
@@ -83,6 +84,30 @@ async function readiness(req, res) {
 }
 
 /**
+ * GET /health/deploy  (also /version, /deploy/info)
+ * Public deploy fingerprint: commit, times, run, backups names, node, etc.
+ * No secrets.
+ */
+async function deployInfo(req, res) {
+  const meta = requestMeta(req);
+  const info = getDeploymentInfo();
+  logLine('info', 'deploy.info', {
+    ...meta,
+    shortCommit: info.shortCommit,
+    releaseName: info.releaseName,
+    branch: info.branch
+  });
+
+  return res.status(200).json({
+    status: '1',
+    message: info.commit
+      ? `Live release ${info.shortCommit}${info.branch ? ` (${info.branch})` : ''}`
+      : 'Live process up; release metadata missing (pre-Careflow deploy or release.json absent)',
+    data: info
+  });
+}
+
+/**
  * GET /health/:dependency
  * dependency = mysql | redis | firebase | stripe | zeptomail
  */
@@ -121,5 +146,6 @@ async function singleDependency(req, res) {
 module.exports = {
   liveness,
   readiness,
+  deployInfo,
   singleDependency
 };

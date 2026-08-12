@@ -52,11 +52,12 @@ jobs:
           {
             "app": "laundry-api",
             "commit": "${{ github.sha }}",
+            "shortCommit": "$(echo '${{ github.sha }}' | cut -c1-8)",
             "branch": "${{ github.ref_name }}",
             "deployedBy": "${{ github.actor }}",
             "runId": "${{ github.run_id }}",
             "runNumber": "${{ github.run_number }}",
-            "deployedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            "packagedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF
 

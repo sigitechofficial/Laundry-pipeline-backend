@@ -129,11 +129,20 @@ $RELEASE_NAME
 commit=$RELEASE_ID
 branch=${GITHUB_REF_NAME:-}
 run=${RUN_NUMBER}
+runId=${GITHUB_RUN_ID:-}
 actor=${GITHUB_ACTOR:-}
 deployed_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+pm2=$PM2_APP_NAME
+livePath=$LIVE_PATH
+deployRoot=$DEPLOY_ROOT
 file_backup=$(basename "$BACKUP_FILE")
 db_backup=$(basename "$DB_BACKUP_FILE")
 EOF
+
+PACKAGED_AT=""
+if [ -f "$RELEASE_PATH/release.json" ]; then
+  PACKAGED_AT="$(node -e "try{const j=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));process.stdout.write(j.packagedAt||j.deployedAt||'')}catch(e){}" "$RELEASE_PATH/release.json" || true)"
+fi
 
 FREE_KB="$(df -Pk "$DEPLOY_ROOT/backups" | awk 'NR==2 {print $4}')"
 if [ -n "${FREE_KB:-}" ] && [ "$FREE_KB" -lt 1048576 ]; then
@@ -181,6 +190,43 @@ MYSQL_PWD="$DB_PASS" mysqldump \
 test -s "$DB_BACKUP_FILE"
 chmod 600 "$DB_BACKUP_FILE"
 ls -lh "$DB_BACKUP_FILE"
+
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$RELEASE_PATH/release.json" <<EOF
+{
+  "app": "laundry-api",
+  "commit": "$RELEASE_ID",
+  "shortCommit": "$(printf '%s' "$RELEASE_ID" | cut -c1-8)",
+  "branch": "${GITHUB_REF_NAME:-}",
+  "releaseName": "$RELEASE_NAME",
+  "deployedBy": "${GITHUB_ACTOR:-}",
+  "runId": "${GITHUB_RUN_ID:-}",
+  "runNumber": "${GITHUB_RUN_NUMBER:-$RUN_NUMBER}",
+  "packagedAt": "${PACKAGED_AT:-}",
+  "deployedAt": "$DEPLOYED_AT",
+  "pm2App": "$PM2_APP_NAME",
+  "livePath": "$LIVE_PATH",
+  "deployRoot": "$DEPLOY_ROOT",
+  "appUrl": "$APP_URL",
+  "fileBackup": "$(basename "$BACKUP_FILE")",
+  "dbBackup": "$(basename "$DB_BACKUP_FILE")"
+}
+EOF
+# Keep text twin in sync with final deploy clock
+cat > "$RELEASE_PATH/release-info.txt" <<EOF
+$RELEASE_NAME
+commit=$RELEASE_ID
+branch=${GITHUB_REF_NAME:-}
+run=${RUN_NUMBER}
+runId=${GITHUB_RUN_ID:-}
+actor=${GITHUB_ACTOR:-}
+deployed_at_utc=$DEPLOYED_AT
+pm2=$PM2_APP_NAME
+livePath=$LIVE_PATH
+deployRoot=$DEPLOY_ROOT
+file_backup=$(basename "$BACKUP_FILE")
+db_backup=$(basename "$DB_BACKUP_FILE")
+EOF
 
 echo "Syncing release to live (preserving secrets/uploads/Public)..."
 rsync -az --delete \
@@ -238,6 +284,7 @@ fi
 pm2 save
 
 echo "$RELEASE_NAME" > "$DEPLOY_ROOT/current-release.txt"
+cp -f "$LIVE_PATH/release.json" "$DEPLOY_ROOT/current-release.json" 2>/dev/null || true
 {
   echo "release_name=$RELEASE_NAME"
   echo "commit=$RELEASE_ID"
@@ -249,20 +296,30 @@ echo "$RELEASE_NAME" > "$DEPLOY_ROOT/current-release.txt"
   echo "---"
 } >> "$DEPLOY_LOG"
 
-echo "Smoke check $APP_URL ..."
+echo "Smoke check $APP_URL/health ..."
 HTTP_CODE="000"
 for ATTEMPT in $(seq 1 12); do
-  HTTP_CODE="$(curl -sS -L -I --max-time 20 "$APP_URL" | awk 'NR==1 {print $2}' || echo 000)"
-  echo "attempt $ATTEMPT HTTP=$HTTP_CODE"
-  if [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" -lt 500 ]; then
+  HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$APP_URL/health" || echo 000)"
+  echo "attempt $ATTEMPT /health HTTP=$HTTP_CODE"
+  if [ "$HTTP_CODE" = "200" ]; then
     break
   fi
   sleep 5
 done
-if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" -ge 500 ]; then
-  echo "Smoke check failed"
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "Smoke check failed: /health returned HTTP=$HTTP_CODE"
   exit 1
 fi
+
+echo "Smoke check $APP_URL/health/deploy (expect commit $RELEASE_ID) ..."
+DEPLOY_BODY="$(curl -sS --max-time 20 "$APP_URL/health/deploy" || true)"
+echo "$DEPLOY_BODY" | head -c 800; echo
+SHORT="$(printf '%s' "$RELEASE_ID" | cut -c1-8)"
+if ! printf '%s' "$DEPLOY_BODY" | grep -q "$SHORT"; then
+  echo "Smoke check failed: /health/deploy missing commit $SHORT"
+  exit 1
+fi
+echo "Deploy fingerprint OK ($SHORT)"
 
 # Keep last 10
 ls -1dt "$DEPLOY_ROOT/releases"/* 2>/dev/null | tail -n +11 | xargs -r rm -rf
