@@ -10,7 +10,10 @@ async function getShopReviewSummary(req, res) {
   if (!agentId) {
     throw new ValidationError('Unable to resolve shop agent');
   }
-  const data = await shopReviewService.getShopSummaryForAgent(agentId);
+  const data = await shopReviewService.getShopSummaryForAgent(agentId, {
+    page: req.query.page,
+    limit: req.query.limit || 20,
+  });
   return ResponseHelper.success(res, 'Shop review summary retrieved', data);
 }
 

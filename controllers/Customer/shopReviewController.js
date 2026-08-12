@@ -38,9 +38,17 @@ async function getShopReviews(req, res) {
   return ResponseHelper.success(res, 'Shop reviews retrieved successfully', data);
 }
 
+async function getPendingShopReviews(req, res) {
+  const data = await shopReviewService.getPendingReviews(req.user.id, {
+    limit: req.query.limit,
+  });
+  return ResponseHelper.success(res, 'Pending shop reviews retrieved', data);
+}
+
 module.exports = {
   getReviewReasonCodes,
   getReviewEligibility,
   createShopReview,
   getShopReviews,
+  getPendingShopReviews,
 };

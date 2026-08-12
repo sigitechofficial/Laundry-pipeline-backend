@@ -305,6 +305,7 @@ router.delete('/deleteReviewReasonCode/:id', asyncMiddleware(shopReviewControlle
 
 //!-------------------------Shop Reviews (moderation inbox)-------------------------------------------------//
 router.get('/shopReviews', asyncMiddleware(shopReviewController.listShopReviews))
+router.get('/shopReviews/by-booking/:bookingId', asyncMiddleware(shopReviewController.getShopReviewByBooking))
 router.get('/shopReviews/:id', asyncMiddleware(shopReviewController.getShopReviewById))
 router.patch('/shopReviews/:id/hide', asyncMiddleware(shopReviewController.hideShopReview))
 router.patch('/shopReviews/:id/unhide', asyncMiddleware(shopReviewController.unhideShopReview))

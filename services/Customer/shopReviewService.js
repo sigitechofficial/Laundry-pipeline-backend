@@ -308,6 +308,11 @@ class ShopReviewService {
           as: 'customer',
           attributes: ['id', 'firstName', 'lastName'],
         },
+        {
+          model: booking,
+          as: 'booking',
+          attributes: ['id', 'orderTrackId'],
+        },
       ],
       order: [['submittedAt', 'DESC']],
       limit: limitNum,
@@ -341,6 +346,8 @@ class ShopReviewService {
           },
       reviews: rows.map((r) => ({
         id: r.id,
+        bookingId: r.bookingId,
+        orderTrackId: r.booking?.orderTrackId || null,
         rating: r.rating,
         comment: r.comment,
         submittedAt: r.submittedAt,
@@ -363,18 +370,145 @@ class ShopReviewService {
     };
   }
 
-  async getShopSummaryForAgent(agentUserId) {
+  async getPendingReviews(customerId, { limit = 5 } = {}) {
+    const uid = Number(customerId);
+    if (!uid) throw new ValidationError('Valid customer ID is required');
+
+    const lim = Math.min(10, Math.max(1, Number(limit) || 5));
+
+    const reviewedBookingIds = (
+      await shopReview.findAll({
+        where: { customerId: uid },
+        attributes: ['bookingId'],
+        raw: true,
+      })
+    ).map((r) => Number(r.bookingId));
+
+    const where = {
+      customerId: uid,
+      bookingStatusId: { [Op.in]: COMPLETED_STATUS_IDS },
+      laundryShopId: { [Op.ne]: null },
+    };
+    if (reviewedBookingIds.length > 0) {
+      where.id = { [Op.notIn]: reviewedBookingIds };
+    }
+
+    const rows = await booking.findAll({
+      where,
+      attributes: [
+        'id',
+        'orderTrackId',
+        'laundryShopId',
+        'bookingStatusId',
+        'updatedAt',
+        'createdAt',
+      ],
+      order: [
+        ['updatedAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+      limit: lim,
+    });
+
+    const pending = [];
+    for (const row of rows) {
+      const shop = await bussinessInformation.findOne({
+        where: { shopAddressId: row.laundryShopId },
+        attributes: ['id', 'shopName'],
+      });
+      if (!shop) continue;
+      pending.push({
+        bookingId: row.id,
+        orderTrackId: row.orderTrackId,
+        completedAt: row.updatedAt,
+        shop: {
+          id: shop.id,
+          shopName: shop.shopName,
+        },
+      });
+    }
+
+    return {
+      hasPending: pending.length > 0,
+      count: pending.length,
+      pending,
+      latest: pending[0] || null,
+    };
+  }
+
+  async getReviewByBookingId(bookingId) {
+    const id = Number(bookingId);
+    if (!id) throw new ValidationError('Valid booking ID is required');
+
+    const row = await shopReview.findOne({
+      where: { bookingId: id },
+      include: [
+        {
+          model: shopReviewReason,
+          as: 'reasons',
+          include: [
+            {
+              model: reviewReasonCode,
+              as: 'reasonCode',
+              attributes: ['id', 'code', 'label', 'sentiment', 'isOther'],
+            },
+          ],
+        },
+        {
+          model: users,
+          as: 'customer',
+          attributes: ['id', 'firstName', 'lastName'],
+        },
+        {
+          model: bussinessInformation,
+          as: 'shop',
+          attributes: ['id', 'shopName'],
+        },
+        {
+          model: booking,
+          as: 'booking',
+          attributes: ['id', 'orderTrackId'],
+        },
+      ],
+    });
+
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      bookingId: row.bookingId,
+      orderTrackId: row.booking?.orderTrackId || null,
+      rating: row.rating,
+      comment: row.comment,
+      visibility: row.visibility,
+      submittedAt: row.submittedAt,
+      shopName: row.shop?.shopName || null,
+      businessInfoId: row.businessInfoId,
+      customerName: row.customer
+        ? `${row.customer.firstName || ''} ${row.customer.lastName || ''}`.trim()
+        : 'Customer',
+      reasons: (row.reasons || []).map((x) => ({
+        code: x.reasonCode?.code,
+        label: x.reasonCode?.label,
+        sentiment: x.reasonCode?.sentiment,
+        otherText: x.otherText,
+      })),
+    };
+  }
+
+  async getShopSummaryForAgent(agentUserId, { page = 1, limit = 20 } = {}) {
     const shop = await bussinessInformation.findOne({
       where: { agentId: agentUserId },
       attributes: ['id', 'shopName'],
     });
     if (!shop) throw new NotFoundError('Shop not found for this agent');
 
-    const data = await this.getShopReviews(shop.id, { page: 1, limit: 10 });
+    const data = await this.getShopReviews(shop.id, { page, limit });
     return {
       shop: data.shop,
       summary: data.summary,
       recentReviews: data.reviews,
+      pagination: data.pagination,
     };
   }
 }

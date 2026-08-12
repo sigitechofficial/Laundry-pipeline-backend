@@ -102,6 +102,7 @@ router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.ge
 
 //!----------------------------Shop Reviews---------------------//
 router.get('/reviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
+router.get('/pendingShopReviews', validateAccessToken, asyncMiddleware(shopReviewController.getPendingShopReviews))
 router.get('/bookings/:bookingId/reviewEligibility', validateAccessToken, asyncMiddleware(shopReviewController.getReviewEligibility))
 router.post('/shopReviews', validateAccessToken, asyncMiddleware(shopReviewController.createShopReview))
 router.get('/shops/:businessInfoId/reviews', asyncMiddleware(shopReviewController.getShopReviews))

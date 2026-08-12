@@ -832,7 +832,11 @@ exports.agentRejectOrder = async (req, res) => {
 };
 
 exports.agentAcceptOrder = async (req, res) => {
-    if (!actorCanManageShopOps(req)) {
+    // Route gates with requireCapability('canAcceptOrders'); keep a soft guard
+    const canAccept =
+        req.canAcceptOrders === true ||
+        req.capabilities?.canAcceptOrders === true;
+    if (!canAccept) {
         throw new ForbiddenError(
             'Only the shop owner or manager can accept new orders. Ask them to assign jobs to you.'
         );
@@ -5666,7 +5670,41 @@ exports.getShopPerformanceDashboard = async (req, res) => {
             : 0;
 
     const performanceScore = safePercent(completedOrders, totalOrders);
-    const rating = Number(((performanceScore / 100) * 5).toFixed(1));
+    // Legacy completion-derived score (kept for backward compatibility)
+    const completionDerivedRating = Number(((performanceScore / 100) * 5).toFixed(1));
+
+    const shopBiz = await bussinessInformation.findOne({
+        where: { shopAddressId: agentShopAddress.id },
+        attributes: ['id', 'shopName'],
+    });
+
+    let customerRating = {
+        avgRating: 0,
+        publishedCount: 0,
+        ratingCount: 0,
+        histogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        topPositiveReasonCode: null,
+        topNegativeReasonCode: null,
+        recentReviews: [],
+    };
+
+    if (shopBiz) {
+        const shopReviewService = require('../../services/Customer/shopReviewService');
+        const reviewData = await shopReviewService.getShopReviews(shopBiz.id, {
+            page: 1,
+            limit: 10,
+        });
+        customerRating = {
+            ...reviewData.summary,
+            recentReviews: reviewData.reviews,
+        };
+    }
+
+    // Prefer real customer star rating when reviews exist; otherwise fall back
+    const rating =
+        customerRating.publishedCount > 0
+            ? Number(customerRating.avgRating)
+            : completionDerivedRating;
 
     const topServicesRaw = await customerSelectedService.findAll({
         attributes: [
@@ -5727,7 +5765,9 @@ exports.getShopPerformanceDashboard = async (req, res) => {
         },
         processingAndRating: {
             averageProcessingHours,
-            rating
+            rating,
+            completionDerivedRating,
+            customerRating,
         },
         totals: {
             totalOrders,

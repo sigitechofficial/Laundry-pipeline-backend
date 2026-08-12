@@ -2,6 +2,7 @@
 
 const reviewReasonCodeService = require('../../services/Admin/reviewReasonCodeService');
 const shopReviewAdminService = require('../../services/Admin/shopReviewAdminService');
+const shopReviewService = require('../../services/Customer/shopReviewService');
 const ResponseHelper = require('../../utils/responseHelper');
 
 async function getReviewReasonCodes(req, res) {
@@ -64,6 +65,15 @@ async function unhideShopReview(req, res) {
   return ResponseHelper.success(res, 'Review published successfully', data);
 }
 
+async function getShopReviewByBooking(req, res) {
+  const data = await shopReviewService.getReviewByBookingId(req.params.bookingId);
+  return ResponseHelper.success(
+    res,
+    data ? 'Shop review retrieved' : 'No review for this booking',
+    data
+  );
+}
+
 module.exports = {
   getReviewReasonCodes,
   createReviewReasonCode,
@@ -73,4 +83,5 @@ module.exports = {
   getShopReviewById,
   hideShopReview,
   unhideShopReview,
+  getShopReviewByBooking,
 };
