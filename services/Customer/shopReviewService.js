@@ -9,6 +9,7 @@ const {
   reviewReasonCode,
   bussinessInformation,
   users,
+  addressDb,
   sequelize,
 } = require('../../models');
 const {
@@ -18,6 +19,7 @@ const {
   ForbiddenError,
 } = require('../../middlewares/universalErrorHandler');
 const { refreshShopReviewStats } = require('../shopReviewStatsService');
+const { notifyShopReviewSubmitted } = require('../../utils/reviewNotify');
 
 const COMPLETED_STATUS_IDS = [16, 17];
 const COMMENT_MAX = 500;
@@ -208,7 +210,7 @@ class ShopReviewService {
     });
 
     const row = await booking.findByPk(bookingId, {
-      attributes: ['id', 'laundryShopId', 'customerId'],
+      attributes: ['id', 'laundryShopId', 'customerId', 'orderTrackId'],
     });
     const businessInfo = await bussinessInformation.findOne({
       where: { shopAddressId: row.laundryShopId },
@@ -243,7 +245,34 @@ class ShopReviewService {
       return review;
     });
 
-    return this.getReviewById(created.id);
+    const result = await this.getReviewById(created.id);
+
+    // Notify shop owner so they can open the order and see rating/review.
+    try {
+      const shopAddress = await addressDb.findByPk(row.laundryShopId, {
+        attributes: ['id', 'userId'],
+      });
+      if (shopAddress?.userId) {
+        notifyShopReviewSubmitted({
+          shopOwnerUserId: shopAddress.userId,
+          bookingId,
+          orderTrackId: row.orderTrackId || result?.orderTrackId,
+          rating,
+        }).catch((err) =>
+          console.warn(
+            '[createReview] shop review notify failed:',
+            err?.message || err
+          )
+        );
+      }
+    } catch (err) {
+      console.warn(
+        '[createReview] shop review notify setup failed:',
+        err?.message || err
+      );
+    }
+
+    return result;
   }
 
   async getReviewById(id) {

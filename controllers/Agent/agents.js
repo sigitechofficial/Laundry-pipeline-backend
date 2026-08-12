@@ -1166,9 +1166,20 @@ exports.orderDetailsById = async (req, res) => {
         }
     }
 
+    let shopReview = null;
+    try {
+        const shopReviewService = require('../../services/Customer/shopReviewService');
+        shopReview = await shopReviewService.getReviewByBookingId(bookingfind.id);
+    } catch (err) {
+        console.warn(
+            '[orderDetailsById] shopReview attach failed:',
+            err?.message || err
+        );
+    }
+
     if (bookingfind.bookingStatusId === 5) {
         const paymentType = normalizePaymentType(bookingfind.paymentType);
-        const payload = { bookingfind };
+        const payload = { bookingfind, shopReview };
         if (paymentType === "card") {
             payload.oneHourLater = moment().add(1, "hours").format("HH:mm A");
             payload.invoicePaymentWindowApplies = true;
@@ -1182,10 +1193,11 @@ exports.orderDetailsById = async (req, res) => {
         );
     }
 
+    const plain = bookingfind.toJSON ? bookingfind.toJSON() : bookingfind;
     return ResponseHelper.success(
         res,
         `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
-        bookingfind
+        { ...plain, shopReview }
     );
 }
 
@@ -3286,6 +3298,26 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         driverId: bookingCheck.driverId,
     }
     sendNotification(customerId, title, body, data);
+
+    // Prompt customer to leave a shop review (fire-and-forget).
+    try {
+        const { notifyCustomerRequestReview } = require('../../utils/reviewNotify');
+        notifyCustomerRequestReview({
+            customerId,
+            bookingId,
+            orderTrackId: bookingCheck.orderTrackId,
+        }).catch((err) =>
+            console.warn(
+                '[bookingDeliverToCustomer] requestShopReview notify failed:',
+                err?.message || err
+            )
+        );
+    } catch (err) {
+        console.warn(
+            '[bookingDeliverToCustomer] requestShopReview setup failed:',
+            err?.message || err
+        );
+    }
 
     let paymentFlags = {};
     let paymentSummary = null;
