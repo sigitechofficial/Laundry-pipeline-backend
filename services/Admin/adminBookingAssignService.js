@@ -4,6 +4,8 @@ const {
     bussinessInformation,
     bookingHistory,
     proofOfDeliveries,
+    zone,
+    sequelize,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const {
@@ -47,10 +49,50 @@ class AdminBookingAssignService {
                 "collectionTimeFrom",
                 "collectionTimeTo",
             ],
+            include: [
+                {
+                    model: zone,
+                    attributes: ["id", "name"],
+                    required: false,
+                    paranoid: false,
+                },
+            ],
         });
 
         if (!bookingRow) {
             throw new NotFoundError("Booking not found");
+        }
+
+        if (bookingRow.zoneId == null) {
+            throw new ValidationError(
+                "This order has no zone. Assign a zone before selecting a shop."
+            );
+        }
+
+        const orderZoneId = Number(bookingRow.zoneId);
+        let zoneRow = bookingRow.zone || null;
+        if (!zoneRow?.name) {
+            zoneRow = await zone.findByPk(orderZoneId, {
+                attributes: ["id", "name"],
+                paranoid: false,
+            });
+        }
+        let zoneName =
+            (zoneRow?.name && String(zoneRow.name).trim()) || null;
+        if (!zoneName) {
+            try {
+                const rows = await sequelize.query(
+                    "SELECT id, name FROM zones WHERE id = :id LIMIT 1",
+                    {
+                        replacements: { id: orderZoneId },
+                        type: sequelize.QueryTypes.SELECT,
+                    }
+                );
+                const row = Array.isArray(rows) ? rows[0] : rows;
+                if (row?.name) zoneName = String(row.name).trim();
+            } catch (_) {
+                /* ignore — UI can still resolve name from getZones */
+            }
         }
 
         const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
@@ -66,16 +108,21 @@ class AdminBookingAssignService {
         );
         const todayDayOfWeek = wallClock.dayOfWeek;
 
+        // Strict zone filter — only laundry shops that belong to this booking's zone.
         const shops = await addressDb.findAll({
             where: {
-                zoneId: bookingRow.zoneId,
+                zoneId: orderZoneId,
                 addressType: "LaundaryShopAddress",
+                status: true,
             },
-            attributes: ["id", "userId", "zoneId"],
+            attributes: ["id", "userId", "zoneId", "status"],
         });
 
         const shopList = [];
         for (const shop of shops) {
+            if (Number(shop.zoneId) !== orderZoneId) {
+                continue;
+            }
             const ownerId = shop.userId;
             const openNow = await isShopScheduleOpenNow(
                 ownerId,
@@ -95,6 +142,8 @@ class AdminBookingAssignService {
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
+                zoneId: orderZoneId,
+                zoneName,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
@@ -106,18 +155,27 @@ class AdminBookingAssignService {
             });
         }
 
+        shopList.sort((a, b) =>
+            String(a.shopName).localeCompare(String(b.shopName), undefined, {
+                sensitivity: "base",
+            })
+        );
+
         const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 
         return {
             bookingId: bookingRow.id,
             orderTrackId: bookingRow.orderTrackId,
             invoiceStatus: bookingRow.invoiceStatus,
+            zoneId: orderZoneId,
+            zoneName,
             currentLaundryShopId: bookingRow.laundryShopId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
             collectionDate: bookingRow.collectionDate,
             collectionTimeFrom: bookingRow.collectionTimeFrom,
             collectionTimeTo: bookingRow.collectionTimeTo,
+            shopCount: shopList.length,
             shops: shopList,
         };
     }
@@ -135,16 +193,24 @@ class AdminBookingAssignService {
             );
         }
 
+        if (bookingRow.zoneId == null) {
+            throw new ValidationError(
+                "This order has no zone. Assign a zone before selecting a shop."
+            );
+        }
+
+        const orderZoneId = Number(bookingRow.zoneId);
         const shop = await addressDb.findOne({
             where: {
                 id: laundryShopId,
                 addressType: "LaundaryShopAddress",
-                zoneId: bookingRow.zoneId,
+                zoneId: orderZoneId,
+                status: true,
             },
             attributes: ["id", "userId", "zoneId"],
         });
 
-        if (!shop) {
+        if (!shop || Number(shop.zoneId) !== orderZoneId) {
             throw new NotFoundError(
                 "Shop not found in this booking zone or invalid shop address."
             );
@@ -199,6 +265,14 @@ class AdminBookingAssignService {
             },
             { where: { id: bookingId } }
         );
+
+        try {
+            const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
+            // Close any active trip tracking when admin reassigns shop/driver.
+            syncLiveTrackingForBookingStatus(bookingId, 3, {
+                reason: 'admin_reassign',
+            }).catch(() => {});
+        } catch (_) { /* ignore */ }
 
         if (Number(bookingRow.bookingStatusId) === 1) {
             await bookingHistory.bulkCreate(
@@ -260,41 +334,20 @@ class AdminBookingAssignService {
     }
 
     /**
-     * Enrich order list with assign flags using each booking zone's country timezone.
+     * Enrich order list with assign flags.
+     * Admin list UI only needs canAdminAssign — skip per-zone timezone + decline
+     * queries (those were unused by the panel and added multi-hundred-ms latency).
      */
     async enrichBookingsForAdminList(bookingInstances) {
-        const zoneIds = [
-            ...new Set(
-                bookingInstances
-                    .map((row) => {
-                        const plain = row.get ? row.get({ plain: true }) : row;
-                        return plain.zoneId;
-                    })
-                    .filter(Boolean)
-            ),
-        ];
-
-        const tzByZone = new Map();
-        await Promise.all(
-            zoneIds.map(async (zoneId) => {
-                const ctx = await getCountryContextFromZoneId(zoneId);
-                tzByZone.set(zoneId, ctx.ianaTimeZone);
-            })
-        );
-
-        const bookingIds = bookingInstances.map((row) => {
-            const plain = row.get ? row.get({ plain: true }) : row;
-            return plain.id;
-        });
-        const declineCountByBooking =
-            await agentBookingDeclineService.getDeclineCountByBookingIds(bookingIds);
-
         return bookingInstances.map((row) => {
             const plain = row.get ? row.get({ plain: true }) : row;
-            const tz =
-                tzByZone.get(plain.zoneId) || BUSINESS_TIME_ZONE;
-            const declineCount = declineCountByBooking.get(plain.id) || 0;
-            return this.enrichBookingForAdmin(plain, tz, declineCount);
+            return {
+                ...plain,
+                canAdminAssign: canAdminAssignOrReassignBooking(plain),
+                agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
+                agentAcceptExpired: false,
+                agentDeclineCount: 0,
+            };
         });
     }
 }

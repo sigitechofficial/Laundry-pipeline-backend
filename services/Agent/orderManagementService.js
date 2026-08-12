@@ -16,8 +16,6 @@ const {
     proofOfDeliveries,
     OnHoldConfirmation,
     bookingHistory,
-    customerOriginalServiceSnapshot,
-    customerOriginalPreferenceSnapshot,
     bookingPreference
 } = require('../../models');
 const moment = require('moment');
@@ -39,6 +37,9 @@ const {
     getActiveBookingCutoff,
 } = require('../../utils/bookingTimeZone');
 const invoiceManagementService = require('./invoiceManagementService');
+const {
+    ensureCustomerDeclaredSnapshot,
+} = require('./customerDeclaredServicesService');
 const { buildCollectPaymentFlags, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { redactCustomerPhone } = require('../../utils/maskPhone');
 
@@ -1231,59 +1232,7 @@ class AgentOrderManagementService {
      * (called once when booking transitions 7 → 8). Idempotent — skips if already taken.
      */
     async _snapshotCustomerSelections(bookingId) {
-        const existing = await customerOriginalServiceSnapshot.count({ where: { bookingId } });
-        if (existing > 0) return;
-
-        const services = await customerSelectedService.findAll({
-            where: { bookingId, status: true }
-        });
-
-        for (const svc of services) {
-            const snap = await customerOriginalServiceSnapshot.create({
-                bookingId,
-                serviceId:          svc.serviceId    ?? null,
-                categoryId:         svc.categoryId   ?? null,
-                subCategoryId:      svc.subCategoryId ?? null,
-                items:              svc.items         ?? null,
-                bags:               svc.bags          ?? null,
-                categoryPrice:      svc.categoryPrice ?? null,
-                serviceInstruction: svc.serviceInstruction ?? null,
-            });
-
-            const prefs = await bookingPreference.findAll({
-                where: { bookingId, customerSelectedServiceId: svc.id }
-            });
-
-            if (prefs.length > 0) {
-                await customerOriginalPreferenceSnapshot.bulkCreate(
-                    prefs.map((p) => ({
-                        bookingId,
-                        snapshotServiceId:        snap.id,
-                        preferenceTypeId:         p.preferenceTypeId         ?? null,
-                        preferenceValueId:        p.preferenceValueId        ?? null,
-                        parentPreferenceValueId:  p.parentPreferenceValueId  ?? null,
-                        preferenceInstruction:    p.preferenceInstruction    ?? null,
-                    }))
-                );
-            }
-        }
-
-        // Also capture booking-level preferences (not tied to a specific service)
-        const bookingLevelPrefs = await bookingPreference.findAll({
-            where: { bookingId, customerSelectedServiceId: null }
-        });
-        if (bookingLevelPrefs.length > 0) {
-            await customerOriginalPreferenceSnapshot.bulkCreate(
-                bookingLevelPrefs.map((p) => ({
-                    bookingId,
-                    snapshotServiceId:        null,
-                    preferenceTypeId:         p.preferenceTypeId         ?? null,
-                    preferenceValueId:        p.preferenceValueId        ?? null,
-                    parentPreferenceValueId:  p.parentPreferenceValueId  ?? null,
-                    preferenceInstruction:    p.preferenceInstruction    ?? null,
-                }))
-            );
-        }
+        await ensureCustomerDeclaredSnapshot(bookingId);
     }
 
     /**

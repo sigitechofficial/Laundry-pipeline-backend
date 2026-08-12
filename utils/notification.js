@@ -13,6 +13,17 @@ const firebaseCredPath = path.join(__dirname, '../firebase.json');
 let firebaseReady = false;
 let firebaseInitError = null;
 
+/**
+ * RTDB URL — set FIREBASE_DATABASE_URL in env after enabling Realtime Database
+ * in the Firebase console (e.g. https://laundry-app-bf43c-default-rtdb.firebaseio.com).
+ */
+function getFirebaseDatabaseUrl() {
+  const fromEnv = (process.env.FIREBASE_DATABASE_URL || '').trim();
+  if (fromEnv) return fromEnv;
+  // Sensible default for project laundry-app-bf43c; override via env if region differs.
+  return 'https://laundry-app-bf43c-default-rtdb.firebaseio.com';
+}
+
 function ensureFirebaseReady() {
   if (firebaseReady && admin.apps.length) {
     return true;
@@ -29,14 +40,17 @@ function ensureFirebaseReady() {
   }
   try {
     const serviceAccount = JSON.parse(fs.readFileSync(firebaseCredPath, 'utf8'));
+    const databaseURL = getFirebaseDatabaseUrl();
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
+      databaseURL,
     });
     firebaseReady = true;
     firebaseInitError = null;
     console.log(
-      '[Firebase] Admin initialized OK project_id=%s',
-      serviceAccount.project_id || '?'
+      '[Firebase] Admin initialized OK project_id=%s databaseURL=%s',
+      serviceAccount.project_id || '?',
+      databaseURL
     );
     return true;
   } catch (err) {
@@ -91,6 +105,7 @@ function getFirebaseDiagnostics() {
     firebaseInitError,
     appsInitialized: admin.apps.length,
     credPath: firebaseCredPath,
+    databaseURL: getFirebaseDatabaseUrl(),
     fileExists,
     parseOk,
     parseError,
@@ -150,7 +165,7 @@ function buildMulticastMessage({ title, body, data = {}, tokens, tagPrefix = 'de
       notification: {
         title,
         body,
-        icon: '/icons/icon-192x192.png'
+        icon: '/images/logo.png'
       }
     },
     tokens
@@ -297,7 +312,24 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
 
     console.log("🚀 ~ sendNotification ~ tokens:", tokens);
 
-    if (!tokens || tokens.length === 0) {
+    const { isValidFcmRegistrationToken } = require('./fcmToken');
+    const validTokenRows = (tokens || []).filter((t) =>
+      isValidFcmRegistrationToken(t.tokenId)
+    );
+    const invalidTokenIds = (tokens || [])
+      .map((t) => t.tokenId)
+      .filter((id) => !isValidFcmRegistrationToken(id));
+
+    if (invalidTokenIds.length > 0) {
+      await deviceToken.destroy({
+        where: {
+          userId,
+          tokenId: { [Op.in]: invalidTokenIds }
+        }
+      });
+    }
+
+    if (!validTokenRows.length) {
       console.log(`No device tokens found for user ++++++++++++++++++++++++++ ${userId}`);
       const result = {
         sent: false,
@@ -313,7 +345,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       return result;
     }
 
-    const tokenIds = tokens.map(token => token.tokenId);
+    const tokenIds = validTokenRows.map(token => token.tokenId);
     const message = buildMulticastMessage({
       title,
       body,
@@ -338,7 +370,8 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
     const invalidTokens = failedTokens
       .filter(item =>
         item.code === 'messaging/registration-token-not-registered' ||
-        item.code === 'messaging/invalid-registration-token'
+        item.code === 'messaging/invalid-registration-token' ||
+        item.code === 'messaging/invalid-argument'
       )
       .map(item => item.token);
 
@@ -382,5 +415,7 @@ module.exports = {
   sendNotification,
   sendNotificationToTokens,
   getFirebaseDiagnostics,
+  getFirebaseDatabaseUrl,
+  ensureFirebaseReady,
   isFirebaseReady: () => firebaseReady
 }; 

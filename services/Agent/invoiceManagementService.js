@@ -46,6 +46,9 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
+const {
+    ensureCustomerDeclaredSnapshot,
+} = require("./customerDeclaredServicesService");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -385,6 +388,9 @@ class AgentInvoiceManagementService {
         currentDate,
         currentTime,
     }) {
+        // Freeze customer booking intent BEFORE agent lines replace live CSS.
+        await ensureCustomerDeclaredSnapshot(bookingId);
+
         const keptActiveIds = [];
 
         for (const serviceLine of services) {
@@ -448,6 +454,7 @@ class AgentInvoiceManagementService {
             );
         }
 
+        // Agent invoice lines only — customer intent lives in original snapshots.
         const deactivateWhere = {
             bookingId,
             status: true,

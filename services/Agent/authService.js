@@ -20,6 +20,12 @@ const {
     parseTimeZoneFromBody,
     resolveAgentTimeZone,
 } = require('../../utils/agentTimeZone');
+const {
+    getEffectiveShopCapabilities,
+    LAUNDRY_SHOP_DRIVER_ROLE_ID,
+    LAUNDRY_SHOP_MANAGER_ROLE_ID,
+} = require('../../utils/shopAgentContext');
+const { CLASSIFIED_AS } = require('../../constants/systemRoles');
 
 /**
  * Replaces all existing device tokens for a user with a single new one.
@@ -953,6 +959,25 @@ class AgentAuthService {
             }
         }
 
+        // Shop staff must use employeeLogin — they have no personal shop address/business profile.
+        if (Number(userFind.classifiedAsId) === CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE) {
+            const passwordMatch = await bcrypt.compare(data.password, userFind.password);
+            if (!passwordMatch) {
+                throw new UnauthorizedError("Bad credentials", {
+                    message: "Please enter correct password to continue",
+                });
+            }
+            throw new ValidationError(
+                "This is a team member account. Please sign in using Employee login.",
+                {
+                    useEmployeeLogin: true,
+                    userId: userFind.id,
+                    message:
+                        "This is a team member account. Please sign in using Employee login.",
+                }
+            );
+        }
+
         // Check verification before anything else
         let otpId = 0;
         if (!userFind.status) {
@@ -1174,6 +1199,11 @@ class AgentAuthService {
         }
 
         const connectAccountId = agentInfo?.[0]?.connectAccountId || null;
+        const ownerCapabilities = await getEffectiveShopCapabilities({
+            id: userFind.id,
+            classifiedAsId: userFind.classifiedAsId,
+            roleId: userFind.roleId,
+        });
 
         return {
             userId: String(userFind.id),
@@ -1190,6 +1220,12 @@ class AgentAuthService {
             features: featureData,
             isConnectAccountConnected,
             connectAccountId,
+            isEmployee: false,
+            isManager: false,
+            isDriver: false,
+            roleId: userFind.roleId ?? null,
+            classifiedAsId: userFind.classifiedAsId ?? null,
+            capabilities: ownerCapabilities,
             ianaTimeZone: resolveAgentTimeZone(data, userFind.ianaTimeZone),
             ...this._buildAgentApprovalConnectMeta({
                 agentApprovalStatus: userFind.agentApprovalStatus || 'approved',
@@ -1357,6 +1393,118 @@ class AgentAuthService {
     }
 
     /**
+     * Session for shop employees (Driver / Manager).
+     * Does not require personal LaundaryShopAddress or business profile —
+     * those belong to the parent agent (employeeOff).
+     */
+    async _sessionForShopEmployee(employeeData, data) {
+        if (!employeeData.employeeOff) {
+            throw new ValidationError(
+                "Employee is not linked to a laundry shop. Contact your shop owner.",
+                { userId: employeeData.id }
+            );
+        }
+
+        const agentData = await users.findOne({
+            where: { id: employeeData.employeeOff },
+            attributes: [
+                'id',
+                'firstName',
+                'lastName',
+                'email',
+                'userTypeId',
+                'agentApprovalStatus',
+                'rejectionReason',
+                'ianaTimeZone',
+            ],
+            include: [
+                {
+                    model: bussinessInformation,
+                    as: 'agentInfo',
+                    attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
+                    required: false,
+                },
+            ],
+        });
+
+        this._assertAgentApprovalForLogin(agentData);
+
+        const shopAddress = await addressDb.findOne({
+            where: {
+                userId: employeeData.employeeOff,
+                addressType: 'LaundaryShopAddress',
+            },
+            attributes: ['id'],
+        });
+
+        await _refreshDeviceToken(employeeData.id, data.dvToken);
+
+        const accessToken = jwt.sign(
+            {
+                id: employeeData.id,
+                email: employeeData.email,
+                dvToken: data.dvToken,
+                employeeOff: employeeData.employeeOff,
+                roleId: employeeData.roleId,
+                classifiedAsId: employeeData.classifiedAsId,
+            },
+            process.env.JWT_ACCESS_SECRET
+        );
+
+        if (data.dvToken) {
+            await redisCli.hSet(`id-${employeeData.id}`, { [data.dvToken]: accessToken });
+        }
+
+        const featureData = await features.findAll({
+            where: {
+                status: true,
+                deletedAt: { [Op.is]: null },
+            },
+            attributes: ['id', 'title', 'key', 'featureOf'],
+        });
+
+        const capabilities = await getEffectiveShopCapabilities(employeeData);
+        const agentInfoRow = Array.isArray(agentData?.agentInfo)
+            ? agentData.agentInfo[0]
+            : agentData?.agentInfo;
+        const isConnectAccountConnected = true; // employees never complete Stripe onboarding
+        const connectAccountId = agentInfoRow?.connectAccountId || null;
+        const currencyUnit = '$';
+        const ianaTimeZone = resolveAgentTimeZone(
+            data,
+            agentData?.ianaTimeZone || employeeData.ianaTimeZone
+        );
+        const plainUser = this._withAgentTimeZone(
+            this._toPlainUserForResponse(employeeData),
+            ianaTimeZone
+        );
+
+        return {
+            userData: plainUser,
+            userId: String(employeeData.id),
+            firstName: employeeData.firstName,
+            lastName: employeeData.lastName,
+            email: employeeData.email,
+            accessToken,
+            addressId: shopAddress ? String(shopAddress.id) : null,
+            currencyUnit,
+            isGuest: false,
+            featureData,
+            isConnectAccountConnected,
+            connectAccountId,
+            isEmployee: true,
+            isManager: Number(employeeData.roleId) === LAUNDRY_SHOP_MANAGER_ROLE_ID,
+            isDriver: Number(employeeData.roleId) === LAUNDRY_SHOP_DRIVER_ROLE_ID,
+            roleId: employeeData.roleId,
+            classifiedAsId: employeeData.classifiedAsId,
+            employeeOff: employeeData.employeeOff,
+            capabilities,
+            ianaTimeZone,
+            agentInfo: agentData,
+        };
+    }
+
+    /**
      * Session
      * @param {Object} data - Session data
      * @returns {Object} Session result
@@ -1424,6 +1572,9 @@ class AgentAuthService {
                 "phoneNum",
                 "classifiedAsId",
                 "roleId",
+                "employeeOff",
+                "image",
+                "countryCode",
                 "ianaTimeZone",
                 "agentApprovalStatus",
                 "rejectionReason",
@@ -1476,6 +1627,11 @@ class AgentAuthService {
                 otpId, 
                 email: userData.email,
             });
+        }
+
+        // Shop employees: skip agent onboarding (address / business info). Shop owner owns that data.
+        if (Number(userData.classifiedAsId) === CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE) {
+            return this._sessionForShopEmployee(userData, data);
         }
 
         // Check for address
@@ -1704,6 +1860,14 @@ class AgentAuthService {
 
         this._assertAgentApprovalForLogin(agentData);
 
+        const shopAddress = await addressDb.findOne({
+            where: {
+                userId: employeeData.employeeOff,
+                addressType: 'LaundaryShopAddress',
+            },
+            attributes: ['id', 'zoneId'],
+        });
+
         // Get permissions for the employee's role — only Agent/Agent Employee/both features
         const permissionData = await permissions.findAll({
             where: { roleId: employeeData.roleId },
@@ -1740,8 +1904,11 @@ class AgentAuthService {
 
         await redisCli.hSet(`id-${employeeData.id}`, { [dvToken]: accessToken });
 
+        const capabilities = await getEffectiveShopCapabilities(employeeData);
+
         return {
             id: employeeData.id,
+            userId: String(employeeData.id),
             firstName: employeeData.firstName,
             lastName: employeeData.lastName,
             email: employeeData.email,
@@ -1752,6 +1919,11 @@ class AgentAuthService {
             role: roleData,
             classifiedAsId: employeeData.classifiedAsId,
             employeeOff: employeeData.employeeOff,
+            addressId: shopAddress ? String(shopAddress.id) : null,
+            isEmployee: true,
+            isManager: Number(employeeData.roleId) === LAUNDRY_SHOP_MANAGER_ROLE_ID,
+            isDriver: Number(employeeData.roleId) === LAUNDRY_SHOP_DRIVER_ROLE_ID,
+            capabilities,
             agentInfo: agentData,
             permissions: permissionData,
             accessToken

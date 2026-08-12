@@ -1,0 +1,9 @@
+/**
+ * firebase.json for CLI deploy of Realtime Database rules.
+ * Deploy: firebase deploy --only database --project laundry-app-bf43c
+ */
+{
+  "database": {
+    "rules": "firebase/database.rules.json"
+  }
+}

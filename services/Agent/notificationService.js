@@ -1,5 +1,7 @@
 const { booking, users } = require('../../models');
 const { sendNotification } = require('../../utils/notification');
+const { sendAdminAlert } = require('../Admin/adminAlertService');
+const { inferAlertType } = require('../../constants/adminAlertTypes');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { Op } = require('sequelize');
 
@@ -66,67 +68,31 @@ async function sendNotificationToCustomer(bookingId, title, body, data = {}) {
  */
 async function sendNotificationToAdmin(title, body, data = {}, adminId = null) {
     try {
-        let admins;
+        const bookingId = data?.bookingId != null ? Number(data.bookingId) : null;
+        const alertType =
+            data?.alertType ||
+            (data?.type ? inferAlertType({ title, body, data }) : null);
 
-        if (adminId) {
-            const admin = await users.findOne({
-                where: {
-                    id: adminId,
-                    userTypeId: 1,
-                    status: true
-                }
-            });
+        const result = await sendAdminAlert({
+            alertType,
+            title,
+            body,
+            data,
+            bookingId: Number.isFinite(bookingId) ? bookingId : null,
+            zoneId: data?.zoneId != null ? Number(data.zoneId) : null,
+            adminId,
+        });
 
-            if (!admin) {
-                throw new NotFoundError(`Admin with ID ${adminId} not found`);
-            }
-
-            admins = [admin];
-        } else {
-            admins = await users.findAll({
-                where: {
-                    userTypeId: 1,
-                    status: true
-                },
-                attributes: ['id', 'firstName', 'lastName', 'email']
-            });
-
-            if (!admins || admins.length === 0) {
-                throw new NotFoundError('No active admins found');
-            }
-        }
-
-        const results = [];
-        for (const admin of admins) {
-            try {
-                const result = await sendNotification(
-                    admin.id,
-                    title,
-                    body,
-                    data
-                );
-
-                results.push({
-                    adminId: admin.id,
-                    adminName: `${admin.firstName} ${admin.lastName}`,
-                    success: result.sent,
-                    result
-                });
-            } catch (error) {
-                console.error(`Failed to send notification to admin ${admin.id}:`, error);
-                results.push({
-                    adminId: admin.id,
-                    adminName: `${admin.firstName} ${admin.lastName}`,
-                    success: false,
-                    error: error.message
-                });
-            }
+        if (result.totalAdmins === 0 && adminId) {
+            throw new NotFoundError(`Admin with ID ${adminId} not found`);
         }
 
         return {
-            totalAdmins: admins.length,
-            successCount: results.filter(r => r.success).length,
-            results
+            alertType: result.alertType,
+            totalAdmins: result.totalAdmins,
+            successCount: result.successCount,
+            skippedCount: result.skippedCount,
+            results: result.results,
         };
     } catch (error) {
         console.error('Error in sendNotificationToAdmin:', error);

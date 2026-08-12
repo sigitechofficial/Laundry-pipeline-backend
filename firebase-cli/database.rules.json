@@ -1,0 +1,21 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "liveTracking": {
+      "$bookingId": {
+        ".read": "auth != null && data.exists() && ((auth.token.role === 'customer' && data.child('meta/customerId').val() === auth.token.appUserId) || (auth.token.role === 'agent' && data.child('meta/agentId').val() === auth.token.appUserId)) && (data.child('meta/active').val() === true || (data.child('meta/endedAt').val() != null && now < data.child('meta/endedAt').val() + 300000))",
+        "meta": {
+          ".write": false
+        },
+        "location": {
+          ".write": "auth != null && auth.token.role === 'agent' && root.child('liveTracking').child($bookingId).child('meta/agentId').val() === auth.token.appUserId && root.child('liveTracking').child($bookingId).child('meta/active').val() === true",
+          ".validate": "newData.hasChildren(['lat', 'lng', 'updatedAt']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('updatedAt').isNumber()"
+        },
+        "route": {
+          ".write": "auth != null && auth.token.role === 'agent' && root.child('liveTracking').child($bookingId).child('meta/agentId').val() === auth.token.appUserId && root.child('liveTracking').child($bookingId).child('meta/active').val() === true"
+        }
+      }
+    }
+  }
+}

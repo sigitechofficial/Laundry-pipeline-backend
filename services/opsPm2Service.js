@@ -158,7 +158,7 @@ async function getPm2Status() {
   };
 }
 
-async function getPm2Logs({ lines = DEFAULT_LINES, stream = 'both' } = {}) {
+async function getPm2Logs({ lines = DEFAULT_LINES, stream = 'both', grep = null } = {}) {
   const appName = resolvePm2AppName();
   const n = clampLines(lines);
   const streamNorm = String(stream || 'both').toLowerCase();
@@ -167,17 +167,48 @@ async function getPm2Logs({ lines = DEFAULT_LINES, stream = 'both' } = {}) {
   else if (streamNorm === 'out' || streamNorm === 'output') args.push('--out');
 
   const result = await runPm2(args, { timeoutMs: 60000 });
-  const combined = `${result.stdout || ''}${result.stderr ? `\n${result.stderr}` : ''}`;
+  let combined = `${result.stdout || ''}${result.stderr ? `\n${result.stderr}` : ''}`;
+  const grepRaw = grep == null ? '' : String(grep).trim();
+  let matchedLines = null;
+  if (grepRaw) {
+    let re;
+    try {
+      re = new RegExp(grepRaw, 'i');
+    } catch {
+      re = new RegExp(grepRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    }
+    const filtered = combined.split(/\r?\n/).filter((line) => re.test(line));
+    matchedLines = filtered.length;
+    combined = filtered.join('\n');
+  }
   return {
     ok: result.ok,
-    message: result.ok ? `Last ${n} log line(s) for ${appName}` : 'pm2 logs failed',
+    message: result.ok
+      ? grepRaw
+        ? `Matched ${matchedLines} line(s) in last ${n} for ${appName} (grep=${grepRaw})`
+        : `Last ${n} log line(s) for ${appName}`
+      : 'pm2 logs failed',
     appName,
     stream: streamNorm,
     lines: n,
+    grep: grepRaw || null,
+    matchedLines,
     text: redactLogText(combined),
     error: result.ok ? null : result.stderr || result.stdout,
     serverTime: new Date().toISOString()
   };
+}
+
+const ERROR_LINE_RE =
+  /\b(error|exception|fatal|unhandled|ECONNREFUSED|ETIMEDOUT|EADDRINUSE|TypeError|ReferenceError|SequelizeDatabaseError|WARN:)\b/i;
+
+function extractInterestingLogLines(text, { limit = 40 } = {}) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter(Boolean)
+    .filter((l) => ERROR_LINE_RE.test(l));
+  return lines.slice(-limit);
 }
 
 const DEPLOY_LOG_FILES = {
@@ -292,11 +323,127 @@ async function mutatePm2(action, { confirm } = {}) {
   };
 }
 
+/**
+ * One-shot remote diagnosis: PM2 + deps + schema + recent error lines + deploy logs.
+ */
+async function runDiagnose({ logLines = 120 } = {}) {
+  const { runDependencyChecks, checkShopReviewSchema } = require('./healthCheckService');
+  const n = clampLines(logLines);
+
+  const [pm2, errLogs, outLogs, ready, schema] = await Promise.all([
+    getPm2Status(),
+    getPm2Logs({ lines: n, stream: 'err' }),
+    getPm2Logs({ lines: Math.min(n, 80), stream: 'out' }),
+    runDependencyChecks({ path: '/ops/diagnose' }),
+    checkShopReviewSchema()
+  ]);
+
+  const migrate = getDeployLog({ name: 'migrate', lines: 40 });
+  const seed = getDeployLog({ name: 'seed', lines: 50 });
+
+  const interesting = extractInterestingLogLines(
+    `${errLogs.text || ''}\n${outLogs.text || ''}`,
+    { limit: 50 }
+  );
+
+  const issues = [];
+  if (!pm2.ok) issues.push({ code: 'pm2_query_failed', detail: pm2.message });
+  if (!pm2.self) issues.push({ code: 'pm2_process_missing', detail: `Expected ${pm2.appName}` });
+  else if (pm2.self.status !== 'online') {
+    issues.push({ code: 'pm2_not_online', detail: pm2.self.status });
+  }
+  if (ready.overall === 'fail') {
+    issues.push({
+      code: 'deps_fail',
+      detail: (ready.summary?.fail || []).join(',')
+    });
+  } else if (ready.overall === 'degraded') {
+    issues.push({
+      code: 'deps_degraded',
+      detail: (ready.summary?.fail || []).join(',')
+    });
+  }
+  if (schema.status !== 'ok') {
+    issues.push({ code: 'schema_fail', detail: schema.message });
+  }
+  if (!migrate.ok) issues.push({ code: 'migrate_log_missing', detail: migrate.message });
+  if (interesting.length >= 3) {
+    issues.push({
+      code: 'recent_error_lines',
+      detail: `${interesting.length} matching line(s) in recent PM2 logs`
+    });
+  }
+
+  const severity =
+    issues.some((i) => ['pm2_not_online', 'pm2_process_missing', 'deps_fail', 'schema_fail'].includes(i.code))
+      ? 'critical'
+      : issues.length
+        ? 'warn'
+        : 'ok';
+
+  return {
+    ok: severity === 'ok',
+    severity,
+    message:
+      severity === 'ok'
+        ? 'Diagnose OK — PM2 online, core deps healthy, schema present'
+        : `Diagnose ${severity}: ${issues.map((i) => i.code).join(', ')}`,
+    issues,
+    pm2: {
+      ok: pm2.ok,
+      appName: pm2.appName,
+      self: pm2.self,
+      deploy: pm2.deploy
+    },
+    dependencies: {
+      overall: ready.overall,
+      ready: ready.ready,
+      summary: ready.summary,
+      checks: Object.fromEntries(
+        Object.entries(ready.checks || {}).map(([name, c]) => [
+          name,
+          {
+            status: c.status,
+            message: c.message,
+            latencyMs: c.latencyMs,
+            hint: c.hint || c.fixHint || null
+          }
+        ])
+      )
+    },
+    schema: {
+      status: schema.status,
+      message: schema.message,
+      migration: schema.migration,
+      tables: schema.tables,
+      counts: schema.counts
+    },
+    logs: {
+      interesting,
+      errTail: redactLogText((errLogs.text || '').split(/\r?\n/).slice(-25).join('\n')),
+      outTail: redactLogText((outLogs.text || '').split(/\r?\n/).slice(-15).join('\n'))
+    },
+    deployLogs: {
+      migrate: {
+        ok: migrate.ok,
+        summary: (migrate.text || '').split(/\r?\n/).slice(-8).join('\n')
+      },
+      seed: {
+        ok: seed.ok,
+        summary: (seed.text || '').split(/\r?\n/).slice(-10).join('\n')
+      }
+    },
+    serverTime: new Date().toISOString()
+  };
+}
+
 module.exports = {
   getPm2Status,
   getPm2Logs,
   getDeployLog,
   mutatePm2,
+  runDiagnose,
+  extractInterestingLogLines,
   resolvePm2AppName,
   resolveDeployRoot,
   redactLogText

@@ -25,14 +25,32 @@ async function status(req, res) {
 }
 
 /**
- * GET /ops/pm2/logs?lines=200&stream=both|out|err
+ * GET /ops/pm2/logs?lines=200&stream=both|out|err&grep=Error
  */
 async function pm2Logs(req, res) {
   const data = await opsPm2Service.getPm2Logs({
     lines: req.query.lines,
-    stream: req.query.stream
+    stream: req.query.stream,
+    grep: req.query.grep || req.query.q
   });
   return res.status(data.ok ? 200 : 500).json({
+    status: data.ok ? '1' : '0',
+    message: data.message,
+    data: { ...data, request: requestMeta(req) }
+  });
+}
+
+/**
+ * GET /ops/diagnose?logLines=120
+ * Bundled PM2 + deps + schema + recent error lines (no cPanel needed).
+ */
+async function diagnose(req, res) {
+  const data = await opsPm2Service.runDiagnose({
+    logLines: req.query.logLines || req.query.lines
+  });
+  const http =
+    data.severity === 'critical' ? 503 : data.severity === 'warn' ? 200 : 200;
+  return res.status(http).json({
     status: data.ok ? '1' : '0',
     message: data.message,
     data: { ...data, request: requestMeta(req) }
@@ -83,5 +101,6 @@ module.exports = {
   status,
   pm2Logs,
   deployLogs,
+  diagnose,
   pm2Mutate
 };

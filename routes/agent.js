@@ -4,12 +4,19 @@ const router = express();
 const agentAuthController = require("../controllers/Agent/authController");
 const agentController = require("../controllers/Agent/agents");
 const bookingAttemptController = require("../controllers/Agent/bookingAttemptController");
+const shopReviewAgentController = require("../controllers/Agent/shopReviewController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
 const multer = require("multer");
 const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
+const {
+    requireShopOwner,
+    requireCapability,
+    requireAnyCapability,
+    requireBookingAssignee,
+} = require("../middlewares/requireShopOwner");
 const {
     postcodeAutocompleteRateLimit,
     postcodeValidateRateLimit,
@@ -208,12 +215,14 @@ router.get(
 router.post(
     "/acceptOrder",
     validateAccessToken,
+    requireCapability("canAcceptOrders"),
     asyncMiddleware(agentController.agentAcceptOrder)
 );
 //Agent reject/decline incoming booking (hidden from this agent only)
 router.post(
     "/rejectOrder",
     validateAccessToken,
+    requireCapability("canAcceptOrders"),
     checkPermissions,
     asyncMiddleware(agentController.agentRejectOrder)
 );
@@ -221,12 +230,18 @@ router.post(
 // router.get('/agentInvoiceMake',validateAccessToken,asyncMiddleware(agentController.orderDetailsforInvoice))
 //Get All Services
 router.get("/getAllServices", asyncMiddleware(adminController.getAllServices));
+// Agent/admin support contact (zone-aware). Call button uses this — not customer phone.
+router.get("/supportContact", validateAccessToken, asyncMiddleware(async (req, res) => {
+    req.query.audience = "agent";
+    return adminController.getSupportContact(req, res);
+}));
 //Agent upload proof Images
 router.post(
     "/AddPickupDeliveryProof",
     validateAccessToken,
     checkPermissions,
     uploadPickDropProofs.array("Images", 10),
+    requireBookingAssignee({ types: ["either"] }),
     asyncMiddleware(agentController.AddPickupDeliveryProof)
 );
 //Agent goes to pick order Byself and Mark order on the way driver
@@ -234,6 +249,7 @@ router.patch(
     "/agentBookingStatusOnTheWay/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.agentBookingStatusOnTheWay)
 );
 //Agent mark booking Status Arrived
@@ -241,7 +257,28 @@ router.patch(
     "/driverStatusArrived/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.driverStatusArrived)
+);
+// Live map tracking publisher bootstrap (Firebase RTDB custom token)
+const liveTrackingController = require("../controllers/liveTrackingController");
+router.get(
+    "/live-tracking/:bookingId",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.getAgentLiveTracking)
+);
+router.post(
+    "/live-tracking/:bookingId/demo-stream",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.startDemoLiveTrackingStream)
+);
+router.delete(
+    "/live-tracking/:bookingId/demo-stream",
+    validateAccessToken,
+    checkPermissions,
+    asyncMiddleware(liveTrackingController.stopDemoLiveTrackingStream)
 );
 // Pickup/delivery attempt options after Arrived (grace, fail, unattended)
 router.get(
@@ -294,6 +331,7 @@ router.patch(
     "/reachedAtDeliveryShopStatus/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.reachedAtDeliveryShopStatus)
 );
 //Laundry Washed At Laundry Shop
@@ -308,6 +346,7 @@ router.patch(
     "/laundryDeliverToCustomer/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.laundryDeliverToCustomer)
 );
 //Invoice Details of Order
@@ -358,6 +397,7 @@ router.patch(
     "/driverReachedForDelivery/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.driverReachedForDelivery)
 );
 //Driver/Agent deliver delivery to customer
@@ -365,6 +405,7 @@ router.patch(
     "/bookingDeliverToCustomer/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.bookingDeliverToCustomer)
 );
 //invoice Details Tab Api
@@ -431,29 +472,108 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.agnetDrivers)
 );
-//Agent Assign Order To Driver
+// Unassign reasons for Return / Unassign me dialogs
+router.get(
+    "/staffUnassignReasons",
+    validateAccessToken,
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
+    asyncMiddleware(agentController.getStaffUnassignReasons)
+);
+//Agent Assign Order To Driver (legacy path — pickup assign, no forced status 13)
 router.patch(
     "/agentAssignBookingToLaundryDriver",
     validateAccessToken,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.agentAssignBookingToLaundryDriver)
+);
+// Assign pickup or delivery staff
+router.patch(
+    "/assignBookingStaff",
+    validateAccessToken,
+    requireCapability("canAssignStaff"),
+    asyncMiddleware(agentController.assignBookingStaff)
+);
+// Unassign staff (return to shop owner).
+// Assigners: any leg. Runners: only self-assigned leg (controller enforces).
+router.patch(
+    "/unassignBookingStaff",
+    validateAccessToken,
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
+    asyncMiddleware(agentController.unassignBookingStaff)
+);
+// Reassign staff
+router.patch(
+    "/reassignBookingStaff",
+    validateAccessToken,
+    requireCapability("canAssignStaff"),
+    asyncMiddleware(agentController.reassignBookingStaff)
+);
+// Staff jobs monitor board (assigners see all; runners see own via controller)
+router.get(
+    "/staffJobs",
+    validateAccessToken,
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
+    asyncMiddleware(agentController.getStaffJobs)
 );
 //Agent Assign Order to Self
 router.patch(
     "/agentPickupOrderBySelf",
     validateAccessToken,
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.agentPickupOrderBySelf)
 );
+// Staff activity (assignment events + completed jobs)
+router.get(
+    "/staffActivity",
+    validateAccessToken,
+    requireCapability("canViewStaffActivity"),
+    asyncMiddleware(agentController.getStaffActivity)
+);
+// Auto-assign settings (owner only by default ceiling)
+router.get(
+    "/autoAssignSettings",
+    validateAccessToken,
+    requireCapability("canManageAutoAssign"),
+    asyncMiddleware(agentController.getAutoAssignSettings)
+);
+router.put(
+    "/autoAssignSettings",
+    validateAccessToken,
+    requireCapability("canManageAutoAssign"),
+    asyncMiddleware(agentController.putAutoAssignSettings)
+);
+// Per-employee capability overrides
+router.get(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.getEmployeeCapabilities)
+);
+router.put(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.putEmployeeCapabilities)
+);
+router.patch(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.putEmployeeCapabilities)
+);
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
-//Add Roles
+//Add Roles (owner only — system roles 6/8 must not be casually mutated)
 router.post(
     "/AddLaundryRoles",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addRole)
 );
 //Update Roles
 router.patch(
     "/updateRoles",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.updateRoles)
 );
 //Get Roles
@@ -466,6 +586,7 @@ router.get(
 router.post(
     "/addClassifiedAs",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addClassifiedAs)
 );
 //Get ClassifiedAs
@@ -478,6 +599,7 @@ router.get(
 router.post(
     "/addfeatures",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.addfeatures)
 );
 //Get Features
@@ -491,6 +613,7 @@ router.get(
 router.post(
     "/addEmployee",
     validateAccessToken,
+    requireCapability("canManageTeam"),
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.addEmployee)
 );
@@ -498,6 +621,7 @@ router.post(
 router.patch(
     "/updateEmployee",
     validateAccessToken,
+    requireCapability("canManageTeam"),
     checkPermissions,
     uploadProfile.single("profileImage"),
     asyncMiddleware(agentController.updateEmployee)
@@ -506,13 +630,22 @@ router.patch(
 router.patch(
     "/updateEmployeeStatus",
     validateAccessToken,
+    requireCapability("canManageTeam"),
     checkPermissions,
     asyncMiddleware(agentController.changeEmployeeStatus)
+);
+// Soft-delete employee
+router.delete(
+    "/deleteEmployee/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.deleteEmployee)
 );
 //Get All Employees
 router.get(
     "/getAllEmployees",
     validateAccessToken,
+    requireCapability("canManageTeam"),
     checkPermissions,
     asyncMiddleware(agentController.getAllEmployees)
 );
@@ -663,26 +796,31 @@ router.get(
 router.get(
     "/wallet",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentWallet)
 );
 router.get(
     "/wallet/transactions",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentWalletTransactions)
 );
 router.post(
     "/wallet/withdraw",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.withdrawAgentWallet)
 );
 router.get(
     "/settlement",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.getAgentSettlement)
 );
 router.post(
     "/cash-remittance",
     validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentController.submitCashRemittance)
 );
 
@@ -741,6 +879,13 @@ router.post(
     validateAccessToken,
     checkPermissions,
     asyncMiddleware(agentController.sendNotificationToMultiple)
+);
+
+//!----------------------------Shop Reviews Summary---------------------//
+router.get(
+    '/shopReviews/summary',
+    validateAccessToken,
+    asyncMiddleware(shopReviewAgentController.getShopReviewSummary)
 );
 
 module.exports = router;

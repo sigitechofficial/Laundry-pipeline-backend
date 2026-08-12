@@ -327,6 +327,7 @@ function buildOrderListFilters(req) {
     if (req.query.endDate) filters.endDate = req.query.endDate;
     if (req.query.date) filters.date = req.query.date;
     if (req.query.search) filters.search = String(req.query.search).trim();
+    if (req.query.includeCounts != null) filters.includeCounts = req.query.includeCounts;
     return filters;
 }
 
@@ -945,7 +946,8 @@ async function updateRoles(req, res) {
   * Get All Roles
 */
 async function getAllRoles(req, res) {
-    const getRoles = await roleManagementService.getAllRoles();
+    const audience = (req.query.audience || 'all').toString();
+    const getRoles = await roleManagementService.getAllRoles({ audience });
     return ResponseHelper.success(res, "Get All Roles", getRoles);
 }
 
@@ -2524,6 +2526,22 @@ function calculateZoneRadius(polygon) {
 //!----------------------------------Support Contact Config-----------------------------------------//
 
 async function getSupportContact(req, res) {
+    // Admin panel (no audience) → raw config for editing.
+    // Apps pass audience=agent|customer (± zoneId) → resolved dial number.
+    const audienceRaw = (req.query.audience || req.body?.audience || '')
+        .toString()
+        .toLowerCase()
+        .trim();
+    const zoneId = req.query.zoneId ?? req.body?.zoneId ?? null;
+
+    if (audienceRaw === 'agent' || audienceRaw === 'customer') {
+        const data = await supportContactService.getResolvedSupportContact({
+            audience: audienceRaw,
+            zoneId,
+        });
+        return ResponseHelper.success(res, 'Support contact retrieved successfully', data);
+    }
+
     const data = await supportContactService.getSupportContact();
     return ResponseHelper.success(res, 'Support contact retrieved successfully', data);
 }

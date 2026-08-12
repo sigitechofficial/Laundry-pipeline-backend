@@ -7,41 +7,39 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const { 
-    UnauthorizedError, 
-    NotFoundError, 
     ConflictError, 
     ValidationError 
 } = require('../../middlewares/universalErrorHandler');
-
-/** `featureOf` values used by the agent app (shop / employees). Not Admin-only. */
-const AGENT_APP_FEATURE_OF = ['Agent', 'Agent Employee', 'both'];
-
-/**
- * Role names that must never appear in the agent app role list (admin / zone portal).
- * They may still have permissions on `both` features — exclude explicitly.
- */
-const ADMIN_PORTAL_ROLE_NAMES = new Set(['zone admin']);
-
-function isAdminPortalRoleName(name) {
-    if (!name || typeof name !== 'string') return false;
-    return ADMIN_PORTAL_ROLE_NAMES.has(name.trim().toLowerCase());
-}
+const {
+    AGENT_SHOP_STAFF_ROLE_IDS,
+    SYSTEM_ROLES,
+    AGENT_APP_FEATURE_OF,
+    isAgentShopStaffRoleId,
+    isAdminPortalRoleId,
+    isAdminPortalRoleName,
+    isAgentShopRoleName,
+    SYSTEM_ROLE_NAMES,
+} = require('../../constants/systemRoles');
 
 /**
  * Agent Role & Permission Service
- * Handles all agent role and permission related business logic
+ * Agent shop staff only — never surfaces or mutates Admin portal roles (Zone Admin).
  */
 class AgentRolePermissionService {
 
-    /**
-     * Add Role
-     * @param {Object} data - Role data
-     * @param {string} data.name - Role name
-     * @param {Array} data.permissionRole - Permission role array
-     * @returns {Object} Role creation result
-     */
     async addRole(data) {
         const { name, permissionRole } = data;
+
+        if (isAgentShopRoleName(name)) {
+            throw new ConflictError(
+                'Laundry Shop Driver and Manager are system Agent employee roles'
+            );
+        }
+        if (isAdminPortalRoleName(name)) {
+            throw new ConflictError(
+                'Zone Admin is an Admin employee system role and cannot be created from the agent app'
+            );
+        }
 
         const checkExist = await roles.findOne({ where: { name } });
         if (checkExist) {
@@ -51,7 +49,7 @@ class AgentRolePermissionService {
 
         const newRole = await roles.create({ name, status: true });
 
-        const bulkArray = permissionRole.map((ele) => ({
+        const bulkArray = (permissionRole || []).map((ele) => ({
             featureId: ele.id,
             roleId: newRole.id,
             create: ele.permissions?.create === true || ele.permissions?.write === true,
@@ -60,21 +58,15 @@ class AgentRolePermissionService {
             delete: ele.permissions?.delete === true || ele.permissions?.write === true,
         }));
 
-        await permissions.bulkCreate(bulkArray);
+        if (bulkArray.length > 0) {
+            await permissions.bulkCreate(bulkArray);
+        }
 
         return {
             newRole,
         };
     }
 
-    /**
-     * Update Roles
-     * @param {Object} data - Role update data
-     * @param {string} data.name - Role name
-     * @param {Array} data.permissionRole - Permission role array
-     * @param {number} data.roleId - Role ID
-     * @returns {Object} Role update result
-     */
     async updateRoles(data) {
         const { name, permissionRole, roleId } = data;
 
@@ -84,7 +76,21 @@ class AgentRolePermissionService {
             });
         }
 
+        if (isAgentShopStaffRoleId(roleId)) {
+            throw new ValidationError(
+                `${SYSTEM_ROLE_NAMES[Number(roleId)]} is a system Agent employee role and cannot be modified here`
+            );
+        }
+        if (isAdminPortalRoleId(roleId)) {
+            throw new ValidationError(
+                'Zone Admin is an Admin employee system role and cannot be modified from the agent app'
+            );
+        }
+
         if (name) {
+            if (isAgentShopRoleName(name) || isAdminPortalRoleName(name)) {
+                throw new ConflictError('Cannot rename a role to a reserved system role name');
+            }
             const checkExist = await roles.findOne({
                 where: { name, id: { [Op.not]: roleId } },
             });
@@ -120,79 +126,34 @@ class AgentRolePermissionService {
     }
 
     /**
-     * Roles for the agent app only:
-     * - Must have at least one permission on a feature with featureOf in Agent / Agent Employee / both.
-     * - Must not have any permission on an Admin-only feature.
-     * Roles with zero permissions, or only Admin features, are omitted.
-     * @returns {Object} All roles data
+     * Roles for the agent app team picker:
+     * Only system shop staff — Driver (6) + Manager (8).
+     * Never Zone Admin / Admin Employee roles / leftover custom admin-ish roles.
      */
     async getAllRoles() {
-        const [adminFeatureRows, agentFeatureRows] = await Promise.all([
-            permissions.findAll({
-                attributes: ['roleId'],
-                include: [
-                    {
-                        model: features,
-                        required: true,
-                        where: { featureOf: 'Admin' },
-                        attributes: [],
-                    },
-                ],
-                raw: true,
-            }),
-            permissions.findAll({
-                attributes: ['roleId'],
-                include: [
-                    {
-                        model: features,
-                        required: true,
-                        where: { featureOf: { [Op.in]: AGENT_APP_FEATURE_OF } },
-                        attributes: [],
-                    },
-                ],
-                raw: true,
-            }),
-        ]);
-
-        const roleIdsWithAdminFeature = new Set(
-            adminFeatureRows.map((r) => r.roleId).filter(Boolean)
-        );
-        const roleIdsWithAgentAppFeature = new Set(
-            agentFeatureRows.map((r) => r.roleId).filter(Boolean)
-        );
-
-        const agentOnlyRoleIds = [...roleIdsWithAgentAppFeature].filter(
-            (id) => id && !roleIdsWithAdminFeature.has(id)
-        );
-
-        if (agentOnlyRoleIds.length === 0) {
-            return { getRoles: [] };
-        }
-
         const roleRows = await roles.findAll({
             where: {
                 status: true,
-                id: { [Op.in]: agentOnlyRoleIds },
+                id: { [Op.in]: [...AGENT_SHOP_STAFF_ROLE_IDS] },
             },
             attributes: ['id', 'name', 'status'],
-            order: [['name', 'ASC']],
+            order: [['id', 'ASC']],
         });
 
-        const getRoles = roleRows.filter((r) => !isAdminPortalRoleName(r.name));
-
         return {
-            getRoles,
+            getRoles: roleRows.filter((r) => !isAdminPortalRoleName(r.name)),
         };
     }
 
-    /**
-     * Get Permissions
-     * @param {Object} data - Permission data
-     * @param {number} data.roleId - Role ID
-     * @returns {Object} Permissions data
-     */
     async getPermissions(data) {
         const { roleId } = data;
+
+        // Do not expose Admin portal role permissions via agent API
+        if (isAdminPortalRoleId(roleId)) {
+            throw new ValidationError(
+                'Zone Admin permissions are managed in the Admin panel only'
+            );
+        }
 
         const getPermissions = await permissions.findAll({
             where: {
@@ -201,7 +162,11 @@ class AgentRolePermissionService {
             include: [
                 {
                     model: features,
-                    attributes: ['id', 'title', 'status']
+                    attributes: ['id', 'title', 'status'],
+                    where: {
+                        featureOf: { [Op.in]: [...AGENT_APP_FEATURE_OF] },
+                    },
+                    required: false,
                 },
                 {
                     model: roles,
@@ -216,12 +181,6 @@ class AgentRolePermissionService {
         };
     }
 
-    /**
-     * Add Classified As
-     * @param {Object} data - Classified data
-     * @param {string} data.name - Classified name
-     * @returns {Object} Classified creation result
-     */
     async addClassifiedAs(data) {
         const { name } = data;
 
@@ -234,12 +193,10 @@ class AgentRolePermissionService {
         };
     }
 
-    /**
-     * Get Classified As
-     * @returns {Object} All classified data
-     */
     async getClassifiedAs() {
+        // Agent app only needs Laundry Shop Employee (1), not Admin Employee (2)
         const getClassifiedAs = await classifiedAs.findAll({
+            where: { id: 1 },
             attributes: ["id", "name", "status"],
         });
 
@@ -248,13 +205,6 @@ class AgentRolePermissionService {
         };
     }
 
-    /**
-     * Add Features
-     * @param {Object} data - Feature data
-     * @param {string} data.title - Feature title
-     * @param {string} data.description - Feature description
-     * @returns {Object} Feature creation result
-     */
     async addfeatures(data) {
         const { title, description } = data;
 
@@ -269,16 +219,13 @@ class AgentRolePermissionService {
         };
     }
 
-    /**
-     * Get Features
-     * @returns {Object} All features data
-     */
     async getFeatures() {
         const getFeatures = await features.findAll({
             where: {
                 status: true,
+                featureOf: { [Op.in]: [...AGENT_APP_FEATURE_OF] },
             },
-            attributes: ["id", "title", "description", "status"],
+            attributes: ["id", "title", "description", "status", "featureOf", "key"],
         });
 
         return {

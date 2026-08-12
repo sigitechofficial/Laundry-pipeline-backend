@@ -51,7 +51,8 @@ const {
     ValidationError,
     NotFoundError,
     ConflictError,
-    UnauthorizedError
+    UnauthorizedError,
+    ForbiddenError,
 } = require('../../middlewares/universalErrorHandler');
 const otpMail = require("../../helper/otpMail");
 const error = require("../../middlewares/error");
@@ -102,6 +103,27 @@ const {
 
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
+
+function syncLiveTrackingSafe(bookingId, bookingStatusId, extras = {}) {
+    try {
+        const {
+            syncLiveTrackingForBookingStatus,
+        } = require("../../utils/liveTrackingRtdb");
+        Promise.resolve(
+            syncLiveTrackingForBookingStatus(bookingId, bookingStatusId, extras)
+        ).catch((err) => {
+            console.error(
+                `[liveTracking] async sync failed booking=${bookingId}:`,
+                err.message
+            );
+        });
+    } catch (err) {
+        console.error(
+            `[liveTracking] sync import/call failed booking=${bookingId}:`,
+            err.message
+        );
+    }
+}
 
 /**
  * Wall-clock date/time for agent actions (invoice lines, history).
@@ -155,6 +177,9 @@ const {
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
+const {
+    getCustomerDeclaredServices,
+} = require("../../services/Agent/customerDeclaredServicesService");
 const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
 const { sendNotification } = require("../../utils/notification");
 const {
@@ -167,12 +192,58 @@ const activePoliciesService = require('../../services/Admin/activePoliciesServic
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
 const agentEmployeeManagementService = require('../../services/Agent/employeeManagementService');
+const agentDriverManagementService = require('../../services/Agent/driverManagementService');
 const agentBookingDeclineService = require('../../services/Agent/agentBookingDeclineService');
 const agentOrderManagementService = require('../../services/Agent/orderManagementService');
 const agentWalletService = require('../../services/Agent/agentWalletService');
 const agentSettlementService = require('../../services/Agent/agentSettlementService');
 const agentWithdrawalService = require('../../services/Agent/agentWithdrawalService');
 const invoiceAutoChargeService = require('../../services/Agent/invoiceAutoChargeService');
+const staffActivityService = require('../../services/Agent/staffActivityService');
+const employeeCapabilityService = require('../../services/Agent/employeeCapabilityService');
+const autoAssignService = require('../../services/Agent/autoAssignService');
+const {
+    resolveShopAgentId,
+    resolveActorUserId,
+    canManageShopOps,
+} = require('../../utils/shopAgentContext');
+
+function shopAgentIdFromReq(req) {
+    return req.shopAgentId ?? resolveShopAgentId(req.user);
+}
+
+function actorUserIdFromReq(req) {
+    return req.actorUserId ?? resolveActorUserId(req.user);
+}
+
+function actorCanManageShopOps(req) {
+    if (typeof req.canManageShopOps === 'boolean') {
+        return req.canManageShopOps;
+    }
+    return canManageShopOps(req.user);
+}
+
+/** Owner/manager board access (view orders / assign / accept) — not shopOps edit. */
+function actorCanViewShopBoard(req) {
+    const caps = req.capabilities || {};
+    return (
+        caps.canViewShopOrders === true ||
+        caps.canAssignStaff === true ||
+        caps.canAcceptOrders === true ||
+        req.canViewShopOrders === true ||
+        req.canAssignStaff === true ||
+        req.canAcceptOrders === true ||
+        req.isShopOwner === true ||
+        req.isShopManager === true
+    );
+}
+
+function actorCanAcceptOrders(req) {
+    return (
+        req.canAcceptOrders === true ||
+        req.capabilities?.canAcceptOrders === true
+    );
+}
 
 async function tryCreditAgentWallet(bookingId, options = {}) {
     try {
@@ -455,7 +526,7 @@ exports.getShopAddress = async (req, res) => {
  */
 
 exports.getBookingHome = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     const userData = await users.findOne({
         where: {
@@ -638,6 +709,18 @@ exports.getBookingHome = async (req, res) => {
                 attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum']
             },
             {
+                model: users,
+                as: 'driver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
+                model: users,
+                as: 'deliveryDriver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
                 model: zone,
                 attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId']
             }
@@ -664,6 +747,8 @@ exports.getBookingHome = async (req, res) => {
             "dropOffAddressId",
             "laundryShopId",
             "customerId",
+            "driverId",
+            "deliveryDriverId",
             "createdAt",
             "orderExpireTime",
             "adminAssignedShopId",
@@ -764,7 +849,12 @@ exports.getBookingHome = async (req, res) => {
 }
 
 exports.agentRejectOrder = async (req, res) => {
-    const agentId = req.user.id;
+    if (!actorCanAcceptOrders(req)) {
+        throw new ForbiddenError(
+            'Only the shop owner or manager can decline new orders'
+        );
+    }
+    const agentId = shopAgentIdFromReq(req);
     const { bookingId } = req.body;
 
     if (!bookingId) {
@@ -781,7 +871,16 @@ exports.agentRejectOrder = async (req, res) => {
 };
 
 exports.agentAcceptOrder = async (req, res) => {
-    const agentId = req.user.id;
+    // Route gates with requireCapability('canAcceptOrders'); keep a soft guard
+    const canAccept =
+        req.canAcceptOrders === true ||
+        req.capabilities?.canAcceptOrders === true;
+    if (!canAccept) {
+        throw new ForbiddenError(
+            'Only the shop owner or manager can accept new orders. Ask them to assign jobs to you.'
+        );
+    }
+    const agentId = shopAgentIdFromReq(req);
     const { bookingId } = req.body;
 
     if (!bookingId) {
@@ -801,7 +900,7 @@ exports.agentAcceptOrder = async (req, res) => {
  * Get ALl Order of Agent
  */
 exports.getAgentOrder = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     const getShopAddress = await addressDb.findOne({
         where: {
@@ -980,6 +1079,8 @@ exports.getAgentOrder = async (req, res) => {
  */
 exports.orderDetailsById = async (req, res) => {
     const { bookingId, orderTrackId } = req.query;
+    const agentId = shopAgentIdFromReq(req);
+    const actorId = actorUserIdFromReq(req);
 
     let whereCondition = {};
 
@@ -988,7 +1089,15 @@ exports.orderDetailsById = async (req, res) => {
     } else {
         whereCondition.orderTrackId = orderTrackId;
     }
-    console.log("ðŸš€ ~ orderDetailsById ~ whereCondition:", whereCondition);
+    console.log("orderDetailsById whereCondition:", whereCondition);
+
+    const shopAddress = await addressDb.findOne({
+        where: { userId: agentId, addressType: 'LaundaryShopAddress' },
+        attributes: ['id'],
+    });
+    if (!shopAddress) {
+        throw new NotFoundError('Address not found for agent');
+    }
 
     const bookingfind = await booking.findOne({
         where: whereCondition,
@@ -1017,12 +1126,60 @@ exports.orderDetailsById = async (req, res) => {
                 model: bookingStatus,
                 attributes: ["title", "description"],
             },
+            {
+                model: users,
+                as: "driver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
+            {
+                model: users,
+                as: "deliveryDriver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
         ],
     });
 
+    if (!bookingfind) {
+        throw new NotFoundError('Booking not found');
+    }
+
+    if (Number(bookingfind.laundryShopId) !== Number(shopAddress.id)) {
+        throw new ForbiddenError('This order does not belong to your shop');
+    }
+
+    if (req.isShopEmployee && !actorCanViewShopBoard(req)) {
+        const pickupId =
+            bookingfind.driverId != null ? Number(bookingfind.driverId) : null;
+        const deliveryId =
+            bookingfind.deliveryDriverId != null
+                ? Number(bookingfind.deliveryDriverId)
+                : null;
+        const mine =
+            (pickupId != null && pickupId === Number(actorId)) ||
+            (deliveryId != null && deliveryId === Number(actorId));
+        if (!mine) {
+            throw new ForbiddenError(
+                'You can only view orders assigned to you'
+            );
+        }
+    }
+
+    let shopReview = null;
+    try {
+        const shopReviewService = require('../../services/Customer/shopReviewService');
+        shopReview = await shopReviewService.getReviewByBookingId(bookingfind.id);
+    } catch (err) {
+        console.warn(
+            '[orderDetailsById] shopReview attach failed:',
+            err?.message || err
+        );
+    }
+
     if (bookingfind.bookingStatusId === 5) {
         const paymentType = normalizePaymentType(bookingfind.paymentType);
-        const payload = { bookingfind };
+        const payload = { bookingfind, shopReview };
         if (paymentType === "card") {
             payload.oneHourLater = moment().add(1, "hours").format("HH:mm A");
             payload.invoicePaymentWindowApplies = true;
@@ -1036,10 +1193,11 @@ exports.orderDetailsById = async (req, res) => {
         );
     }
 
+    const plain = bookingfind.toJSON ? bookingfind.toJSON() : bookingfind;
     return ResponseHelper.success(
         res,
         `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
-        bookingfind
+        { ...plain, shopReview }
     );
 }
 
@@ -1057,10 +1215,10 @@ exports.orderDetailsById = async (req, res) => {
 const AGENT_PICKUP_STATUSES = [3, 4, 5, 6, 7];
 /** Invoice tab — at shop / services added. Once invoice is generated (10+) leave this tab. */
 const AGENT_INVOICE_STATUSES = [8, 9];
-/** Processing tab — invoice generated + actively washing. Status 12+ leave this tab. */
-const AGENT_PROCESSING_STATUSES = [10, 11];
-/** After wash complete through delivered — still active for Orders / day tabs, not Processing tab. */
-const AGENT_POST_FACILITY_STATUSES = [12, 13, 14, 15, 16];
+/** Processing tab — invoice generated through wash complete (ready for OFD assign). */
+const AGENT_PROCESSING_STATUSES = [10, 11, 12];
+/** Out for delivery through delivered — Orders / day tabs (not Processing). */
+const AGENT_POST_FACILITY_STATUSES = [13, 14, 15, 16];
 const AGENT_POST_PICKUP_STATUSES = [
     ...AGENT_INVOICE_STATUSES,
     ...AGENT_PROCESSING_STATUSES,
@@ -1122,7 +1280,18 @@ const agentSlotWhere = (laundryShopId, slotFrom, slotTo, dayStart, dayEnd) => {
 };
 
 exports.agentBookingFilters = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
+    const actorId = actorUserIdFromReq(req);
+    // Drivers only see jobs assigned to them; owner/manager see the full shop board.
+    const employeeStaffScope =
+        req.isShopEmployee && !actorCanViewShopBoard(req)
+            ? {
+                  [Op.or]: [
+                      { driverId: actorId },
+                      { deliveryDriverId: actorId },
+                  ],
+              }
+            : null;
     const { filterType, filterDate } = req.query;
 
     // ── Shop address ────────────────────────────────────────────────────────
@@ -1138,9 +1307,15 @@ exports.agentBookingFilters = async (req, res) => {
     const shopId  = addressFound.id;
     const zoneId  = addressFound.zoneId;
 
+    // Must AND staff scope — spreading Op.or would wipe day/slot date branches.
+    const withStaffScope = (where) =>
+        employeeStaffScope ? { [Op.and]: [where, employeeStaffScope] } : where;
+
     // ── Slots shortcut ───────────────────────────────────────────────────────
     if (filterType === "slots") {
-        const results = { slots: await getSlotBookings(shopId, filterDate) };
+        const results = {
+            slots: await getSlotBookings(shopId, filterDate, employeeStaffScope),
+        };
         return ResponseHelper.success(res, "Booking Details Fetched for all filters", results);
     }
 
@@ -1153,6 +1328,7 @@ exports.agentBookingFilters = async (req, res) => {
         "bookingStatusId", "totalItems", "totalBags",
         "sameBagForAllServices", "noOfBags",
         "pickupAttemptCount", "pickupRescheduleRequired", "deliveryAttemptCount",
+        "driverId", "deliveryDriverId",
     ];
 
     // ── Fresh includes factory — returns NEW objects every call ─────────────
@@ -1187,6 +1363,14 @@ exports.agentBookingFilters = async (req, res) => {
         {
             model: users, as: "customer",
             attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+        },
+        {
+            model: users, as: "driver", required: false,
+            attributes: ["id", "firstName", "lastName", "image"],
+        },
+        {
+            model: users, as: "deliveryDriver", required: false,
+            attributes: ["id", "firstName", "lastName", "image"],
         },
         {
             model: customerSelectedService,
@@ -1267,13 +1451,29 @@ exports.agentBookingFilters = async (req, res) => {
     };
 
     const fetchTabCounts = async () => {
+        const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
         const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-            booking.count({ where: newOrdersWhere }),
-            booking.count({ where: agentDayTabWhere(shopId, todayStr, tomorrowStr) }),
-            booking.count({ where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr) }),
-            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES } } }),
-            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: INVOICE_STATUSES } } }),
-            booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: PROCESSING_STATUSES } } }),
+            hideNew ? Promise.resolve(0) : booking.count({ where: newOrdersWhere }),
+            booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),
+            booking.count({ where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)) }),
+            booking.count({
+                where: withStaffScope({
+                    laundryShopId: shopId,
+                    bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
+                }),
+            }),
+            booking.count({
+                where: withStaffScope({
+                    laundryShopId: shopId,
+                    bookingStatusId: { [Op.in]: INVOICE_STATUSES },
+                }),
+            }),
+            booking.count({
+                where: withStaffScope({
+                    laundryShopId: shopId,
+                    bookingStatusId: { [Op.in]: PROCESSING_STATUSES },
+                }),
+            }),
         ]);
         return {
             new: countNew,
@@ -1288,14 +1488,19 @@ exports.agentBookingFilters = async (req, res) => {
     const results = {};
 
     // ── NEW — unaccepted bookings in agent's zone ────────────────────────────
+    // Drivers do not accept from the broadcast pool — owner/manager do.
     if (!filterType || filterType === "new") {
-        const rows = await booking.findAll({
-            where: newOrdersWhere,
-            order: [["id", "DESC"]],
-            attributes: BOOKING_ATTRS,
-            include: makeIncludes(),
-        });
-        results.New = addDisplayStatus(rows);
+        if (req.isShopEmployee && !actorCanAcceptOrders(req)) {
+            results.New = [];
+        } else {
+            const rows = await booking.findAll({
+                where: newOrdersWhere,
+                order: [["id", "DESC"]],
+                attributes: BOOKING_ATTRS,
+                include: makeIncludes(),
+            });
+            results.New = addDisplayStatus(rows);
+        }
         if (filterType === "new") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "New bookings fetched", results);
@@ -1305,7 +1510,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── TODAY — pickup phase by collectionDate OR facility+ by deliveryDate ─
     if (!filterType || filterType === "today") {
         const rows = await booking.findAll({
-            where: agentDayTabWhere(shopId, todayStr, tomorrowStr),
+            where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1320,7 +1525,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── TOMORROW — same relevantDate rules for tomorrow's calendar day ───────
     if (!filterType || filterType === "tomorrow") {
         const rows = await booking.findAll({
-            where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr),
+            where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1335,10 +1540,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── ORDERS — all active bookings (master list) ───────────────────────────
     if (!filterType || filterType === "orders") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: ALL_ACTIVE_STATUSES },
-            },
+            }),
             order: agentRelevantDateOrder,
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
@@ -1353,10 +1558,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── INVOICE — delivered to shop → services added (not yet generated) ─────
     if (!filterType || filterType === "invoice") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: INVOICE_STATUSES },
-            },
+            }),
             order: [
                 [literal("deliveryDate IS NULL"), "ASC"],
                 ["deliveryDate", "ASC"],
@@ -1376,10 +1581,10 @@ exports.agentBookingFilters = async (req, res) => {
     // ── PROCESSING — invoice generated + washing ─────────────────────────────
     if (!filterType || filterType === "processing") {
         const rows = await booking.findAll({
-            where: {
+            where: withStaffScope({
                 laundryShopId: shopId,
                 bookingStatusId: { [Op.in]: PROCESSING_STATUSES },
-            },
+            }),
             order: [
                 [literal("deliveryDate IS NULL"), "ASC"],
                 ["deliveryDate", "ASC"],
@@ -1417,9 +1622,22 @@ exports.agentBookingFilters = async (req, res) => {
  * Lightweight — returns only tab badge counts, no list data, no JOINs.
  */
 exports.getBookingCounts = async (req, res) => {
-    const userId  = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
+    const actorId = actorUserIdFromReq(req);
+    const employeeStaffScope =
+        req.isShopEmployee && !actorCanViewShopBoard(req)
+            ? {
+                  [Op.or]: [
+                      { driverId: actorId },
+                      { deliveryDriverId: actorId },
+                  ],
+              }
+            : null;
+    const withStaffScope = (where) =>
+        employeeStaffScope ? { [Op.and]: [where, employeeStaffScope] } : where;
+
     const shopRow = await addressDb.findOne({
-        where: { userId, deletedAt: null },
+        where: { userId: agentId, deletedAt: null },
         attributes: ["id", "zoneId"],
     });
     if (!shopRow) return ResponseHelper.success(res, "Booking counts", { counts: { new: 0, today: 0, tomorrow: 0, orders: 0, invoice: 0, processing: 0 } });
@@ -1431,9 +1649,12 @@ exports.getBookingCounts = async (req, res) => {
     const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
     const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
     const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
+    const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-        booking.count({
+        hideNew
+            ? Promise.resolve(0)
+            : booking.count({
             where: {
                 bookingStatusId: 1,
                 laundryShopId: null,
@@ -1444,11 +1665,26 @@ exports.getBookingCounts = async (req, res) => {
                 [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }],
             },
         }),
-        booking.count({ where: agentDayTabWhere(shopId, todayStr, tomorrowStr) }),
-        booking.count({ where: agentDayTabWhere(shopId, tomorrowStr, dayAfterStr) }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_ALL_ACTIVE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_INVOICE_STATUSES } } }),
-        booking.count({ where: { laundryShopId: shopId, bookingStatusId: { [Op.in]: AGENT_PROCESSING_STATUSES } } }),
+        booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),
+        booking.count({ where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)) }),
+        booking.count({
+            where: withStaffScope({
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: AGENT_ALL_ACTIVE_STATUSES },
+            }),
+        }),
+        booking.count({
+            where: withStaffScope({
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: AGENT_INVOICE_STATUSES },
+            }),
+        }),
+        booking.count({
+            where: withStaffScope({
+                laundryShopId: shopId,
+                bookingStatusId: { [Op.in]: AGENT_PROCESSING_STATUSES },
+            }),
+        }),
     ]);
 
     return ResponseHelper.success(res, "Booking counts", {
@@ -1637,6 +1873,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             { bookingId, driverId: bookingfind.driverId }
         );
 
+        syncLiveTrackingSafe(bookingId, 4, {
+            agentId: bookingfind.driverId,
+            customerId,
+            bookingRow: bookingfind,
+        });
+
         return ResponseHelper.success(res, "Booking status updated (cash — no pickup charge)", {
             bookingId,
             paymentType: "cash",
@@ -1700,6 +1942,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 bookingStatusId: 4,
             });
         }
+
+        syncLiveTrackingSafe(bookingId, 4, {
+            agentId: bookingfind.driverId,
+            customerId: bookingfind.customerId,
+            bookingRow: bookingfind,
+        });
 
         return res.status(200).json({
             status: "1",
@@ -1835,6 +2083,12 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         }
     );
 
+    syncLiveTrackingSafe(bookingId, 4, {
+        agentId: bookingfind.driverId,
+        customerId,
+        bookingRow: bookingfind,
+    });
+
     return ResponseHelper.success(res, "Booking status updated and payment captured", {
         paymentIntentId: paymentIntent.id,
         paymentStatus: "succeeded",
@@ -1934,6 +2188,8 @@ exports.driverStatusArrived = async (req, res) => {
     } catch (emailError) {
         console.error('⚠️ Failed to send driver arrived email (non-blocking):', emailError.message);
     }
+
+    syncLiveTrackingSafe(bookingId, 5, { reason: 'pickup_arrived' });
 
     return ResponseHelper.success(res, "Booking Status Updated to Driver Arrived", {});
 }
@@ -2780,9 +3036,11 @@ exports.laundryWashCompleted = async (req, res) => {
 exports.laundryDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
 
-    const driverId = req.query.driverId;
-
-    const agentId = req.user.id;
+    const queryDriverId = req.query.driverId
+        ? Number(req.query.driverId)
+        : null;
+    const actorId = actorUserIdFromReq(req);
+    const shopOwnerId = shopAgentIdFromReq(req);
 
     const bookingCheck = await booking.findOne({ where: { id: bookingId } });
     if (!bookingCheck) {
@@ -2794,7 +3052,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
     try {
         ofdGate = await invoiceAutoChargeService.assertCanOutForDelivery(
             bookingId,
-            { agentUserId: agentId }
+            { agentUserId: shopOwnerId }
         );
     } catch (gateErr) {
         if (gateErr.code === "PAYMENT_WAITING_ADMIN" || gateErr.statusCode === 402) {
@@ -2813,23 +3071,29 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         throw gateErr;
     }
 
-    if (driverId) {
-        await booking.update(
-            {
-                bookingStatusId: 13,
-                deliveryDriverId: driverId,
-            },
-            { where: { id: bookingId } }
-        );
-    } else {
-        await booking.update(
-            {
-                bookingStatusId: 13,
-                driverId: agentId,
-            },
-            { where: { id: bookingId } }
-        );
+    const currentDeliveryId =
+        bookingCheck.deliveryDriverId != null
+            ? Number(bookingCheck.deliveryDriverId)
+            : null;
+    const deliveryShopHeld =
+        currentDeliveryId == null ||
+        currentDeliveryId === Number(shopOwnerId);
+
+    let deliveryAssignee = currentDeliveryId;
+    if (queryDriverId && Number.isFinite(queryDriverId)) {
+        deliveryAssignee = queryDriverId;
+    } else if (deliveryShopHeld) {
+        // Owner/manager OFD, or pickup driver claiming shop-held delivery.
+        deliveryAssignee = Number(actorId);
     }
+
+    await booking.update(
+        {
+            bookingStatusId: 13,
+            deliveryDriverId: deliveryAssignee,
+        },
+        { where: { id: bookingId } }
+    );
 
     await bookingHistory.create({
         date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
@@ -2846,15 +3110,22 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         {
             bookingId: String(bookingId),
             type: "OUT_FOR_DELIVERY",
-            driverId: String(driverId || agentId),
+            driverId: String(deliveryAssignee || actorId),
         }
     ).catch(() => {});
+
+    syncLiveTrackingSafe(bookingId, 13, {
+        agentId: deliveryAssignee || actorId,
+        customerId,
+        bookingRow: bookingCheck,
+    });
 
     return ResponseHelper.success(
         res,
         "Driver updated and out for Deliver Laundry to Customer",
         {
             bookingStatusId: 13,
+            deliveryDriverId: deliveryAssignee,
             chargedOnOfd: Boolean(ofdGate?.chargedOnOfd),
             ...(ofdGate?.flags || {}),
         }
@@ -2953,6 +3224,8 @@ exports.driverReachedForDelivery = async (req, res) => {
         );
     }
 
+    syncLiveTrackingSafe(bookingId, 14, { reason: 'delivery_arrived' });
+
     return ResponseHelper.success(res, "Driver reached for delivery", {
         bookingId: Number(bookingId),
         bookingStatusId: 14,
@@ -3025,6 +3298,26 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         driverId: bookingCheck.driverId,
     }
     sendNotification(customerId, title, body, data);
+
+    // Prompt customer to leave a shop review (fire-and-forget).
+    try {
+        const { notifyCustomerRequestReview } = require('../../utils/reviewNotify');
+        notifyCustomerRequestReview({
+            customerId,
+            bookingId,
+            orderTrackId: bookingCheck.orderTrackId,
+        }).catch((err) =>
+            console.warn(
+                '[bookingDeliverToCustomer] requestShopReview notify failed:',
+                err?.message || err
+            )
+        );
+    } catch (err) {
+        console.warn(
+            '[bookingDeliverToCustomer] requestShopReview setup failed:',
+            err?.message || err
+        );
+    }
 
     let paymentFlags = {};
     let paymentSummary = null;
@@ -3473,6 +3766,18 @@ exports.invoiceCreation = async (req, res) => {
                 attributes: ["firstName", "lastName", "email", "phoneNum", "image", "stripeCustomerId"]
             },
             {
+                model: users,
+                as: "driver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
+            {
+                model: users,
+                as: "deliveryDriver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
+            {
                 model: addressDb,
                 as: "pickupAddress",
                 attributes: [
@@ -3686,6 +3991,10 @@ exports.invoiceCreation = async (req, res) => {
         seenServiceIds.add(serviceId);
         return item;
     });
+
+    // Frozen customer booking intent — independent of agent invoice lines.
+    bookingData.customerDeclaredServices =
+        await getCustomerDeclaredServices(bookingId);
 
     // Determine customer response status from OnHoldConfirmations
     let customerHasResponded = null;
@@ -4147,133 +4456,135 @@ exports.agentIssueResolved = async (req, res) => {
  *     All Agent Laundry Drivers
  */
 exports.agnetDrivers = async (req, res) => {
-    const agentId = req.user.id;
-
-    const laundryShopFound = await bussinessInformation.findOne({
-        where: {
-            agentId: agentId,
-        },
-    });
-    console.log("ðŸš€ ~ agnetDrivers ~ laundryShopFound:", laundryShopFound);
-    //return res.json(laundryShopFound)
-    const driverFound = await driverInZones.findAll({
-        where: {
-            laundaryShopId: 1,
-        },
-        include: [
-            {
-                model: users,
-                as: "driverInZone",
-                where: {
-                    classifiedAsId: 1,
-                    roleId: 6,
-                },
-                attributes: ["id", "firstName", "lastName", "email"],
-            },
-            {
-                model: bussinessInformation,
-                as: "laundaryDriver",
-                attributes: ["shopAddressId"],
-                include: [
-                    {
-                        model: addressDb,
-                        where: {
-                            addressType: "LaundaryShopAddress",
-                        },
-                        attributes: [
-                            "streetAddress",
-                            "province",
-                            "lat",
-                            "lng",
-                            "addressType",
-                        ],
-                    },
-                ],
-            },
-        ],
-        attributes: ["id", "status", "cityId", "countryId", "zoneId"],
-    });
-    console.log("ðŸš€ ~ agnetDrivers ~ driverFound:", driverFound);
-    return res.json(
-        responsefunc(
-            "1",
-            "All Drivers Fetched for this Laundry Shop",
-            driverFound,
-            " "
-        )
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.agnetDrivers(agentId);
+    return ResponseHelper.success(
+        res,
+        "All Drivers Fetched for this Laundry Shop",
+        result
     );
 }
 
 /*
- *     Agent Assign Booking To Laundry Driver
+ * Active reasons for staff unassign / self-return (dropdown).
+ */
+exports.getStaffUnassignReasons = async (req, res) => {
+    const result = await agentDriverManagementService.listStaffUnassignReasons();
+    return ResponseHelper.success(res, "Staff unassign reasons", result);
+}
+
+/*
+ *     Agent Assign Booking To Laundry Driver (pickup; does not force Out for Delivery)
  */
 exports.agentAssignBookingToLaundryDriver = async (req, res) => {
-    const { driverId, bookingId } = req.body;
-
-    const orderAssign = await booking.update(
-        {
-            driverId: driverId,
-            bookingStatusId: 13,
-        },
-        {
-            where: {
-                id: bookingId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.agentAssignBookingToLaundryDriver(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
     );
+    return ResponseHelper.success(res, result.message || "Order assigned to laundry driver", result);
+}
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
+/*
+ * Assign pickup or delivery staff
+ * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery' }
+ */
+exports.assignBookingStaff = async (req, res) => {
+    if (!actorCanManageShopOps(req) && req.canAssignStaff !== true && req.capabilities?.canAssignStaff !== true) {
+        throw new ForbiddenError('Only the shop owner or manager can assign staff to jobs');
+    }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.assignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
+    );
+    return ResponseHelper.success(res, result.message, result);
+}
 
-    const currentDate = new Date().toISOString().split("T")[0];
-    console.log(currentDate); // Example: "2025-01-28"
+/*
+ * Unassign staff — return job to shop owner.
+ * Owner/manager (canAssignStaff): any leg.
+ * Driver (canRunAssignedJobs only): only a leg currently assigned to themselves.
+ * Body: { bookingId, assignmentType?: 'pickup'|'delivery', reasonId, note? }
+ */
+exports.unassignBookingStaff = async (req, res) => {
+    const canManageAssign =
+        req.canAssignStaff === true ||
+        req.capabilities?.canAssignStaff === true ||
+        actorCanManageShopOps(req);
+    const canRun =
+        req.canRunAssignedJobs === true ||
+        req.capabilities?.canRunAssignedJobs === true;
 
-    await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: 13,
-    });
-    return ResponseHelper.success(res, "Order Assign to Laundry Driver", {});
+    if (!canManageAssign && !canRun) {
+        throw new ForbiddenError(
+            'You do not have permission to return this job to the shop'
+        );
+    }
+
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.unassignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req),
+        { selfOnly: !canManageAssign }
+    );
+    return ResponseHelper.success(res, result.message, result);
+}
+
+/*
+ * Reassign staff (same as assign with new staffId)
+ */
+exports.reassignBookingStaff = async (req, res) => {
+    if (!actorCanManageShopOps(req) && req.canAssignStaff !== true && req.capabilities?.canAssignStaff !== true) {
+        throw new ForbiddenError('Only the shop owner or manager can reassign staff');
+    }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentDriverManagementService.reassignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
+    );
+    return ResponseHelper.success(res, result.message || "Staff reassigned", result);
+}
+
+/*
+ * Monitor board — staff jobs for this shop
+ * Query: employeeId?, assignmentType?, statusGroup?
+ */
+exports.getStaffJobs = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    // Drivers may only monitor their own jobs; owner/manager see all
+    const query = { ...req.query };
+    const canSeeAll =
+        req.canAssignStaff === true ||
+        req.capabilities?.canAssignStaff === true ||
+        req.canViewShopOrders === true ||
+        req.capabilities?.canViewShopOrders === true ||
+        actorCanViewShopBoard(req);
+    if (req.isShopEmployee && !canSeeAll) {
+        query.employeeId = actorUserIdFromReq(req);
+    }
+    const result = await agentDriverManagementService.getStaffJobs(agentId, query);
+    return ResponseHelper.success(res, "Staff jobs fetched", result);
 }
 
 /*
  * Agent pickup order BySelf
  */
 exports.agentPickupOrderBySelf = async (req, res) => {
-    const agentId = req.user.id;
-    const { bookingId } = req.query.bookingId;
-
-    const agentByselfPickup = await bookingHistory.update(
-        {
-            bookingStatusId: 13,
-            driverId: agentId,
-        },
-        {
-            where: {
-                id: bookingId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const bookingId = req.body?.bookingId ?? req.query?.bookingId;
+    // Employees assign themselves as actor; owners use shop agent id
+    const selfId = req.isShopEmployee ? actorUserIdFromReq(req) : agentId;
+    const result = await agentDriverManagementService.agentPickupOrderBySelf(
+        { ...req.body, bookingId, staffId: selfId },
+        agentId,
+        actorUserIdFromReq(req)
     );
-
-    const currentDate = new Date.toISOString().split("T")[0];
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-    });
-
-    await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: 13,
-    });
-
-    return ResponseHelper.success(res, "Agent Assigned To PickUp Order", {});
+    return ResponseHelper.success(res, result.message || "Agent assigned to pick up order", result);
 }
 
 //!-----------------------------------Agent Cancel Booking------------------------------------//
@@ -4453,14 +4764,11 @@ exports.addClassifiedAs = async (req, res) => {
 }
 
 /*
- * Get ClassifiedAs
+ * Get ClassifiedAs — agent app: Laundry Shop Employee only (not Admin Employee)
  */
 exports.getClassifiedAs = async (req, res) => {
-    const findData = await classifiedAs.findAll({
-        attributes: ["id", "name"],
-    });
-
-    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", findData);
+    const { getClassifiedAs } = await agentRolePermissionService.getClassifiedAs();
+    return ResponseHelper.success(res, "Fetched All ClassifiedAs Roles", getClassifiedAs);
 }
 
 /*
@@ -4509,7 +4817,7 @@ exports.getFeatures = async (req, res) => {
  */
 
 exports.addEmployee = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req);
 
     let profileImg = null;
     if (req.file) {
@@ -4530,56 +4838,15 @@ exports.addEmployee = async (req, res) => {
  * Update Employee
  */
 exports.updateEmployee = async (req, res) => {
-    const {
-        firstName,
-        lastName,
-        email,
-        phoneNum,
-        roleId,
-        updatePassword,
-        employeeId
-    } = req.body;
+    const agentId = shopAgentIdFromReq(req);
 
-
-    if (email) {
-        const userExists = await users.findOne({
-            where: {
-                email: email,
-                id: { [Op.not]: employeeId },
-                classifiedAs: 1,
-            },
-        });
-
-        if (userExists) {
-            throw new ConflictError("Employee with the following email exists. Please try another email");
-        }
-    }
-
-
-    const updatedFields = {};
-
-    if (firstName !== undefined) updatedFields.firstName = firstName;
-    if (lastName !== undefined) updatedFields.lastName = lastName;
-    if (email !== undefined) updatedFields.email = email;
-    if (phoneNum !== undefined) updatedFields.phoneNum = phoneNum;
-    if (roleId !== undefined) updatedFields.roleId = roleId;
-
-
-    if (updatePassword && updatePassword.trim() !== '') {
-        const hashedPassword = await bcrypt.hash(updatePassword, 10);
-        updatedFields.password = hashedPassword;
-    }
-
-
+    let profileImg = null;
     if (req.file) {
         const tempProfileImg = req.file.path;
-        const profileImage = path.join('Public', 'Profile', path.basename(tempProfileImg));
-        updatedFields.image = profileImage.replace(/\\/g, "/");
+        profileImg = tempProfileImg.replace(/\\/g, '/');
     }
-    await users.update(updatedFields, {
-        where: { id: employeeId },
-    });
 
+    await agentEmployeeManagementService.updateEmployee(req.body, profileImg, agentId);
     return ResponseHelper.success(res, "Employee Updated Successfully", {});
 }
 
@@ -4587,42 +4854,31 @@ exports.updateEmployee = async (req, res) => {
  * Change Employee status
  */
 exports.changeEmployeeStatus = async (req, res) => {
-    const { status, employeeId } = req.body;
-
-    users.update(
-        {
-            status,
-        },
-        {
-            where: {
-                id: employeeId,
-            },
-        }
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentEmployeeManagementService.changeEmployeeStatus(
+        req.body,
+        agentId
     );
+    return ResponseHelper.success(res, result.message || "Employee Status Updated", {});
+}
 
-    return ResponseHelper.success(res, "Employee Status Updated", {});
+/*
+ * Soft-delete employee belonging to this shop
+ */
+exports.deleteEmployee = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId || req.body.employeeId;
+    const result = await agentEmployeeManagementService.deleteEmployee(employeeId, agentId);
+    return ResponseHelper.success(res, result.message, result);
 }
 
 /*
  * Get All Employee
  */
 exports.getAllEmployees = async (req, res) => {
-
-    const agentId = req.user.id
-    const agentEmployee = await users.findAll({
-        where: {
-            classifiedAsId: 1,
-            employeeOff: agentId
-        },
-        attributes: ["id", "firstName", "lastName", "email", "status", "phoneNum", 'image'],
-        include: [
-            {
-                model: roles,
-                attributes: ["id", "name"],
-            },
-        ],
-    });
-    return ResponseHelper.success(res, "All Employee Fetched", { agentEmployee });
+    const agentId = shopAgentIdFromReq(req);
+    const result = await agentEmployeeManagementService.getAllEmployees(agentId);
+    return ResponseHelper.success(res, "All Employee Fetched", result);
 }
 
 /*
@@ -5654,7 +5910,41 @@ exports.getShopPerformanceDashboard = async (req, res) => {
             : 0;
 
     const performanceScore = safePercent(completedOrders, totalOrders);
-    const rating = Number(((performanceScore / 100) * 5).toFixed(1));
+    // Legacy completion-derived score (kept for backward compatibility)
+    const completionDerivedRating = Number(((performanceScore / 100) * 5).toFixed(1));
+
+    const shopBiz = await bussinessInformation.findOne({
+        where: { shopAddressId: agentShopAddress.id },
+        attributes: ['id', 'shopName'],
+    });
+
+    let customerRating = {
+        avgRating: 0,
+        publishedCount: 0,
+        ratingCount: 0,
+        histogram: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        topPositiveReasonCode: null,
+        topNegativeReasonCode: null,
+        recentReviews: [],
+    };
+
+    if (shopBiz) {
+        const shopReviewService = require('../../services/Customer/shopReviewService');
+        const reviewData = await shopReviewService.getShopReviews(shopBiz.id, {
+            page: 1,
+            limit: 10,
+        });
+        customerRating = {
+            ...reviewData.summary,
+            recentReviews: reviewData.reviews,
+        };
+    }
+
+    // Prefer real customer star rating when reviews exist; otherwise fall back
+    const rating =
+        customerRating.publishedCount > 0
+            ? Number(customerRating.avgRating)
+            : completionDerivedRating;
 
     const topServicesRaw = await customerSelectedService.findAll({
         attributes: [
@@ -5715,7 +6005,9 @@ exports.getShopPerformanceDashboard = async (req, res) => {
         },
         processingAndRating: {
             averageProcessingHours,
-            rating
+            rating,
+            completionDerivedRating,
+            customerRating,
         },
         totals: {
             totalOrders,
@@ -6242,7 +6534,7 @@ const findZones = async (lat, lng) => {
  * Optional filterDate (YYYY-MM-DD) scopes slots to that calendar day so Flutter merge
  * cannot resurface facility-done orders on the wrong day.
  */
-const getSlotBookings = async (laundryShopId, filterDate) => {
+const getSlotBookings = async (laundryShopId, filterDate, staffScope = null) => {
     const slots = [
         "07:00",
         "08:00",
@@ -6269,7 +6561,10 @@ const getSlotBookings = async (laundryShopId, filterDate) => {
         slots.map(async (slot) => {
             const slotFrom = slot;
             const slotTo = getNextHourTime(slot);
-            const where = agentSlotWhere(laundryShopId, slotFrom, slotTo, dayStart, dayEnd);
+            const baseWhere = agentSlotWhere(laundryShopId, slotFrom, slotTo, dayStart, dayEnd);
+            const where = staffScope
+                ? { [Op.and]: [baseWhere, staffScope] }
+                : baseWhere;
 
             const bookings = await booking.findAll({
                 where,
@@ -6288,6 +6583,8 @@ const getSlotBookings = async (laundryShopId, filterDate) => {
                     "pickupAttemptCount",
                     "pickupRescheduleRequired",
                     "deliveryAttemptCount",
+                    "driverId",
+                    "deliveryDriverId",
                 ],
                 include: [
                     {
@@ -6343,6 +6640,18 @@ const getSlotBookings = async (laundryShopId, filterDate) => {
                         model: users,
                         as: "customer",
                         attributes: ["firstName", "lastName", "email", "phoneNum"],
+                    },
+                    {
+                        model: users,
+                        as: "driver",
+                        required: false,
+                        attributes: ["id", "firstName", "lastName", "image"],
+                    },
+                    {
+                        model: users,
+                        as: "deliveryDriver",
+                        required: false,
+                        attributes: ["id", "firstName", "lastName", "image"],
                     },
                 ],
             });
@@ -6605,6 +6914,64 @@ exports.sendNotificationToMultiple = async (req, res) => {
     );
 
     return ResponseHelper.success(res, "Notifications sent", result);
+};
+
+//!---------------------------------------------Shop staff enterprise----------------------------------------//
+
+/**
+ * Staff activity board — assignment events + completed jobs
+ * Query: from?, to?, employeeId?, type? (pickup|delivery)
+ */
+exports.getStaffActivity = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await staffActivityService.getStaffActivity(agentId, req.query);
+    return ResponseHelper.success(res, 'Staff activity fetched', result);
+};
+
+/**
+ * GET auto-assign settings for this shop
+ */
+exports.getAutoAssignSettings = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await autoAssignService.getSettings(agentId);
+    return ResponseHelper.success(res, 'Auto-assign settings fetched', result);
+};
+
+/**
+ * PUT auto-assign settings
+ * Body: { enabled?, strategy?, scope?, fallbackToOwner? }
+ */
+exports.putAutoAssignSettings = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await autoAssignService.setSettings(agentId, req.body || {});
+    return ResponseHelper.success(res, 'Auto-assign settings updated', result);
+};
+
+/**
+ * PUT employee capability overrides
+ * Body: { capabilities: { canAcceptOrders: true, ... } } or flat map of capability keys
+ */
+exports.putEmployeeCapabilities = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId;
+    const capsMap = req.body?.capabilities || req.body || {};
+    const result = await employeeCapabilityService.setForEmployee(
+        employeeId,
+        agentId,
+        capsMap,
+        req.user
+    );
+    return ResponseHelper.success(res, 'Employee capabilities updated', result);
+};
+
+/**
+ * GET employee capability overrides / effective caps
+ */
+exports.getEmployeeCapabilities = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId;
+    const result = await employeeCapabilityService.getForEmployee(employeeId, agentId);
+    return ResponseHelper.success(res, 'Employee capabilities fetched', result);
 };
 
 

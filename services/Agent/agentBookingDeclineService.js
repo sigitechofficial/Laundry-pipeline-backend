@@ -1,5 +1,5 @@
 const { booking, bookingAgentDecline, addressDb } = require('../../models');
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const {
     ValidationError,
     NotFoundError,
@@ -33,12 +33,17 @@ class AgentBookingDeclineService {
 
         const rows = await bookingAgentDecline.findAll({
             where: { bookingId: { [Op.in]: bookingIds } },
-            attributes: ['bookingId'],
+            attributes: [
+                'bookingId',
+                [fn('COUNT', col('id')), 'declineCount'],
+            ],
+            group: ['bookingId'],
+            raw: true,
         });
 
         rows.forEach((row) => {
             const id = Number(row.bookingId);
-            map.set(id, (map.get(id) || 0) + 1);
+            map.set(id, Number(row.declineCount) || 0);
         });
         return map;
     }

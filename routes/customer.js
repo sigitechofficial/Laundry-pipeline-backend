@@ -3,6 +3,7 @@ const router =express()
 const customerAuthControllers=require('../controllers/Customer/customerAuth')
 const customerOtherController=require('../controllers/Customer/customerOrders')
 const customerPaymentMethodsController=require('../controllers/Customer/customerPaymentMethods')
+const shopReviewController=require('../controllers/Customer/shopReviewController')
 const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
@@ -76,6 +77,9 @@ router.get('/allBookings',validateAccessToken,asyncMiddleware(customerOtherContr
 router.get('/bookingDetailsById',validateAccessToken,asyncMiddleware(customerOtherController.bookingDetailsById))
 //Customer detailed track order timeline
 router.get('/trackOrder',validateAccessToken,asyncMiddleware(customerOtherController.trackOrder))
+// Live map tracking bootstrap (Firebase RTDB custom token)
+const liveTrackingController = require('../controllers/liveTrackingController')
+router.get('/live-tracking/:bookingId',validateAccessToken,asyncMiddleware(liveTrackingController.getCustomerLiveTracking))
 //Custome Response Update and Evemt Sent To Agent
 router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(customerOtherController.customerResponseUpdate))
 
@@ -90,8 +94,19 @@ router.get('/allServices',asyncMiddleware(customerOtherController.allServices))
 //Get Specific Service Detail (registered or guest)
 router.get('/serviceDetail',asyncMiddleware(customerOtherController.serviceDetail))
 // Public support contact (email, phone, help URL, hours) — from DB
-router.get('/supportContact', asyncMiddleware(adminController.getSupportContact))
+router.get('/supportContact', asyncMiddleware(async (req, res) => {
+    req.query.audience = req.query.audience || 'customer';
+    return adminController.getSupportContact(req, res);
+}))
 router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.getAccountDeletionReasons))
+
+//!----------------------------Shop Reviews---------------------//
+router.get('/reviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
+router.get('/pendingShopReviews', validateAccessToken, asyncMiddleware(shopReviewController.getPendingShopReviews))
+router.get('/bookings/:bookingId/reviewEligibility', validateAccessToken, asyncMiddleware(shopReviewController.getReviewEligibility))
+router.post('/shopReviews', validateAccessToken, asyncMiddleware(shopReviewController.createShopReview))
+router.get('/shops/:businessInfoId/reviews', asyncMiddleware(shopReviewController.getShopReviews))
+
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 

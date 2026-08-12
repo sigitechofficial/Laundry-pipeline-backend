@@ -369,6 +369,12 @@ class CancelBookingService {
         }
         await booking.update(cancelPayload, { where: { id: bookingId } });
 
+        // Close any active live-tracking session (non-blocking)
+        try {
+            const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
+            syncLiveTrackingForBookingStatus(bookingId, 19, { reason: 'cancelled' }).catch(() => {});
+        } catch (_) { /* ignore */ }
+
         // Step 10: Create booking history entry using caller/business timezone wall-clock
         const resolvedTz = this._resolveTimeZone(timeZone);
         const cancellationMoment = moment.tz(resolvedTz);

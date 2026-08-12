@@ -2,6 +2,52 @@ const { users, zone, addressDb, bussinessInformation, driverInZones, roles } = r
 const { UniqueConstraintError, ValidationError: SequelizeValidationError, Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const { ValidationError, NotFoundError, ConflictError } = require('../../middlewares/universalErrorHandler');
+const {
+    CLASSIFIED_AS,
+    SYSTEM_ROLES,
+    isAgentShopStaffRoleId,
+    isAdminPortalRoleId,
+    SYSTEM_ROLE_NAMES,
+} = require('../../constants/systemRoles');
+
+async function assertAdminPortalRole(roleId) {
+    const numericRoleId = parseInt(roleId, 10);
+    if (Number.isNaN(numericRoleId)) {
+        throw new ValidationError('roleId must be a valid number');
+    }
+    if (isAgentShopStaffRoleId(numericRoleId)) {
+        throw new ValidationError(
+            `${SYSTEM_ROLE_NAMES[numericRoleId]} is an Agent shop employee role and cannot be assigned to Admin employees`
+        );
+    }
+    const roleRecord = await roles.findByPk(numericRoleId, {
+        attributes: ['id', 'name', 'status'],
+    });
+    if (!roleRecord || !roleRecord.status) {
+        throw new ValidationError('Invalid or inactive role');
+    }
+    // Prefer Zone Admin / custom admin roles — never shop Driver/Manager (already blocked).
+    return roleRecord;
+}
+
+async function assertAgentShopStaffRole(roleId) {
+    const numericRoleId = parseInt(roleId, 10);
+    if (Number.isNaN(numericRoleId)) {
+        throw new ValidationError('roleId must be a valid number');
+    }
+    if (!isAgentShopStaffRoleId(numericRoleId)) {
+        throw new ValidationError(
+            'Agent shop employees must use Laundry Shop Driver (6) or Laundry Shop Manager (8) only'
+        );
+    }
+    const roleRecord = await roles.findByPk(numericRoleId, {
+        attributes: ['id', 'name', 'status'],
+    });
+    if (!roleRecord || !roleRecord.status) {
+        throw new ValidationError('Invalid or inactive role');
+    }
+    return roleRecord;
+}
 
 class EmployeeManagementService {
     /**
@@ -37,6 +83,8 @@ class EmployeeManagementService {
             throw new ValidationError('firstName, lastName, email, password and roleId are all required');
         }
 
+        await assertAdminPortalRole(roleId);
+
         // Check email is not already taken anywhere in the system
         const existingUser = await users.findOne({ where: { email } });
         if (existingUser) {
@@ -67,7 +115,7 @@ class EmployeeManagementService {
                 password: hashedPassword,
                 phoneNum: phoneNum || null,
                 roleId,
-                classifiedAsId: 2,  // marks as employee (not super admin)
+                classifiedAsId: CLASSIFIED_AS.ADMIN_EMPLOYEE,
                 status: true,
                 verifiedAt: new Date(),
                 employeeOff: adminId
@@ -112,13 +160,31 @@ class EmployeeManagementService {
         try {
             const { updatePassword, employeeId, ...updateFields } = updateData;
 
+            if (!employeeId) {
+                throw new ValidationError('Employee ID is required');
+            }
+
+            const existing = await users.findOne({
+                where: {
+                    id: employeeId,
+                    classifiedAsId: CLASSIFIED_AS.ADMIN_EMPLOYEE,
+                },
+            });
+            if (!existing) {
+                throw new NotFoundError('Admin employee not found');
+            }
+
+            if (updateFields.roleId !== undefined && updateFields.roleId !== null) {
+                await assertAdminPortalRole(updateFields.roleId);
+            }
+
             // Check if email already exists for another employee
             if (updateFields.email) {
                 const userExists = await users.findOne({
                     where: {
                         email: updateFields.email,
                         id: { [Op.not]: employeeId },
-                        classifiedAsId: 2
+                        classifiedAsId: CLASSIFIED_AS.ADMIN_EMPLOYEE,
                     }
                 });
 
@@ -132,13 +198,19 @@ class EmployeeManagementService {
                 updateFields.password = await bcrypt.hash(updatePassword, 10);
             }
 
+            // Never allow flipping employee kind via update
+            delete updateFields.classifiedAsId;
+
             const result = await users.update(updateFields, {
-                where: { id: employeeId }
+                where: {
+                    id: employeeId,
+                    classifiedAsId: CLASSIFIED_AS.ADMIN_EMPLOYEE,
+                }
             });
 
             return result;
         } catch (error) {
-            if (error instanceof ValidationError || error instanceof NotFoundError) {
+            if (error instanceof ValidationError || error instanceof NotFoundError || error instanceof ConflictError) {
                 throw error;
             }
             throw new Error(`Update employee error: ${error.message}`);
@@ -304,10 +376,12 @@ class EmployeeManagementService {
                 throw new ValidationError('Agent ID is required');
             }
 
+            await assertAgentShopStaffRole(employeeData.roleId);
+
             // Check if employee already exists
             const userFind = await users.findOne({
                 where: {
-                    classifiedAsId: 1,
+                    classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE,
                     roleId: employeeData.roleId,
                     firstName: employeeData.firstName,
                     lastName: employeeData.lastName,
@@ -325,7 +399,7 @@ class EmployeeManagementService {
                 createData.password = await bcrypt.hash(createData.password, 10);
             }
             createData.status = true;
-            createData.classifiedAsId = 1;
+            createData.classifiedAsId = CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE;
             createData.image = profileImg;
             createData.verifiedAt = Date.now();
             createData.employeeOff = agentId; // Set employeeOff during creation
@@ -334,7 +408,7 @@ class EmployeeManagementService {
             const user = await users.create(createData);
 
             // Handle driver assignment and zone mapping
-            if (user.roleId === 6) {
+            if (Number(user.roleId) === SYSTEM_ROLES.LAUNDRY_SHOP_DRIVER) {
                 const agentAddress = await addressDb.findOne({
                     where: {
                         userId: agentId,
