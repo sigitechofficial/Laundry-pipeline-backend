@@ -319,6 +319,37 @@ if [ "$MIGRATE_EXIT" -ne 0 ]; then
   exit "$MIGRATE_EXIT"
 fi
 
+# Sync ops control token (optional). Enables /ops/* from CI / local agents without SSH.
+# Prefer GitHub secret OPS_CONTROL_TOKEN passed into this script's environment.
+if [ -n "${OPS_CONTROL_TOKEN:-}" ]; then
+  echo "Writing ops control token file + upserting .env OPS_CONTROL_TOKEN..."
+  printf '%s' "$OPS_CONTROL_TOKEN" > "$LIVE_PATH/.ops-control-token"
+  chmod 600 "$LIVE_PATH/.ops-control-token"
+  if [ -f "$LIVE_PATH/.env" ]; then
+    if grep -q '^OPS_CONTROL_TOKEN=' "$LIVE_PATH/.env"; then
+      # portable in-place replace without leaking token into process list via sed -i backup
+      awk -v tok="$OPS_CONTROL_TOKEN" '
+        BEGIN { done=0 }
+        /^OPS_CONTROL_TOKEN=/ {
+          print "OPS_CONTROL_TOKEN=" tok
+          done=1
+          next
+        }
+        { print }
+        END { if (!done) print "OPS_CONTROL_TOKEN=" tok }
+      ' "$LIVE_PATH/.env" > "$LIVE_PATH/.env.ops-tmp" && mv "$LIVE_PATH/.env.ops-tmp" "$LIVE_PATH/.env"
+      chmod 600 "$LIVE_PATH/.env" 2>/dev/null || true
+    else
+      printf '\nOPS_CONTROL_TOKEN=%s\n' "$OPS_CONTROL_TOKEN" >> "$LIVE_PATH/.env"
+    fi
+  else
+    printf 'OPS_CONTROL_TOKEN=%s\n' "$OPS_CONTROL_TOKEN" > "$LIVE_PATH/.env"
+    chmod 600 "$LIVE_PATH/.env"
+  fi
+else
+  echo "OPS_CONTROL_TOKEN not set in deploy env — /ops stays disabled unless already on server"
+fi
+
 echo "Reloading PM2..."
 if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
   pm2 reload "$PM2_APP_NAME" --update-env

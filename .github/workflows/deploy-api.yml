@@ -156,6 +156,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          OPS_CONTROL_TOKEN: ${{ secrets.OPS_CONTROL_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -163,7 +164,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 60s
           command_timeout: 55m
-          envs: RELEASE_ID,LIVE_PATH,APP_URL,PM2_APP_NAME,DEPLOY_ROOT,APP_NAME,GITHUB_RUN_NUMBER,GITHUB_RUN_ID,GITHUB_ACTOR,GITHUB_REF_NAME
+          envs: RELEASE_ID,LIVE_PATH,APP_URL,PM2_APP_NAME,DEPLOY_ROOT,APP_NAME,GITHUB_RUN_NUMBER,GITHUB_RUN_ID,GITHUB_ACTOR,GITHUB_REF_NAME,OPS_CONTROL_TOKEN
           script: |
             set -euo pipefail
             export HOME=/home/sigisolutions
@@ -201,4 +202,5 @@ jobs:
 
             export RELEASE_ID LIVE_PATH APP_URL PM2_APP_NAME DEPLOY_ROOT APP_NAME
             export GITHUB_RUN_NUMBER GITHUB_RUN_ID GITHUB_ACTOR GITHUB_REF_NAME
+            export OPS_CONTROL_TOKEN
             bash "$DEPLOY_ROOT/remote-deploy-api.sh"

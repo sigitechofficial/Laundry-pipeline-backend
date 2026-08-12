@@ -328,6 +328,7 @@ app.get('/release.json', asyncMiddleware(async (req, res) => {
   const { getDeploymentInfo } = require('./services/deploymentInfoService');
   return res.status(200).json(getDeploymentInfo());
 }));
+app.use('/ops', require('./routes/ops'));
 app.use('/customer', customerRouter);
 app.use('/admin', adminRouter);
 app.use('/driver', driverRouter);
