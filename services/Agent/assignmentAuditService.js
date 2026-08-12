@@ -13,6 +13,9 @@ class AssignmentAuditService {
      *   toUserId?: number|null,
      *   actedByUserId: number,
      *   source?: 'manual'|'auto'|'self_return',
+     *   reasonId?: number|null,
+     *   reasonText?: string|null,
+     *   note?: string|null,
      * }} payload
      */
     async recordEvent(payload) {
@@ -24,6 +27,9 @@ class AssignmentAuditService {
             toUserId = null,
             actedByUserId,
             source = 'manual',
+            reasonId = null,
+            reasonText = null,
+            note = null,
         } = payload || {};
 
         if (!bookingId || !assignmentType || !action || actedByUserId == null) {
@@ -42,6 +48,9 @@ class AssignmentAuditService {
             toUserId: toUserId != null ? Number(toUserId) : null,
             actedByUserId: Number(actedByUserId),
             source: normalizedSource,
+            reasonId: reasonId != null ? Number(reasonId) : null,
+            reasonText: reasonText != null ? String(reasonText).slice(0, 255) : null,
+            note: note != null && String(note).trim() !== '' ? String(note).trim() : null,
         });
     }
 }

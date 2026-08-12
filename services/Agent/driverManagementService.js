@@ -7,6 +7,7 @@ const {
     booking,
     bookingHistory,
     bookingStatus,
+    staffUnassignReason,
 } = require('../../models');
 const { Op } = require('sequelize');
 const {
@@ -195,38 +196,85 @@ class AgentDriverManagementService {
     }
 
     /**
-     * Assign pickup or delivery staff. Does NOT jump booking to Out for Delivery.
-     * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery' }
-     * @param {number|null} [actorUserId] - user who performed the action (defaults to agentId)
+     * Pickup (default) also assigns delivery to the same staff.
+     * Use assignmentType=delivery for delivery-only.
+     * assignmentType=both is explicit alias for pickup+delivery.
      */
-    async assignBookingStaff(data, agentId, actorUserId = null) {
-        const {
-            bookingId,
-            driverId,
-            staffId,
-            assignmentType = 'pickup',
-            timeZone,
-            clientTimeZone,
-        } = data;
+    _legsToAssign(assignmentType) {
+        const type = String(assignmentType || 'pickup').toLowerCase();
+        if (type === 'delivery') return ['delivery'];
+        if (type === 'both' || type === 'pickup') return ['pickup', 'delivery'];
+        return ['pickup', 'delivery'];
+    }
 
-        if (!bookingId) {
-            throw new ValidationError('bookingId is required');
+    async listStaffUnassignReasons() {
+        const rows = await staffUnassignReason.findAll({
+            where: { status: true },
+            attributes: ['id', 'label', 'sortOrder', 'isOther'],
+            order: [
+                ['sortOrder', 'ASC'],
+                ['id', 'ASC'],
+            ],
+        });
+        return {
+            reasons: rows.map((r) => r.get({ plain: true })),
+        };
+    }
+
+    async _resolveUnassignReason(data) {
+        const reasonId = data.reasonId != null ? Number(data.reasonId) : null;
+        const note =
+            data.note != null && String(data.note).trim() !== ''
+                ? String(data.note).trim()
+                : null;
+
+        if (!reasonId || Number.isNaN(reasonId)) {
+            throw new ValidationError(
+                'Please select a reason for unassigning this job'
+            );
         }
 
-        const targetStaffId = staffId ?? driverId;
-        const { shopAddress } = await this._getShopContext(agentId);
-        const bookingRow = await this._assertBookingOwnedByShop(bookingId, shopAddress.id);
-        const staff = await this._assertAssignableStaff(agentId, targetStaffId);
+        const reason = await staffUnassignReason.findOne({
+            where: { id: reasonId, status: true },
+            attributes: ['id', 'label', 'isOther'],
+        });
+        if (!reason) {
+            throw new ValidationError('Invalid unassign reason');
+        }
+
+        if (reason.isOther && (!note || note.length < 3)) {
+            throw new ValidationError(
+                'Please add a short note when selecting Other'
+            );
+        }
+
+        return {
+            reasonId: reason.id,
+            reasonText: reason.label,
+            note,
+        };
+    }
+
+    async _assignSingleLeg({
+        bookingId,
+        bookingRow,
+        staff,
+        assignmentType,
+        agentId,
+        actedBy,
+        timeZone,
+        clientTimeZone,
+    }) {
         const { field, label } = this._assignmentField(assignmentType);
         const fromUserId =
             bookingRow[field] != null ? Number(bookingRow[field]) : null;
-        const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
         const hadPriorAssignee =
             fromUserId != null && fromUserId !== Number(staff.id);
         const action = hadPriorAssignee ? 'reassign' : 'assign';
 
-        const updatePayload = { [field]: staff.id };
-        await booking.update(updatePayload, { where: { id: bookingId } });
+        await booking.update({ [field]: staff.id }, { where: { id: bookingId } });
+        // Keep in-memory row in sync for multi-leg assigns
+        bookingRow[field] = staff.id;
 
         await this._writeAssignmentHistory(
             bookingId,
@@ -245,8 +293,6 @@ class AgentDriverManagementService {
             source: 'manual',
         });
 
-        await this._syncLiveTrackingAssignee(bookingId, staff.id);
-
         notifyStaffAssignmentChange({
             bookingId,
             orderTrackId: bookingRow.orderTrackId,
@@ -257,10 +303,75 @@ class AgentDriverManagementService {
             shopOwnerUserId: agentId,
         }).catch(() => {});
 
+        return { label, action, fromUserId };
+    }
+
+    /**
+     * Assign pickup or delivery staff. Does NOT jump booking to Out for Delivery.
+     * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery'|'both' }
+     * Default pickup also assigns the same staff to delivery.
+     * @param {number|null} [actorUserId] - user who performed the action (defaults to agentId)
+     */
+    async assignBookingStaff(data, agentId, actorUserId = null) {
+        const {
+            bookingId,
+            driverId,
+            staffId,
+            assignmentType = 'pickup',
+            timeZone,
+            clientTimeZone,
+            alsoAssignDelivery,
+        } = data;
+
+        if (!bookingId) {
+            throw new ValidationError('bookingId is required');
+        }
+
+        const targetStaffId = staffId ?? driverId;
+        const { shopAddress } = await this._getShopContext(agentId);
+        const bookingRow = await this._assertBookingOwnedByShop(bookingId, shopAddress.id);
+        const staff = await this._assertAssignableStaff(agentId, targetStaffId);
+        const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
+
+        let legs = this._legsToAssign(assignmentType);
+        // Explicit opt-out: pickup only
+        if (
+            String(assignmentType || 'pickup').toLowerCase() === 'pickup' &&
+            alsoAssignDelivery === false
+        ) {
+            legs = ['pickup'];
+        }
+
+        const results = [];
+        for (const leg of legs) {
+            results.push(
+                await this._assignSingleLeg({
+                    bookingId,
+                    bookingRow,
+                    staff,
+                    assignmentType: leg,
+                    agentId,
+                    actedBy,
+                    timeZone,
+                    clientTimeZone,
+                })
+            );
+        }
+
+        // Live tracking follows pickup assignee when both change; else the leg we set.
+        await this._syncLiveTrackingAssignee(bookingId, staff.id);
+
+        const labels = results.map((r) => r.label);
+        const message =
+            labels.length > 1
+                ? `Pickup and delivery assigned to the same staff`
+                : `${labels[0]} staff assigned successfully`;
+
         return {
-            message: `${label} staff assigned successfully`,
+            message,
             bookingId: Number(bookingId),
-            assignmentType: label,
+            assignmentType: labels.length > 1 ? 'both' : labels[0],
+            assignedLegs: labels,
             assignedTo: {
                 id: staff.id,
                 firstName: staff.firstName || null,
@@ -271,7 +382,7 @@ class AgentDriverManagementService {
     }
 
     /**
-     * Backward-compatible wrapper — assigns pickup staff without forcing status 13.
+     * Backward-compatible wrapper — assigns pickup staff without forcing Out for Delivery.
      */
     async agentAssignBookingToLaundryDriver(data, agentId, actorUserId = null) {
         return this.assignBookingStaff(
@@ -283,13 +394,21 @@ class AgentDriverManagementService {
 
     /**
      * Unassign staff: return pickup/delivery field to shop owner (shop-held).
+     * Requires reasonId (+ note when reason is Other).
      * When opts.selfOnly is true, only the current assignee may return that leg.
      */
     async unassignBookingStaff(data, agentId, actorUserId = null, opts = {}) {
-        const { bookingId, assignmentType = 'pickup', timeZone, clientTimeZone } = data;
+        const {
+            bookingId,
+            assignmentType = 'pickup',
+            timeZone,
+            clientTimeZone,
+        } = data;
         if (!bookingId) {
             throw new ValidationError('bookingId is required');
         }
+
+        const reasonMeta = await this._resolveUnassignReason(data);
 
         const { shopAddress } = await this._getShopContext(agentId);
         const bookingRow = await this._assertBookingOwnedByShop(bookingId, shopAddress.id);
@@ -344,6 +463,9 @@ class AgentDriverManagementService {
             toUserId: Number(agentId),
             actedByUserId: actedBy,
             source: auditSource,
+            reasonId: reasonMeta.reasonId,
+            reasonText: reasonMeta.reasonText,
+            note: reasonMeta.note,
         });
 
         await this._syncLiveTrackingAssignee(bookingId, agentId);
@@ -366,6 +488,11 @@ class AgentDriverManagementService {
             bookingId: Number(bookingId),
             assignmentType: label,
             assignedTo: { id: agentId, isOwner: true },
+            reason: {
+                id: reasonMeta.reasonId,
+                label: reasonMeta.reasonText,
+                note: reasonMeta.note,
+            },
         };
     }
 
@@ -377,7 +504,7 @@ class AgentDriverManagementService {
     }
 
     /**
-     * Owner takes the job themselves (pickup by default).
+     * Owner takes the job themselves (pickup by default → also delivery).
      */
     async agentPickupOrderBySelf(data, agentId, actorUserId = null) {
         const {
@@ -386,6 +513,7 @@ class AgentDriverManagementService {
             assignmentType = 'pickup',
             timeZone,
             clientTimeZone,
+            alsoAssignDelivery,
         } = data;
         return this.assignBookingStaff(
             {
@@ -394,6 +522,7 @@ class AgentDriverManagementService {
                 assignmentType,
                 timeZone,
                 clientTimeZone,
+                alsoAssignDelivery,
             },
             agentId,
             actorUserId

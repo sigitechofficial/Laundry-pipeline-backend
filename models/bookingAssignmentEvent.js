@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
                 foreignKey: 'actedByUserId',
                 as: 'actedByUser',
             });
+            bookingAssignmentEvent.belongsTo(models.staffUnassignReason, {
+                foreignKey: 'reasonId',
+                as: 'unassignReason',
+            });
         }
     }
 
@@ -53,6 +57,18 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.STRING(20),
                 allowNull: false,
                 defaultValue: 'manual',
+            },
+            reasonId: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+            },
+            reasonText: {
+                type: DataTypes.STRING(255),
+                allowNull: true,
+            },
+            note: {
+                type: DataTypes.TEXT,
+                allowNull: true,
             },
         },
         {

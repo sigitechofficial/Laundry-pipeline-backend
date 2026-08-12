@@ -472,6 +472,13 @@ router.get(
     validateAccessToken,
     asyncMiddleware(agentController.agnetDrivers)
 );
+// Unassign reasons for Return / Unassign me dialogs
+router.get(
+    "/staffUnassignReasons",
+    validateAccessToken,
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
+    asyncMiddleware(agentController.getStaffUnassignReasons)
+);
 //Agent Assign Order To Driver (legacy path — pickup assign, no forced status 13)
 router.patch(
     "/agentAssignBookingToLaundryDriver",

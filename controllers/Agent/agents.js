@@ -4425,6 +4425,14 @@ exports.agnetDrivers = async (req, res) => {
 }
 
 /*
+ * Active reasons for staff unassign / self-return (dropdown).
+ */
+exports.getStaffUnassignReasons = async (req, res) => {
+    const result = await agentDriverManagementService.listStaffUnassignReasons();
+    return ResponseHelper.success(res, "Staff unassign reasons", result);
+}
+
+/*
  *     Agent Assign Booking To Laundry Driver (pickup; does not force Out for Delivery)
  */
 exports.agentAssignBookingToLaundryDriver = async (req, res) => {
@@ -4458,7 +4466,7 @@ exports.assignBookingStaff = async (req, res) => {
  * Unassign staff — return job to shop owner.
  * Owner/manager (canAssignStaff): any leg.
  * Driver (canRunAssignedJobs only): only a leg currently assigned to themselves.
- * Body: { bookingId, assignmentType?: 'pickup'|'delivery' }
+ * Body: { bookingId, assignmentType?: 'pickup'|'delivery', reasonId, note? }
  */
 exports.unassignBookingStaff = async (req, res) => {
     const canManageAssign =

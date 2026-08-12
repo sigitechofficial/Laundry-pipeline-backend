@@ -56,6 +56,14 @@ Post-accept sheet (Owner/Manager): **Assign pickup**, **I'll do pickup**, or **K
 
 A driver who cannot work today taps **Unassign me** on each assigned leg (or **Unassign me from this job** when both legs are theirs). Allowed before leaving (status 3) and after trip start. The leg returns to the shop owner (`driverId` / `deliveryDriverId` = owner). Audit `source=self_return`. This is not a customer attempt-fail. Mid-trip unassign reassigns any active live-tracking session to the shop owner. Unassign is **blocked** for delivered / completed / cancelled / refunded (16, 17, 19, 21).
 
+Unassign / Return / Unassign me requires:
+- `GET /agent/staffUnassignReasons` — pick a reason
+- `PATCH /agent/unassignBookingStaff` body: `{ bookingId, assignmentType, reasonId, note? }` (`note` required when reason `isOther`)
+
+## Assign pickup → delivery by default
+
+`PATCH /assignBookingStaff` with `assignmentType: "pickup"` (default) also sets **delivery** to the same staff. Use `assignmentType: "delivery"` for delivery-only, or `alsoAssignDelivery: false` to assign pickup only.
+
 Assign / unassign / auto-assign notify the affected staff via socket + FCM (`staffJobAssigned` / `staffJobUnassigned`).
 
 ## Admin visibility
