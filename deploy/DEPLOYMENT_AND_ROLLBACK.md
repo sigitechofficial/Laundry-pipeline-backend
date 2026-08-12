@@ -58,7 +58,27 @@ Preserved on API deploy (never overwritten by rsync):
 - `config/config.json`
 - `firebase.json`
 - `uploads/`
+- `Public/`
 - `.htaccess`
+
+## Verify live version
+
+After any deploy, open these (no auth):
+
+| URL | Purpose |
+|-----|---------|
+| `GET /health` | Process alive |
+| `GET /health/deploy` | Full deploy fingerprint (commit, times, run, backups, node) |
+| `GET /version` | Same as `/health/deploy` |
+| `GET /deploy/info` | Same as `/health/deploy` |
+| `GET /release.json` | Same payload (raw-friendly) |
+
+```bash
+curl -sS https://prodlaundry.sigisolutions.net/health/deploy | jq .
+curl -sS https://stagelaundry.sigisolutions.net/health/deploy | jq .data.shortCommit
+```
+
+Remote smoke checks require `/health` = 200 and `/health/deploy` to contain the deployed commit.
 
 ## Roll-forward
 

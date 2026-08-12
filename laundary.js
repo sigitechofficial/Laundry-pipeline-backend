@@ -319,6 +319,15 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 // ROUTES
 // ============================================
 app.use('/health', require('./routes/health'));
+// Convenience aliases for deploy fingerprint (same payload as /health/deploy)
+const healthController = require('./controllers/healthController');
+const asyncMiddleware = require('./middlewares/asyncHandler');
+app.get('/version', asyncMiddleware(healthController.deployInfo));
+app.get('/deploy/info', asyncMiddleware(healthController.deployInfo));
+app.get('/release.json', asyncMiddleware(async (req, res) => {
+  const { getDeploymentInfo } = require('./services/deploymentInfoService');
+  return res.status(200).json(getDeploymentInfo());
+}));
 app.use('/customer', customerRouter);
 app.use('/admin', adminRouter);
 app.use('/driver', driverRouter);
