@@ -1,0 +1,236 @@
+name: CI/CD Workflow
+
+on:
+  push:
+    branches:
+      - main
+      - stage
+    paths-ignore:
+      # Keep Live→Stage DB sync workflow edits from redeploying apps.
+      - '.github/workflows/sync-live-to-stage-db.yml'
+  workflow_dispatch:
+
+# cPanel FTP is slow; default FTP client timeout (30s) caused control-socket failures.
+env:
+  FTP_DEPLOY_TIMEOUT_MS: '300000'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20.19.6
+
+    steps:
+      - uses: actions/checkout@v4
+
+  deploy_main:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v4
+
+      - name: Create .env file dynamically
+        run: |
+          echo "Creating .env file..."
+          echo "${{ secrets.ENV_FILE_CONTENT_PROD }}" > .env
+
+      - name: Create config folder and files
+        run: |
+          echo "Creating config folder..."
+          mkdir -p config
+          cat << 'EOF' > config/config.json
+          ${{ secrets.CONFIG_JSON_CONTENT_PROD }}
+          EOF
+
+      - name: Create .htaccess file
+        env:
+          HTACCESS_CONTENT: ${{ secrets.HTACCESS_CONTENT_PROD }}
+        run: |
+          printf '%s\n' "$HTACCESS_CONTENT" > .htaccess
+
+      - name: Creating firebase.json file
+        env:
+          FIREBASE_CONTENT: ${{ secrets.FIREBASE_CONTENT_PROD }}
+        run: |
+          echo "Creating firebase.json..."
+          if [ -z "$FIREBASE_CONTENT" ]; then
+            echo "::error::FIREBASE_CONTENT_PROD secret is empty"
+            exit 1
+          fi
+          printf '%s\n' "$FIREBASE_CONTENT" > firebase.json
+          node -e "const j=JSON.parse(require('fs').readFileSync('firebase.json','utf8')); if(!j.project_id||!j.private_key){throw new Error('missing project_id/private_key')}; console.log('firebase.json OK project_id='+j.project_id)"
+
+      - name: 🚀 Deploy via FTP
+        id: ftp_deploy
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.PROD_FTP_USERNAME }}
+          password: ${{ secrets.PROD_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          timeout: ${{ env.FTP_DEPLOY_TIMEOUT_MS }}
+          log-level: standard
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.github/**
+            **/examples/**
+            **/backups/**
+            **/graphify-out/**
+
+      - name: 🚀 Deploy via FTP (retry once)
+        id: ftp_retry
+        if: steps.ftp_deploy.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.PROD_FTP_USERNAME }}
+          password: ${{ secrets.PROD_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          timeout: ${{ env.FTP_DEPLOY_TIMEOUT_MS }}
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.github/**
+            **/examples/**
+            **/backups/**
+            **/graphify-out/**
+
+      - name: Fail if FTP deploy did not succeed
+        if: steps.ftp_deploy.outcome != 'success' && steps.ftp_retry.outcome != 'success'
+        run: |
+          echo "::error::FTP deploy failed on first try and retry"
+          exit 1
+
+      - name: Trigger npm install on server
+        run: |
+          echo "Triggering npm install via PHP script..."
+          curl -X GET "https://prodlaundry.sigisolutions.net/trigger.php"
+        env:
+          HOME: /home/sigisolutions
+
+  deploy_stage:
+    needs: build
+    if: github.ref == 'refs/heads/stage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 🚚 Get latest code
+        uses: actions/checkout@v4
+
+      - name: Create .env file dynamically
+        run: |
+          echo "Creating .env file..."
+          echo "${{ secrets.ENV_FILE_CONTENT_STAGE }}" > .env
+
+      - name: Create config folder and files
+        run: |
+          echo "Creating config folder..."
+          mkdir -p config
+          cat << 'EOF' > config/config.json
+          ${{ secrets.CONFIG_JSON_CONTENT_STAGE }}
+          EOF
+
+      - name: Create .htaccess file
+        run: |
+          echo "Creating stage .htaccess (proxy -> 127.0.0.1:8083)..."
+          cp deploy/stage.htaccess .htaccess
+          cat .htaccess
+
+      - name: Creating firebase.json file
+        env:
+          FIREBASE_CONTENT: ${{ secrets.FIREBASE_CONTENT_STAGE }}
+        run: |
+          echo "Creating firebase.json..."
+          if [ -z "$FIREBASE_CONTENT" ]; then
+            echo "::error::FIREBASE_CONTENT_STAGE secret is empty"
+            exit 1
+          fi
+          printf '%s\n' "$FIREBASE_CONTENT" > firebase.json
+          node -e "const j=JSON.parse(require('fs').readFileSync('firebase.json','utf8')); if(!j.project_id||!j.private_key){throw new Error('missing project_id/private_key')}; console.log('firebase.json OK project_id='+j.project_id)"
+
+      - name: 🚀 Deploy via FTP
+        id: ftp_deploy
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.STAGE_FTP_USERNAME }}
+          password: ${{ secrets.STAGE_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          timeout: ${{ env.FTP_DEPLOY_TIMEOUT_MS }}
+          log-level: standard
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.github/**
+            **/examples/**
+            **/backups/**
+            **/graphify-out/**
+
+      - name: 🚀 Deploy via FTP (retry once)
+        id: ftp_retry
+        if: steps.ftp_deploy.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: sigisolutions.net
+          username: ${{ secrets.STAGE_FTP_USERNAME }}
+          password: ${{ secrets.STAGE_FTP_PASSWORD }}
+          protocol: ftp
+          port: 21
+          timeout: ${{ env.FTP_DEPLOY_TIMEOUT_MS }}
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.vscode/**
+            **/.github/**
+            **/examples/**
+            **/backups/**
+            **/graphify-out/**
+
+      - name: Fail if FTP deploy did not succeed
+        if: steps.ftp_deploy.outcome != 'success' && steps.ftp_retry.outcome != 'success'
+        run: |
+          echo "::error::FTP deploy failed on first try and retry. See deploy/FTP_DEPLOY.md"
+          exit 1
+
+      - name: Trigger npm install on stage server
+        run: |
+          echo "Triggering stage deploy via /stage-trigger.php (Express handler)..."
+          body=""
+          for attempt in 1 2 3 4 5; do
+            body="$(curl -sS --max-time 120 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
+            echo "Attempt ${attempt}:"
+            echo "$body"
+            if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then
+              echo "Stage trigger succeeded"
+              exit 0
+            fi
+            echo "Trigger not ready yet (proxy/app restarting?). Waiting 20s..."
+            sleep 20
+          done
+          echo "Stage trigger failed after retries."
+          echo "Ensure PM2 is online on PORT=8083, then run once:"
+          echo "  source /home/sigisolutions/.nvm/nvm.sh && pm2 restart laundary-stage --update-env"
+          echo "Then re-run this workflow."
+          exit 1
+        env:
+          HOME: /home/sigisolutions

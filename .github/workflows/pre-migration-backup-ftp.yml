@@ -1,0 +1,116 @@
+# FTP-based pre-migration backup (works when SSH password auth is broken).
+# Uploads script + trigger.php to stage, then curls the trigger (backs up stage+prod on same VPS).
+name: Pre-migration full backup via FTP trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type BACKUP to confirm'
+        required: true
+        type: string
+
+concurrency:
+  group: laundry-pre-migration-backup
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: FTP upload + HTTP trigger backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "BACKUP" ]; then
+            echo "Blocked. Type BACKUP in the confirmation field."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare trigger token file
+        env:
+          TOKEN: ${{ secrets.BACKUP_TRIGGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            # Derive a stable token from existing stage FTP password so we can run
+            # without a new secret; prefer setting BACKUP_TRIGGER_TOKEN in repo secrets.
+            TOKEN="${{ secrets.STAGE_FTP_PASSWORD }}"
+          fi
+          if [ -z "${TOKEN}" ]; then
+            echo "No BACKUP_TRIGGER_TOKEN or STAGE_FTP_PASSWORD available"
+            exit 1
+          fi
+          printf '%s' "$TOKEN" > .backup-trigger-token
+          chmod 600 .backup-trigger-token
+          echo "TOKEN_VALUE=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Upload backup assets to stage via FTP
+        env:
+          STAGE_FTP_USERNAME: ${{ secrets.STAGE_FTP_USERNAME }}
+          STAGE_FTP_PASSWORD: ${{ secrets.STAGE_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from ftplib import FTP, error_perm
+          import os, time
+
+          def connect():
+              last = None
+              for i in range(1, 8):
+                  try:
+                      ftp = FTP()
+                      ftp.connect('sigisolutions.net', 21, timeout=120)
+                      ftp.login(os.environ['STAGE_FTP_USERNAME'], os.environ['STAGE_FTP_PASSWORD'])
+                      ftp.set_pasv(True)
+                      return ftp
+                  except Exception as e:
+                      last = e
+                      print('FTP retry', i, e)
+                      time.sleep(5 * i)
+              raise last
+
+          def ensure_dir(ftp, remote_dir):
+              parts = remote_dir.strip('/').split('/')
+              cur = ''
+              for p in parts:
+                  cur = f'{cur}/{p}' if cur else p
+                  try:
+                      ftp.mkd(cur)
+                  except error_perm:
+                      pass
+
+          def upload(local, remote):
+              ftp = connect()
+              ensure_dir(ftp, '/'.join(remote.split('/')[:-1]))
+              with open(local, 'rb') as fh:
+                  ftp.storbinary('STOR ' + remote, fh)
+              ftp.quit()
+              print('Uploaded', remote)
+
+          upload('scripts/pre-migration-full-backup.sh', 'scripts/pre-migration-full-backup.sh')
+          upload('backup-trigger.php', 'backup-trigger.php')
+          upload('.backup-trigger-token', '.backup-trigger-token')
+          PY
+
+      - name: Run backup via HTTP trigger
+        run: |
+          set -euo pipefail
+          url="https://stagelaundry.sigisolutions.net/backup-trigger.php?token=${TOKEN_VALUE}"
+          echo "Triggering backup (this can take many minutes)..."
+          # Long timeout: dumps + tar of prod/stage
+          body="$(curl -sS --max-time 3600 "$url" || true)"
+          echo "$body" | tee /tmp/backup-trigger-out.txt | tail -n 80
+          if echo "$body" | grep -q 'BACKUP COMPLETE'; then
+            echo "Backup succeeded."
+            exit 0
+          fi
+          echo "Backup did not report BACKUP COMPLETE"
+          exit 1

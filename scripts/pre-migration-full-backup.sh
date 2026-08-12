@@ -131,52 +131,119 @@ dump_db_from_config() {
   local label="$1"
   local config_path="$2"
   local out_sql="$3"
+  local require_laundry="${4:-1}"
 
   if [ ! -f "$config_path" ]; then
     echo "SKIP db/$label — config missing: $config_path"
     echo "db_${label}=MISSING_CONFIG:$config_path" >> "$MANIFEST"
-    return 0
+    return 1
   fi
 
   echo "Dumping MySQL for $label using $config_path"
-  node <<JS
+  if ! node <<JS
 const fs = require('fs');
 const { spawnSync } = require('child_process');
 
 function isPlaceholder(cfg) {
   const db = String((cfg && cfg.database) || '');
   const user = String((cfg && cfg.username) || '');
-  return /^your_/i.test(db) || /^your_/i.test(user);
+  return /^your_/i.test(db) || /^your_/i.test(user) || !db || !user;
 }
 
-function pick(raw) {
-  const preferred = ['production', 'development', 'test'];
-  const laundryKeys = Object.keys(raw).filter((k) => {
+function isLaundry(cfg) {
+  // Project historically uses "laundary" (typo) as well as "laundry".
+  const text = (String(cfg.database || '') + ' ' + String(cfg.username || '')).toLowerCase();
+  if (/fomino/.test(text)) return false;
+  return /laund/.test(text);
+}
+
+function summarize(raw) {
+  const out = [];
+  if (raw && raw.database) {
+    out.push({ key: '(root)', database: raw.database, username: raw.username });
+  }
+  Object.keys(raw || {}).forEach((k) => {
     const c = raw[k];
-    return c && c.database && !isPlaceholder(c) && (/laundr/i.test(String(c.database)) || /laundr/i.test(String(c.username || '')));
+    if (c && typeof c === 'object' && c.database) {
+      out.push({ key: k, database: c.database, username: c.username });
+    }
   });
-  for (const k of preferred) {
-    if (laundryKeys.includes(k)) return raw[k];
+  return out;
+}
+
+function pick(raw, requireLaundry) {
+  const preferred = ['production', 'development', 'test'];
+  const entries = [];
+  if (raw && raw.database && raw.username) {
+    entries.push({ key: '(root)', cfg: raw });
   }
-  if (laundryKeys.length) return raw[laundryKeys[0]];
+  Object.keys(raw || {}).forEach((k) => {
+    const c = raw[k];
+    if (c && typeof c === 'object' && c.database) entries.push({ key: k, cfg: c });
+  });
+
+  const laundry = entries.filter((e) => !isPlaceholder(e.cfg) && isLaundry(e.cfg));
   for (const k of preferred) {
-    if (raw[k] && raw[k].database && !isPlaceholder(raw[k])) return raw[k];
+    const hit = laundry.find((e) => e.key === k);
+    if (hit) return Object.assign({ _pickedKey: hit.key }, hit.cfg);
   }
-  if (raw.database && raw.username && !isPlaceholder(raw)) return raw;
+  if (laundry.length) return Object.assign({ _pickedKey: laundry[0].key }, laundry[0].cfg);
+
+  if (requireLaundry) {
+    throw new Error(
+      'No laundry DB credentials in config (refusing non-laundry fallback). Available: ' +
+        JSON.stringify(summarize(raw))
+    );
+  }
+
+  for (const k of preferred) {
+    const e = entries.find((x) => x.key === k && !isPlaceholder(x.cfg));
+    if (e) return Object.assign({ _pickedKey: e.key }, e.cfg);
+  }
+  if (entries.length && !isPlaceholder(entries[0].cfg)) {
+    return Object.assign({ _pickedKey: entries[0].key }, entries[0].cfg);
+  }
   throw new Error('No usable DB config in $config_path');
 }
 
+const requireLaundry = process.env.REQUIRE_LAUNDRY !== '0';
 const raw = JSON.parse(fs.readFileSync('$config_path', 'utf8'));
-const cfg = pick(raw);
+console.log('Config candidates:', JSON.stringify(summarize(raw)));
+const cfg = pick(raw, requireLaundry);
 const host = cfg.host || '127.0.0.1';
 const port = String(cfg.port || 3306);
 const user = cfg.username;
 const pass = cfg.password == null ? '' : String(cfg.password);
 const database = cfg.database;
 
-console.log('DB target:', { label: '$label', host, port, user, database, password: 'hidden' });
+console.log('DB target:', {
+  label: '$label',
+  pickedKey: cfg._pickedKey,
+  host,
+  port,
+  user,
+  database,
+  password: 'hidden',
+});
 
-const args = [
+if (/fomino/i.test(user + database)) {
+  console.error('Refusing to dump non-laundry (fomino) database for laundry backup');
+  process.exit(2);
+}
+
+function runDump(args) {
+  const out = fs.openSync('$out_sql', 'w');
+  const r = spawnSync('mysqldump', args, {
+    env: Object.assign({}, process.env, { MYSQL_PWD: pass }),
+    stdio: ['ignore', out, 'pipe'],
+    encoding: 'utf8',
+  });
+  fs.closeSync(out);
+  return r;
+}
+
+// MariaDB-friendly flags first (no set-gtid-purged / column-statistics)
+let r = runDump([
   '-h', host,
   '-P', port,
   '-u', user,
@@ -184,34 +251,21 @@ const args = [
   '--routines',
   '--triggers',
   '--events',
-  '--set-gtid-purged=OFF',
-  '--column-statistics=0',
   database,
-];
-
-const env = Object.assign({}, process.env, { MYSQL_PWD: pass });
-const out = fs.openSync('$out_sql', 'w');
-const r = spawnSync('mysqldump', args, { env, stdio: ['ignore', out, 'pipe'], encoding: 'utf8' });
-fs.closeSync(out);
+]);
 
 if (r.status !== 0) {
-  // Retry without flags some MariaDB/MySQL builds reject
   console.warn('mysqldump first attempt failed:', (r.stderr || '').slice(0, 500));
-  const args2 = [
+  r = runDump([
     '-h', host,
     '-P', port,
     '-u', user,
     '--single-transaction',
-    '--routines',
-    '--triggers',
     database,
-  ];
-  const out2 = fs.openSync('$out_sql', 'w');
-  const r2 = spawnSync('mysqldump', args2, { env, stdio: ['ignore', out2, 'pipe'], encoding: 'utf8' });
-  fs.closeSync(out2);
-  if (r2.status !== 0) {
-    console.error(r2.stderr || r.stderr || 'mysqldump failed');
-    process.exit(r2.status || 1);
+  ]);
+  if (r.status !== 0) {
+    console.error(r.stderr || 'mysqldump failed');
+    process.exit(r.status || 1);
   }
 }
 
@@ -222,12 +276,23 @@ if (!st.size) {
 }
 console.log('Dump bytes:', st.size);
 JS
+  then
+    :
+  else
+    echo "ERROR: mysqldump/node failed for $label ($config_path)"
+    return 1
+  fi
+
+  if [ ! -s "$out_sql" ]; then
+    echo "ERROR: dump sql missing/empty for $label"
+    return 1
+  fi
 
   gzip -f "$out_sql"
   local gz="${out_sql}.gz"
   if [ ! -s "$gz" ]; then
     echo "ERROR: empty dump $gz"
-    exit 1
+    return 1
   fi
   chmod 600 "$gz"
   local size sha
@@ -235,15 +300,162 @@ JS
   sha="$(sha256sum "$gz" | awk '{print $1}')"
   echo "OK $gz ($size) sha256=$sha"
   echo "db_${label}=$gz size=$size sha256=$sha" >> "$MANIFEST"
+  return 0
 }
 
-# --- Database dumps ---
-dump_db_from_config "prod" "$PROD_ROOT/config/config.json" "$OUT/db/prod.sql"
-dump_db_from_config "stage" "$STAGE_ROOT/config/config.json" "$OUT/db/stage.sql"
+# Prefer explicit laundry env vars on the server when config.json is polluted (e.g. fomino).
+dump_db_from_env_file() {
+  local label="$1"
+  local env_path="$2"
+  local out_sql="$3"
 
-# If stage keeps a sync copy of prod credentials, also dump that live DB under an explicit name
+  if [ ! -f "$env_path" ]; then
+    return 1
+  fi
+
+  echo "Trying DB dump for $label from env file $env_path"
+  node <<JS
+const fs = require('fs');
+const { spawnSync } = require('child_process');
+const text = fs.readFileSync('$env_path', 'utf8');
+const env = {};
+for (const line of text.split(/\\r?\\n/)) {
+  const t = line.trim();
+  if (!t || t.startsWith('#')) continue;
+  const i = t.indexOf('=');
+  if (i < 0) continue;
+  let k = t.slice(0, i).trim();
+  let v = t.slice(i + 1).trim().replace(/^['"]|['"]$/g, '');
+  env[k] = v;
+}
+
+function pick() {
+  const database =
+    env.DB_NAME || env.MYSQL_DATABASE || env.DATABASE_NAME || env.DB_DATABASE || '';
+  const user =
+    env.DB_USER || env.MYSQL_USER || env.DATABASE_USER || env.DB_USERNAME || '';
+  const pass =
+    env.DB_PASSWORD || env.MYSQL_PASSWORD || env.DATABASE_PASSWORD || env.DB_PASS || '';
+  const host =
+    env.DB_HOST || env.MYSQL_HOST || env.DATABASE_HOST || '127.0.0.1';
+  const port =
+    env.DB_PORT || env.MYSQL_PORT || env.DATABASE_PORT || '3306';
+  return { database, user, pass, host, port };
+}
+
+const cfg = pick();
+const textId = (cfg.database + ' ' + cfg.user).toLowerCase();
+console.log('Env DB candidate:', {
+  label: '$label',
+  host: cfg.host,
+  port: cfg.port,
+  user: cfg.user || '(empty)',
+  database: cfg.database || '(empty)',
+  password: 'hidden',
+});
+if (!cfg.database || !cfg.user) process.exit(3);
+if (/fomino/.test(textId)) {
+  console.error('Env DB looks like fomino — skipping');
+  process.exit(4);
+}
+if (!/laund/.test(textId)) {
+  console.error('Env DB does not look like laundry — skipping');
+  process.exit(5);
+}
+
+function runDump(args) {
+  const out = fs.openSync('$out_sql', 'w');
+  const r = spawnSync('mysqldump', args, {
+    env: Object.assign({}, process.env, { MYSQL_PWD: cfg.pass }),
+    stdio: ['ignore', out, 'pipe'],
+    encoding: 'utf8',
+  });
+  fs.closeSync(out);
+  return r;
+}
+
+let r = runDump([
+  '-h', cfg.host,
+  '-P', String(cfg.port),
+  '-u', cfg.user,
+  '--single-transaction',
+  '--routines',
+  '--triggers',
+  '--events',
+  cfg.database,
+]);
+if (r.status !== 0) {
+  console.warn((r.stderr || '').slice(0, 500));
+  r = runDump([
+    '-h', cfg.host,
+    '-P', String(cfg.port),
+    '-u', cfg.user,
+    '--single-transaction',
+    cfg.database,
+  ]);
+}
+if (r.status !== 0) {
+  console.error(r.stderr || 'mysqldump failed');
+  process.exit(r.status || 1);
+}
+const st = fs.statSync('$out_sql');
+if (!st.size) process.exit(1);
+console.log('Dump bytes:', st.size);
+JS
+
+  gzip -f "$out_sql"
+  local gz="${out_sql}.gz"
+  [ -s "$gz" ] || return 1
+  chmod 600 "$gz"
+  local size sha
+  size="$(du -h "$gz" | awk '{print $1}')"
+  sha="$(sha256sum "$gz" | awk '{print $1}')"
+  echo "OK $gz ($size) sha256=$sha"
+  echo "db_${label}=$gz size=$size sha256=$sha source=env:$env_path" >> "$MANIFEST"
+  return 0
+}
+
+# --- Database dumps (laundry credentials only; never fall back to fomino) ---
+DB_OK=1
+export REQUIRE_LAUNDRY=1
+
+dump_prod() {
+  dump_db_from_config "prod" "$PROD_ROOT/config/config.json" "$OUT/db/prod.sql" && return 0
+  [ -f "$STAGE_ROOT/config/config.prod.sync.json" ] && \
+    dump_db_from_config "prod" "$STAGE_ROOT/config/config.prod.sync.json" "$OUT/db/prod.sql" && return 0
+  [ -f "$PROD_ROOT/config/config.production.json" ] && \
+    dump_db_from_config "prod" "$PROD_ROOT/config/config.production.json" "$OUT/db/prod.sql" && return 0
+  dump_db_from_env_file "prod" "$PROD_ROOT/.env" "$OUT/db/prod.sql" && return 0
+  return 1
+}
+
+dump_stage() {
+  dump_db_from_config "stage" "$STAGE_ROOT/config/config.json" "$OUT/db/stage.sql" && return 0
+  dump_db_from_env_file "stage" "$STAGE_ROOT/.env" "$OUT/db/stage.sql" && return 0
+  return 1
+}
+
+if ! dump_prod; then
+  echo "ERROR: could not dump prod laundry database"
+  echo "db_prod=FAILED" >> "$MANIFEST"
+  DB_OK=0
+fi
+
+if ! dump_stage; then
+  echo "ERROR: could not dump stage laundry database"
+  echo "db_stage=FAILED" >> "$MANIFEST"
+  DB_OK=0
+fi
+
+# Extra copy of prod via sync config when present (best-effort)
 if [ -f "$STAGE_ROOT/config/config.prod.sync.json" ]; then
   dump_db_from_config "prod-via-stage-sync-config" "$STAGE_ROOT/config/config.prod.sync.json" "$OUT/db/prod-via-stage-sync-config.sql" || true
+fi
+
+if [ "$DB_OK" -ne 1 ]; then
+  echo "ERROR: one or more laundry DB dumps failed. Code archives above are still kept."
+  echo "Inspect config candidates in the log; fix laundry credentials in config.json, then re-run."
+  exit 1
 fi
 
 echo "---" >> "$MANIFEST"
@@ -269,4 +481,3 @@ echo "  Code:  tar -xzf $OUT/code/prod-backend.tar.gz -C $PROD_ROOT"
 echo "  Code:  tar -xzf $OUT/code/stage-backend.tar.gz -C $STAGE_ROOT"
 echo "  DB:    gunzip -c $OUT/db/prod.sql.gz | mysql -u... -p... DBNAME"
 echo "  DB:    gunzip -c $OUT/db/stage.sql.gz | mysql -u... -p... DBNAME"
-)

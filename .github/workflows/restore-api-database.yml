@@ -1,0 +1,121 @@
+name: Restore Laundry API Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options: [staging, production]
+      restore_action:
+        description: 'Action'
+        required: true
+        type: choice
+        options: [list-available, restore-specific-db-backup]
+      target:
+        description: 'db-before-....sql.gz filename'
+        required: false
+        type: string
+      confirmation:
+        description: 'Type RESTORE_DATABASE to confirm'
+        required: false
+        type: string
+
+concurrency:
+  group: laundry-api-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    timeout-minutes: 60
+    steps:
+      - name: Validate
+        run: |
+          if [ "${{ github.event.inputs.restore_action }}" = "list-available" ]; then exit 0; fi
+          if [ "${{ github.event.inputs.confirmation }}" != "RESTORE_DATABASE" ]; then
+            echo "Type RESTORE_DATABASE"; exit 1
+          fi
+          if [ -z "${{ github.event.inputs.target }}" ]; then
+            echo "target required"; exit 1
+          fi
+
+      - name: Restore on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          ENV_NAME: ${{ github.event.inputs.environment }}
+          ACTION: ${{ github.event.inputs.restore_action }}
+          TARGET: ${{ github.event.inputs.target }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 55m
+          envs: ENV_NAME,ACTION,TARGET
+          script: |
+            set -euo pipefail
+            export HOME=/home/sigisolutions
+            source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+
+            if [ "$ENV_NAME" = "production" ]; then
+              LIVE_PATH=/home/sigisolutions/prodlaundry.sigisolutions.net
+              APP_URL=https://prodlaundry.sigisolutions.net/
+              PM2_APP_NAME=laundary
+              DEPLOY_ROOT=/home/sigisolutions/deployments/laundry-api
+            else
+              LIVE_PATH=/home/sigisolutions/stagelaundry.sigisolutions.net
+              APP_URL=https://stagelaundry.sigisolutions.net/
+              PM2_APP_NAME=laundary-stage
+              DEPLOY_ROOT=/home/sigisolutions/deployments/laundry-api-stage
+            fi
+            DB_DIR="$DEPLOY_ROOT/db-backups"
+            mkdir -p "$DB_DIR" "$DEPLOY_ROOT/logs"
+
+            if [ "$ACTION" = "list-available" ]; then
+              ls -1t "$DB_DIR"/db-before-*.sql.gz 2>/dev/null | sed 's#.*/##' | head -20 || echo "(none)"
+              exit 0
+            fi
+
+            case "$TARGET" in *".."*|*"/"*|"") echo "bad target"; exit 1;; esac
+            RESTORE_FILE="$DB_DIR/$TARGET"
+            test -s "$RESTORE_FILE"
+
+            export CFG="$LIVE_PATH/config/config.json"
+            DB_JSON="$(node -e '
+            const fs=require("fs");
+            const raw=JSON.parse(fs.readFileSync(process.env.CFG,"utf8"));
+            function ph(c){return !c||!c.database||!c.username||/^your_/i.test(c.database);}
+            function laundry(c){const t=(c.database+" "+(c.username||"")).toLowerCase();return /laund/.test(t)&&!/fomino/.test(t);}
+            const preferred=["development","production","test"];
+            const entries=Object.keys(raw).map(k=>({k,c:raw[k]})).filter(e=>e.c&&e.c.database);
+            const L=entries.filter(e=>!ph(e.c)&&laundry(e.c));
+            for (const k of preferred){const h=L.find(e=>e.k===k); if(h){process.stdout.write(JSON.stringify(h.c)); process.exit(0);}}
+            if(L[0]){process.stdout.write(JSON.stringify(L[0].c)); process.exit(0);}
+            process.exit(2);
+            ')"
+
+            DB_HOST="$(node -e "const c=JSON.parse(process.argv[1]);process.stdout.write(c.host||'127.0.0.1')" "$DB_JSON")"
+            DB_PORT="$(node -e "const c=JSON.parse(process.argv[1]);process.stdout.write(String(c.port||3306))" "$DB_JSON")"
+            DB_USER="$(node -e "const c=JSON.parse(process.argv[1]);process.stdout.write(c.username)" "$DB_JSON")"
+            DB_NAME="$(node -e "const c=JSON.parse(process.argv[1]);process.stdout.write(c.database)" "$DB_JSON")"
+            DB_PASS="$(node -e "const c=JSON.parse(process.argv[1]);process.stdout.write(c.password==null?'':String(c.password))" "$DB_JSON")"
+
+            SAFETY="$DB_DIR/pre-db-restore-current-$(date -u +%Y%m%d-%H%M%SZ).sql.gz"
+            echo "Safety dump -> $SAFETY (db=$DB_NAME user=$DB_USER)"
+            MYSQL_PWD="$DB_PASS" mysqldump -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" --single-transaction "$DB_NAME" | gzip -c > "$SAFETY"
+            test -s "$SAFETY"
+
+            pm2 stop "$PM2_APP_NAME" || true
+            echo "Restoring $RESTORE_FILE into $DB_NAME"
+            gunzip -c "$RESTORE_FILE" | MYSQL_PWD="$DB_PASS" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "$DB_NAME"
+            pm2 restart "$PM2_APP_NAME" --update-env || pm2 start "$LIVE_PATH/laundary.js" --name "$PM2_APP_NAME" --cwd "$LIVE_PATH"
+            pm2 save
+            curl -fsS --retry 3 "$APP_URL" >/dev/null
+            echo "DB restore completed. Safety backup: $SAFETY"
