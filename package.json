@@ -16,7 +16,11 @@
     "db:setup:reset": "node scripts/db-setup-local.js --reset",
     "db:migrate:verify": "node scripts/run-fresh-migrate-until-clean.js",
     "db:seed": "sequelize-cli db:seed:all",
-    "demo:live-tracking": "node scripts/demoLiveTrackingStream.js"
+    "demo:live-tracking": "node scripts/demoLiveTrackingStream.js",
+    "ops:stage": "bash scripts/ops.sh stage",
+    "ops:prod": "bash scripts/ops.sh prod",
+    "ops:diagnose": "bash scripts/ops.sh stage diagnose",
+    "ops:logs": "bash scripts/ops.sh stage logs"
   },
   "keywords": [],
   "author": "",
