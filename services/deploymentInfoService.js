@@ -118,6 +118,8 @@ function getDeploymentInfo() {
     deployRoot: (releaseJson && releaseJson.deployRoot) || null,
     fileBackup: (releaseJson && releaseJson.fileBackup) || releaseTxt.file_backup || null,
     dbBackup: (releaseJson && releaseJson.dbBackup) || releaseTxt.db_backup || null,
+    migrate: (releaseJson && releaseJson.migrate) || null,
+    seed: (releaseJson && releaseJson.seed) || null,
     node: {
       version: process.version,
       pid: process.pid,

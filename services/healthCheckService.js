@@ -554,12 +554,120 @@ async function runDependencyChecks(options = {}) {
   return report;
 }
 
+/**
+ * Read-only schema probe for shop ratings/reviews feature.
+ * Confirms tables exist, migration is recorded, and returns safe counts.
+ * Never returns secrets or row contents.
+ */
+async function checkShopReviewSchema() {
+  const started = nowMs();
+  const REQUIRED_TABLES = [
+    'reviewReasonCodes',
+    'shopReviews',
+    'shopReviewReasons',
+    'shopReviewStats'
+  ];
+  const REVIEW_MIGRATION = '20260811180000-create-shop-review-tables.js';
+
+  try {
+    const [tableRows] = await db.sequelize.query(
+      `SELECT TABLE_NAME AS name
+       FROM information_schema.tables
+       WHERE table_schema = DATABASE()
+         AND TABLE_NAME IN (:names)`,
+      { replacements: { names: REQUIRED_TABLES } }
+    );
+    const existing = new Set((tableRows || []).map((r) => r.name));
+    const tables = {};
+    for (const name of REQUIRED_TABLES) {
+      tables[name] = existing.has(name);
+    }
+    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+
+    let migrationApplied = false;
+    let migrationError = null;
+    try {
+      const [metaRows] = await db.sequelize.query(
+        `SELECT name FROM SequelizeMeta WHERE name = :name LIMIT 1`,
+        { replacements: { name: REVIEW_MIGRATION } }
+      );
+      migrationApplied = Array.isArray(metaRows) && metaRows.length > 0;
+    } catch (err) {
+      migrationError = err.message || String(err);
+    }
+
+    const counts = {
+      reviewReasonCodes: null,
+      shopReviews: null,
+      shopReviewsPublished: null,
+      shopReviewStats: null
+    };
+    const countErrors = {};
+
+    async function safeCount(key, sql) {
+      try {
+        const [rows] = await db.sequelize.query(sql);
+        counts[key] = Number(rows?.[0]?.c ?? 0);
+      } catch (err) {
+        countErrors[key] = err.message || String(err);
+      }
+    }
+
+    if (tables.reviewReasonCodes) {
+      await safeCount('reviewReasonCodes', 'SELECT COUNT(*) AS c FROM reviewReasonCodes');
+    }
+    if (tables.shopReviews) {
+      await safeCount('shopReviews', 'SELECT COUNT(*) AS c FROM shopReviews');
+      await safeCount(
+        'shopReviewsPublished',
+        `SELECT COUNT(*) AS c FROM shopReviews WHERE moderationStatus = 'published'`
+      );
+    }
+    if (tables.shopReviewStats) {
+      await safeCount('shopReviewStats', 'SELECT COUNT(*) AS c FROM shopReviewStats');
+    }
+
+    const ok = missingTables.length === 0 && migrationApplied;
+    return result(ok ? 'ok' : 'fail', ok
+      ? 'Shop review schema present (tables + SequelizeMeta)'
+      : missingTables.length
+        ? `Missing tables: ${missingTables.join(', ')}`
+        : `Migration not in SequelizeMeta: ${REVIEW_MIGRATION}`, {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'shopReviews',
+      migration: {
+        name: REVIEW_MIGRATION,
+        applied: migrationApplied,
+        error: migrationError
+      },
+      tables,
+      missingTables,
+      counts,
+      countErrors: Object.keys(countErrors).length ? countErrors : undefined,
+      hint: ok
+        ? null
+        : 'If tables are missing, re-run db:migrate on stage (deploy should do this). If only meta is missing but tables exist, investigate partial migrate.'
+    });
+  } catch (err) {
+    const fields = safeErrorFields(err);
+    return result('fail', err.message || 'Schema check failed', {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'shopReviews',
+      ...fields,
+      hint: 'MySQL must be reachable. Verify /health/mysql first.'
+    });
+  }
+}
+
 module.exports = {
   checkMysql,
   checkRedis,
   checkFirebase,
   checkStripe,
   checkZeptoMail,
+  checkShopReviewSchema,
   runDependencyChecks,
   logCheck,
   logLine

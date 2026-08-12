@@ -264,15 +264,59 @@ process.stdout.write('development');
 JS
 )"
 echo "sequelize migrate --env $MIGRATE_ENV"
+set +e
 npx sequelize-cli db:migrate --env "$MIGRATE_ENV" 2>&1 | tee "$DEPLOY_ROOT/logs/last-migrate-deploy.log"
+MIGRATE_EXIT=${PIPESTATUS[0]}
+set -e
 
+MIGRATE_TAIL="$(tail -n 40 "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tr '\n' ' ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-900 || true)"
+MIGRATE_SUMMARY="$(grep -E 'No migrations were executed|migrated|== [0-9].*: migrated|ERROR|Error' "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tail -n 8 | tr '\n' ' | ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-500 || true)"
 
 echo "Running deploy seeds (non-fatal)..."
+SEED_EXIT=0
 if [ -x "$LIVE_PATH/scripts/run-deploy-seeds.sh" ]; then
-  bash "$LIVE_PATH/scripts/run-deploy-seeds.sh" "$LIVE_PATH" 2>&1 | tee "$DEPLOY_ROOT/logs/last-seed.log" || \
+  set +e
+  bash "$LIVE_PATH/scripts/run-deploy-seeds.sh" "$LIVE_PATH" 2>&1 | tee "$DEPLOY_ROOT/logs/last-seed.log"
+  SEED_EXIT=${PIPESTATUS[0]}
+  set -e
+  if [ "$SEED_EXIT" -ne 0 ]; then
     echo "WARN: seeds failed — continuing"
+  fi
 else
   echo "WARN: run-deploy-seeds.sh missing"
+  SEED_EXIT=1
+fi
+SEED_SUMMARY="$(grep -E 'seed|Seed|Validation error|ERROR|Error|done|OK' "$DEPLOY_ROOT/logs/last-seed.log" 2>/dev/null | tail -n 10 | tr '\n' ' | ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-500 || true)"
+
+# Persist migrate/seed fingerprint into live release.json (readable via /health/deploy)
+export LIVE_PATH MIGRATE_ENV
+export MIGRATE_EXIT MIGRATE_SUMMARY MIGRATE_TAIL
+export SEED_EXIT SEED_SUMMARY
+node <<'EOF'
+const fs = require('fs');
+const p = (process.env.LIVE_PATH || '') + '/release.json';
+let j = {};
+try { j = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) {}
+j.migrate = {
+  env: process.env.MIGRATE_ENV || null,
+  exitCode: Number(process.env.MIGRATE_EXIT || 0),
+  ok: Number(process.env.MIGRATE_EXIT || 0) === 0,
+  summary: process.env.MIGRATE_SUMMARY || null,
+  logTail: process.env.MIGRATE_TAIL || null,
+  at: new Date().toISOString()
+};
+j.seed = {
+  exitCode: Number(process.env.SEED_EXIT || 0),
+  ok: Number(process.env.SEED_EXIT || 0) === 0,
+  summary: process.env.SEED_SUMMARY || null,
+  at: new Date().toISOString()
+};
+fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+EOF
+
+if [ "$MIGRATE_EXIT" -ne 0 ]; then
+  echo "ERROR: db:migrate failed (exit $MIGRATE_EXIT) — see $DEPLOY_ROOT/logs/last-migrate-deploy.log"
+  exit "$MIGRATE_EXIT"
 fi
 
 echo "Reloading PM2..."
