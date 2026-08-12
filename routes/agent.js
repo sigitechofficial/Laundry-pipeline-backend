@@ -14,6 +14,8 @@ const validateAccessToken = require("../middlewares/accessToken");
 const {
     requireShopOwner,
     requireCapability,
+    requireAnyCapability,
+    requireBookingAssignee,
 } = require("../middlewares/requireShopOwner");
 const {
     postcodeAutocompleteRateLimit,
@@ -239,6 +241,7 @@ router.post(
     validateAccessToken,
     checkPermissions,
     uploadPickDropProofs.array("Images", 10),
+    requireBookingAssignee({ types: ["either"] }),
     asyncMiddleware(agentController.AddPickupDeliveryProof)
 );
 //Agent goes to pick order Byself and Mark order on the way driver
@@ -246,6 +249,7 @@ router.patch(
     "/agentBookingStatusOnTheWay/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.agentBookingStatusOnTheWay)
 );
 //Agent mark booking Status Arrived
@@ -253,6 +257,7 @@ router.patch(
     "/driverStatusArrived/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.driverStatusArrived)
 );
 // Live map tracking publisher bootstrap (Firebase RTDB custom token)
@@ -326,6 +331,7 @@ router.patch(
     "/reachedAtDeliveryShopStatus/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["pickup"] }),
     asyncMiddleware(agentController.reachedAtDeliveryShopStatus)
 );
 //Laundry Washed At Laundry Shop
@@ -340,6 +346,7 @@ router.patch(
     "/laundryDeliverToCustomer/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.laundryDeliverToCustomer)
 );
 //Invoice Details of Order
@@ -390,6 +397,7 @@ router.patch(
     "/driverReachedForDelivery/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.driverReachedForDelivery)
 );
 //Driver/Agent deliver delivery to customer
@@ -397,6 +405,7 @@ router.patch(
     "/bookingDeliverToCustomer/:bookingId",
     validateAccessToken,
     checkPermissions,
+    requireBookingAssignee({ types: ["delivery"] }),
     asyncMiddleware(agentController.bookingDeliverToCustomer)
 );
 //invoice Details Tab Api
@@ -491,11 +500,11 @@ router.patch(
     requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.reassignBookingStaff)
 );
-// Staff jobs monitor board
+// Staff jobs monitor board (assigners see all; runners see own via controller)
 router.get(
     "/staffJobs",
     validateAccessToken,
-    requireCapability("canAssignStaff"),
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
     asyncMiddleware(agentController.getStaffJobs)
 );
 //Agent Assign Order to Self
@@ -504,6 +513,39 @@ router.patch(
     validateAccessToken,
     requireCapability("canRunAssignedJobs"),
     asyncMiddleware(agentController.agentPickupOrderBySelf)
+);
+// Staff activity (assignment events + completed jobs)
+router.get(
+    "/staffActivity",
+    validateAccessToken,
+    requireCapability("canViewStaffActivity"),
+    asyncMiddleware(agentController.getStaffActivity)
+);
+// Auto-assign settings (owner only by default ceiling)
+router.get(
+    "/autoAssignSettings",
+    validateAccessToken,
+    requireCapability("canManageAutoAssign"),
+    asyncMiddleware(agentController.getAutoAssignSettings)
+);
+router.put(
+    "/autoAssignSettings",
+    validateAccessToken,
+    requireCapability("canManageAutoAssign"),
+    asyncMiddleware(agentController.putAutoAssignSettings)
+);
+// Per-employee capability overrides
+router.get(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.getEmployeeCapabilities)
+);
+router.put(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.putEmployeeCapabilities)
 );
 //!--------------------------------------------Agent Add,roles,classifiedAs------------------------------------------//
 //Add Roles (owner only — system roles 6/8 must not be casually mutated)

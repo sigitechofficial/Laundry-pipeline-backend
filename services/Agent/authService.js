@@ -21,7 +21,7 @@ const {
     resolveAgentTimeZone,
 } = require('../../utils/agentTimeZone');
 const {
-    getShopCapabilities,
+    getEffectiveShopCapabilities,
     LAUNDRY_SHOP_DRIVER_ROLE_ID,
     LAUNDRY_SHOP_MANAGER_ROLE_ID,
 } = require('../../utils/shopAgentContext');
@@ -1179,7 +1179,7 @@ class AgentAuthService {
         }
 
         const connectAccountId = agentInfo?.[0]?.connectAccountId || null;
-        const ownerCapabilities = getShopCapabilities({
+        const ownerCapabilities = await getEffectiveShopCapabilities({
             id: userFind.id,
             classifiedAsId: userFind.classifiedAsId,
             roleId: userFind.roleId,
@@ -1764,7 +1764,7 @@ class AgentAuthService {
 
         await redisCli.hSet(`id-${employeeData.id}`, { [dvToken]: accessToken });
 
-        const capabilities = getShopCapabilities(employeeData);
+        const capabilities = await getEffectiveShopCapabilities(employeeData);
 
         return {
             id: employeeData.id,

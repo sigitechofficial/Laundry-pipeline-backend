@@ -114,6 +114,21 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         excludeUserIds: [shopOwnerUserId, agentUserId],
     });
 
+    // Auto-assign after accept — must not fail the accept itself
+    try {
+        const autoAssignService = require("./autoAssignService");
+        await autoAssignService.tryAutoAssignAfterAccept({
+            shopAgentId: shopOwnerUserId,
+            bookingId: Number(bookingId),
+            actedByUserId: Number(agentUserId),
+        });
+    } catch (autoErr) {
+        console.error(
+            "[acceptOrder] auto-assign after accept failed:",
+            autoErr.message
+        );
+    }
+
     return {
         bookingId: Number(bookingId),
         laundryShopId: shopAddress.id,

@@ -13,6 +13,7 @@ const {
     ValidationError,
 } = require('../../middlewares/universalErrorHandler');
 const momentTz = require('moment-timezone');
+const assignmentAuditService = require('./assignmentAuditService');
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
@@ -165,8 +166,9 @@ class AgentDriverManagementService {
     /**
      * Assign pickup or delivery staff. Does NOT jump booking to Out for Delivery.
      * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery' }
+     * @param {number|null} [actorUserId] - user who performed the action (defaults to agentId)
      */
-    async assignBookingStaff(data, agentId) {
+    async assignBookingStaff(data, agentId, actorUserId = null) {
         const {
             bookingId,
             driverId,
@@ -185,6 +187,12 @@ class AgentDriverManagementService {
         const bookingRow = await this._assertBookingOwnedByShop(bookingId, shopAddress.id);
         const staff = await this._assertAssignableStaff(agentId, targetStaffId);
         const { field, label } = this._assignmentField(assignmentType);
+        const fromUserId =
+            bookingRow[field] != null ? Number(bookingRow[field]) : null;
+        const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
+        const hadPriorAssignee =
+            fromUserId != null && fromUserId !== Number(staff.id);
+        const action = hadPriorAssignee ? 'reassign' : 'assign';
 
         const updatePayload = { [field]: staff.id };
         await booking.update(updatePayload, { where: { id: bookingId } });
@@ -195,6 +203,16 @@ class AgentDriverManagementService {
             timeZone,
             clientTimeZone
         );
+
+        await assignmentAuditService.recordEvent({
+            bookingId,
+            assignmentType: label,
+            action,
+            fromUserId,
+            toUserId: staff.id,
+            actedByUserId: actedBy,
+            source: 'manual',
+        });
 
         return {
             message: `${label} staff assigned successfully`,
@@ -212,17 +230,18 @@ class AgentDriverManagementService {
     /**
      * Backward-compatible wrapper — assigns pickup staff without forcing status 13.
      */
-    async agentAssignBookingToLaundryDriver(data, agentId) {
+    async agentAssignBookingToLaundryDriver(data, agentId, actorUserId = null) {
         return this.assignBookingStaff(
             { ...data, assignmentType: 'pickup' },
-            agentId
+            agentId,
+            actorUserId
         );
     }
 
     /**
      * Unassign staff: return pickup/delivery field to shop owner (shop-held).
      */
-    async unassignBookingStaff(data, agentId) {
+    async unassignBookingStaff(data, agentId, actorUserId = null) {
         const { bookingId, assignmentType = 'pickup', timeZone, clientTimeZone } = data;
         if (!bookingId) {
             throw new ValidationError('bookingId is required');
@@ -231,6 +250,9 @@ class AgentDriverManagementService {
         const { shopAddress } = await this._getShopContext(agentId);
         const bookingRow = await this._assertBookingOwnedByShop(bookingId, shopAddress.id);
         const { field, label } = this._assignmentField(assignmentType);
+        const fromUserId =
+            bookingRow[field] != null ? Number(bookingRow[field]) : null;
+        const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
 
         // Keep jobs shop-owned (same pattern as accept/admin assign)
         await booking.update(
@@ -245,6 +267,16 @@ class AgentDriverManagementService {
             clientTimeZone
         );
 
+        await assignmentAuditService.recordEvent({
+            bookingId,
+            assignmentType: label,
+            action: 'unassign',
+            fromUserId,
+            toUserId: Number(agentId),
+            actedByUserId: actedBy,
+            source: 'manual',
+        });
+
         return {
             message: `${label} staff unassigned; job returned to shop owner`,
             bookingId: Number(bookingId),
@@ -256,14 +288,14 @@ class AgentDriverManagementService {
     /**
      * Reassign to another staff member (atomic field swap).
      */
-    async reassignBookingStaff(data, agentId) {
-        return this.assignBookingStaff(data, agentId);
+    async reassignBookingStaff(data, agentId, actorUserId = null) {
+        return this.assignBookingStaff(data, agentId, actorUserId);
     }
 
     /**
      * Owner takes the job themselves (pickup by default).
      */
-    async agentPickupOrderBySelf(data, agentId) {
+    async agentPickupOrderBySelf(data, agentId, actorUserId = null) {
         const {
             bookingId,
             staffId,
@@ -279,7 +311,8 @@ class AgentDriverManagementService {
                 timeZone,
                 clientTimeZone,
             },
-            agentId
+            agentId,
+            actorUserId
         );
     }
 

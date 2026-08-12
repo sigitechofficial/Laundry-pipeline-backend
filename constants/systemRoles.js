@@ -10,8 +10,12 @@
  *   7 = Zone Admin             → classifiedAs 2 only
  *   8 = Laundry Shop Manager   → classifiedAs 1 only
  *
- * Shop ops (accept / assign / team / finance) for roles 6/8 are enforced by
- * utils/shopAgentContext capabilities — not by feature CRUD checkboxes alone.
+ * Shop ops (accept / assign / team / finance / invoice / processing / trips)
+ * for roles 6/8 are enforced by utils/shopAgentContext capabilities — not by
+ * feature CRUD checkboxes alone. Per-employee fine-grained overrides live in
+ * employeeCapabilityOverrides and are merged via getEffectiveShopCapabilities,
+ * clamped by ROLE_CAPABILITY_CEILINGS (drivers cannot gain finance/accept/assign/team;
+ * managers cannot gain finance or auto-assign config).
  */
 
 const CLASSIFIED_AS = Object.freeze({

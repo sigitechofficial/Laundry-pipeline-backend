@@ -199,6 +199,9 @@ const agentWalletService = require('../../services/Agent/agentWalletService');
 const agentSettlementService = require('../../services/Agent/agentSettlementService');
 const agentWithdrawalService = require('../../services/Agent/agentWithdrawalService');
 const invoiceAutoChargeService = require('../../services/Agent/invoiceAutoChargeService');
+const staffActivityService = require('../../services/Agent/staffActivityService');
+const employeeCapabilityService = require('../../services/Agent/employeeCapabilityService');
+const autoAssignService = require('../../services/Agent/autoAssignService');
 const {
     resolveShopAgentId,
     resolveActorUserId,
@@ -218,6 +221,28 @@ function actorCanManageShopOps(req) {
         return req.canManageShopOps;
     }
     return canManageShopOps(req.user);
+}
+
+/** Owner/manager board access (view orders / assign / accept) — not shopOps edit. */
+function actorCanViewShopBoard(req) {
+    const caps = req.capabilities || {};
+    return (
+        caps.canViewShopOrders === true ||
+        caps.canAssignStaff === true ||
+        caps.canAcceptOrders === true ||
+        req.canViewShopOrders === true ||
+        req.canAssignStaff === true ||
+        req.canAcceptOrders === true ||
+        req.isShopOwner === true ||
+        req.isShopManager === true
+    );
+}
+
+function actorCanAcceptOrders(req) {
+    return (
+        req.canAcceptOrders === true ||
+        req.capabilities?.canAcceptOrders === true
+    );
 }
 
 async function tryCreditAgentWallet(bookingId, options = {}) {
@@ -810,7 +835,7 @@ exports.getBookingHome = async (req, res) => {
 }
 
 exports.agentRejectOrder = async (req, res) => {
-    if (!actorCanManageShopOps(req)) {
+    if (!actorCanAcceptOrders(req)) {
         throw new ForbiddenError(
             'Only the shop owner or manager can decline new orders'
         );
@@ -1186,7 +1211,7 @@ exports.agentBookingFilters = async (req, res) => {
     const actorId = actorUserIdFromReq(req);
     // Drivers only see jobs assigned to them; owner/manager see the full shop board.
     const employeeStaffScope =
-        req.isShopEmployee && !actorCanManageShopOps(req)
+        req.isShopEmployee && !actorCanViewShopBoard(req)
             ? {
                   [Op.or]: [
                       { driverId: actorId },
@@ -1364,7 +1389,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── NEW — unaccepted bookings in agent's zone ────────────────────────────
     // Drivers do not accept from the broadcast pool — owner/manager do.
     if (!filterType || filterType === "new") {
-        if (req.isShopEmployee && !actorCanManageShopOps(req)) {
+        if (req.isShopEmployee && !actorCanAcceptOrders(req)) {
             results.New = [];
         } else {
             const rows = await booking.findAll({
@@ -4274,7 +4299,8 @@ exports.agentAssignBookingToLaundryDriver = async (req, res) => {
     const agentId = shopAgentIdFromReq(req);
     const result = await agentDriverManagementService.agentAssignBookingToLaundryDriver(
         req.body,
-        agentId
+        agentId,
+        actorUserIdFromReq(req)
     );
     return ResponseHelper.success(res, result.message || "Order assigned to laundry driver", result);
 }
@@ -4284,11 +4310,15 @@ exports.agentAssignBookingToLaundryDriver = async (req, res) => {
  * Body: { bookingId, driverId|staffId, assignmentType?: 'pickup'|'delivery' }
  */
 exports.assignBookingStaff = async (req, res) => {
-    if (!actorCanManageShopOps(req)) {
+    if (!actorCanManageShopOps(req) && req.canAssignStaff !== true && req.capabilities?.canAssignStaff !== true) {
         throw new ForbiddenError('Only the shop owner or manager can assign staff to jobs');
     }
     const agentId = shopAgentIdFromReq(req);
-    const result = await agentDriverManagementService.assignBookingStaff(req.body, agentId);
+    const result = await agentDriverManagementService.assignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
+    );
     return ResponseHelper.success(res, result.message, result);
 }
 
@@ -4297,11 +4327,15 @@ exports.assignBookingStaff = async (req, res) => {
  * Body: { bookingId, assignmentType?: 'pickup'|'delivery' }
  */
 exports.unassignBookingStaff = async (req, res) => {
-    if (!actorCanManageShopOps(req)) {
+    if (!actorCanManageShopOps(req) && req.canAssignStaff !== true && req.capabilities?.canAssignStaff !== true) {
         throw new ForbiddenError('Only the shop owner or manager can unassign staff');
     }
     const agentId = shopAgentIdFromReq(req);
-    const result = await agentDriverManagementService.unassignBookingStaff(req.body, agentId);
+    const result = await agentDriverManagementService.unassignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
+    );
     return ResponseHelper.success(res, result.message, result);
 }
 
@@ -4309,11 +4343,15 @@ exports.unassignBookingStaff = async (req, res) => {
  * Reassign staff (same as assign with new staffId)
  */
 exports.reassignBookingStaff = async (req, res) => {
-    if (!actorCanManageShopOps(req)) {
+    if (!actorCanManageShopOps(req) && req.canAssignStaff !== true && req.capabilities?.canAssignStaff !== true) {
         throw new ForbiddenError('Only the shop owner or manager can reassign staff');
     }
     const agentId = shopAgentIdFromReq(req);
-    const result = await agentDriverManagementService.reassignBookingStaff(req.body, agentId);
+    const result = await agentDriverManagementService.reassignBookingStaff(
+        req.body,
+        agentId,
+        actorUserIdFromReq(req)
+    );
     return ResponseHelper.success(res, result.message || "Staff reassigned", result);
 }
 
@@ -4325,7 +4363,13 @@ exports.getStaffJobs = async (req, res) => {
     const agentId = shopAgentIdFromReq(req);
     // Drivers may only monitor their own jobs; owner/manager see all
     const query = { ...req.query };
-    if (req.isShopEmployee && !actorCanManageShopOps(req)) {
+    const canSeeAll =
+        req.canAssignStaff === true ||
+        req.capabilities?.canAssignStaff === true ||
+        req.canViewShopOrders === true ||
+        req.capabilities?.canViewShopOrders === true ||
+        actorCanViewShopBoard(req);
+    if (req.isShopEmployee && !canSeeAll) {
         query.employeeId = actorUserIdFromReq(req);
     }
     const result = await agentDriverManagementService.getStaffJobs(agentId, query);
@@ -4342,7 +4386,8 @@ exports.agentPickupOrderBySelf = async (req, res) => {
     const selfId = req.isShopEmployee ? actorUserIdFromReq(req) : agentId;
     const result = await agentDriverManagementService.agentPickupOrderBySelf(
         { ...req.body, bookingId, staffId: selfId },
-        agentId
+        agentId,
+        actorUserIdFromReq(req)
     );
     return ResponseHelper.success(res, result.message || "Agent assigned to pick up order", result);
 }
@@ -6657,6 +6702,64 @@ exports.sendNotificationToMultiple = async (req, res) => {
     );
 
     return ResponseHelper.success(res, "Notifications sent", result);
+};
+
+//!---------------------------------------------Shop staff enterprise----------------------------------------//
+
+/**
+ * Staff activity board — assignment events + completed jobs
+ * Query: from?, to?, employeeId?, type? (pickup|delivery)
+ */
+exports.getStaffActivity = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await staffActivityService.getStaffActivity(agentId, req.query);
+    return ResponseHelper.success(res, 'Staff activity fetched', result);
+};
+
+/**
+ * GET auto-assign settings for this shop
+ */
+exports.getAutoAssignSettings = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await autoAssignService.getSettings(agentId);
+    return ResponseHelper.success(res, 'Auto-assign settings fetched', result);
+};
+
+/**
+ * PUT auto-assign settings
+ * Body: { enabled?, strategy?, scope?, fallbackToOwner? }
+ */
+exports.putAutoAssignSettings = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const result = await autoAssignService.setSettings(agentId, req.body || {});
+    return ResponseHelper.success(res, 'Auto-assign settings updated', result);
+};
+
+/**
+ * PUT employee capability overrides
+ * Body: { capabilities: { canAcceptOrders: true, ... } } or flat map of capability keys
+ */
+exports.putEmployeeCapabilities = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId;
+    const capsMap = req.body?.capabilities || req.body || {};
+    const result = await employeeCapabilityService.setForEmployee(
+        employeeId,
+        agentId,
+        capsMap,
+        req.user
+    );
+    return ResponseHelper.success(res, 'Employee capabilities updated', result);
+};
+
+/**
+ * GET employee capability overrides / effective caps
+ */
+exports.getEmployeeCapabilities = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const employeeId = req.params.employeeId;
+    const result = await employeeCapabilityService.getForEmployee(employeeId, agentId);
+    return ResponseHelper.success(res, 'Employee capabilities fetched', result);
 };
 
 
