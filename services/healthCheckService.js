@@ -620,7 +620,7 @@ async function checkShopReviewSchema() {
       await safeCount('shopReviews', 'SELECT COUNT(*) AS c FROM shopReviews');
       await safeCount(
         'shopReviewsPublished',
-        `SELECT COUNT(*) AS c FROM shopReviews WHERE moderationStatus = 'published'`
+        `SELECT COUNT(*) AS c FROM shopReviews WHERE visibility = 'published'`
       );
     }
     if (tables.shopReviewStats) {
