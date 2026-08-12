@@ -6,6 +6,7 @@ node_modules/
 .env.local
 .env.*.local
 !.env.example
+.ops-control-token
 
 # Local Firebase service account (contains private key)
 firebase.json

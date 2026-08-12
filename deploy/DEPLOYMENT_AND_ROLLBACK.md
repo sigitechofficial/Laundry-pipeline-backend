@@ -69,9 +69,19 @@ After any deploy, open these (no auth):
 |-----|---------|
 | `GET /health` | Process alive |
 | `GET /health/deploy` | Full deploy fingerprint (commit, times, run, backups, node) |
+| `GET /health/schema` | Shop-review tables + SequelizeMeta + safe counts |
 | `GET /version` | Same as `/health/deploy` |
 | `GET /deploy/info` | Same as `/health/deploy` |
 | `GET /release.json` | Same payload (raw-friendly) |
+
+Authenticated ops (PM2 logs / reload) — see [OPS_CONTROL.md](./OPS_CONTROL.md):
+
+| URL | Purpose |
+|-----|---------|
+| `GET /ops/status` | PM2 status (header `X-Ops-Token`) |
+| `GET /ops/pm2/logs` | Tail PM2 logs |
+| `POST /ops/pm2/reload` | `pm2 reload --update-env` |
+| `POST /ops/pm2/restart` | `pm2 restart --update-env` |
 
 ```bash
 curl -sS https://prodlaundry.sigisolutions.net/health/deploy | jq .
