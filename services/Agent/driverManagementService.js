@@ -6,6 +6,7 @@ const {
     addressDb,
     booking,
     bookingHistory,
+    bookingStatus,
 } = require('../../models');
 const { Op } = require('sequelize');
 const {
@@ -14,9 +15,21 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const momentTz = require('moment-timezone');
 const assignmentAuditService = require('./assignmentAuditService');
+const liveTrackingRtdb = require('../../utils/liveTrackingRtdb');
+const {
+    notifyStaffAssignmentChange,
+} = require('../../utils/staffAssignmentNotify');
+
+/** Delivered / Completed / Cancelled / Refunded — no staff unassign. */
+const TERMINAL_UNASSIGN_STATUSES = new Set([16, 17, 19, 21]);
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
+const LAUNDRY_SHOP_MANAGER_ROLE_ID = 8;
+const ASSIGNABLE_STAFF_ROLE_IDS = [
+    LAUNDRY_SHOP_DRIVER_ROLE_ID,
+    LAUNDRY_SHOP_MANAGER_ROLE_ID,
+];
 
 /**
  * Agent Driver / Staff Assignment Service
@@ -115,6 +128,24 @@ class AgentDriverManagementService {
     }
 
     /**
+     * Mid-trip assign/unassign: keep RTDB publisher on the current assignee.
+     * No-ops when there is no active session (status 3, closed, etc.).
+     */
+    async _syncLiveTrackingAssignee(bookingId, newUserId) {
+        try {
+            await liveTrackingRtdb.reassignLiveTrackingAgent(
+                bookingId,
+                Number(newUserId)
+            );
+        } catch (err) {
+            console.warn(
+                '[assign] live tracking reassign failed:',
+                err?.message || err
+            );
+        }
+    }
+
+    /**
      * List laundry-shop drivers for this agent (fixes hardcoded laundaryShopId: 1).
      */
     async agnetDrivers(agentId) {
@@ -135,7 +166,7 @@ class AgentDriverManagementService {
                         where: {
                             classifiedAsId: 1,
                             employeeOff: agentId,
-                            roleId: LAUNDRY_SHOP_DRIVER_ROLE_ID,
+                            roleId: { [Op.in]: ASSIGNABLE_STAFF_ROLE_IDS },
                             status: true,
                         },
                         attributes: ['id', 'firstName', 'lastName', 'email', 'image', 'phoneNum', 'status'],
@@ -151,7 +182,7 @@ class AgentDriverManagementService {
             where: {
                 employeeOff: agentId,
                 classifiedAsId: 1,
-                roleId: LAUNDRY_SHOP_DRIVER_ROLE_ID,
+                roleId: { [Op.in]: ASSIGNABLE_STAFF_ROLE_IDS },
                 status: true,
             },
             attributes: ['id', 'firstName', 'lastName', 'email', 'image', 'phoneNum', 'status', 'roleId'],
@@ -214,6 +245,18 @@ class AgentDriverManagementService {
             source: 'manual',
         });
 
+        await this._syncLiveTrackingAssignee(bookingId, staff.id);
+
+        notifyStaffAssignmentChange({
+            bookingId,
+            orderTrackId: bookingRow.orderTrackId,
+            assignmentType: label,
+            action,
+            toUserId: staff.id,
+            fromUserId,
+            shopOwnerUserId: agentId,
+        }).catch(() => {});
+
         return {
             message: `${label} staff assigned successfully`,
             bookingId: Number(bookingId),
@@ -240,8 +283,9 @@ class AgentDriverManagementService {
 
     /**
      * Unassign staff: return pickup/delivery field to shop owner (shop-held).
+     * When opts.selfOnly is true, only the current assignee may return that leg.
      */
-    async unassignBookingStaff(data, agentId, actorUserId = null) {
+    async unassignBookingStaff(data, agentId, actorUserId = null, opts = {}) {
         const { bookingId, assignmentType = 'pickup', timeZone, clientTimeZone } = data;
         if (!bookingId) {
             throw new ValidationError('bookingId is required');
@@ -253,6 +297,30 @@ class AgentDriverManagementService {
         const fromUserId =
             bookingRow[field] != null ? Number(bookingRow[field]) : null;
         const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
+        const statusId = Number(bookingRow.bookingStatusId);
+
+        if (TERMINAL_UNASSIGN_STATUSES.has(statusId)) {
+            throw new ValidationError(
+                'Cannot unassign a delivered, completed, cancelled, or refunded booking'
+            );
+        }
+
+        if (opts.selfOnly === true) {
+            if (fromUserId == null || fromUserId !== actedBy) {
+                throw new ValidationError(
+                    'You can only return a job that is assigned to you'
+                );
+            }
+            // Shop-held already — nothing to do
+            if (fromUserId === Number(agentId)) {
+                return {
+                    message: `${label} is already with the shop owner`,
+                    bookingId: Number(bookingId),
+                    assignmentType: label,
+                    assignedTo: { id: agentId, isOwner: true },
+                };
+            }
+        }
 
         // Keep jobs shop-owned (same pattern as accept/admin assign)
         await booking.update(
@@ -267,6 +335,7 @@ class AgentDriverManagementService {
             clientTimeZone
         );
 
+        const auditSource = opts.selfOnly === true ? 'self_return' : 'manual';
         await assignmentAuditService.recordEvent({
             bookingId,
             assignmentType: label,
@@ -274,11 +343,26 @@ class AgentDriverManagementService {
             fromUserId,
             toUserId: Number(agentId),
             actedByUserId: actedBy,
-            source: 'manual',
+            source: auditSource,
         });
 
+        await this._syncLiveTrackingAssignee(bookingId, agentId);
+
+        notifyStaffAssignmentChange({
+            bookingId,
+            orderTrackId: bookingRow.orderTrackId,
+            assignmentType: label,
+            action: auditSource === 'self_return' ? 'self_return' : 'unassign',
+            toUserId: Number(agentId),
+            fromUserId,
+            shopOwnerUserId: agentId,
+        }).catch(() => {});
+
         return {
-            message: `${label} staff unassigned; job returned to shop owner`,
+            message:
+                opts.selfOnly === true
+                    ? `${label} returned to shop owner — you are no longer assigned`
+                    : `${label} staff unassigned; job returned to shop owner`,
             bookingId: Number(bookingId),
             assignmentType: label,
             assignedTo: { id: agentId, isOwner: true },
@@ -356,6 +440,17 @@ class AgentDriverManagementService {
                 'laundryShopId',
             ],
             include: [
+                {
+                    model: bookingStatus,
+                    attributes: ['id', 'title', 'description'],
+                    required: false,
+                },
+                {
+                    model: users,
+                    as: 'customer',
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                    required: false,
+                },
                 {
                     model: users,
                     as: 'driver',

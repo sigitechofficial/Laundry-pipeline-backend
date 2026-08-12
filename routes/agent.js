@@ -486,11 +486,12 @@ router.patch(
     requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.assignBookingStaff)
 );
-// Unassign staff (return to shop owner)
+// Unassign staff (return to shop owner).
+// Assigners: any leg. Runners: only self-assigned leg (controller enforces).
 router.patch(
     "/unassignBookingStaff",
     validateAccessToken,
-    requireCapability("canAssignStaff"),
+    requireAnyCapability(["canAssignStaff", "canRunAssignedJobs"]),
     asyncMiddleware(agentController.unassignBookingStaff)
 );
 // Reassign staff
@@ -511,7 +512,7 @@ router.get(
 router.patch(
     "/agentPickupOrderBySelf",
     validateAccessToken,
-    requireCapability("canRunAssignedJobs"),
+    requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.agentPickupOrderBySelf)
 );
 // Staff activity (assignment events + completed jobs)
@@ -542,6 +543,12 @@ router.get(
     asyncMiddleware(agentController.getEmployeeCapabilities)
 );
 router.put(
+    "/employeeCapabilities/:employeeId",
+    validateAccessToken,
+    requireCapability("canManageTeam"),
+    asyncMiddleware(agentController.putEmployeeCapabilities)
+);
+router.patch(
     "/employeeCapabilities/:employeeId",
     validateAccessToken,
     requireCapability("canManageTeam"),

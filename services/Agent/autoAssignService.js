@@ -124,7 +124,7 @@ class AutoAssignService {
             }
 
             const bookingRow = await booking.findByPk(bookingId, {
-                attributes: ['id', 'driverId', 'deliveryDriverId'],
+                attributes: ['id', 'driverId', 'deliveryDriverId', 'orderTrackId'],
             });
             if (!bookingRow) {
                 throw new NotFoundError('Booking not found');
@@ -187,6 +187,22 @@ class AutoAssignService {
                     actedByUserId: actorId,
                     source: 'auto',
                 });
+                try {
+                    const {
+                        notifyStaffAssignmentChange,
+                    } = require('../../utils/staffAssignmentNotify');
+                    await notifyStaffAssignmentChange({
+                        bookingId,
+                        orderTrackId: bookingRow.orderTrackId,
+                        assignmentType: ev.assignmentType,
+                        action: 'auto',
+                        toUserId: ev.toUserId,
+                        fromUserId: ev.fromUserId,
+                        shopOwnerUserId: shopAgentId,
+                    });
+                } catch (_) {
+                    /* non-fatal */
+                }
             }
 
             return {

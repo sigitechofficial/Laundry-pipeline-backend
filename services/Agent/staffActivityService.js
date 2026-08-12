@@ -63,7 +63,10 @@ class StaffActivityService {
             createdAt: { [Op.between]: [from, to] },
         };
         if (employeeId) {
-            eventWhere.toUserId = employeeId;
+            eventWhere[Op.or] = [
+                { toUserId: employeeId },
+                { fromUserId: employeeId },
+            ];
         }
         if (typeFilter === 'pickup' || typeFilter === 'delivery') {
             eventWhere.assignmentType = typeFilter;
@@ -77,6 +80,12 @@ class StaffActivityService {
                 {
                     model: users,
                     as: 'toUser',
+                    attributes: ['id', 'firstName', 'lastName'],
+                    required: false,
+                },
+                {
+                    model: users,
+                    as: 'fromUser',
                     attributes: ['id', 'firstName', 'lastName'],
                     required: false,
                 },
@@ -132,12 +141,22 @@ class StaffActivityService {
 
         for (const ev of events) {
             const plain = ev.get({ plain: true });
-            const toId = plain.toUserId;
-            if (!toId) continue;
-            const entry = ensureDriver(toId, plain.toUser || {});
+            const isUnassign =
+                plain.action === 'unassign' || plain.source === 'self_return';
+            const subjectId = isUnassign ? plain.fromUserId : plain.toUserId;
+            if (!subjectId) continue;
+            if (Number(subjectId) === Number(shopAgentId)) continue;
+            if (employeeId && Number(subjectId) !== Number(employeeId)) continue;
+
+            const nameBits = isUnassign
+                ? plain.fromUser || {}
+                : plain.toUser || {};
+            const entry = ensureDriver(subjectId, nameBits);
             if (!entry) continue;
-            if (plain.assignmentType === 'pickup') entry.pickups += 1;
-            if (plain.assignmentType === 'delivery') entry.deliveries += 1;
+            if (!isUnassign) {
+                if (plain.assignmentType === 'pickup') entry.pickups += 1;
+                if (plain.assignmentType === 'delivery') entry.deliveries += 1;
+            }
             entry.jobs.push({
                 source: 'assignmentEvent',
                 bookingId: plain.bookingId,

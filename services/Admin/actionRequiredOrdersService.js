@@ -7,6 +7,7 @@ const {
     billingDetails,
     bookingStatus,
     zone,
+    addressDb,
 } = require('../../models');
 const {
     formatPaymentFailureReason,
@@ -31,15 +32,21 @@ const REASON_META = {
         color: 'warning',
         pathHint: '/orders/pending-orders',
     },
+    needs_staff: {
+        label: 'Needs staff driver',
+        priority: 4,
+        color: 'warning',
+        pathHint: '/orders',
+    },
     pickup_reschedule: {
         label: 'Pickup reschedule needed',
-        priority: 4,
+        priority: 5,
         color: 'info',
         pathHint: '/orders/pending-orders',
     },
     delivery_failed: {
         label: 'Delivery failed',
-        priority: 5,
+        priority: 6,
         color: 'error',
         pathHint: '/orders/pending-orders',
     },
@@ -135,6 +142,8 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
         'bookingStatusId',
         'customerId',
         'laundryShopId',
+        'driverId',
+        'deliveryDriverId',
         'zoneId',
         'orderAmount',
         'paymentType',
@@ -150,7 +159,7 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
         'updatedAt',
     ];
 
-    const [paymentFailed, onHold, needsAssignment, pickupReschedule, deliveryFailed] =
+    const [paymentFailed, onHold, needsAssignment, shopHeldStaff, pickupReschedule, deliveryFailed] =
         await Promise.all([
             booking.findAll({
                 where: {
@@ -188,6 +197,25 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
             booking.findAll({
                 where: {
                     ...zoneFilter,
+                    laundryShopId: { [Op.ne]: null },
+                    bookingStatusId: { [Op.in]: [4, 5, 6, 7, 13, 14] },
+                },
+                include: [
+                    ...include,
+                    {
+                        model: addressDb,
+                        as: 'laundryShop',
+                        attributes: ['id', 'userId'],
+                        required: true,
+                    },
+                ],
+                attributes: attrs,
+                order: [['updatedAt', 'DESC']],
+                limit: Math.min(capped * 3, 300),
+            }),
+            booking.findAll({
+                where: {
+                    ...zoneFilter,
                     pickupRescheduleRequired: true,
                     bookingStatusId: { [Op.notIn]: [17, 19] },
                 },
@@ -208,6 +236,31 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
             }),
         ]);
 
+    const needsStaff = shopHeldStaff
+        .filter((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            const ownerId =
+                plain.laundryShop?.userId != null
+                    ? Number(plain.laundryShop.userId)
+                    : null;
+            if (!ownerId) return false;
+            const status = Number(plain.bookingStatusId);
+            const pickupId =
+                plain.driverId != null ? Number(plain.driverId) : null;
+            const deliveryId =
+                plain.deliveryDriverId != null
+                    ? Number(plain.deliveryDriverId)
+                    : null;
+            if ([4, 5, 6, 7].includes(status)) {
+                return pickupId == null || pickupId === ownerId;
+            }
+            if ([13, 14].includes(status)) {
+                return deliveryId == null || deliveryId === ownerId;
+            }
+            return false;
+        })
+        .slice(0, capped);
+
     const byId = new Map();
 
     const add = (rows, reason) => {
@@ -224,6 +277,7 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
     add(paymentFailed, 'payment_failed');
     add(onHold, 'on_hold');
     add(needsAssignment, 'needs_assignment');
+    add(needsStaff, 'needs_staff');
     add(pickupReschedule, 'pickup_reschedule');
     add(deliveryFailed, 'delivery_failed');
 
@@ -247,6 +301,7 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
         payment_failed: paymentFailed.length,
         on_hold: onHold.length,
         needs_assignment: needsAssignment.length,
+        needs_staff: needsStaff.length,
         pickup_reschedule: pickupReschedule.length,
         delivery_failed: deliveryFailed.length,
     };
@@ -260,81 +315,13 @@ async function listActionRequiredOrders({ limit = 150, zoneId = null } = {}) {
 }
 
 async function countActionRequiredOrders(filters = {}) {
-    const zoneFilter =
-        filters.zoneId != null && String(filters.zoneId).trim() !== ''
-            ? { zoneId: parseInt(filters.zoneId, 10) }
-            : {};
-
-    const where = {
-        ...zoneFilter,
-        [Op.or]: [
-            {
-                paymentType: 'card',
-                paymentDeliveryGate: 'waiting_admin',
-                bookingStatusId: { [Op.lt]: 17 },
-            },
-            { bookingStatusId: { [Op.in]: [18, 24] } },
-            {
-                laundryShopId: null,
-                bookingStatusId: { [Op.in]: [1, 2, 3] },
-            },
-            {
-                pickupRescheduleRequired: true,
-                bookingStatusId: { [Op.notIn]: [17, 19] },
-            },
-            { bookingStatusId: 15 },
-        ],
-    };
-
-    const actionRequiredCount = await booking.count({ where });
-
-    const [paymentFailed, onHold, needsAssignment, pickupReschedule, deliveryFailed] =
-        await Promise.all([
-            booking.count({
-                where: {
-                    ...zoneFilter,
-                    paymentType: 'card',
-                    paymentDeliveryGate: 'waiting_admin',
-                    bookingStatusId: { [Op.lt]: 17 },
-                },
-            }),
-            booking.count({
-                where: {
-                    ...zoneFilter,
-                    bookingStatusId: { [Op.in]: [18, 24] },
-                },
-            }),
-            booking.count({
-                where: {
-                    ...zoneFilter,
-                    laundryShopId: null,
-                    bookingStatusId: { [Op.in]: [1, 2, 3] },
-                },
-            }),
-            booking.count({
-                where: {
-                    ...zoneFilter,
-                    pickupRescheduleRequired: true,
-                    bookingStatusId: { [Op.notIn]: [17, 19] },
-                },
-            }),
-            booking.count({
-                where: {
-                    ...zoneFilter,
-                    bookingStatusId: 15,
-                },
-            }),
-        ]);
-
+    const listed = await listActionRequiredOrders({
+        limit: 300,
+        zoneId: filters.zoneId,
+    });
     return {
-        actionRequiredCount,
-        actionRequiredBreakdown: {
-            payment_failed: paymentFailed,
-            on_hold: onHold,
-            needs_assignment: needsAssignment,
-            pickup_reschedule: pickupReschedule,
-            delivery_failed: deliveryFailed,
-        },
+        actionRequiredCount: listed.count,
+        actionRequiredBreakdown: listed.countsByReason,
     };
 }
 

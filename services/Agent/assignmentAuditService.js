@@ -12,7 +12,7 @@ class AssignmentAuditService {
      *   fromUserId?: number|null,
      *   toUserId?: number|null,
      *   actedByUserId: number,
-     *   source?: 'manual'|'auto',
+     *   source?: 'manual'|'auto'|'self_return',
      * }} payload
      */
     async recordEvent(payload) {
@@ -31,6 +31,9 @@ class AssignmentAuditService {
             return null;
         }
 
+        const normalizedSource =
+            source === 'auto' || source === 'self_return' ? source : 'manual';
+
         return bookingAssignmentEvent.create({
             bookingId: Number(bookingId),
             assignmentType: String(assignmentType).toLowerCase(),
@@ -38,7 +41,7 @@ class AssignmentAuditService {
             fromUserId: fromUserId != null ? Number(fromUserId) : null,
             toUserId: toUserId != null ? Number(toUserId) : null,
             actedByUserId: Number(actedByUserId),
-            source: source === 'auto' ? 'auto' : 'manual',
+            source: normalizedSource,
         });
     }
 }

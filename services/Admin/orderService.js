@@ -21,7 +21,8 @@ const {
     zone,
     cities,
     countries,
-    users
+    users,
+    bookingAssignmentEvent,
 } = require('../../models');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
@@ -147,7 +148,7 @@ class OrderService {
                 model: addressDb,
                 as: 'laundryShop',
                 required: false,
-                attributes: ['id'],
+                attributes: ['id', 'userId'],
                 include: {
                     model: bussinessInformation,
                     attributes: ['shopName'],
@@ -670,6 +671,57 @@ class OrderService {
                 err?.message || err
             );
         }
+
+        try {
+            const events = await bookingAssignmentEvent.findAll({
+                where: { bookingId: orderId },
+                order: [['createdAt', 'DESC'], ['id', 'DESC']],
+                limit: 50,
+                include: [
+                    {
+                        model: users,
+                        as: 'fromUser',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                    {
+                        model: users,
+                        as: 'toUser',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                    {
+                        model: users,
+                        as: 'actedByUser',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                ],
+            });
+            enriched.assignmentEvents = events.map((ev) =>
+                ev.get ? ev.get({ plain: true }) : ev
+            );
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] assignmentEvents unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.assignmentEvents = [];
+        }
+
+        const shopOwnerUserId =
+            enriched.laundryShop?.userId != null
+                ? Number(enriched.laundryShop.userId)
+                : null;
+        enriched.shopOwnerUserId = shopOwnerUserId;
+        enriched.isPickupShopHeld =
+            enriched.driverId == null ||
+            (shopOwnerUserId != null &&
+                Number(enriched.driverId) === shopOwnerUserId);
+        enriched.isDeliveryShopHeld =
+            enriched.deliveryDriverId == null ||
+            (shopOwnerUserId != null &&
+                Number(enriched.deliveryDriverId) === shopOwnerUserId);
 
         return enriched;
     }
