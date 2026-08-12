@@ -135,12 +135,19 @@ function requireBookingAssignee({ types = ['either'] } = {}) {
             }
 
             const actorId = Number(req.actorUserId);
+            const shopAgentId = Number(req.shopAgentId);
             const pickupId =
                 row.driverId != null ? Number(row.driverId) : null;
             const deliveryId =
                 row.deliveryDriverId != null
                     ? Number(row.deliveryDriverId)
                     : null;
+            const deliveryShopHeld =
+                deliveryId == null ||
+                (Number.isFinite(shopAgentId) && deliveryId === shopAgentId);
+            const pickupShopHeld =
+                pickupId == null ||
+                (Number.isFinite(shopAgentId) && pickupId === shopAgentId);
 
             let isAssignee = false;
             if (typeList.includes('either')) {
@@ -154,17 +161,38 @@ function requireBookingAssignee({ types = ['either'] } = {}) {
                 if (typeList.includes('delivery') && deliveryId === actorId) {
                     isAssignee = true;
                 }
+                // Delivery still shop-held: pickup assignee may start OFD / run delivery
+                // (same person often continues from facility to customer).
+                if (
+                    typeList.includes('delivery') &&
+                    deliveryShopHeld &&
+                    pickupId != null &&
+                    pickupId === actorId &&
+                    !pickupShopHeld
+                ) {
+                    isAssignee = true;
+                }
             }
 
             if (!isAssignee) {
                 return next(
                     new ForbiddenError(
-                        'You are not assigned to this booking for this action'
+                        deliveryShopHeld && typeList.includes('delivery')
+                            ? 'Delivery is still with the shop owner. Ask them to Assign you on Delivery, or assign yourself if you have permission.'
+                            : 'You are not assigned to this booking for this action'
                     )
                 );
             }
 
-            req.bookingAssigneeContext = { booking: row, bypassed: false };
+            req.bookingAssigneeContext = {
+                booking: row,
+                bypassed: false,
+                deliveryShopHeld,
+                claimingDeliveryFromPickup:
+                    typeList.includes('delivery') &&
+                    deliveryShopHeld &&
+                    pickupId === actorId,
+            };
             return next();
         } catch (err) {
             return next(err);

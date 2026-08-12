@@ -3024,9 +3024,11 @@ exports.laundryWashCompleted = async (req, res) => {
 exports.laundryDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
 
-    const driverId = req.query.driverId;
-
-    const agentId = req.user.id;
+    const queryDriverId = req.query.driverId
+        ? Number(req.query.driverId)
+        : null;
+    const actorId = actorUserIdFromReq(req);
+    const shopOwnerId = shopAgentIdFromReq(req);
 
     const bookingCheck = await booking.findOne({ where: { id: bookingId } });
     if (!bookingCheck) {
@@ -3038,7 +3040,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
     try {
         ofdGate = await invoiceAutoChargeService.assertCanOutForDelivery(
             bookingId,
-            { agentUserId: agentId }
+            { agentUserId: shopOwnerId }
         );
     } catch (gateErr) {
         if (gateErr.code === "PAYMENT_WAITING_ADMIN" || gateErr.statusCode === 402) {
@@ -3057,23 +3059,29 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         throw gateErr;
     }
 
-    if (driverId) {
-        await booking.update(
-            {
-                bookingStatusId: 13,
-                deliveryDriverId: driverId,
-            },
-            { where: { id: bookingId } }
-        );
-    } else {
-        await booking.update(
-            {
-                bookingStatusId: 13,
-                driverId: agentId,
-            },
-            { where: { id: bookingId } }
-        );
+    const currentDeliveryId =
+        bookingCheck.deliveryDriverId != null
+            ? Number(bookingCheck.deliveryDriverId)
+            : null;
+    const deliveryShopHeld =
+        currentDeliveryId == null ||
+        currentDeliveryId === Number(shopOwnerId);
+
+    let deliveryAssignee = currentDeliveryId;
+    if (queryDriverId && Number.isFinite(queryDriverId)) {
+        deliveryAssignee = queryDriverId;
+    } else if (deliveryShopHeld) {
+        // Owner/manager OFD, or pickup driver claiming shop-held delivery.
+        deliveryAssignee = Number(actorId);
     }
+
+    await booking.update(
+        {
+            bookingStatusId: 13,
+            deliveryDriverId: deliveryAssignee,
+        },
+        { where: { id: bookingId } }
+    );
 
     await bookingHistory.create({
         date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
@@ -3090,12 +3098,12 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         {
             bookingId: String(bookingId),
             type: "OUT_FOR_DELIVERY",
-            driverId: String(driverId || agentId),
+            driverId: String(deliveryAssignee || actorId),
         }
     ).catch(() => {});
 
     syncLiveTrackingSafe(bookingId, 13, {
-        agentId: driverId || agentId,
+        agentId: deliveryAssignee || actorId,
         customerId,
         bookingRow: bookingCheck,
     });
@@ -3105,6 +3113,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         "Driver updated and out for Deliver Laundry to Customer",
         {
             bookingStatusId: 13,
+            deliveryDriverId: deliveryAssignee,
             chargedOnOfd: Boolean(ofdGate?.chargedOnOfd),
             ...(ofdGate?.flags || {}),
         }

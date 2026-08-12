@@ -34,7 +34,7 @@ Ceilings: Driver cannot be granted finance / accept / assign / team. Manager can
 | `canAssignStaff` **or** `canRunAssignedJobs` (self only) | `PATCH /unassignBookingStaff` — drivers may only return a leg assigned to them (status 3 or later; no trip-start gate) |
 | `canAssignStaff` **or** `canRunAssignedJobs` | `GET /staffJobs` — drivers are forced to their own jobs |
 | `requireBookingAssignee` (pickup) | `PATCH /agentBookingStatusOnTheWay/:bookingId`, `/driverStatusArrived/:bookingId`, `/reachedAtDeliveryShopStatus/:bookingId` |
-| `requireBookingAssignee` (delivery) | `PATCH /laundryDeliverToCustomer/:bookingId`, `/driverReachedForDelivery/:bookingId`, `/bookingDeliverToCustomer/:bookingId` |
+| `requireBookingAssignee` (delivery) | `PATCH /laundryDeliverToCustomer/:bookingId`, `/driverReachedForDelivery/:bookingId`, `/bookingDeliverToCustomer/:bookingId` — if delivery is still shop-held, the **pickup assignee** may start OFD (claims delivery) |
 | `requireBookingAssignee` (either) | `POST /AddPickupDeliveryProof` |
 | `canViewStaffActivity` | `GET /staffActivity` |
 | `canManageAutoAssign` | `GET/PUT /autoAssignSettings` |
