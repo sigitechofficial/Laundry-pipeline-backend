@@ -251,23 +251,30 @@ echo "Installing dependencies..."
 npm ci --include=dev || npm install
 
 echo "Running migrations..."
-# Prefer laundry-bearing Sequelize env (often `development` on this VPS).
-MIGRATE_ENV="$(node <<'JS'
-const fs = require('fs');
-const raw = JSON.parse(fs.readFileSync('config/config.json', 'utf8'));
-function ph(c){return !c||!c.database||!c.username||/^your_/i.test(c.database);}
-function laundry(c){const t=(c.database+' '+(c.username||'')).toLowerCase();return /laund/.test(t)&&!/fomino/.test(t);}
-for (const k of ['development','production','test']) {
-  if (raw[k] && !ph(raw[k]) && laundry(raw[k])) { process.stdout.write(k); process.exit(0); }
-}
-process.stdout.write('development');
-JS
+# Prefer the Sequelize env that matches THIS live path / .env DB
+# (never blindly pick `development` — that migrates stage while prod stays behind).
+MIGRATE_ENV="$(
+  LIVE_PATH="$LIVE_PATH" \
+  PM2_APP_NAME="$PM2_APP_NAME" \
+  APP_URL="$APP_URL" \
+  node "$LIVE_PATH/scripts/pick-sequelize-migrate-env.js" 2>/dev/null || true
 )"
-echo "sequelize migrate --env $MIGRATE_ENV"
+MIGRATE_ENV="${MIGRATE_ENV:-development}"
+echo "sequelize migrate --env $MIGRATE_ENV (live=$LIVE_PATH pm2=$PM2_APP_NAME)"
 set +e
 npx sequelize-cli db:migrate --env "$MIGRATE_ENV" 2>&1 | tee "$DEPLOY_ROOT/logs/last-migrate-deploy.log"
 MIGRATE_EXIT=${PIPESTATUS[0]}
 set -e
+
+# Self-heal repair catalog schema against the live .env DB even if meta drifted.
+if [ -f "$LIVE_PATH/scripts/ensure-repair-catalog-schema.js" ]; then
+  echo "Ensuring repair catalog schema on live DB..."
+  set +e
+  LIVE_PATH="$LIVE_PATH" PM2_APP_NAME="$PM2_APP_NAME" APP_URL="$APP_URL" \
+    SEQUELIZE_ENV="$MIGRATE_ENV" \
+    node "$LIVE_PATH/scripts/ensure-repair-catalog-schema.js" 2>&1 | tee -a "$DEPLOY_ROOT/logs/last-migrate-deploy.log"
+  set -e
+fi
 
 MIGRATE_TAIL="$(tail -n 40 "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tr '\n' ' ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-900 || true)"
 MIGRATE_SUMMARY="$(grep -E 'No migrations were executed|migrated|== [0-9].*: migrated|ERROR|Error' "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tail -n 8 | tr '\n' ' | ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-500 || true)"
