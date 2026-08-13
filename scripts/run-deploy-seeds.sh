@@ -26,6 +26,12 @@ fi
 MIGRATE_ENV="${MIGRATE_ENV:-development}"
 echo ">>> [deploy-seed] env=$MIGRATE_ENV"
 
+# Catch-all: pending + idempotent-heal every migration on this live DB.
+if [ -f scripts/ensure-live-migrations.js ]; then
+  echo ">>> ensure scripts/ensure-live-migrations.js"
+  SEQUELIZE_ENV="$MIGRATE_ENV" node scripts/ensure-live-migrations.js || echo "WARN: ensure-live-migrations failed (non-fatal)"
+fi
+
 # Repair tables must exist before catalog seed (prod previously skipped migrate).
 if [ -f scripts/ensure-repair-catalog-schema.js ]; then
   echo ">>> ensure scripts/ensure-repair-catalog-schema.js"

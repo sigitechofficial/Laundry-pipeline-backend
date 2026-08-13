@@ -266,6 +266,17 @@ npx sequelize-cli db:migrate --env "$MIGRATE_ENV" 2>&1 | tee "$DEPLOY_ROOT/logs/
 MIGRATE_EXIT=${PIPESTATUS[0]}
 set -e
 
+# Apply ALL pending + idempotent-heal migrations on the LIVE database
+# (config.json env can still point sequelize-cli at the wrong DB).
+if [ -f "$LIVE_PATH/scripts/ensure-live-migrations.js" ]; then
+  echo "Ensuring ALL migrations on live DB..."
+  set +e
+  LIVE_PATH="$LIVE_PATH" PM2_APP_NAME="$PM2_APP_NAME" APP_URL="$APP_URL" \
+    SEQUELIZE_ENV="$MIGRATE_ENV" \
+    node "$LIVE_PATH/scripts/ensure-live-migrations.js" 2>&1 | tee -a "$DEPLOY_ROOT/logs/last-migrate-deploy.log"
+  set -e
+fi
+
 # Self-heal repair catalog schema against the live .env DB even if meta drifted.
 if [ -f "$LIVE_PATH/scripts/ensure-repair-catalog-schema.js" ]; then
   echo "Ensuring repair catalog schema on live DB..."
