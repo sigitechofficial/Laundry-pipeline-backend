@@ -606,9 +606,15 @@ async function bookingEventSentCheckTheShops(
 
         console.log("ðŸš€ ~ getBookingDetails ~ bookingDetails:", bookingDetails);
 
+        if (!bookingDetails) {
+            return;
+        }
+
         const customerService =
-            bookingDetails.customerSelectedServices.length > 0
-                ? bookingDetails.customerSelectedServices.map((serviceItem) => ({
+            bookingDetails.customerSelectedServices?.length > 0
+                ? bookingDetails.customerSelectedServices
+                      .filter((serviceItem) => serviceItem?.service)
+                      .map((serviceItem) => ({
                     serviceId: serviceItem.service.id,
                     serviceName: serviceItem.service.name,
                     serviceStatus: serviceItem.service.status,
@@ -2602,7 +2608,7 @@ class CustomerOrderService {
                         }
                     ]
                 }
-            ],
+            ].filter(Boolean),
         });
         if (!bookingFind) {
             throw new NotFoundError("No Booking Found");

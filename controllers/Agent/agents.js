@@ -1405,8 +1405,7 @@ exports.agentBookingFilters = async (req, res) => {
                         { model: preferenceValues, required: false, attributes: ["id", "value"] },
                     ],
                 },
-                buildRepairItemsInclude(dbModels),
-            ].filter(Boolean),
+            ],
         },
     ];  // <-- end makeIncludes
 

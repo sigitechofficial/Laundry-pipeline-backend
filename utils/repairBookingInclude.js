@@ -5,7 +5,7 @@
  * Used by customer, admin, and agent booking/invoice detail responses.
  */
 
-function buildRepairItemsInclude(models, { separate = true } = {}) {
+function buildRepairItemsInclude(models, { separate = false } = {}) {
   const {
     customerSelectedRepairItem,
     customerSelectedRepairItemOption,
@@ -142,92 +142,109 @@ function attachNormalizedRepairItems(payload) {
 
 /**
  * Explicit hydrate when nested includes are empty/missing (mirrors add-on hydrate).
+ * Never throws to callers — returns original selectedServices on failure so booking
+ * / invoice detail APIs stay healthy even if repair tables are unavailable.
  */
 async function hydrateRepairItemsForBooking(models, bookingId, selectedServices) {
-  const {
-    customerSelectedRepairItem,
-    customerSelectedRepairItemOption,
-    customerSelectedRepairItemImage,
-  } = models;
+  try {
+    const {
+      customerSelectedRepairItem,
+      customerSelectedRepairItemOption,
+      customerSelectedRepairItemImage,
+    } = models;
 
-  if (
-    !customerSelectedRepairItem ||
-    !Array.isArray(selectedServices) ||
-    selectedServices.length === 0
-  ) {
-    return selectedServices;
+    if (
+      !customerSelectedRepairItem ||
+      !Array.isArray(selectedServices) ||
+      selectedServices.length === 0
+    ) {
+      return selectedServices;
+    }
+
+    const id = parseInt(bookingId, 10);
+    if (!Number.isFinite(id)) return selectedServices;
+
+    const rows = await customerSelectedRepairItem.findAll({
+      where: { bookingId: id },
+      attributes: [
+        'id',
+        'bookingId',
+        'customerSelectedServiceId',
+        'serviceId',
+        'repairGarmentId',
+        'garmentName',
+        'quantity',
+        'instruction',
+      ],
+      include: [
+        {
+          model: customerSelectedRepairItemOption,
+          as: 'options',
+          required: false,
+          attributes: ['id', 'repairOptionId', 'optionName', 'price'],
+        },
+        {
+          model: customerSelectedRepairItemImage,
+          as: 'images',
+          required: false,
+          attributes: ['id', 'imageUrl', 'sortOrder'],
+        },
+      ],
+      order: [['id', 'ASC']],
+    });
+
+    const byCssId = {};
+    const byServiceId = {};
+
+    for (const row of rows) {
+      const normalized = normalizeRepairItem(row);
+      const cssId = normalized.customerSelectedServiceId;
+      const serviceId = normalized.serviceId;
+      if (cssId != null) {
+        if (!byCssId[cssId]) byCssId[cssId] = [];
+        byCssId[cssId].push(normalized);
+      }
+      if (serviceId != null) {
+        if (!byServiceId[serviceId]) byServiceId[serviceId] = [];
+        byServiceId[serviceId].push(normalized);
+      }
+    }
+
+    return selectedServices.map((svc) => {
+      const plain = svc && typeof svc === 'object' ? { ...svc } : svc;
+      if (!plain || typeof plain !== 'object') return plain;
+
+      const cssId = plain.id != null ? Number(plain.id) : null;
+      const serviceId = plain.serviceId != null ? Number(plain.serviceId) : null;
+
+      let items = [];
+      if (cssId != null && byCssId[cssId]?.length) {
+        items = byCssId[cssId];
+      } else if (serviceId != null && byServiceId[serviceId]?.length) {
+        items = byServiceId[serviceId];
+      } else if (Array.isArray(plain.repairItems) && plain.repairItems.length) {
+        items = normalizeRepairItems(plain.repairItems);
+      }
+
+      plain.repairItems = items;
+      return plain;
+    });
+  } catch (err) {
+    console.warn(
+      '[hydrateRepairItemsForBooking] skipped:',
+      err?.message || err
+    );
+    if (!Array.isArray(selectedServices)) return selectedServices;
+    return selectedServices.map((svc) => {
+      if (!svc || typeof svc !== 'object') return svc;
+      return {
+        ...svc,
+        repairItems: Array.isArray(svc.repairItems)
+          ? normalizeRepairItems(svc.repairItems)
+          : [],
+      };
+    });
   }
-
-  const id = parseInt(bookingId, 10);
-  if (!Number.isFinite(id)) return selectedServices;
-
-  const rows = await customerSelectedRepairItem.findAll({
-    where: { bookingId: id },
-    attributes: [
-      'id',
-      'bookingId',
-      'customerSelectedServiceId',
-      'serviceId',
-      'repairGarmentId',
-      'garmentName',
-      'quantity',
-      'instruction',
-    ],
-    include: [
-      {
-        model: customerSelectedRepairItemOption,
-        as: 'options',
-        required: false,
-        attributes: ['id', 'repairOptionId', 'optionName', 'price'],
-      },
-      {
-        model: customerSelectedRepairItemImage,
-        as: 'images',
-        required: false,
-        attributes: ['id', 'imageUrl', 'sortOrder'],
-      },
-    ],
-    order: [['id', 'ASC']],
-  });
-
-  const byCssId = {};
-  const byServiceId = {};
-  const all = [];
-
-  for (const row of rows) {
-    const normalized = normalizeRepairItem(row);
-    all.push(normalized);
-    const cssId = normalized.customerSelectedServiceId;
-    const serviceId = normalized.serviceId;
-    if (cssId != null) {
-      if (!byCssId[cssId]) byCssId[cssId] = [];
-      byCssId[cssId].push(normalized);
-    }
-    if (serviceId != null) {
-      if (!byServiceId[serviceId]) byServiceId[serviceId] = [];
-      byServiceId[serviceId].push(normalized);
-    }
-  }
-
-  return selectedServices.map((svc) => {
-    const plain = svc && typeof svc === 'object' ? { ...svc } : svc;
-    if (!plain || typeof plain !== 'object') return plain;
-
-    const cssId = plain.id != null ? Number(plain.id) : null;
-    const serviceId = plain.serviceId != null ? Number(plain.serviceId) : null;
-
-    let items = [];
-    if (cssId != null && byCssId[cssId]?.length) {
-      items = byCssId[cssId];
-    } else if (serviceId != null && byServiceId[serviceId]?.length) {
-      items = byServiceId[serviceId];
-    } else if (Array.isArray(plain.repairItems) && plain.repairItems.length) {
-      items = normalizeRepairItems(plain.repairItems);
-    }
-
-    plain.repairItems = items;
-    return plain;
-  });
 }
 
 module.exports = {

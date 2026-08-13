@@ -671,7 +671,7 @@ class OrderService {
                     attributes: ['id', 'name'],
                     required: false,
                 }
-            ]
+            ].filter(Boolean)
         });
 
         if (!orderDetails) {
