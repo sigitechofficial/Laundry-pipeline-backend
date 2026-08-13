@@ -145,13 +145,27 @@ function attachNormalizedRepairItems(payload) {
  * Never throws to callers — returns original selectedServices on failure so booking
  * / invoice detail APIs stay healthy even if repair tables are unavailable.
  */
-async function hydrateRepairItemsForBooking(models, bookingId, selectedServices) {
+/**
+ * @param {object} models
+ * @param {number|string} bookingId
+ * @param {Array} selectedServices
+ * @param {{ matchByServiceIdOnly?: boolean }} [options]
+ *   When true (customerDeclared / snapshot rows), never match on row `id` —
+ *   snapshot ids live in a different sequence than customerSelectedServiceId.
+ */
+async function hydrateRepairItemsForBooking(
+  models,
+  bookingId,
+  selectedServices,
+  options = {}
+) {
   try {
     const {
       customerSelectedRepairItem,
       customerSelectedRepairItemOption,
       customerSelectedRepairItemImage,
     } = models;
+    const matchByServiceIdOnly = options.matchByServiceIdOnly === true;
 
     if (
       !customerSelectedRepairItem ||
@@ -218,10 +232,16 @@ async function hydrateRepairItemsForBooking(models, bookingId, selectedServices)
       const serviceId = plain.serviceId != null ? Number(plain.serviceId) : null;
 
       let items = [];
-      if (cssId != null && byCssId[cssId]?.length) {
-        items = byCssId[cssId];
-      } else if (serviceId != null && byServiceId[serviceId]?.length) {
+      // Prefer serviceId — snapshot row ids ≠ customerSelectedServiceId, so CSS-id
+      // matching wrongly empties or mis-attaches repair garments / notes / photos.
+      if (serviceId != null && byServiceId[serviceId]?.length) {
         items = byServiceId[serviceId];
+      } else if (
+        !matchByServiceIdOnly &&
+        cssId != null &&
+        byCssId[cssId]?.length
+      ) {
+        items = byCssId[cssId];
       } else if (Array.isArray(plain.repairItems) && plain.repairItems.length) {
         items = normalizeRepairItems(plain.repairItems);
       }

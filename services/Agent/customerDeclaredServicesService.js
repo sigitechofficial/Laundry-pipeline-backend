@@ -185,7 +185,10 @@ function mapSnapshotToDeclaredService(row) {
 async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) {
     let list = Array.isArray(declaredServices) ? [...declaredServices] : [];
 
-    list = await hydrateRepairItemsForBooking(dbModels, bookingId, list);
+    // Snapshot row ids ≠ customerSelectedServiceId — match repair lines by serviceId.
+    list = await hydrateRepairItemsForBooking(dbModels, bookingId, list, {
+        matchByServiceIdOnly: true,
+    });
 
     // Collect serviceIds already covered.
     const covered = new Set(
@@ -256,7 +259,8 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
     const hydratedPlaceholders = await hydrateRepairItemsForBooking(
         dbModels,
         bookingId,
-        placeholders
+        placeholders,
+        { matchByServiceIdOnly: true }
     );
 
     return [...list, ...hydratedPlaceholders];
