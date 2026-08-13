@@ -14,6 +14,11 @@ const {
 const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
+const {
+    resolveShopAgentId,
+    isShopOwner,
+    isShopManager,
+} = require("../../utils/shopAgentContext");
 const twilioSmsService = require("../twilioSmsService");
 const twilioCallService = require("../twilioCallService");
 const { maskPhoneNumber } = require("../../utils/maskPhone");
@@ -180,15 +185,93 @@ function clearRateLimit(bookingId, leg, channel) {
     recentNotifyByKey.delete(`${bookingId}:${leg}:${channel}`);
 }
 
-async function resolveAgentShopId(agentUserId) {
+/**
+ * Shop address lives on the owner. Employees must resolve via employeeOff.
+ * @returns {{ shopId: number|null, shopOwnerId: number|null, actor: object|null }}
+ */
+async function resolveActorShopContext(agentUserId) {
+    const actor = await users.findByPk(agentUserId, {
+        attributes: ["id", "classifiedAsId", "employeeOff", "roleId"],
+    });
+    if (!actor) {
+        return { shopId: null, shopOwnerId: null, actor: null };
+    }
+    const shopOwnerId = resolveShopAgentId(actor);
+    if (!shopOwnerId) {
+        return { shopId: null, shopOwnerId: null, actor };
+    }
     const shop = await addressDb.findOne({
         where: {
-            userId: agentUserId,
+            userId: shopOwnerId,
             addressType: "LaundaryShopAddress",
         },
         attributes: ["id"],
     });
-    return shop?.id || null;
+    return {
+        shopId: shop?.id || null,
+        shopOwnerId: Number(shopOwnerId),
+        actor,
+    };
+}
+
+/** @deprecated use resolveActorShopContext — kept for callers expecting shop id only */
+async function resolveAgentShopId(agentUserId) {
+    const { shopId } = await resolveActorShopContext(agentUserId);
+    return shopId;
+}
+
+/**
+ * Owner/manager of the shop may notify any booking of that shop.
+ * Drivers may only notify the leg they are assigned to (pickup → driverId,
+ * delivery → deliveryDriverId; pickup assignee may continue if delivery is still shop-held).
+ */
+function assertActorCanNotifyForLeg({ actor, bookingRow, leg, shopOwnerId }) {
+    if (!actor) {
+        throw new ForbiddenError("You are not assigned to this booking");
+    }
+
+    if (isShopOwner(actor) || isShopManager(actor)) {
+        return;
+    }
+
+    const actorId = Number(actor.id);
+    const pickupId =
+        bookingRow.driverId != null ? Number(bookingRow.driverId) : null;
+    const deliveryId =
+        bookingRow.deliveryDriverId != null
+            ? Number(bookingRow.deliveryDriverId)
+            : null;
+    const ownerId = Number(shopOwnerId);
+    const deliveryShopHeld =
+        deliveryId == null ||
+        (Number.isFinite(ownerId) && deliveryId === ownerId);
+    const pickupShopHeld =
+        pickupId == null ||
+        (Number.isFinite(ownerId) && pickupId === ownerId);
+
+    if (leg === "pickup") {
+        if (pickupId != null && pickupId === actorId) return;
+        throw new ForbiddenError(
+            "You are not assigned to pickup for this booking"
+        );
+    }
+
+    if (deliveryId != null && deliveryId === actorId) return;
+
+    if (
+        deliveryShopHeld &&
+        pickupId != null &&
+        pickupId === actorId &&
+        !pickupShopHeld
+    ) {
+        return;
+    }
+
+    throw new ForbiddenError(
+        deliveryShopHeld
+            ? "Delivery is still with the shop owner. Ask them to Assign you on Delivery, or assign yourself if you have permission."
+            : "You are not assigned to delivery for this booking"
+    );
 }
 
 async function loadOpenAttempt(bookingId, leg) {
@@ -272,10 +355,18 @@ async function notifyCustomer({
 
     assertBookingNotCancelledForAgent(bookingRow);
 
-    const shopId = await resolveAgentShopId(agentUserId);
+    const { shopId, shopOwnerId, actor } =
+        await resolveActorShopContext(agentUserId);
     if (!shopId || Number(bookingRow.laundryShopId) !== Number(shopId)) {
         throw new ForbiddenError("You are not assigned to this booking");
     }
+
+    assertActorCanNotifyForLeg({
+        actor,
+        bookingRow,
+        leg,
+        shopOwnerId,
+    });
 
     const customerPhone = normalizePhoneNumber(
         bookingRow.customer?.phoneNum,
