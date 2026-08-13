@@ -4,9 +4,9 @@
 name: Deploy Laundry API
 
 on:
-  # Auto-deploy stage on push. Prod = workflow_dispatch until you add `main` here (Careflow uses push main).
+  # Auto-deploy stage + production on push (same as Careflow).
   push:
-    branches: [stage]
+    branches: [stage, main]
     paths-ignore:
       - '.github/workflows/sync-live-to-stage-db.yml'
       - '.github/workflows/pre-migration-backup.yml'
