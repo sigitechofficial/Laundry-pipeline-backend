@@ -13,6 +13,7 @@ const path = require('path');
 const { Sequelize } = require('sequelize');
 
 const MIGRATIONS = [
+  '20260805160000-add-default-payment-method-to-users.js',
   '20260806163000-add-invoice-auto-charge-and-payment-attempts.js',
 ];
 
@@ -59,14 +60,6 @@ async function metaInsert(sequelize, name) {
   );
 }
 
-async function columnExists(sequelize, table, column) {
-  const [rows] = await sequelize.query(
-    `SHOW COLUMNS FROM \`${table}\` LIKE :column`,
-    { replacements: { column } }
-  );
-  return Array.isArray(rows) && rows.length > 0;
-}
-
 async function main() {
   try {
     const picked = require('child_process')
@@ -97,18 +90,14 @@ async function main() {
       }
 
       const alreadyMeta = await metaHas(sequelize, name);
-      const hasCol = await columnExists(sequelize, 'bookings', 'autoChargeStatus');
-      if (alreadyMeta && hasCol) {
-        console.log(`[ensure-auto-charge] already applied: ${name}`);
-        continue;
-      }
-
       const migration = require(file);
-      console.log(`[ensure-auto-charge] applying ${name} (meta=${alreadyMeta} col=${hasCol})...`);
+      console.log(`[ensure-auto-charge] applying ${name} (meta=${alreadyMeta})...`);
       await migration.up(qi, Sequelize);
       if (!alreadyMeta) {
         await metaInsert(sequelize, name);
         console.log(`[ensure-auto-charge] SequelizeMeta + ${name}`);
+      } else {
+        console.log(`[ensure-auto-charge] columns ensured (already in SequelizeMeta): ${name}`);
       }
     }
     console.log('[ensure-auto-charge] done');
