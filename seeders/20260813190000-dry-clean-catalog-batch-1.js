@@ -11,7 +11,7 @@ const { seedDryCleanBatch } = require('./helpers/dryCleanCatalogSeed');
 
 module.exports = {
   async up(queryInterface) {
-    await seedDryCleanBatch(queryInterface, BATCH_1, { disableLegacy: true });
+    await seedDryCleanBatch(queryInterface, BATCH_1, { disableLegacy: false });
   },
 
   async down() {

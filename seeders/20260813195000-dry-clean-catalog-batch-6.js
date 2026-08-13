@@ -9,7 +9,7 @@ const { seedDryCleanBatch } = require('./helpers/dryCleanCatalogSeed');
 
 module.exports = {
   async up(queryInterface) {
-    await seedDryCleanBatch(queryInterface, BATCH_6, { disableLegacy: true });
+    await seedDryCleanBatch(queryInterface, BATCH_6, { disableLegacy: false });
   },
 
   async down() {

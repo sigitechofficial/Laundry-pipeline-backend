@@ -322,7 +322,7 @@ async function ensureSubCategories(queryInterface, categoryId, categoryName, ite
  */
 async function seedDryCleanBatch(queryInterface, batch, opts = {}) {
   const now = new Date();
-  const disableLegacy = opts.disableLegacy !== false;
+  const disableLegacy = opts.disableLegacy === true;
   const serviceId = await ensureDryCleanService(queryInterface, now);
 
   if (disableLegacy) {
