@@ -437,6 +437,18 @@ class AgentDriverManagementService {
                     assignedTo: { id: agentId, isOwner: true },
                 };
             }
+            // Pickup already completed at facility — driver cannot self-unassign.
+            if (label === 'pickup' && statusId >= 8) {
+                throw new ValidationError(
+                    'Pickup is already completed. You cannot unassign this job.'
+                );
+            }
+            // Delivery trip already started.
+            if (label === 'delivery' && statusId >= 13) {
+                throw new ValidationError(
+                    'Delivery has already started. You cannot unassign this job.'
+                );
+            }
         }
 
         // Keep jobs shop-owned (same pattern as accept/admin assign)
