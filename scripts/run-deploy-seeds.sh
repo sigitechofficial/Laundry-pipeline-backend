@@ -60,6 +60,10 @@ run_one "20260811190000-shop-staff-default-permissions.js"
 run_one "20260813171000-repair-catalog-defaults.js"
 run_one "20260813190000-dry-clean-catalog-batch-1.js"
 run_one "20260813191000-dry-clean-catalog-batch-2.js"
+run_one "20260813192000-dry-clean-catalog-batch-3.js"
+run_one "20260813193000-dry-clean-catalog-batch-4.js"
+run_one "20260813194000-dry-clean-catalog-batch-5.js"
+run_one "20260813195000-dry-clean-catalog-batch-6.js"
 
 # Optional ensure-* scripts (no-op if already applied)
 for s in \
