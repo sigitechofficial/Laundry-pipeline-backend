@@ -59,6 +59,12 @@ class RepairCatalogService {
     });
     if (!svc) throw new NotFoundError('Service not found');
 
+    // Self-heal empty catalogs after migrate-without-seed (idempotent).
+    const garmentCount = await repairGarment.count();
+    if (garmentCount === 0) {
+      await this.seedDefaultsIfEmpty();
+    }
+
     const garments = await repairGarment.findAll({
       where: { status: true },
       include: [

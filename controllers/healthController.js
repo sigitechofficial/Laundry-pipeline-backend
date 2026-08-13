@@ -8,6 +8,7 @@ const {
   checkStripe,
   checkZeptoMail,
   checkShopReviewSchema,
+  checkRepairCatalogSchema,
   logCheck,
   logLine
 } = require('../services/healthCheckService');
@@ -133,6 +134,29 @@ async function schemaInfo(req, res) {
 }
 
 /**
+ * GET /health/repair-catalog
+ * Read-only probe: repair tables, SequelizeMeta, seed counts.
+ */
+async function repairCatalogSchemaInfo(req, res) {
+  const meta = requestMeta(req);
+  logLine('info', 'schema.repairCatalog.start', meta);
+  const check = await checkRepairCatalogSchema();
+  logCheck('schema.repairCatalog', check);
+
+  const httpStatus = check.status === 'ok' ? 200 : 503;
+  return res.status(httpStatus).json({
+    status: check.status === 'ok' ? '1' : '0',
+    message: check.message,
+    data: {
+      ...check,
+      deploy: getDeploymentInfo(),
+      serverTime: new Date().toISOString(),
+      request: meta
+    }
+  });
+}
+
+/**
  * GET /health/:dependency
  * dependency = mysql | redis | firebase | stripe | zeptomail
  */
@@ -173,5 +197,6 @@ module.exports = {
   readiness,
   deployInfo,
   schemaInfo,
+  repairCatalogSchemaInfo,
   singleDependency
 };

@@ -48,6 +48,7 @@ run_one "20260520130000-account-deletion-reasons.js"
 run_one "20260811120000-laundry-shop-manager-role.js"
 run_one "20260811181000-review-reason-codes.js"
 run_one "20260811190000-shop-staff-default-permissions.js"
+run_one "20260813171000-repair-catalog-defaults.js"
 
 # Optional ensure-* scripts (no-op if already applied)
 for s in \

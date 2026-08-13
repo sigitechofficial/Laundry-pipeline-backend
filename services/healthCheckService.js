@@ -661,6 +661,159 @@ async function checkShopReviewSchema() {
   }
 }
 
+/**
+ * Read-only schema probe for dedicated alteration/repair catalog.
+ * Confirms tables + migration + seed row counts (no secrets / row contents).
+ */
+async function checkRepairCatalogSchema() {
+  const started = nowMs();
+  const REQUIRED_TABLES = [
+    'repairGarments',
+    'repairOptions',
+    'repairGarmentOptions',
+    'customerSelectedRepairItems',
+    'customerSelectedRepairItemOptions',
+    'customerSelectedRepairItemImages',
+  ];
+  const REPAIR_MIGRATION =
+    '20260813170000-create-repair-catalog-and-booking-items.js';
+  const REPAIR_IMAGES_MIGRATION =
+    '20260813160000-create-customer-selected-service-repair-images.js';
+
+  try {
+    const [tableRows] = await db.sequelize.query(
+      `SELECT TABLE_NAME AS name
+       FROM information_schema.tables
+       WHERE table_schema = DATABASE()
+         AND TABLE_NAME IN (:names)`,
+      { replacements: { names: REQUIRED_TABLES } }
+    );
+    const existing = new Set((tableRows || []).map((r) => r.name));
+    const tables = {};
+    for (const name of REQUIRED_TABLES) {
+      tables[name] = existing.has(name);
+    }
+    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+
+    async function migrationApplied(name) {
+      try {
+        const [metaRows] = await db.sequelize.query(
+          `SELECT name FROM SequelizeMeta WHERE name = :name LIMIT 1`,
+          { replacements: { name } }
+        );
+        return {
+          name,
+          applied: Array.isArray(metaRows) && metaRows.length > 0,
+          error: null,
+        };
+      } catch (err) {
+        return {
+          name,
+          applied: false,
+          error: err.message || String(err),
+        };
+      }
+    }
+
+    const migrations = {
+      catalog: await migrationApplied(REPAIR_MIGRATION),
+      legacyImages: await migrationApplied(REPAIR_IMAGES_MIGRATION),
+    };
+
+    const counts = {
+      repairGarments: null,
+      repairOptions: null,
+      repairGarmentOptions: null,
+      garmentsWithOptions: null,
+    };
+    const countErrors = {};
+
+    async function safeCount(key, sql) {
+      try {
+        const [rows] = await db.sequelize.query(sql);
+        counts[key] = Number(rows?.[0]?.c ?? 0);
+      } catch (err) {
+        countErrors[key] = err.message || String(err);
+      }
+    }
+
+    if (tables.repairGarments) {
+      await safeCount(
+        'repairGarments',
+        'SELECT COUNT(*) AS c FROM repairGarments WHERE deletedAt IS NULL'
+      );
+    }
+    if (tables.repairOptions) {
+      await safeCount(
+        'repairOptions',
+        'SELECT COUNT(*) AS c FROM repairOptions WHERE deletedAt IS NULL'
+      );
+    }
+    if (tables.repairGarmentOptions) {
+      await safeCount(
+        'repairGarmentOptions',
+        'SELECT COUNT(*) AS c FROM repairGarmentOptions'
+      );
+      await safeCount(
+        'garmentsWithOptions',
+        `SELECT COUNT(DISTINCT repairGarmentId) AS c FROM repairGarmentOptions`
+      );
+    }
+
+    const seeded =
+      (counts.repairGarments || 0) > 0 &&
+      (counts.repairOptions || 0) > 0 &&
+      (counts.garmentsWithOptions || 0) > 0;
+    const migrationsOk =
+      migrations.catalog.applied === true;
+    const ok = missingTables.length === 0 && migrationsOk && seeded;
+
+    return result(
+      ok ? 'ok' : 'fail',
+      ok
+        ? 'Repair catalog schema present and seeded'
+        : missingTables.length
+          ? `Missing tables: ${missingTables.join(', ')}`
+          : !migrationsOk
+            ? `Migration not in SequelizeMeta: ${REPAIR_MIGRATION}`
+            : 'Tables exist but catalog is empty (seed not applied)',
+      {
+        latencyMs: nowMs() - started,
+        checkType: 'schema',
+        feature: 'repairCatalog',
+        migrations,
+        tables,
+        missingTables,
+        counts,
+        seeded,
+        countErrors: Object.keys(countErrors).length ? countErrors : undefined,
+        verifyEndpoints: {
+          health: 'GET /health/repair-catalog',
+          adminGarments: 'GET /admin/getRepairGarments',
+          adminOptions: 'GET /admin/getRepairOptions',
+          adminSeed: 'POST /admin/seedRepairCatalog',
+          customerCatalog: 'GET /customer/repairCatalog/:serviceId',
+          deploy: 'GET /health/deploy',
+        },
+        hint: ok
+          ? null
+          : missingTables.length || !migrationsOk
+            ? 'Deploy should run db:migrate. Check GET /health/deploy migrate section.'
+            : 'Run deploy seeds (includes repair catalog) or POST /admin/seedRepairCatalog. Customer catalog also auto-seeds when empty.',
+      }
+    );
+  } catch (err) {
+    const fields = safeErrorFields(err);
+    return result('fail', err.message || 'Repair catalog schema check failed', {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'repairCatalog',
+      ...fields,
+      hint: 'MySQL must be reachable. Verify /health/mysql first.',
+    });
+  }
+}
+
 module.exports = {
   checkMysql,
   checkRedis,
@@ -668,6 +821,7 @@ module.exports = {
   checkStripe,
   checkZeptoMail,
   checkShopReviewSchema,
+  checkRepairCatalogSchema,
   runDependencyChecks,
   logCheck,
   logLine
