@@ -522,11 +522,12 @@ router.patch(
     requireCapability("canAssignStaff"),
     asyncMiddleware(agentController.agentPickupOrderBySelf)
 );
-// Staff activity (assignment events + completed jobs)
+// Staff activity (assignment events + completed jobs).
+// Drivers with canRunAssignedJobs may load this for self-only (controller forces employeeId).
 router.get(
     "/staffActivity",
     validateAccessToken,
-    requireCapability("canViewStaffActivity"),
+    requireAnyCapability(["canViewStaffActivity", "canRunAssignedJobs"]),
     asyncMiddleware(agentController.getStaffActivity)
 );
 // Auto-assign settings (owner only by default ceiling)

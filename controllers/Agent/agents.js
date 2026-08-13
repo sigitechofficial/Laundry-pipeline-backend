@@ -1281,10 +1281,12 @@ const agentSlotWhere = (laundryShopId, slotFrom, slotTo, dayStart, dayEnd) => {
 
 exports.agentBookingFilters = async (req, res) => {
     const agentId = shopAgentIdFromReq(req);
-    const actorId = actorUserIdFromReq(req);
+    const actorId = Number(actorUserIdFromReq(req));
     // Drivers only see jobs assigned to them; owner/manager see the full shop board.
     const employeeStaffScope =
-        req.isShopEmployee && !actorCanViewShopBoard(req)
+        req.isShopEmployee &&
+        !actorCanViewShopBoard(req) &&
+        Number.isFinite(actorId)
             ? {
                   [Op.or]: [
                       { driverId: actorId },
@@ -1623,9 +1625,11 @@ exports.agentBookingFilters = async (req, res) => {
  */
 exports.getBookingCounts = async (req, res) => {
     const agentId = shopAgentIdFromReq(req);
-    const actorId = actorUserIdFromReq(req);
+    const actorId = Number(actorUserIdFromReq(req));
     const employeeStaffScope =
-        req.isShopEmployee && !actorCanViewShopBoard(req)
+        req.isShopEmployee &&
+        !actorCanViewShopBoard(req) &&
+        Number.isFinite(actorId)
             ? {
                   [Op.or]: [
                       { driverId: actorId },
@@ -6979,7 +6983,9 @@ exports.getStaffActivity = async (req, res) => {
         actorCanViewShopBoard(req);
 
     if (!canViewAll) {
+        // Force self — ignore spoofed employeeId from client.
         query.employeeId = actorId;
+        query.includeActive = true;
     }
 
     const result = await staffActivityService.getStaffActivity(agentId, query);

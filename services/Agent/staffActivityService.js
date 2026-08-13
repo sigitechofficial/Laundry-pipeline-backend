@@ -27,7 +27,7 @@ class StaffActivityService {
 
     /**
      * @param {number} shopAgentId
-     * @param {{ from?: string, to?: string, employeeId?: number|string, type?: string }} [query]
+     * @param {{ from?: string, to?: string, employeeId?: number|string, type?: string, includeActive?: boolean|string }} [query]
      */
     async getStaffActivity(shopAgentId, query = {}) {
         const shopAddressId = await this._shopAddressId(shopAgentId);
@@ -47,6 +47,10 @@ class StaffActivityService {
         const typeFilter = query.type
             ? String(query.type).toLowerCase()
             : null;
+        const includeActive =
+            query.includeActive === true ||
+            query.includeActive === '1' ||
+            query.includeActive === 'true';
 
         const shopBookings = await booking.findAll({
             where: { laundryShopId: shopAddressId },
@@ -138,6 +142,38 @@ class StaffActivityService {
             limit: 500,
         });
 
+        // Active jobs currently assigned to this employee (My Jobs History).
+        let activeRows = [];
+        if (includeActive && employeeId) {
+            const activeOr = [];
+            if (!typeFilter || typeFilter === 'pickup') {
+                activeOr.push({ driverId: employeeId });
+            }
+            if (!typeFilter || typeFilter === 'delivery') {
+                activeOr.push({ deliveryDriverId: employeeId });
+            }
+            if (activeOr.length) {
+                activeRows = await booking.findAll({
+                    where: {
+                        laundryShopId: shopAddressId,
+                        bookingStatusId: { [Op.notIn]: [16, 17, 18, 19] },
+                        [Op.or]: activeOr,
+                    },
+                    attributes: [
+                        'id',
+                        'orderTrackId',
+                        'driverId',
+                        'deliveryDriverId',
+                        'bookingStatusId',
+                        'collectionDate',
+                        'deliveryDate',
+                        'updatedAt',
+                    ],
+                    limit: 200,
+                });
+            }
+        }
+
         const driverMap = new Map();
 
         const ensureDriver = (id, nameBits = {}) => {
@@ -223,7 +259,8 @@ class StaffActivityService {
             const alreadyHasComplete = (driverEntry, type) =>
                 driverEntry.jobs.some(
                     (j) =>
-                        j.source === 'completedLeg' &&
+                        (j.source === 'completedLeg' ||
+                            j.source === 'completedBooking') &&
                         Number(j.bookingId) === Number(plain.id) &&
                         j.assignmentType === type
                 );
@@ -268,6 +305,58 @@ class StaffActivityService {
                         at: plain.deliveryCompletedAt || plain.updatedAt,
                     });
                 }
+            }
+        }
+
+        for (const row of activeRows) {
+            const plain = row.get({ plain: true });
+            const pickupId =
+                plain.driverId != null ? Number(plain.driverId) : null;
+            const deliveryId =
+                plain.deliveryDriverId != null
+                    ? Number(plain.deliveryDriverId)
+                    : null;
+            const entry = ensureDriver(employeeId);
+            if (!entry) continue;
+
+            const hasJob = (type) =>
+                entry.jobs.some(
+                    (j) =>
+                        Number(j.bookingId) === Number(plain.id) &&
+                        j.assignmentType === type
+                );
+
+            if (
+                pickupId === Number(employeeId) &&
+                (!typeFilter || typeFilter === 'pickup') &&
+                !hasJob('pickup')
+            ) {
+                entry.pickups += 1;
+                entry.jobs.push({
+                    source: 'activeAssignment',
+                    bookingId: plain.id,
+                    orderTrackId: plain.orderTrackId,
+                    assignmentType: 'pickup',
+                    action: 'assigned',
+                    bookingStatusId: plain.bookingStatusId,
+                    at: plain.collectionDate || plain.updatedAt,
+                });
+            }
+            if (
+                deliveryId === Number(employeeId) &&
+                (!typeFilter || typeFilter === 'delivery') &&
+                !hasJob('delivery')
+            ) {
+                entry.deliveries += 1;
+                entry.jobs.push({
+                    source: 'activeAssignment',
+                    bookingId: plain.id,
+                    orderTrackId: plain.orderTrackId,
+                    assignmentType: 'delivery',
+                    action: 'assigned',
+                    bookingStatusId: plain.bookingStatusId,
+                    at: plain.deliveryDate || plain.updatedAt,
+                });
             }
         }
 
