@@ -503,6 +503,11 @@ class ShopReviewService {
 
     if (!row) return null;
 
+    return this._serializeReview(row);
+  }
+
+  _serializeReview(row) {
+    if (!row) return null;
     return {
       id: row.id,
       bookingId: row.bookingId,
@@ -523,6 +528,55 @@ class ShopReviewService {
         otherText: x.otherText,
       })),
     };
+  }
+
+  /**
+   * Batch-load reviews for agent order history cards (map: bookingId → review).
+   */
+  async getReviewsByBookingIds(bookingIds = []) {
+    const ids = [...new Set((bookingIds || []).map((id) => Number(id)).filter(Boolean))];
+    if (!ids.length) return {};
+
+    const rows = await shopReview.findAll({
+      where: { bookingId: { [Op.in]: ids } },
+      include: [
+        {
+          model: shopReviewReason,
+          as: 'reasons',
+          include: [
+            {
+              model: reviewReasonCode,
+              as: 'reasonCode',
+              attributes: ['id', 'code', 'label', 'sentiment', 'isOther'],
+            },
+          ],
+        },
+        {
+          model: users,
+          as: 'customer',
+          attributes: ['id', 'firstName', 'lastName'],
+        },
+        {
+          model: bussinessInformation,
+          as: 'shop',
+          attributes: ['id', 'shopName'],
+        },
+        {
+          model: booking,
+          as: 'booking',
+          attributes: ['id', 'orderTrackId'],
+        },
+      ],
+    });
+
+    const map = {};
+    for (const row of rows) {
+      const serialized = this._serializeReview(row);
+      if (serialized?.bookingId != null) {
+        map[serialized.bookingId] = serialized;
+      }
+    }
+    return map;
   }
 
   async getShopSummaryForAgent(agentUserId, { page = 1, limit = 20 } = {}) {

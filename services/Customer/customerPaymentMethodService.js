@@ -9,6 +9,7 @@ const {
 const {
     createStripeCustomer,
     createSetupIntent,
+    createEphemeralKey,
     attachPaymentMethodToCustomer,
     listCustomerCardPaymentMethods,
     retrievePaymentMethod,
@@ -101,22 +102,53 @@ class CustomerPaymentMethodService {
 
     /**
      * Sync active card onto open card bookings so invoice/balance charges use it.
+     * Also clears payment-failure state so a declined card can be retried after update.
      */
     async syncOpenBookingsPaymentMethod(customerUserId, paymentMethodId) {
-        const [updated] = await booking.update(
-            { paymentMethodId },
-            {
-                where: {
-                    customerId: customerUserId,
-                    paymentType: "card",
-                    bookingStatusId: { [Op.notIn]: TERMINAL_BOOKING_STATUS_IDS },
-                    [Op.or]: [
-                        { paymentMethodId: { [Op.ne]: paymentMethodId } },
-                        { paymentMethodId: null },
-                    ],
-                },
+        const openBookings = await booking.findAll({
+            where: {
+                customerId: customerUserId,
+                paymentType: "card",
+                bookingStatusId: { [Op.notIn]: TERMINAL_BOOKING_STATUS_IDS },
+            },
+            attributes: [
+                "id",
+                "paymentMethodId",
+                "autoChargeStatus",
+                "paymentDeliveryGate",
+                "lastPaymentFailureCode",
+            ],
+        });
+
+        let updated = 0;
+        for (const row of openBookings) {
+            const hadFailure =
+                Boolean(row.lastPaymentFailureCode) ||
+                row.autoChargeStatus === "failed" ||
+                row.paymentDeliveryGate === "waiting_admin";
+
+            const patch = {};
+            if (row.paymentMethodId !== paymentMethodId) {
+                patch.paymentMethodId = paymentMethodId;
             }
-        );
+            if (hadFailure) {
+                patch.lastPaymentFailureCode = null;
+                patch.lastPaymentFailureMessage = null;
+                patch.lastPaymentFailureAt = null;
+                patch.paymentDeliveryGate = "open";
+                if (
+                    row.autoChargeStatus === "failed" ||
+                    row.paymentDeliveryGate === "waiting_admin"
+                ) {
+                    patch.autoChargeStatus = "scheduled";
+                    patch.autoChargeDueAt = new Date();
+                }
+            }
+
+            if (Object.keys(patch).length === 0) continue;
+            await row.update(patch);
+            updated += 1;
+        }
         return updated;
     }
 
@@ -199,11 +231,23 @@ class CustomerPaymentMethodService {
         const user = await this._getCustomerUser(userId);
         const stripeCustomerId = await this._ensureStripeCustomer(user);
         const setupIntent = await createSetupIntent(stripeCustomerId);
+        let ephemeralKeySecret = null;
+        try {
+            const ephemeralKey = await createEphemeralKey(stripeCustomerId);
+            ephemeralKeySecret = ephemeralKey.secret;
+        } catch (ekErr) {
+            console.warn(
+                "[paymentMethods] ephemeral key failed (saved cards may be hidden):",
+                ekErr.message
+            );
+        }
 
         return {
             setupIntentId: setupIntent.id,
             clientSecret: setupIntent.client_secret,
             stripeCustomerId,
+            customerId: stripeCustomerId,
+            ephemeralKeySecret,
             status: setupIntent.status,
             isSetupIntent: true,
         };

@@ -54,6 +54,9 @@ function isBookingPaid(_bookingRow, amountDueNow) {
     return roundMoney(amountDueNow) <= 0.02;
 }
 
+const OFD_WAIT_ADMIN_MESSAGE =
+    "Please wait for admin instruction. Payment still needs to be processed.";
+
 function buildPaymentGateFlags(bookingRow = {}, amountDueNow = 0) {
     const paymentType = normalizePaymentType(bookingRow.paymentType);
     const balanceMethod = resolveBalancePaymentMethod(bookingRow);
@@ -67,24 +70,33 @@ function buildPaymentGateFlags(bookingRow = {}, amountDueNow = 0) {
     const waitingAdmin = !paid && gate === "waiting_admin";
     const clearedCash = gate === "cleared_cash" || balanceMethod === "cash";
     const clearedAllow = gate === "cleared_allow";
+    // Unpaid card with an open gate may still attempt OFD (server charges once,
+    // then holds for admin). Hard-block only while waiting_admin.
     const canOutForDelivery =
         paid ||
         paymentType === "cash" ||
         clearedCash ||
         clearedAllow ||
-        (paymentType === "card" && balanceMethod === "cash");
+        (paymentType === "card" && balanceMethod === "cash") ||
+        (paymentType === "card" &&
+            balanceMethod === "card" &&
+            !waitingAdmin &&
+            gate === "open");
 
     const failureCode = bookingRow.lastPaymentFailureCode || null;
     const rawFailureMessage = bookingRow.lastPaymentFailureMessage || null;
+    const failureReason = failed
+        ? formatPaymentFailureReason(failureCode, rawFailureMessage)
+        : null;
 
     return {
         autoChargeStatus: bookingRow.autoChargeStatus || "none",
         autoChargeDueAt: bookingRow.autoChargeDueAt || null,
         paymentFailed: failed,
         paymentFailureCode: failureCode,
-        paymentFailureReason: failed
-            ? formatPaymentFailureReason(failureCode, rawFailureMessage)
-            : null,
+        paymentFailureReason: waitingAdmin
+            ? failureReason || OFD_WAIT_ADMIN_MESSAGE
+            : failureReason,
         paymentFailureRawMessage: rawFailureMessage,
         paymentFailureAt: bookingRow.lastPaymentFailureAt || null,
         paymentWaitingAdmin: waitingAdmin,
@@ -336,8 +348,8 @@ async function notifyPaymentFailed(bookingRow, failure) {
     if (agentUserId) {
         sendNotification(
             agentUserId,
-            "Payment failed — waiting for admin",
-            `Order ${bookingRow.orderTrackId || bookingRow.id}: ${reason}. Waiting for admin response before Out for Delivery.`,
+            "Please wait for admin instruction",
+            `Order ${bookingRow.orderTrackId || bookingRow.id}: ${OFD_WAIT_ADMIN_MESSAGE} (${reason})`,
             data
         ).catch((e) =>
             console.error("[invoiceAutoCharge] agent notify failed:", e.message)
@@ -347,12 +359,56 @@ async function notifyPaymentFailed(bookingRow, failure) {
     const { sendAdminAlert } = require("../Admin/adminAlertService");
     sendAdminAlert({
         alertType: "payment_failed",
-        title: "Payment failed — action required",
-        body: `Order ${bookingRow.orderTrackId || bookingRow.id}: ${reason}. Resolve in Payment Failures before delivery.`,
+        title: "Payment needs admin — delivery held",
+        body: `Order ${bookingRow.orderTrackId || bookingRow.id}: ${reason}. Flagged until payment is resolved (Payment Failures).`,
         data,
         bookingId: bookingRow.id,
     }).catch((e) =>
         console.error("[invoiceAutoCharge] admin notify failed:", e.message)
+    );
+}
+
+/**
+ * Delivery held for unpaid/unprocessed card — flag admin even when no new Stripe error.
+ */
+async function notifyPaymentAwaitingAdmin(bookingRow, reason = null) {
+    const displayReason = reason || OFD_WAIT_ADMIN_MESSAGE;
+    const data = {
+        bookingId: String(bookingRow.id),
+        type: "PAYMENT_WAITING_ADMIN",
+        alertType: "payment_failed",
+        paymentFailureReason: displayReason,
+        orderTrackId: bookingRow.orderTrackId || "",
+        paymentDeliveryGate: "waiting_admin",
+    };
+
+    const agentUserId = await resolveAgentUserId(bookingRow);
+    if (agentUserId) {
+        sendNotification(
+            agentUserId,
+            "Please wait for admin instruction",
+            `Order ${bookingRow.orderTrackId || bookingRow.id}: ${OFD_WAIT_ADMIN_MESSAGE}`,
+            data
+        ).catch((e) =>
+            console.error(
+                "[invoiceAutoCharge] agent awaiting-admin notify failed:",
+                e.message
+            )
+        );
+    }
+
+    const { sendAdminAlert } = require("../Admin/adminAlertService");
+    sendAdminAlert({
+        alertType: "payment_failed",
+        title: "Order flagged — payment not processed",
+        body: `Order ${bookingRow.orderTrackId || bookingRow.id}: card payment not processed. Delivery held until admin resolves.`,
+        data,
+        bookingId: bookingRow.id,
+    }).catch((e) =>
+        console.error(
+            "[invoiceAutoCharge] admin awaiting-admin notify failed:",
+            e.message
+        )
     );
 }
 
@@ -733,6 +789,15 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
         return { allowed: true, flags, paymentSummary };
     }
 
+    // Already held for admin — do not re-attempt charge; agent must wait.
+    if (bookingRow.paymentDeliveryGate === "waiting_admin") {
+        const err = new Error(OFD_WAIT_ADMIN_MESSAGE);
+        err.statusCode = 402;
+        err.code = "PAYMENT_WAITING_ADMIN";
+        err.paymentFlags = flags;
+        throw err;
+    }
+
     // OFD automatic retry (once)
     if (!bookingRow.ofdAutoRetryDone) {
         await bookingRow.update({ ofdAutoRetryDone: true });
@@ -768,20 +833,37 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
         ],
     });
 
-    if (fresh.paymentDeliveryGate !== "waiting_admin") {
-        await fresh.update({ paymentDeliveryGate: "waiting_admin" });
+    const wasAlreadyWaiting = fresh.paymentDeliveryGate === "waiting_admin";
+    if (!wasAlreadyWaiting) {
+        await fresh.update({
+            paymentDeliveryGate: "waiting_admin",
+            lastPaymentFailureAt: fresh.lastPaymentFailureAt || new Date(),
+            lastPaymentFailureMessage:
+                fresh.lastPaymentFailureMessage ||
+                "Card payment has not been processed yet",
+            lastPaymentFailureCode:
+                fresh.lastPaymentFailureCode || "payment_not_processed",
+        });
+        await notifyPaymentAwaitingAdmin(
+            { ...fresh.get({ plain: true }), paymentDeliveryGate: "waiting_admin" },
+            fresh.lastPaymentFailureMessage
+        );
     }
 
     const blockedFlags = buildPaymentGateFlags(
-        { ...fresh.get({ plain: true }), paymentDeliveryGate: "waiting_admin" },
+        {
+            ...fresh.get({ plain: true }),
+            paymentDeliveryGate: "waiting_admin",
+            lastPaymentFailureCode:
+                fresh.lastPaymentFailureCode || "payment_not_processed",
+            lastPaymentFailureMessage:
+                fresh.lastPaymentFailureMessage ||
+                "Card payment has not been processed yet",
+        },
         amountDue
     );
 
-    const err = new Error(
-        blockedFlags.paymentFailureReason
-            ? `Payment failed: ${blockedFlags.paymentFailureReason}. Waiting for admin response.`
-            : "Payment failed. Waiting for admin response before Out for Delivery."
-    );
+    const err = new Error(OFD_WAIT_ADMIN_MESSAGE);
     err.statusCode = 402;
     err.code = "PAYMENT_WAITING_ADMIN";
     err.paymentFlags = blockedFlags;

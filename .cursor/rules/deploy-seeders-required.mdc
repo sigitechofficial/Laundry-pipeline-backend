@@ -1,0 +1,10 @@
+---
+description: Always register new seeders in run-deploy-seeds.sh
+alwaysApply: true
+---
+
+# Seeders must be in deploy seeds
+
+Any new file under `seeders/` that provides reference/catalog data **must** be added to `scripts/run-deploy-seeds.sh` with `run_one "…"`.
+
+Pushing code + migration alone is not enough — empty tables break customer/admin until the seeder runs on deploy. Do not rely on manual SSH or “remind the user to seed.”

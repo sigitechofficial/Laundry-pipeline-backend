@@ -455,6 +455,28 @@ async function createSetupIntent(customerId) {
     }
 }
 
+/**
+ * Ephemeral key so PaymentSheet can list the customer's saved payment methods.
+ * @param {string} customerId - Stripe customer id (cus_…)
+ * @param {string} [stripeApiVersion] - API version from the mobile SDK (optional)
+ */
+async function createEphemeralKey(customerId, stripeApiVersion) {
+    if (!customerId) {
+        throw new customError("customerId is required for ephemeral key", 400);
+    }
+    try {
+        // Must be a version the mobile Stripe SDK understands.
+        const apiVersion = stripeApiVersion || "2024-06-20";
+        const key = await stripe.ephemeralKeys.create(
+            { customer: customerId },
+            { apiVersion }
+        );
+        return key;
+    } catch (error) {
+        throw new customError(`Ephemeral key error: ${error.message}`, 400);
+    }
+}
+
 
 /*
  *   GET Payment Method
@@ -941,6 +963,7 @@ module.exports = {
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
     createSetupIntent,
+    createEphemeralKey,
     paymentIntentGet,
     confirmIntend,
     getIntent,
