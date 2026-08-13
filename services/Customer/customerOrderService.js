@@ -49,6 +49,12 @@ const sequelize = require('sequelize');
 const serviceManagementService = require('../Admin/serviceManagementService');
 const addOnServicesService = require('../Admin/addOnServicesService');
 const repairCatalogService = require('../Admin/repairCatalogService');
+const dbModels = require('../../models');
+const {
+    buildRepairItemsInclude,
+    buildBookingLevelRepairItemsInclude,
+    hydrateRepairItemsForBooking,
+} = require('../../utils/repairBookingInclude');
 const {
     replaceServiceLinesForSelectedService,
 } = require('../../utils/invoiceLineTotals');
@@ -582,8 +588,10 @@ async function bookingEventSentCheckTheShops(
                             model: subCategories,
                             attributes: ["id", "name", "status"],
                         },
-                    ],
+                        buildRepairItemsInclude(dbModels),
+                    ].filter(Boolean),
                 },
+                buildBookingLevelRepairItemsInclude(dbModels),
                 {
                     model: zone,
                     attributes: [
@@ -593,7 +601,7 @@ async function bookingEventSentCheckTheShops(
                         "currencyUnitId",
                     ],
                 },
-            ],
+            ].filter(Boolean),
         });
 
         console.log("ðŸš€ ~ getBookingDetails ~ bookingDetails:", bookingDetails);
@@ -612,6 +620,24 @@ async function bookingEventSentCheckTheShops(
                     subCategoryStatus: serviceItem?.subCategory?.status,
                     items: serviceItem.items ?? null,
                     bags: serviceItem.bags ?? null,
+                    serviceInstruction: serviceItem.serviceInstruction || null,
+                    repairItems: (serviceItem.repairItems || []).map((ri) => {
+                        const plain = ri.toJSON ? ri.toJSON() : ri;
+                        return {
+                            id: plain.id,
+                            repairGarmentId: plain.repairGarmentId,
+                            garmentName: plain.garmentName,
+                            quantity: plain.quantity,
+                            instruction: plain.instruction,
+                            options: (plain.options || []).map((o) => ({
+                                optionName: o.optionName,
+                                price: o.price,
+                            })),
+                            images: (plain.images || []).map((img) => ({
+                                imageUrl: img.imageUrl,
+                            })),
+                        };
+                    }),
                 }))
                 : [];
 
@@ -2411,8 +2437,10 @@ class CustomerOrderService {
                                 },
                             ],
                         },
-                    ],
+                        buildRepairItemsInclude(dbModels),
+                    ].filter(Boolean),
                 },
+                buildBookingLevelRepairItemsInclude(dbModels),
                 {
                     model: bookingPreference,
                     as: 'bookingPreferences',
@@ -2593,6 +2621,13 @@ class CustomerOrderService {
             await hydrateBookingSelectedServiceAddOns(
                 bookingPlain.id,
                 selectedServices
+            );
+
+        bookingPlain.customerSelectedServices =
+            await hydrateRepairItemsForBooking(
+                dbModels,
+                bookingPlain.id,
+                bookingPlain.customerSelectedServices
             );
 
         const policySummaries = await buildCustomerBookingPolicySummaries(bookingPlain, {

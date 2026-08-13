@@ -43,6 +43,13 @@ const {
 } = require('../../utils/invoiceLineTotals');
 const { getPrepaidInvoiceDeduction } = require('../../utils/invoicePrepaidDeduction');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const dbModels = require('../../models');
+const {
+    buildRepairItemsInclude,
+    buildBookingLevelRepairItemsInclude,
+    hydrateRepairItemsForBooking,
+    normalizeRepairItems,
+} = require('../../utils/repairBookingInclude');
 const {
     ValidationError,
     NotFoundError,
@@ -204,6 +211,12 @@ class OrderService {
             'driverId',
             'deliveryDriverId',
             'customerId',
+            'paymentType',
+            'paymentDeliveryGate',
+            'autoChargeStatus',
+            'lastPaymentFailureCode',
+            'lastPaymentFailureMessage',
+            'lastPaymentFailureAt',
         ];
     }
 
@@ -580,9 +593,11 @@ class OrderService {
                     model: customerSelectedService,
                     include: [
                         { model: service, attributes: ['id', 'name'] },
-                        { model: categories, attributes: ['id', 'name'] }
-                    ]
+                        { model: categories, attributes: ['id', 'name'] },
+                        buildRepairItemsInclude(dbModels),
+                    ].filter(Boolean),
                 },
+                buildBookingLevelRepairItemsInclude(dbModels),
                 {
                     model: addressDb,
                     as: 'laundryShop',
@@ -666,6 +681,14 @@ class OrderService {
         const plain = orderDetails.get
             ? orderDetails.get({ plain: true })
             : orderDetails;
+        plain.customerSelectedServices = await hydrateRepairItemsForBooking(
+            dbModels,
+            orderId,
+            Array.isArray(plain.customerSelectedServices)
+                ? plain.customerSelectedServices
+                : []
+        );
+        plain.repairItems = normalizeRepairItems(plain.repairItems);
         plain.zoneName = plain.zone?.name || null;
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
@@ -894,8 +917,9 @@ class OrderService {
                             required: false
                         }
                     ]
-                }
-            ],
+                },
+                buildRepairItemsInclude(dbModels),
+            ].filter(Boolean),
             attributes: [
                 'id',
                 'date',
@@ -909,8 +933,16 @@ class OrderService {
             ]
         });
 
+        const hydratedSelectedServices = await hydrateRepairItemsForBooking(
+            dbModels,
+            bookingId,
+            selectedServices.map((row) =>
+                row.toJSON ? row.toJSON() : row
+            )
+        );
+
         const selectedServiceIdSet = new Set(
-            selectedServices
+            hydratedSelectedServices
                 .map(item => item?.serviceId)
                 .filter(Boolean)
         );
@@ -923,7 +955,7 @@ class OrderService {
         return {
             bookingId: Number(bookingId),
             serviceDetails: catalogWithSelectionFlag,
-            bookingSelectedServices: selectedServices
+            bookingSelectedServices: hydratedSelectedServices
         };
     }
 

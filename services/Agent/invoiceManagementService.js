@@ -49,6 +49,11 @@ const {
 const {
     ensureCustomerDeclaredSnapshot,
 } = require("./customerDeclaredServicesService");
+const dbModels = require("../../models");
+const {
+    buildRepairItemsInclude,
+    hydrateRepairItemsForBooking,
+} = require("../../utils/repairBookingInclude");
 
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
@@ -235,7 +240,8 @@ class AgentInvoiceManagementService {
                             { model: preferenceValues, attributes: ["id", "value"] },
                         ],
                     },
-                ],
+                    buildRepairItemsInclude(dbModels),
+                ].filter(Boolean),
                 attributes: [
                     "id",
                     "date",
@@ -820,6 +826,12 @@ class AgentInvoiceManagementService {
                 seenServiceIds.add(serviceId);
                 return item;
             });
+
+        bookingData.customerSelectedServices = await hydrateRepairItemsForBooking(
+            dbModels,
+            bookingId,
+            bookingData.customerSelectedServices
+        );
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
         const billing = bookingData.billingDetail || {};

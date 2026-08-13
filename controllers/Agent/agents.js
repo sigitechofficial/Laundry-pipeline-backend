@@ -79,6 +79,11 @@ const {
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require("../../utils/invoiceLineTotals");
+const dbModels = require("../../models");
+const {
+    buildRepairItemsInclude,
+    hydrateRepairItemsForBooking,
+} = require("../../utils/repairBookingInclude");
 const {
     wallClockNow,
     resolveBookingTimeZone,
@@ -1400,7 +1405,8 @@ exports.agentBookingFilters = async (req, res) => {
                         { model: preferenceValues, required: false, attributes: ["id", "value"] },
                     ],
                 },
-            ],
+                buildRepairItemsInclude(dbModels),
+            ].filter(Boolean),
         },
     ];  // <-- end makeIncludes
 
@@ -3226,7 +3232,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         if (gateErr.code === "PAYMENT_WAITING_ADMIN" || gateErr.statusCode === 402) {
             throw new ValidationError(
                 gateErr.message ||
-                    "Payment failed. Waiting for admin response before Out for Delivery.",
+                    "Please wait for admin instruction. Payment still needs to be processed.",
                 {
                     code: "PAYMENT_WAITING_ADMIN",
                     ...(gateErr.paymentFlags || {}),
@@ -4107,8 +4113,9 @@ exports.invoiceCreation = async (req, res) => {
                                 attributes: ['id', 'value']
                             }
                         ]
-                    }
-                ],
+                    },
+                    buildRepairItemsInclude(dbModels),
+                ].filter(Boolean),
                 attributes: [
                     "id", "date", "time", "categoryPrice", "bookingId",
                     "categoryId", "serviceId", "subCategoryId", "items", "bags", "serviceInstruction", "status"
@@ -4205,6 +4212,12 @@ exports.invoiceCreation = async (req, res) => {
         seenServiceIds.add(serviceId);
         return item;
     });
+
+    bookingData.customerSelectedServices = await hydrateRepairItemsForBooking(
+        dbModels,
+        bookingId,
+        bookingData.customerSelectedServices
+    );
 
     // Frozen customer booking intent — independent of agent invoice lines.
     bookingData.customerDeclaredServices =
