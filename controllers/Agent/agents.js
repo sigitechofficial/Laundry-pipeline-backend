@@ -207,6 +207,10 @@ const {
     resolveActorUserId,
     canManageShopOps,
 } = require('../../utils/shopAgentContext');
+const {
+    respondIfAlreadyAdvanced,
+    buildAlreadyUpdatedPayload,
+} = require('../../utils/bookingStatusAlreadyUpdated');
 
 function shopAgentIdFromReq(req) {
     return req.shopAgentId ?? resolveShopAgentId(req.user);
@@ -1860,8 +1864,26 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingfind);
 
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingfind.bookingStatusId,
+            targetStatusId: 4,
+        })
+    ) {
+        return;
+    }
+
     if (bookingfind.bookingStatusId !== 3) {
-        throw new NotFoundError("No driver is assigned to this booking yet");
+        throw new ValidationError(
+            "Booking is not ready for On the Way yet",
+            {
+                code: 'STATUS_NOT_READY',
+                bookingId: Number(bookingId),
+                bookingStatusId: bookingfind.bookingStatusId,
+            }
+        );
     }
 
     const paymentType = bookingfind.paymentType || "card";
@@ -2124,15 +2146,6 @@ exports.driverStatusArrived = async (req, res) => {
     const { bookingId } = req.params;
     const { driverLat, driverLng, geofenceBypassToken } = req.body;
 
-    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
-    await assertDriverWithinCustomerRadius({
-        bookingId,
-        leg: "pickup",
-        driverLat,
-        driverLng,
-        geofenceBypassToken,
-    });
-
     const bookingfind = await booking.findOne({
         where: {
             id: bookingId,
@@ -2145,9 +2158,33 @@ exports.driverStatusArrived = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingfind);
 
-    if (bookingfind.bookingStatusId !== 4) {
-        throw new ValidationError("Your driver is still not out for pickup");
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingfind.bookingStatusId,
+            targetStatusId: 5,
+        })
+    ) {
+        return;
     }
+
+    if (bookingfind.bookingStatusId !== 4) {
+        throw new ValidationError("Your driver is still not out for pickup", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingfind.bookingStatusId,
+        });
+    }
+
+    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
+    await assertDriverWithinCustomerRadius({
+        bookingId,
+        leg: "pickup",
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+    });
 
     await booking.update(
         {
@@ -2299,8 +2336,23 @@ exports.agentInspectionStatus = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingFind);
 
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingFind.bookingStatusId,
+            targetStatusId: 7,
+        })
+    ) {
+        return;
+    }
+
     if (bookingFind.bookingStatusId !== 5) {
-        throw new ValidationError("Your driver is not reached yet");
+        throw new ValidationError("Your driver is not reached yet", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingFind.bookingStatusId,
+        });
     }
 
     await booking.update(
@@ -2375,8 +2427,23 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 8,
+        })
+    ) {
+        return;
+    }
+
     if (bookingCheck.bookingStatusId !== 7) {
-        throw new ValidationError("Booking is still not In Transit to Facility");
+        throw new ValidationError("Booking is still not In Transit to Facility", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingCheck.bookingStatusId,
+        });
     }
 
     await booking.update(
@@ -2411,7 +2478,10 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {});
+    return ResponseHelper.success(res, "Driver Reached At Laundry Shop", {
+        bookingId: Number(bookingId),
+        bookingStatusId: 8,
+    });
 }
 
 
@@ -2892,24 +2962,46 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
             bookingCheck,
             amountDue
         );
-        return ResponseHelper.success(res, "Booking already in processing", {
-            bookingId: Number(bookingId),
-            bookingStatusId: bookingCheck.bookingStatusId,
-            ...paymentFlags,
-            ...paymentGateFlags,
-            paymentSummary: {
-                ...paymentSummary,
+        const alreadyPayload = await buildAlreadyUpdatedPayload({
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 11,
+            extraData: {
                 ...paymentFlags,
                 ...paymentGateFlags,
+                paymentSummary: {
+                    ...paymentSummary,
+                    ...paymentFlags,
+                    ...paymentGateFlags,
+                },
             },
         });
+        return ResponseHelper.success(res, "Booking already in processing", alreadyPayload);
+    }
+
+    // Past processing (wash complete / OFD / delivered) — sync client to current status
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 11,
+        })
+    ) {
+        return;
     }
 
     // 8 = Delivered to shop, 9 = services added, 10 = invoice generated (retry / legacy)
     const allowedForInvoiceGenerate = [8, 9, 10];
     if (!allowedForInvoiceGenerate.includes(bookingCheck.bookingStatusId)) {
         throw new ValidationError(
-            "Booking must be at the laundry shop (invoice stage) before generating the invoice"
+            "Booking must be at the laundry shop (invoice stage) before generating the invoice",
+            {
+                code: 'STATUS_NOT_READY',
+                bookingId: Number(bookingId),
+                bookingStatusId: bookingCheck.bookingStatusId,
+            }
         );
     }
 
@@ -3025,8 +3117,23 @@ exports.laundryWashCompleted = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 12,
+        })
+    ) {
+        return;
+    }
+
     if (bookingCheck.bookingStatusId !== 11) {
-        throw new ValidationError("Booking is still not In Processing or Invoice Not Generated");
+        throw new ValidationError("Booking is still not In Processing or Invoice Not Generated", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingCheck.bookingStatusId,
+        });
     }
 
     await booking.update(
@@ -3058,7 +3165,10 @@ exports.laundryWashCompleted = async (req, res) => {
         driverId: bookingCheck.driverId,
     }
     sendNotification(customerId, title, body, data);
-    return ResponseHelper.success(res, "Laundry Has Been Washed At Shop", {});
+    return ResponseHelper.success(res, "Laundry Has Been Washed At Shop", {
+        bookingId: Number(bookingId),
+        bookingStatusId: 12,
+    });
 }
 
 /*
@@ -3079,6 +3189,32 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         throw new NotFoundError(`Booking with ID ${bookingId} not found`);
     }
     assertBookingNotCancelledForAgent(bookingCheck);
+
+    // Already OFD or further — sync client; never reset status / re-run payment gate
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 13,
+            extraData: {
+                deliveryDriverId: bookingCheck.deliveryDriverId,
+            },
+        })
+    ) {
+        return;
+    }
+
+    if (bookingCheck.bookingStatusId !== 12) {
+        throw new ValidationError(
+            "Laundry must be completed at facility before Out for Delivery",
+            {
+                code: 'STATUS_NOT_READY',
+                bookingId: Number(bookingId),
+                bookingStatusId: bookingCheck.bookingStatusId,
+            }
+        );
+    }
 
     let ofdGate = null;
     try {
@@ -3171,15 +3307,6 @@ exports.driverReachedForDelivery = async (req, res) => {
     const { bookingId } = req.params;
     const { driverLat, driverLng, geofenceBypassToken } = req.body;
 
-    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
-    await assertDriverWithinCustomerRadius({
-        bookingId,
-        leg: "delivery",
-        driverLat,
-        driverLng,
-        geofenceBypassToken,
-    });
-
     const bookingCheck = await booking.findOne({
         where: {
             id: bookingId,
@@ -3192,9 +3319,33 @@ exports.driverReachedForDelivery = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
-    if (bookingCheck.bookingStatusId !== 13) {
-        throw new ValidationError("Driver is not out to deliver your laundry");
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 14,
+        })
+    ) {
+        return;
     }
+
+    if (bookingCheck.bookingStatusId !== 13) {
+        throw new ValidationError("Driver is not out to deliver your laundry", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingCheck.bookingStatusId,
+        });
+    }
+
+    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
+    await assertDriverWithinCustomerRadius({
+        bookingId,
+        leg: "delivery",
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+    });
 
     await booking.update(
         {
@@ -3292,8 +3443,23 @@ exports.bookingDeliverToCustomer = async (req, res) => {
 
     assertBookingNotCancelledForAgent(bookingCheck);
 
+    if (
+        await respondIfAlreadyAdvanced(res, {
+            req,
+            bookingId,
+            currentStatusId: bookingCheck.bookingStatusId,
+            targetStatusId: 17,
+        })
+    ) {
+        return;
+    }
+
     if (bookingCheck.bookingStatusId !== 14) {
-        throw new ValidationError("Driver not reached yet at customer destination");
+        throw new ValidationError("Driver not reached yet at customer destination", {
+            code: 'STATUS_NOT_READY',
+            bookingId: Number(bookingId),
+            bookingStatusId: bookingCheck.bookingStatusId,
+        });
     }
 
     await booking.update(
