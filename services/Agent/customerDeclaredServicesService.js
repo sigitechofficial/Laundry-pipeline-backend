@@ -4,12 +4,16 @@
  * Customer-declared services are a frozen snapshot of what the customer booked.
  * Agent invoice lines live in customerSelectedServices and may be replaced freely.
  * Never derive green-ticks / "Customer selected" UI from live invoice lines.
+ *
+ * Repair/alteration garments are stored on customerSelectedRepairItems (not in the
+ * CSS snapshot tables). They are attached at read time so agents always see them.
  */
 
 const {
     customerOriginalServiceSnapshot,
     customerOriginalPreferenceSnapshot,
     customerSelectedService,
+    customerSelectedRepairItem,
     bookingPreference,
     service,
     categories,
@@ -17,6 +21,11 @@ const {
     preferenceTypes,
     preferenceValues,
 } = require('../../models');
+const dbModels = require('../../models');
+const {
+    hydrateRepairItemsForBooking,
+    normalizeRepairItems,
+} = require('../../utils/repairBookingInclude');
 
 const snapshotInclude = [
     {
@@ -165,11 +174,97 @@ function mapSnapshotToDeclaredService(row) {
             preferenceType: p.preferenceType || null,
             preferenceValue: p.preferenceValue || null,
         })),
+        repairItems: [],
     };
 }
 
 /**
- * Ensure snapshot exists, then return agent-app-friendly declared services.
+ * Attach live repair lines onto declared services (by serviceId).
+ * Creates a synthetic declared row when a repair service has garments but no snapshot.
+ */
+async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) {
+    let list = Array.isArray(declaredServices) ? [...declaredServices] : [];
+
+    list = await hydrateRepairItemsForBooking(dbModels, bookingId, list);
+
+    // Collect serviceIds already covered.
+    const covered = new Set(
+        list
+            .map((s) => (s?.serviceId != null ? Number(s.serviceId) : null))
+            .filter((id) => Number.isFinite(id))
+    );
+
+    // Find repair serviceIds not represented in declared list.
+    let orphanServiceIds = [];
+    try {
+        const allRepair = await customerSelectedRepairItem.findAll({
+            where: { bookingId },
+            attributes: ['serviceId'],
+            raw: true,
+        });
+        const seen = new Set();
+        for (const r of allRepair) {
+            const sid = Number(r.serviceId);
+            if (!Number.isFinite(sid) || covered.has(sid) || seen.has(sid)) continue;
+            seen.add(sid);
+            orphanServiceIds.push(sid);
+        }
+    } catch (err) {
+        console.warn(
+            '[attachRepairItemsToDeclaredServices] orphan lookup skipped:',
+            err?.message || err
+        );
+        return list;
+    }
+
+    if (orphanServiceIds.length === 0) {
+        return list;
+    }
+
+    const serviceRows = await service.findAll({
+        where: { id: orphanServiceIds },
+        attributes: ['id', 'name', 'image', 'pricingBasis'],
+    });
+    const serviceById = new Map(
+        serviceRows.map((s) => [Number(s.id), s.toJSON ? s.toJSON() : s])
+    );
+
+    const placeholders = orphanServiceIds.map((serviceId) => ({
+        id: null,
+        bookingId: Number(bookingId),
+        serviceId,
+        categoryId: null,
+        subCategoryId: null,
+        items: null,
+        bags: null,
+        noOfBags: null,
+        categoryPrice: null,
+        serviceInstruction: null,
+        status: true,
+        service: serviceById.get(serviceId) || {
+            id: serviceId,
+            name: 'Alteration and Repair',
+        },
+        category: null,
+        subCategory: null,
+        addOns: [],
+        serviceLines: [],
+        selectedServicePreferences: [],
+        repairItems: [],
+    }));
+
+    const hydratedPlaceholders = await hydrateRepairItemsForBooking(
+        dbModels,
+        bookingId,
+        placeholders
+    );
+
+    return [...list, ...hydratedPlaceholders];
+}
+
+/**
+ * Ensure snapshot exists, then return agent-app-friendly declared services
+ * including repair garments / options / images.
  */
 async function getCustomerDeclaredServices(bookingId) {
     await ensureCustomerDeclaredSnapshot(bookingId);
@@ -180,10 +275,41 @@ async function getCustomerDeclaredServices(bookingId) {
         order: [['id', 'ASC']],
     });
 
-    return rows.map(mapSnapshotToDeclaredService);
+    const mapped = rows.map(mapSnapshotToDeclaredService);
+    return attachRepairItemsToDeclaredServices(bookingId, mapped);
+}
+
+/**
+ * Flat list of all repair items for a booking (for top-level API fields).
+ */
+async function getBookingRepairItems(bookingId) {
+    try {
+        const rows = await customerSelectedRepairItem.findAll({
+            where: { bookingId },
+            order: [['id', 'ASC']],
+            include: [
+                {
+                    model: dbModels.customerSelectedRepairItemOption,
+                    as: 'options',
+                    required: false,
+                },
+                {
+                    model: dbModels.customerSelectedRepairItemImage,
+                    as: 'images',
+                    required: false,
+                },
+            ],
+        });
+        return normalizeRepairItems(rows);
+    } catch (err) {
+        console.warn('[getBookingRepairItems] skipped:', err?.message || err);
+        return [];
+    }
 }
 
 module.exports = {
     ensureCustomerDeclaredSnapshot,
     getCustomerDeclaredServices,
+    getBookingRepairItems,
+    attachRepairItemsToDeclaredServices,
 };

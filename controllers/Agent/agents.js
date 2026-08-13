@@ -184,6 +184,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const {
     getCustomerDeclaredServices,
+    getBookingRepairItems,
 } = require("../../services/Agent/customerDeclaredServicesService");
 const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
 const { sendNotification } = require("../../utils/notification");
@@ -4221,6 +4222,7 @@ exports.invoiceCreation = async (req, res) => {
     // Frozen customer booking intent — independent of agent invoice lines.
     bookingData.customerDeclaredServices =
         await getCustomerDeclaredServices(bookingId);
+    bookingData.repairItems = await getBookingRepairItems(bookingId);
 
     // Determine customer response status from OnHoldConfirmations
     let customerHasResponded = null;

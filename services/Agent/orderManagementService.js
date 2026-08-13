@@ -18,6 +18,10 @@ const {
     bookingHistory,
     bookingPreference
 } = require('../../models');
+const dbModels = require('../../models');
+const {
+    hydrateRepairItemsForBooking,
+} = require('../../utils/repairBookingInclude');
 const moment = require('moment');
 const { Op } = require('sequelize');
 const {
@@ -166,11 +170,18 @@ class AgentOrderManagementService {
                     'subCategoryId',
                     'categoryPrice',
                     'items',
+                    'bags',
+                    'serviceInstruction',
                     'status',
                 ],
                 include: [
                     {
                         model: service,
+                        required: false,
+                        attributes: ['id', 'name'],
+                    },
+                    {
+                        model: categories,
                         required: false,
                         attributes: ['id', 'name'],
                     },
@@ -254,6 +265,14 @@ class AgentOrderManagementService {
         if (enriched.customer) {
             enriched.customer = redactCustomerPhone(enriched.customer);
         }
+
+        enriched.customerSelectedServices = await hydrateRepairItemsForBooking(
+            dbModels,
+            orderPlain.id,
+            Array.isArray(orderPlain.customerSelectedServices)
+                ? orderPlain.customerSelectedServices
+                : []
+        );
 
         const paymentFlags = buildCollectPaymentFlags({
             paymentType: orderPlain.paymentType,
@@ -473,6 +492,22 @@ class AgentOrderManagementService {
             return plain;
         });
 
+        // Attach customer shop reviews (when given) for agent history / detail.
+        let reviewByBookingId = {};
+        try {
+            const shopReviewService = require('../Customer/shopReviewService');
+            reviewByBookingId = await shopReviewService.getReviewsByBookingIds(
+                mappedOrders.map((o) => o.id)
+            );
+        } catch (err) {
+            console.warn('[getOrderHistory] shopReview attach failed:', err.message);
+        }
+
+        const ordersWithReviews = mappedOrders.map((plain) => ({
+            ...plain,
+            shopReview: reviewByBookingId[plain.id] || null,
+        }));
+
         return {
             filter: status,
             staffScoped: Boolean(staffUserId),
@@ -493,7 +528,7 @@ class AgentOrderManagementService {
                 delivery_failed: deliveryFailedCount,
                 pickup_failed: pickupFailedCount,
             },
-            orders: mappedOrders,
+            orders: ordersWithReviews,
         };
     }
 

@@ -48,6 +48,8 @@ const {
 } = require("../../utils/agentCommission");
 const {
     ensureCustomerDeclaredSnapshot,
+    getCustomerDeclaredServices,
+    getBookingRepairItems,
 } = require("./customerDeclaredServicesService");
 const dbModels = require("../../models");
 const {
@@ -832,6 +834,9 @@ class AgentInvoiceManagementService {
             bookingId,
             bookingData.customerSelectedServices
         );
+        bookingData.customerDeclaredServices =
+            await getCustomerDeclaredServices(bookingId);
+        bookingData.repairItems = await getBookingRepairItems(bookingId);
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
         const billing = bookingData.billingDetail || {};
