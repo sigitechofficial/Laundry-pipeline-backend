@@ -22,6 +22,14 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'customerSelectedServiceId',
         as: 'selectedServicePreferences'
       });
+      customerSelectedService.hasMany(models.customerSelectedServiceRepairImage, {
+        foreignKey: 'customerSelectedServiceId',
+        as: 'repairImages'
+      });
+      customerSelectedService.hasMany(models.customerSelectedRepairItem, {
+        foreignKey: 'customerSelectedServiceId',
+        as: 'repairItems'
+      });
     }
   }
   customerSelectedService.init({

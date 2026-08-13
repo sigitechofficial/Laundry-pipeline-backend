@@ -15,6 +15,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'customerSelectedServiceLineId',
         as: 'addOns'
       });
+      customerSelectedServiceLine.hasMany(models.customerSelectedServiceRepairImage, {
+        foreignKey: 'customerSelectedServiceLineId',
+        as: 'repairImages'
+      });
     }
   }
 

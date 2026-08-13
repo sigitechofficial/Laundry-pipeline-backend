@@ -100,6 +100,7 @@ async function createBooking(req, res) {
         timeZone,
         clientTimeZone,
         paymentType,
+        repairItems,
     } = req.body;
 
     const userId = req.user.id;
@@ -137,6 +138,7 @@ async function createBooking(req, res) {
         timeZone,
         clientTimeZone,
         paymentType,
+        repairItems,
     }, userId);
 
     // Return response using ResponseHelper success method
@@ -421,6 +423,35 @@ async function getAllServiceWithPreferenceDetails(req, res) {
     const { serviceId } = req.params;
     const getData = await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId);
     return ResponseHelper.success(res, "All Preferences and Services Data Fetched", getData);
+}
+
+/*
+ * Repair / alteration catalog: garments + linked add-on options
+ */
+async function getRepairCatalog(req, res) {
+    const { serviceId } = req.params;
+    const result = await customerOrderService.getRepairCatalog(serviceId);
+    return ResponseHelper.success(res, result.message, result.data);
+}
+
+/*
+ * Upload repair garment photos (returns relative Public paths)
+ */
+async function uploadRepairImages(req, res) {
+    const files = req.files || [];
+    if (!Array.isArray(files) || files.length === 0) {
+        return ResponseHelper.error(res, 'At least one image is required', 'NO_FILES', 400);
+    }
+
+    const imageUrls = files.map((file) => {
+        const normalized = String(file.path || '').replace(/\\/g, '/');
+        const publicIdx = normalized.indexOf('Public/');
+        return publicIdx >= 0 ? normalized.slice(publicIdx) : normalized;
+    });
+
+    return ResponseHelper.success(res, 'Repair images uploaded successfully', {
+        imageUrls,
+    });
 }
 
 /*
@@ -1258,6 +1289,8 @@ module.exports = {
     testEmail,
     testEmailAPI,
     getAllServiceWithPreferenceDetails,
+    getRepairCatalog,
+    uploadRepairImages,
     getAllOrderStatus,
     cancelCustomerBooking,
     getCustomerCancellationHistory,

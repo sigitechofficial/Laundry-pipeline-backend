@@ -107,6 +107,7 @@ const blogService = require('../../services/Admin/blogService');
 const supportContactService = require('../../services/Admin/supportContactService');
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
+const repairCatalogService = require('../../services/Admin/repairCatalogService');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
@@ -2169,6 +2170,56 @@ async function deleteAddOnCategory(req, res) {
     return ResponseHelper.success(res, "Add-on category deleted successfully", null);
 }
 
+//!--------------------------------------------Repair Catalog (dedicated, not wash add-ons)-------------------------//
+async function getRepairGarments(req, res) {
+    const rows = await repairCatalogService.listGarments();
+    return ResponseHelper.success(res, "Repair garments retrieved successfully", rows);
+}
+
+async function createRepairGarment(req, res) {
+    const created = await repairCatalogService.createGarment(req.body);
+    return ResponseHelper.success(res, "Repair garment created successfully", created);
+}
+
+async function updateRepairGarment(req, res) {
+    const { repairGarmentId } = req.params;
+    const updated = await repairCatalogService.updateGarment(repairGarmentId, req.body);
+    return ResponseHelper.success(res, "Repair garment updated successfully", updated);
+}
+
+async function deleteRepairGarment(req, res) {
+    const { repairGarmentId } = req.params;
+    const result = await repairCatalogService.deleteGarment(repairGarmentId);
+    return ResponseHelper.success(res, result.message, null);
+}
+
+async function getRepairOptions(req, res) {
+    const rows = await repairCatalogService.listOptions();
+    return ResponseHelper.success(res, "Repair options retrieved successfully", rows);
+}
+
+async function createRepairOption(req, res) {
+    const created = await repairCatalogService.createOption(req.body);
+    return ResponseHelper.success(res, "Repair option created successfully", created);
+}
+
+async function updateRepairOption(req, res) {
+    const { repairOptionId } = req.params;
+    const updated = await repairCatalogService.updateOption(repairOptionId, req.body);
+    return ResponseHelper.success(res, "Repair option updated successfully", updated);
+}
+
+async function deleteRepairOption(req, res) {
+    const { repairOptionId } = req.params;
+    const result = await repairCatalogService.deleteOption(repairOptionId);
+    return ResponseHelper.success(res, result.message, null);
+}
+
+async function seedRepairCatalog(req, res) {
+    const result = await repairCatalogService.seedDefaultsIfEmpty();
+    return ResponseHelper.success(res, result.message, result);
+}
+
 
 //!-----------------------------Add Match Preferences-------------------------//
 /*
@@ -2881,6 +2932,16 @@ module.exports = {
     updateAddOnCategory,
     updateAddOnCategoriesSortOrder,
     deleteAddOnCategory,
+    //!------------Repair Catalog (dedicated)-----------//
+    getRepairGarments,
+    createRepairGarment,
+    updateRepairGarment,
+    deleteRepairGarment,
+    getRepairOptions,
+    createRepairOption,
+    updateRepairOption,
+    deleteRepairOption,
+    seedRepairCatalog,
     //!------------Account Preferences-----------//
     editPreferenceType,
     deletePreferenceTypeController,

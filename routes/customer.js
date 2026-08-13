@@ -16,12 +16,12 @@ const {
     postcodeValidateRateLimit,
 } = require('../middlewares/postcodeRateLimit')
 const { route } = require('./driver')
+const { createDestinationDirectory } = require('../utils/destination')
 
 //!Multer Middlewares
 const uploadProfilePic=multer.diskStorage({
     destination:(req,file,cb)=>{
-        cb(null,'./Public/Profile')
-
+        createDestinationDirectory('./Public/Profile', cb)
     },
     filename:(req,file,cb)=>{
         cb(null,'profile- '+ req?.user?.id + "- "+ Date.now() + path.extname(file.originalname))
@@ -30,6 +30,29 @@ const uploadProfilePic=multer.diskStorage({
 
 const uploadProfile=multer({
     storage:uploadProfilePic
+})
+
+const uploadRepairImageStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        createDestinationDirectory('./Public/repairImages', cb)
+    },
+    filename: (req, file, cb) => {
+        cb(
+            null,
+            `repair-${req?.user?.id || 'guest'}-${Date.now()}-${Math.round(Math.random() * 1e6)}${path.extname(file.originalname)}`
+        )
+    },
+})
+
+const uploadRepairImages = multer({
+    storage: uploadRepairImageStorage,
+    limits: { fileSize: 8 * 1024 * 1024, files: 5 },
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+            return cb(new Error('Only image uploads are allowed'))
+        }
+        cb(null, true)
+    },
 })
 
 
@@ -162,6 +185,15 @@ router.post('/testEmail', asyncMiddleware(customerOtherController.testEmail));
 router.post('/testEmailAPI', asyncMiddleware(customerOtherController.testEmailAPI));
 // Route to get all service with preference details (registered or guest)
 router.get('/getAllServiceWithPreferenceDetails/:serviceId', validateAccessTokenOrGuest, asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails));
+// Repair / alteration catalog for a service
+router.get('/repairCatalog/:serviceId', validateAccessTokenOrGuest, asyncMiddleware(customerOtherController.getRepairCatalog));
+// Upload repair garment photos
+router.post(
+    '/uploadRepairImages',
+    validateAccessToken,
+    uploadRepairImages.array('images', 5),
+    asyncMiddleware(customerOtherController.uploadRepairImages)
+);
 //Get All Order Status
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
 //Cancel Customer Booking with Policy Enforcement

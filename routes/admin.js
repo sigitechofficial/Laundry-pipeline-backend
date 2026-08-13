@@ -326,6 +326,17 @@ router.patch('/updateAddOnService/:addOnServiceId', asyncMiddleware(adminControl
 router.patch('/updateAddOnServicesSortOrder', asyncMiddleware(adminController.updateAddOnServicesSortOrder))
 router.delete('/deleteAddOnService/:addOnServiceId', asyncMiddleware(adminController.deleteAddOnService))
 
+//!-------------------------Repair Catalog (dedicated garments + options; NOT wash add-ons)-----------------//
+router.get('/getRepairGarments', asyncMiddleware(adminController.getRepairGarments))
+router.post('/createRepairGarment', asyncMiddleware(adminController.createRepairGarment))
+router.patch('/updateRepairGarment/:repairGarmentId', asyncMiddleware(adminController.updateRepairGarment))
+router.delete('/deleteRepairGarment/:repairGarmentId', asyncMiddleware(adminController.deleteRepairGarment))
+router.get('/getRepairOptions', asyncMiddleware(adminController.getRepairOptions))
+router.post('/createRepairOption', asyncMiddleware(adminController.createRepairOption))
+router.patch('/updateRepairOption/:repairOptionId', asyncMiddleware(adminController.updateRepairOption))
+router.delete('/deleteRepairOption/:repairOptionId', asyncMiddleware(adminController.deleteRepairOption))
+router.post('/seedRepairCatalog', asyncMiddleware(adminController.seedRepairCatalog))
+
 //!-------------------------Account Preferences------------------------------------------------------------------//
 //Add Preference Types
 router.post('/createPreferenceType', asyncMiddleware(adminController.createPreferenceType))

@@ -36,10 +36,22 @@ const {
     addOnServices,
     customerOriginalServiceSnapshot,
     customerOriginalPreferenceSnapshot,
+    customerSelectedServiceLine,
+    customerSelectedServiceRepairImage,
+    customerSelectedRepairItem,
+    customerSelectedRepairItemOption,
+    customerSelectedRepairItemImage,
+    repairGarment,
+    repairOption,
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const serviceManagementService = require('../Admin/serviceManagementService');
+const addOnServicesService = require('../Admin/addOnServicesService');
+const repairCatalogService = require('../Admin/repairCatalogService');
+const {
+    replaceServiceLinesForSelectedService,
+} = require('../../utils/invoiceLineTotals');
 const otpGenerator = require('otp-generator');
 const { sendEvent } = require('../../socket_io');
 const {
@@ -70,7 +82,8 @@ const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking'
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
+const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 
@@ -1152,6 +1165,123 @@ class CustomerOrderService {
         throw new ValidationError(`${fieldName} must be a valid date`);
     }
 
+    /**
+     * Dedicated repair/alteration catalog (garments + repair options).
+     * Not wash categories / subcategories / add-ons.
+     */
+    async getRepairCatalog(serviceId) {
+        return repairCatalogService.getCatalogForCustomer(serviceId);
+    }
+
+    /**
+     * Persist customer repair selections on dedicated repair booking tables.
+     * Keeps the single CSS placeholder row for the repairing service.
+     */
+    async _persistRepairItemsForBooking({
+        bookingId,
+        serviceCreate,
+        repairItems,
+        selectedServiceIds,
+    }) {
+        for (const raw of repairItems) {
+            const serviceId = Number(raw.serviceId);
+            const repairGarmentId = Number(raw.repairGarmentId);
+            const repairOptionIds = Array.isArray(raw.repairOptionIds)
+                ? [...new Set(raw.repairOptionIds.map((id) => Number(id)).filter(Boolean))]
+                : [];
+            const imageUrls = Array.isArray(raw.imageUrls)
+                ? raw.imageUrls
+                      .map((u) => String(u || '').trim())
+                      .filter(Boolean)
+                      .slice(0, 5)
+                : [];
+            const instruction =
+                raw.instruction != null ? String(raw.instruction).trim() : '';
+            const quantity = Math.max(1, Number(raw.quantity) || 1);
+
+            if (!serviceId || !selectedServiceIds.includes(serviceId)) {
+                throw new ValidationError(
+                    `repairItems serviceId ${raw.serviceId} is not part of selected services`
+                );
+            }
+            if (!repairGarmentId) {
+                throw new ValidationError('Each repair item requires repairGarmentId');
+            }
+            if (repairOptionIds.length === 0) {
+                throw new ValidationError(
+                    'Each repair item requires at least one repairOptionId'
+                );
+            }
+
+            const garment = await repairGarment.findOne({
+                where: { id: repairGarmentId, status: true },
+                include: [
+                    {
+                        model: repairOption,
+                        as: 'options',
+                        attributes: ['id', 'name', 'price', 'status'],
+                        through: { attributes: [] },
+                    },
+                ],
+            });
+            if (!garment) {
+                throw new ValidationError(
+                    `Repair garment ${repairGarmentId} was not found`
+                );
+            }
+
+            const allowed = new Map(
+                (garment.options || [])
+                    .filter((o) => o.status !== false)
+                    .map((o) => [Number(o.id), o])
+            );
+            for (const optionId of repairOptionIds) {
+                if (!allowed.has(optionId)) {
+                    throw new ValidationError(
+                        `Repair option ${optionId} is not available for garment ${garment.name}`
+                    );
+                }
+            }
+
+            const cssRow =
+                serviceCreate.find((s) => Number(s.serviceId) === serviceId) || null;
+
+            const itemRow = await customerSelectedRepairItem.create({
+                bookingId,
+                customerSelectedServiceId: cssRow?.id || null,
+                serviceId,
+                repairGarmentId,
+                garmentName: garment.name,
+                quantity,
+                instruction: instruction || null,
+            });
+
+            await customerSelectedRepairItemOption.bulkCreate(
+                repairOptionIds.map((optionId) => {
+                    const opt = allowed.get(optionId);
+                    return {
+                        customerSelectedRepairItemId: itemRow.id,
+                        repairOptionId: optionId,
+                        optionName: opt.name,
+                        price: Number(opt.price) || 0,
+                    };
+                })
+            );
+
+            if (imageUrls.length > 0) {
+                await customerSelectedRepairItemImage.bulkCreate(
+                    imageUrls.map((imageUrl, index) => ({
+                        customerSelectedRepairItemId: itemRow.id,
+                        imageUrl,
+                        sortOrder: index + 1,
+                    }))
+                );
+            }
+        }
+
+        return serviceCreate;
+    }
+
     _getTimePart(timeValue, fieldName) {
         if (typeof timeValue !== 'string') {
             throw new ValidationError(`${fieldName} must be a valid time`);
@@ -1278,6 +1408,7 @@ class CustomerOrderService {
             clientTimeZone,
             couponCode,
             paymentType: rawPaymentType,
+            repairItems,
         } = data;
 
         const paymentType = normalizePaymentType(rawPaymentType);
@@ -1568,6 +1699,18 @@ class CustomerOrderService {
             console.log("🚀 ~ createBooking ~ serviceData:", serviceData);
             serviceCreate = await customerSelectedService.bulkCreate(serviceData);
             console.log("🚀 ~ createBooking ~ serviceCreate:", serviceCreate);
+
+            // Expand repairing service into per-garment rows + add-ons + images.
+            if (Array.isArray(repairItems) && repairItems.length > 0) {
+                serviceCreate = await this._persistRepairItemsForBooking({
+                    bookingId: bookingData.id,
+                    serviceCreate,
+                    repairItems,
+                    currentDate,
+                    currentTime,
+                    selectedServiceIds: (services || []).map((s) => Number(s.serviceId)),
+                });
+            }
 
             // Create booking preferences and attach them under each selected service
             // whenever serviceId is provided in preferencesArray.
@@ -2527,6 +2670,35 @@ class CustomerOrderService {
             }
         );
 
+        const failureCode = bookingPlain.lastPaymentFailureCode || null;
+        const failureMessage = bookingPlain.lastPaymentFailureMessage || null;
+        const paymentFailed =
+            Boolean(failureCode) ||
+            bookingPlain.autoChargeStatus === "failed" ||
+            String(billing.paymentStatus || "").toLowerCase() === "failed";
+        const paymentIssue = paymentFailed
+            ? {
+                  paymentFailed: true,
+                  paymentFailureCode: failureCode,
+                  paymentFailureReason: formatPaymentFailureReason(
+                      failureCode,
+                      failureMessage
+                  ),
+                  paymentFailureRawMessage: failureMessage,
+                  paymentFailureAt: bookingPlain.lastPaymentFailureAt || null,
+                  canUpdatePaymentMethod:
+                      bookingPlain.paymentType === "card" &&
+                      ![17, 19, 20].includes(Number(bookingPlain.bookingStatusId)),
+              }
+            : {
+                  paymentFailed: false,
+                  paymentFailureCode: null,
+                  paymentFailureReason: null,
+                  paymentFailureRawMessage: null,
+                  paymentFailureAt: null,
+                  canUpdatePaymentMethod: false,
+              };
+
         const hasInvoiceTotals =
             bookingPlain.invoiceStatus === "finalized" ||
             bookingPlain.invoiceStatus === "draft" ||
@@ -2544,6 +2716,7 @@ class CustomerOrderService {
             ...bookingPlain,
             servicesSubtotal,
             paymentSummary,
+            paymentIssue,
             cardDetails,
             cancellationPolicy,
             noShowPolicy,
@@ -2904,10 +3077,22 @@ class CustomerOrderService {
         const setupIntent = await createSetupIntent(customerId);
         console.log("🚀 ~ createIntentUsingStripe ~ setup intent created:", setupIntent.id);
 
+        let ephemeralKeySecret = null;
+        try {
+            const ephemeralKey = await createEphemeralKey(customerId);
+            ephemeralKeySecret = ephemeralKey.secret;
+        } catch (ekErr) {
+            console.warn(
+                "[createIntentUsingStripe] ephemeral key failed (saved cards may be hidden):",
+                ekErr.message
+            );
+        }
+
         let intentData = {
             setupIntentId: setupIntent.id,
             clientSecret: setupIntent.client_secret,
             customerId: customerId,
+            ephemeralKeySecret,
             status: setupIntent.status
         };
 

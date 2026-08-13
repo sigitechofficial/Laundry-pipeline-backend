@@ -37,6 +37,11 @@ module.exports = (sequelize, DataTypes) => {
       booking.hasMany(models.customerSelectedService)
       models.customerSelectedService.belongsTo(booking)
 
+      booking.hasMany(models.customerSelectedRepairItem, {
+        foreignKey: 'bookingId',
+        as: 'repairItems',
+      })
+
       //Relation with onHoldConformation model
       booking.hasMany(models.OnHoldConfirmation)
       models.OnHoldConfirmation.belongsTo(booking)
