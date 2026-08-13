@@ -48,7 +48,23 @@ const uploadRepairImages = multer({
     storage: uploadRepairImageStorage,
     limits: { fileSize: 8 * 1024 * 1024, files: 5 },
     fileFilter: (req, file, cb) => {
-        if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+        const mime = String(file.mimetype || '').toLowerCase()
+        const ext = path.extname(file.originalname || '').toLowerCase()
+        const imageExts = new Set([
+            '.jpg',
+            '.jpeg',
+            '.png',
+            '.webp',
+            '.gif',
+            '.heic',
+            '.heif',
+        ])
+        const isImageMime = mime.startsWith('image/')
+        // GetConnect defaults MultipartFile contentType to application/octet-stream
+        const isLikelyImageBinary =
+            (mime === 'application/octet-stream' || !mime) &&
+            (imageExts.has(ext) || !ext)
+        if (!isImageMime && !isLikelyImageBinary) {
             return cb(new Error('Only image uploads are allowed'))
         }
         cb(null, true)
