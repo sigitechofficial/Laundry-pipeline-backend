@@ -13,7 +13,6 @@ const path = require('path');
 const { Sequelize } = require('sequelize');
 
 const MIGRATIONS = [
-  '20260813120000-booking-leg-completions.js',
   '20260813160000-create-customer-selected-service-repair-images.js',
   '20260813170000-create-repair-catalog-and-booking-items.js',
 ];
@@ -90,15 +89,15 @@ async function main() {
         console.log(`[ensure-repair] SKIP missing migration file: ${name}`);
         continue;
       }
-      const migration = require(file);
-      console.log(`[ensure-repair] applying ${name} (idempotent up)...`);
-      await migration.up(qi, Sequelize);
-      if (!(await metaHas(sequelize, name))) {
-        await metaInsert(sequelize, name);
-        console.log(`[ensure-repair] SequelizeMeta + ${name}`);
-      } else {
-        console.log(`[ensure-repair] SequelizeMeta already has ${name}`);
+      if (await metaHas(sequelize, name)) {
+        console.log(`[ensure-repair] already applied: ${name}`);
+        continue;
       }
+      const migration = require(file);
+      console.log(`[ensure-repair] applying ${name}...`);
+      await migration.up(qi, Sequelize);
+      await metaInsert(sequelize, name);
+      console.log(`[ensure-repair] SequelizeMeta + ${name}`);
     }
     console.log('[ensure-repair] done');
   } finally {
