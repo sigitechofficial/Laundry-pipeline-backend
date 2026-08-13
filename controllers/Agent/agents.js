@@ -1693,14 +1693,26 @@ exports.getBookingCounts = async (req, res) => {
 };
 
 exports.getAgentOrderHistory = async (req, res) => {
-    const agentId = req.user.id;
-    const { status, page, limit } = req.query;
+    const agentId = shopAgentIdFromReq(req);
+    const actorId = actorUserIdFromReq(req);
+    const { status, page, limit, startDate, endDate, mine } = req.query;
 
-    const result = await agentOrderManagementService.getOrderHistory(agentId, {
+    const options = {
         status,
         page,
         limit,
-    });
+        startDate,
+        endDate,
+    };
+
+    // Drivers / employees without shop-board view: only their legs.
+    if (req.isShopEmployee && !actorCanViewShopBoard(req)) {
+        options.staffUserId = actorId;
+    } else if (mine === '1' || mine === 'true') {
+        options.staffUserId = actorId;
+    }
+
+    const result = await agentOrderManagementService.getOrderHistory(agentId, options);
 
     return ResponseHelper.success(
         res,
@@ -2269,6 +2281,7 @@ exports.AddPickupDeliveryProof = async (req, res) => {
 
 exports.agentInspectionStatus = async (req, res) => {
     const { bookingId } = req.params;
+    const actorId = actorUserIdFromReq(req);
 
     const bookingFind = await booking.findOne({
         where: {
@@ -2312,6 +2325,21 @@ exports.agentInspectionStatus = async (req, res) => {
 
     const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
     await noShowEnforcementService.completeOpenAttempt(bookingId, "pickup");
+
+    try {
+        const { recordLegCompletion } = require('../../utils/legCompletion');
+        await recordLegCompletion({
+            bookingId,
+            leg: 'pickup',
+            actorUserId: actorId,
+            fallbackAssigneeId: bookingFind.driverId,
+        });
+    } catch (err) {
+        console.warn(
+            '[agentInspectionStatus] legCompletion failed:',
+            err?.message || err
+        );
+    }
 
     const customerId = bookingFind.customerId;
     let title = "Driver Picked Up";
@@ -3246,6 +3274,7 @@ exports.driverReachedForDelivery = async (req, res) => {
  */
 exports.bookingDeliverToCustomer = async (req, res) => {
     const { bookingId } = req.params;
+    const actorId = actorUserIdFromReq(req);
 
     const bookingCheck = await booking.findOne({
         where: {
@@ -3289,6 +3318,21 @@ exports.bookingDeliverToCustomer = async (req, res) => {
 
     const noShowEnforcementService = require("../../services/Agent/noShowEnforcementService");
     await noShowEnforcementService.completeOpenAttempt(bookingId, "delivery");
+
+    try {
+        const { recordLegCompletion } = require('../../utils/legCompletion');
+        await recordLegCompletion({
+            bookingId,
+            leg: 'delivery',
+            actorUserId: actorId,
+            fallbackAssigneeId: bookingCheck.deliveryDriverId,
+        });
+    } catch (err) {
+        console.warn(
+            '[bookingDeliverToCustomer] legCompletion failed:',
+            err?.message || err
+        );
+    }
 
     const customerId = bookingCheck.customerId;
     let title = "Laundry Delivered to Customer";
@@ -6924,7 +6968,21 @@ exports.sendNotificationToMultiple = async (req, res) => {
  */
 exports.getStaffActivity = async (req, res) => {
     const agentId = shopAgentIdFromReq(req);
-    const result = await staffActivityService.getStaffActivity(agentId, req.query);
+    const actorId = actorUserIdFromReq(req);
+    const query = { ...(req.query || {}) };
+
+    // Drivers may only view their own activity unless they have shop staff-activity rights.
+    const canViewAll =
+        !req.isShopEmployee ||
+        req.capabilities?.canViewStaffActivity === true ||
+        req.canViewStaffActivity === true ||
+        actorCanViewShopBoard(req);
+
+    if (!canViewAll) {
+        query.employeeId = actorId;
+    }
+
+    const result = await staffActivityService.getStaffActivity(agentId, query);
     return ResponseHelper.success(res, 'Staff activity fetched', result);
 };
 

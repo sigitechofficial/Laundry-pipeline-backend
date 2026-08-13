@@ -8,7 +8,7 @@ class AssignmentAuditService {
      * @param {{
      *   bookingId: number,
      *   assignmentType: 'pickup'|'delivery',
-     *   action: 'assign'|'unassign'|'reassign'|'auto',
+     *   action: 'assign'|'unassign'|'reassign'|'auto'|'complete',
      *   fromUserId?: number|null,
      *   toUserId?: number|null,
      *   actedByUserId: number,
@@ -39,11 +39,12 @@ class AssignmentAuditService {
 
         const normalizedSource =
             source === 'auto' || source === 'self_return' ? source : 'manual';
+        const normalizedAction = String(action).toLowerCase();
 
         return bookingAssignmentEvent.create({
             bookingId: Number(bookingId),
             assignmentType: String(assignmentType).toLowerCase(),
-            action: String(action).toLowerCase(),
+            action: normalizedAction,
             fromUserId: fromUserId != null ? Number(fromUserId) : null,
             toUserId: toUserId != null ? Number(toUserId) : null,
             actedByUserId: Number(actedByUserId),

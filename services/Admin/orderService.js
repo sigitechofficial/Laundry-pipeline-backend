@@ -630,6 +630,18 @@ class OrderService {
                     attributes: ['id', 'firstName', 'lastName', 'email']
                 },
                 {
+                    model: users,
+                    as: 'pickupCompletedBy',
+                    required: false,
+                    attributes: ['id', 'firstName', 'lastName', 'email']
+                },
+                {
+                    model: users,
+                    as: 'deliveryCompletedBy',
+                    required: false,
+                    attributes: ['id', 'firstName', 'lastName', 'email']
+                },
+                {
                     model: proofOfDeliveries,
                     attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'note', 'deliveryType', 'bookingId', 'userId']
                 },
@@ -722,6 +734,18 @@ class OrderService {
             enriched.deliveryDriverId == null ||
             (shopOwnerUserId != null &&
                 Number(enriched.deliveryDriverId) === shopOwnerUserId);
+
+        const staffName = (u) => {
+            if (!u) return null;
+            const n = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
+            return n || null;
+        };
+        enriched.pickupCompletedByName = staffName(enriched.pickupCompletedBy);
+        enriched.deliveryCompletedByName = staffName(enriched.deliveryCompletedBy);
+        enriched.pickupStaffName =
+            enriched.pickupCompletedByName || staffName(enriched.driver);
+        enriched.deliveryStaffName =
+            enriched.deliveryCompletedByName || staffName(enriched.deliveryDriver);
 
         return enriched;
     }

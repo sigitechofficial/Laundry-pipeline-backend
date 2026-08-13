@@ -8,7 +8,7 @@ const {
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 
 /**
- * Aggregate staff activity for a shop (assignment events + completed jobs).
+ * Aggregate staff activity for a shop (assignment events + completed legs).
  */
 class StaffActivityService {
     async _shopAddressId(shopAgentId) {
@@ -66,6 +66,7 @@ class StaffActivityService {
             eventWhere[Op.or] = [
                 { toUserId: employeeId },
                 { fromUserId: employeeId },
+                { actedByUserId: employeeId },
             ];
         }
         if (typeFilter === 'pickup' || typeFilter === 'delivery') {
@@ -92,16 +93,31 @@ class StaffActivityService {
             ],
         });
 
-        // Completed bookings (status 16) in range where driver fields set
+        // Completed bookings: status 17 (and legacy 16) with completion snapshots
+        // or live assignee as fallback for older rows.
         const completedWhere = {
             laundryShopId: shopAddressId,
-            bookingStatusId: 16,
-            updatedAt: { [Op.between]: [from, to] },
+            bookingStatusId: { [Op.in]: [16, 17] },
+            [Op.or]: [
+                { pickupCompletedAt: { [Op.between]: [from, to] } },
+                { deliveryCompletedAt: { [Op.between]: [from, to] } },
+                {
+                    pickupCompletedAt: null,
+                    deliveryCompletedAt: null,
+                    updatedAt: { [Op.between]: [from, to] },
+                },
+            ],
         };
         if (employeeId) {
-            completedWhere[Op.or] = [
-                { driverId: employeeId },
-                { deliveryDriverId: employeeId },
+            completedWhere[Op.and] = [
+                {
+                    [Op.or]: [
+                        { pickupCompletedByUserId: employeeId },
+                        { deliveryCompletedByUserId: employeeId },
+                        { driverId: employeeId },
+                        { deliveryDriverId: employeeId },
+                    ],
+                },
             ];
         }
 
@@ -112,6 +128,10 @@ class StaffActivityService {
                 'orderTrackId',
                 'driverId',
                 'deliveryDriverId',
+                'pickupCompletedByUserId',
+                'pickupCompletedAt',
+                'deliveryCompletedByUserId',
+                'deliveryCompletedAt',
                 'bookingStatusId',
                 'updatedAt',
             ],
@@ -133,6 +153,8 @@ class StaffActivityService {
                             .trim() || `User ${key}`,
                     pickups: 0,
                     deliveries: 0,
+                    completedPickups: 0,
+                    completedDeliveries: 0,
                     jobs: [],
                 });
             }
@@ -141,9 +163,14 @@ class StaffActivityService {
 
         for (const ev of events) {
             const plain = ev.get({ plain: true });
+            const isComplete = plain.action === 'complete';
             const isUnassign =
                 plain.action === 'unassign' || plain.source === 'self_return';
-            const subjectId = isUnassign ? plain.fromUserId : plain.toUserId;
+            const subjectId = isComplete
+                ? plain.toUserId || plain.actedByUserId
+                : isUnassign
+                  ? plain.fromUserId
+                  : plain.toUserId;
             if (!subjectId) continue;
             if (Number(subjectId) === Number(shopAgentId)) continue;
             if (employeeId && Number(subjectId) !== Number(employeeId)) continue;
@@ -153,12 +180,23 @@ class StaffActivityService {
                 : plain.toUser || {};
             const entry = ensureDriver(subjectId, nameBits);
             if (!entry) continue;
-            if (!isUnassign) {
+
+            if (isComplete) {
+                if (plain.assignmentType === 'pickup') {
+                    entry.completedPickups += 1;
+                    entry.pickups += 1;
+                }
+                if (plain.assignmentType === 'delivery') {
+                    entry.completedDeliveries += 1;
+                    entry.deliveries += 1;
+                }
+            } else if (!isUnassign) {
                 if (plain.assignmentType === 'pickup') entry.pickups += 1;
                 if (plain.assignmentType === 'delivery') entry.deliveries += 1;
             }
+
             entry.jobs.push({
-                source: 'assignmentEvent',
+                source: isComplete ? 'completedLeg' : 'assignmentEvent',
                 bookingId: plain.bookingId,
                 assignmentType: plain.assignmentType,
                 action: plain.action,
@@ -169,52 +207,70 @@ class StaffActivityService {
 
         for (const row of completed) {
             const plain = row.get({ plain: true });
-            const pickupId = plain.driverId != null ? Number(plain.driverId) : null;
-            const deliveryId =
-                plain.deliveryDriverId != null
-                    ? Number(plain.deliveryDriverId)
-                    : null;
+            const pickupDoneBy =
+                plain.pickupCompletedByUserId != null
+                    ? Number(plain.pickupCompletedByUserId)
+                    : plain.driverId != null
+                      ? Number(plain.driverId)
+                      : null;
+            const deliveryDoneBy =
+                plain.deliveryCompletedByUserId != null
+                    ? Number(plain.deliveryCompletedByUserId)
+                    : plain.deliveryDriverId != null
+                      ? Number(plain.deliveryDriverId)
+                      : null;
+
+            const alreadyHasComplete = (driverEntry, type) =>
+                driverEntry.jobs.some(
+                    (j) =>
+                        j.source === 'completedLeg' &&
+                        Number(j.bookingId) === Number(plain.id) &&
+                        j.assignmentType === type
+                );
 
             if (
-                pickupId &&
-                pickupId !== Number(shopAgentId) &&
-                (!employeeId || pickupId === employeeId) &&
+                pickupDoneBy &&
+                pickupDoneBy !== Number(shopAgentId) &&
+                (!employeeId || pickupDoneBy === employeeId) &&
                 (!typeFilter || typeFilter === 'pickup')
             ) {
-                const entry = ensureDriver(pickupId);
-                if (entry) {
+                const entry = ensureDriver(pickupDoneBy);
+                if (entry && !alreadyHasComplete(entry, 'pickup')) {
+                    entry.completedPickups += 1;
                     entry.pickups += 1;
                     entry.jobs.push({
                         source: 'completedBooking',
                         bookingId: plain.id,
                         orderTrackId: plain.orderTrackId,
                         assignmentType: 'pickup',
-                        at: plain.updatedAt,
+                        action: 'complete',
+                        at: plain.pickupCompletedAt || plain.updatedAt,
                     });
                 }
             }
 
             if (
-                deliveryId &&
-                deliveryId !== Number(shopAgentId) &&
-                (!employeeId || deliveryId === employeeId) &&
+                deliveryDoneBy &&
+                deliveryDoneBy !== Number(shopAgentId) &&
+                (!employeeId || deliveryDoneBy === employeeId) &&
                 (!typeFilter || typeFilter === 'delivery')
             ) {
-                const entry = ensureDriver(deliveryId);
-                if (entry) {
+                const entry = ensureDriver(deliveryDoneBy);
+                if (entry && !alreadyHasComplete(entry, 'delivery')) {
+                    entry.completedDeliveries += 1;
                     entry.deliveries += 1;
                     entry.jobs.push({
                         source: 'completedBooking',
                         bookingId: plain.id,
                         orderTrackId: plain.orderTrackId,
                         assignmentType: 'delivery',
-                        at: plain.updatedAt,
+                        action: 'complete',
+                        at: plain.deliveryCompletedAt || plain.updatedAt,
                     });
                 }
             }
         }
 
-        // Fill missing names
         const missingIds = [...driverMap.values()]
             .filter((d) => d.name.startsWith('User '))
             .map((d) => d.id);
@@ -232,6 +288,12 @@ class StaffActivityService {
                         entry.name;
                 }
             }
+        }
+
+        for (const entry of driverMap.values()) {
+            entry.jobs.sort(
+                (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()
+            );
         }
 
         return {

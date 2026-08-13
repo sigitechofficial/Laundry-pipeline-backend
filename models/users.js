@@ -31,6 +31,24 @@ module.exports = (sequelize, DataTypes) => {
       users.hasMany(models.booking,{as:'deliveryDriver',foreignKey:'deliveryDriverId'})
       models.booking.belongsTo(users,{as:'deliveryDriver',foreignKey:'deliveryDriverId'})
 
+      // Who completed each leg (frozen snapshots)
+      users.hasMany(models.booking, {
+        as: 'pickupCompletions',
+        foreignKey: 'pickupCompletedByUserId',
+      });
+      models.booking.belongsTo(users, {
+        as: 'pickupCompletedBy',
+        foreignKey: 'pickupCompletedByUserId',
+      });
+      users.hasMany(models.booking, {
+        as: 'deliveryCompletions',
+        foreignKey: 'deliveryCompletedByUserId',
+      });
+      models.booking.belongsTo(users, {
+        as: 'deliveryCompletedBy',
+        foreignKey: 'deliveryCompletedByUserId',
+      });
+
       //Relation with tip table as Driver
       users.hasMany(models.tip,{as:'driverTip',foreignKey:'driverId'})
       models.tip.belongsTo(users,{as:'driverTip',foreignKey:'driverId'})

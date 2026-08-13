@@ -348,6 +348,22 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.STRING(500),
     allowNull: true,
   },
+  pickupCompletedByUserId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  pickupCompletedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  deliveryCompletedByUserId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  deliveryCompletedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   }, {
     sequelize,
     modelName: 'booking',

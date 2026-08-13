@@ -543,7 +543,7 @@ class AgentDriverManagementService {
 
         const where = {
             laundryShopId: shopAddress.id,
-            bookingStatusId: { [Op.notIn]: [16, 18, 19] }, // completed / cancelled / refunded
+            bookingStatusId: { [Op.notIn]: [16, 17, 18, 19] }, // delivered/completed / cancelled / refunded
         };
 
         if (employeeId) {

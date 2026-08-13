@@ -119,6 +119,30 @@ class AgentOrderManagementService {
                 attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'image'],
             },
             {
+                model: users,
+                as: 'driver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
+                model: users,
+                as: 'deliveryDriver',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
+                model: users,
+                as: 'pickupCompletedBy',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
+                model: users,
+                as: 'deliveryCompletedBy',
+                required: false,
+                attributes: ['id', 'firstName', 'lastName', 'image'],
+            },
+            {
                 model: billingDetails,
                 as: 'billingDetail',
                 required: false,
@@ -269,13 +293,24 @@ class AgentOrderManagementService {
     /**
      * Agent order history with tab filters and pagination
      * @param {number} agentId
-     * @param {{ status?: string, page?: number, limit?: number }} options
+     * @param {{
+     *   status?: string,
+     *   page?: number,
+     *   limit?: number,
+     *   startDate?: string,
+     *   endDate?: string,
+     *   staffUserId?: number,
+     * }} options
      */
     async getOrderHistory(agentId, options = {}) {
         const status = (options.status || 'all').toLowerCase();
         const page = Math.max(parseInt(options.page, 10) || 1, 1);
         const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
         const offset = (page - 1) * limit;
+        const staffUserId =
+            options.staffUserId != null && options.staffUserId !== ''
+                ? Number(options.staffUserId)
+                : null;
 
         if (!ORDER_HISTORY_STATUSES.includes(status)) {
             throw new ValidationError(
@@ -284,7 +319,10 @@ class AgentOrderManagementService {
         }
 
         const addressFound = await addressDb.findOne({
-            where: { userId: agentId },
+            where: {
+                userId: agentId,
+                addressType: 'LaundaryShopAddress',
+            },
         });
 
         if (!addressFound) {
@@ -292,8 +330,74 @@ class AgentOrderManagementService {
         }
 
         const shopBaseWhere = { laundryShopId: addressFound.id };
+
+        if (options.startDate || options.endDate) {
+            const range = {};
+            if (options.startDate) {
+                const start = new Date(options.startDate);
+                if (!Number.isNaN(start.getTime())) range[Op.gte] = start;
+            }
+            if (options.endDate) {
+                const end = new Date(options.endDate);
+                if (!Number.isNaN(end.getTime())) {
+                    end.setHours(23, 59, 59, 999);
+                    range[Op.lte] = end;
+                }
+            }
+            if (Object.keys(range).length) {
+                shopBaseWhere.createdAt = range;
+            }
+        }
+
+        if (staffUserId && !Number.isNaN(staffUserId)) {
+            shopBaseWhere[Op.or] = [
+                { driverId: staffUserId },
+                { deliveryDriverId: staffUserId },
+                { pickupCompletedByUserId: staffUserId },
+                { deliveryCompletedByUserId: staffUserId },
+            ];
+        }
+
         const statusWhere = this._buildOrderHistoryStatusWhere(status);
         const listWhere = { ...shopBaseWhere, ...statusWhere };
+
+        const historyAttributes = [
+            'id',
+            'orderTrackId',
+            'bookingStatusId',
+            'invoiceStatus',
+            'invoiceDraftSavedAt',
+            'orderAmount',
+            'subTotal',
+            'totalItems',
+            'totalBags',
+            'sameBagForAllServices',
+            'noOfBags',
+            'paymentType',
+            'paymentConfirmed',
+            'balancePaymentMethod',
+            'balanceCollectedVia',
+            'collectionDate',
+            'collectionTimeFrom',
+            'collectionTimeTo',
+            'deliveryDate',
+            'deliveryTimeFrom',
+            'deliveryTimeTo',
+            'driverInstructionOptions',
+            'driverInstructionOptions1',
+            'driverInstruction',
+            'pickupAttemptCount',
+            'pickupRescheduleRequired',
+            'deliveryAttemptCount',
+            'driverId',
+            'deliveryDriverId',
+            'pickupCompletedByUserId',
+            'pickupCompletedAt',
+            'deliveryCompletedByUserId',
+            'deliveryCompletedAt',
+            'createdAt',
+            'updatedAt',
+        ];
 
         const [total, orders, allCount, activeCount, completedCount, cancelledCount, onHoldCount, deliveryFailedCount, pickupFailedCount] =
             await Promise.all([
@@ -303,37 +407,7 @@ class AgentOrderManagementService {
                     order: [['id', 'DESC']],
                     limit,
                     offset,
-                    attributes: [
-                        'id',
-                        'orderTrackId',
-                        'bookingStatusId',
-                        'invoiceStatus',
-                        'invoiceDraftSavedAt',
-                        'orderAmount',
-                        'subTotal',
-                        'totalItems',
-                        'totalBags',
-                        'sameBagForAllServices',
-                        'noOfBags',
-                        'paymentType',
-                        'paymentConfirmed',
-                        'balancePaymentMethod',
-                        'balanceCollectedVia',
-                        'collectionDate',
-                        'collectionTimeFrom',
-                        'collectionTimeTo',
-                        'deliveryDate',
-                        'deliveryTimeFrom',
-                        'deliveryTimeTo',
-                        'driverInstructionOptions',
-                        'driverInstructionOptions1',
-                        'driverInstruction',
-                        'pickupAttemptCount',
-                        'pickupRescheduleRequired',
-                        'deliveryAttemptCount',
-                        'createdAt',
-                        'updatedAt',
-                    ],
+                    attributes: historyAttributes,
                     include: this._getOrderHistoryIncludes(),
                 }),
                 booking.count({
@@ -382,8 +456,26 @@ class AgentOrderManagementService {
 
         const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
 
+        const mappedOrders = orders.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            const staffName = (u) => {
+                if (!u) return null;
+                const n = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
+                return n || null;
+            };
+            plain.pickupStaffName =
+                staffName(plain.pickupCompletedBy) || staffName(plain.driver);
+            plain.deliveryStaffName =
+                staffName(plain.deliveryCompletedBy) ||
+                staffName(plain.deliveryDriver);
+            plain.pickupCompletedByName = staffName(plain.pickupCompletedBy);
+            plain.deliveryCompletedByName = staffName(plain.deliveryCompletedBy);
+            return plain;
+        });
+
         return {
             filter: status,
+            staffScoped: Boolean(staffUserId),
             pagination: {
                 page,
                 limit,
@@ -397,13 +489,11 @@ class AgentOrderManagementService {
                 active: activeCount,
                 completed: completedCount,
                 cancelled: cancelledCount,
-                onHold: onHoldCount,
-                deliveryFailed: deliveryFailedCount,
-                pickupFailed: pickupFailedCount,
+                on_hold: onHoldCount,
+                delivery_failed: deliveryFailedCount,
+                pickup_failed: pickupFailedCount,
             },
-            orders: await Promise.all(
-                orders.map((row) => this._enrichOrderHistoryItem(row.toJSON()))
-            ),
+            orders: mappedOrders,
         };
     }
 
