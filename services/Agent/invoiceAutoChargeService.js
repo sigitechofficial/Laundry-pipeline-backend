@@ -710,6 +710,19 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
     }
 
     if (isBookingPaid(bookingRow, amountDue)) {
+        // Clear a stale admin hold once balance is settled (e.g. charge succeeded
+        // after an earlier OFD retry had set waiting_admin).
+        if (bookingRow.paymentDeliveryGate === "waiting_admin") {
+            await booking.update(
+                {
+                    paymentDeliveryGate: "open",
+                    lastPaymentFailureCode: null,
+                    lastPaymentFailureMessage: null,
+                    lastPaymentFailureAt: null,
+                },
+                { where: { id: bookingId } }
+            );
+        }
         return { allowed: true, flags: buildPaymentGateFlags(bookingRow, 0), paymentSummary };
     }
 
