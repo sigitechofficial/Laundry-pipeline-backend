@@ -1,7 +1,7 @@
 /**
- * Idempotent invoice auto-charge / OFD payment-gate columns on bookings.
- * Prod previously skipped this migrate, so createBooking INSERTs fail with
- * Unknown column 'autoChargeStatus'.
+ * Idempotent payment schema ensure for deploy (prod migrate often skipped).
+ * - users.defaultPaymentMethodId (OFD / laundryDeliverToCustomer)
+ * - bookings.autoChargeStatus + paymentDeliveryGate (createBooking)
  *
  *   node scripts/ensure-invoice-auto-charge-schema.js
  */
