@@ -1,6 +1,6 @@
 "use strict";
 
-const { addColumnIfMissing, removeColumnIfExists } = require('../utils/migrationHelpers');
+const { addColumnIfMissing, removeColumnIfExists, tableExists } = require('../utils/migrationHelpers');
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
@@ -78,6 +78,7 @@ module.exports = {
             allowNull: true,
         });
 
+        if (!(await tableExists(queryInterface, "invoice_payment_attempts"))) {
         await queryInterface.createTable("invoice_payment_attempts", {
             id: {
                 allowNull: false,
@@ -166,14 +167,24 @@ module.exports = {
                 type: Sequelize.DATE,
             },
         });
+        }
 
-        await queryInterface.addIndex("invoice_payment_attempts", ["bookingId"], {
+        const addIndexSafe = async (table, fields, options) => {
+            try {
+                await queryInterface.addIndex(table, fields, options);
+            } catch (err) {
+                const msg = String(err.message || err);
+                if (!/Duplicate|exists|ER_DUP_KEYNAME/i.test(msg)) throw err;
+            }
+        };
+
+        await addIndexSafe("invoice_payment_attempts", ["bookingId"], {
             name: "invoice_payment_attempts_booking_id_idx",
         });
-        await queryInterface.addIndex("bookings", ["autoChargeStatus", "autoChargeDueAt"], {
+        await addIndexSafe("bookings", ["autoChargeStatus", "autoChargeDueAt"], {
             name: "bookings_auto_charge_due_idx",
         });
-        await queryInterface.addIndex("bookings", ["paymentDeliveryGate"], {
+        await addIndexSafe("bookings", ["paymentDeliveryGate"], {
             name: "bookings_payment_delivery_gate_idx",
         });
     },

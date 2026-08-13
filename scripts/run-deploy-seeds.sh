@@ -32,6 +32,12 @@ if [ -f scripts/ensure-repair-catalog-schema.js ]; then
   SEQUELIZE_ENV="$MIGRATE_ENV" node scripts/ensure-repair-catalog-schema.js || echo "WARN: ensure-repair-catalog-schema failed (non-fatal)"
 fi
 
+# Booking auto-charge / OFD gate columns (createBooking INSERT needs these).
+if [ -f scripts/ensure-invoice-auto-charge-schema.js ]; then
+  echo ">>> ensure scripts/ensure-invoice-auto-charge-schema.js"
+  SEQUELIZE_ENV="$MIGRATE_ENV" node scripts/ensure-invoice-auto-charge-schema.js || echo "WARN: ensure-invoice-auto-charge-schema failed (non-fatal)"
+fi
+
 run_one() {
   local file="$1"
   if [ ! -f "seeders/$file" ]; then

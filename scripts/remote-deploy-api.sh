@@ -276,6 +276,15 @@ if [ -f "$LIVE_PATH/scripts/ensure-repair-catalog-schema.js" ]; then
   set -e
 fi
 
+if [ -f "$LIVE_PATH/scripts/ensure-invoice-auto-charge-schema.js" ]; then
+  echo "Ensuring invoice auto-charge columns on live DB..."
+  set +e
+  LIVE_PATH="$LIVE_PATH" PM2_APP_NAME="$PM2_APP_NAME" APP_URL="$APP_URL" \
+    SEQUELIZE_ENV="$MIGRATE_ENV" \
+    node "$LIVE_PATH/scripts/ensure-invoice-auto-charge-schema.js" 2>&1 | tee -a "$DEPLOY_ROOT/logs/last-migrate-deploy.log"
+  set -e
+fi
+
 MIGRATE_TAIL="$(tail -n 40 "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tr '\n' ' ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-900 || true)"
 MIGRATE_SUMMARY="$(grep -E 'No migrations were executed|migrated|== [0-9].*: migrated|ERROR|Error' "$DEPLOY_ROOT/logs/last-migrate-deploy.log" 2>/dev/null | tail -n 8 | tr '\n' ' | ' | tr -d '\r' | sed 's/"/\\"/g' | cut -c1-500 || true)"
 
