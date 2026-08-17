@@ -23,6 +23,18 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDriverWithinCustomerRadius, getDriverGeofenceStatus } = require('../../utils/driverGeofence');
 
+/** Model default on no_show_policy_configs.graceMinutesOnSite. NULL/missing → this, not 0. */
+const DEFAULT_GRACE_MINUTES_ON_SITE = 15;
+
+function resolveGraceMinutesOnSite(config) {
+    const raw = config?.graceMinutesOnSite;
+    if (raw === null || raw === undefined || raw === '') {
+        return DEFAULT_GRACE_MINUTES_ON_SITE;
+    }
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_GRACE_MINUTES_ON_SITE;
+}
+
 function notifyAdminAttemptEvent({ alertType, bookingData, title, body, extra = {} }) {
     try {
         const { sendAdminAlert } = require('../Admin/adminAlertService');
@@ -512,7 +524,8 @@ class NoShowEnforcementService {
 
         const policyRecord = await this.resolveNoShowPolicy(bookingData);
         const config = policyRecord?.noShowConfig;
-        const grace = this._graceState(openAttempt.arrivedAt, config?.graceMinutesOnSite || 0);
+        const graceMinutes = resolveGraceMinutesOnSite(config);
+        const grace = this._graceState(openAttempt.arrivedAt, graceMinutes);
         const feePreview = await this.calculateNoShowFee({
             bookingData,
             attemptType: normalizedType,
@@ -568,6 +581,26 @@ class NoShowEnforcementService {
             );
         }
 
+        let failCompliance = {
+            setId: null,
+            version: null,
+            requireAck: false,
+            items: [],
+        };
+        try {
+            const attemptFailInstructionService = require('./attemptFailInstructionService');
+            failCompliance = await attemptFailInstructionService.getFailComplianceForAgent({
+                scope: normalizedType,
+                bookingId,
+                zoneId: bookingData.zoneId,
+            });
+        } catch (failInstrErr) {
+            console.warn(
+                `[noShowEnforcement] failCompliance for booking ${bookingId}:`,
+                failInstrErr.message
+            );
+        }
+
         return {
             bookingId,
             attemptType: normalizedType,
@@ -602,6 +635,7 @@ class NoShowEnforcementService {
             contacted,
             // Soft signal for app — not a hard block (yet)
             contactRecommendedBeforeFail: true,
+            failCompliance,
         };
     }
 
@@ -623,6 +657,8 @@ class NoShowEnforcementService {
         driverLng,
         geofenceBypassToken,
         wallClock,
+        compliance,
+        actorUserId,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
 
@@ -634,7 +670,17 @@ class NoShowEnforcementService {
             geofenceBypassToken,
         });
 
-        const bookingData = await this._loadBooking(bookingId);
+        const attemptFailInstructionService = require('./attemptFailInstructionService');
+        const bookingDataForCompliance = await this._loadBooking(bookingId);
+        const complianceAck =
+            await attemptFailInstructionService.validateFailComplianceAck({
+                scope: normalizedType,
+                compliance,
+                bookingId,
+                zoneId: bookingDataForCompliance.zoneId,
+            });
+
+        const bookingData = bookingDataForCompliance;
         const expectedStatus = this._expectedArrivedStatus(normalizedType);
 
         if (bookingData.bookingStatusId !== expectedStatus) {
@@ -669,11 +715,12 @@ class NoShowEnforcementService {
 
         const policyRecord = await this.resolveNoShowPolicy(bookingData);
         const config = policyRecord?.noShowConfig;
-        const grace = this._graceState(openAttempt.arrivedAt, config?.graceMinutesOnSite || 0);
+        const graceMinutes = resolveGraceMinutesOnSite(config);
+        const grace = this._graceState(openAttempt.arrivedAt, graceMinutes);
 
         if (!grace.graceElapsed) {
             throw new ValidationError(
-                `Grace period not elapsed. Wait ${grace.graceSecondsRemaining}s or ${config?.graceMinutesOnSite || 0} minutes from arrival.`
+                `Grace period not elapsed. Wait ${grace.graceSecondsRemaining}s or ${graceMinutes} minutes from arrival.`
             );
         }
 
@@ -695,6 +742,46 @@ class NoShowEnforcementService {
             feeWaiveReason: feeResult.feeWaiveReason,
             noShowPolicyId: policyRecord?.id || openAttempt.noShowPolicyId,
         });
+
+        try {
+            const { recordComplianceEvent } = require('./agentComplianceService');
+            const { getDriverGeofenceStatus } = require('../../utils/driverGeofence');
+            let geoSnap = {};
+            try {
+                geoSnap = await getDriverGeofenceStatus({
+                    bookingId,
+                    leg: normalizedType,
+                    driverLat,
+                    driverLng,
+                    geofenceBypassToken,
+                });
+            } catch (_) {
+                /* ignore */
+            }
+            await recordComplianceEvent({
+                bookingId,
+                actorUserId: actorUserId || null,
+                shopId: bookingData.agentId || bookingData.driverId,
+                action: normalizedType === 'pickup' ? 'fail_pickup' : 'fail_delivery',
+                withinGeofence: geoSnap.withinGeofence === true,
+                overrideUsed: false,
+                geofenceBypassedGlobal: geoSnap.geofenceBypassed === true,
+                driverLat,
+                driverLng,
+                customerLat: geoSnap.customerLat,
+                customerLng: geoSnap.customerLng,
+                distanceMeters: geoSnap.distanceMeters,
+                requiredRadiusMeters: geoSnap.requiredRadiusMeters,
+                failInstructionSetId: complianceAck.setId,
+                failInstructionSetVersion: complianceAck.version,
+                acknowledgedItemSnapshot: complianceAck.snapshot,
+            });
+        } catch (compErr) {
+            console.warn(
+                '[noShowEnforcement] fail compliance event failed:',
+                compErr?.message || compErr
+            );
+        }
 
         const stripeCharge = await this._attemptNoShowFeeCharge({
             bookingData,
@@ -831,6 +918,7 @@ class NoShowEnforcementService {
             };
         }
 
+        // Delivery fails are unlimited (no maxDeliveryAttempts). Pickup uses maxPickupAttempts.
         const newDeliveryCount = (bookingData.deliveryAttemptCount || 0) + 1;
         await booking.update(
             {

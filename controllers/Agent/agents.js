@@ -2183,13 +2183,19 @@ exports.driverStatusArrived = async (req, res) => {
         });
     }
 
-    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
-    await assertDriverWithinCustomerRadius({
+    const { confirmOutOfGeofence, overrideReason } = req.body || {};
+    const { gateGeofenceAndRecord } = require('../../services/Agent/geofenceActionGate');
+    await gateGeofenceAndRecord({
         bookingId,
-        leg: "pickup",
+        leg: 'pickup',
+        action: 'arrived_pickup',
         driverLat,
         driverLng,
         geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+        actorUserId: actorUserIdFromReq(req),
+        shopId: bookingfind.agentId || bookingfind.driverId,
     });
 
     await booking.update(
@@ -2360,6 +2366,27 @@ exports.agentInspectionStatus = async (req, res) => {
             bookingStatusId: bookingFind.bookingStatusId,
         });
     }
+
+    const {
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+    } = req.body || {};
+    const { gateGeofenceAndRecord } = require('../../services/Agent/geofenceActionGate');
+    await gateGeofenceAndRecord({
+        bookingId,
+        leg: 'pickup',
+        action: 'complete_pickup',
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+        actorUserId: actorId,
+        shopId: bookingFind.agentId || bookingFind.driverId,
+    });
 
     await booking.update(
         {
@@ -3344,13 +3371,19 @@ exports.driverReachedForDelivery = async (req, res) => {
         });
     }
 
-    const { assertDriverWithinCustomerRadius } = require("../../utils/driverGeofence");
-    await assertDriverWithinCustomerRadius({
+    const { confirmOutOfGeofence, overrideReason } = req.body || {};
+    const { gateGeofenceAndRecord } = require('../../services/Agent/geofenceActionGate');
+    await gateGeofenceAndRecord({
         bookingId,
-        leg: "delivery",
+        leg: 'delivery',
+        action: 'arrived_delivery',
         driverLat,
         driverLng,
         geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+        actorUserId: actorUserIdFromReq(req),
+        shopId: bookingCheck.agentId || bookingCheck.deliveryDriverId || bookingCheck.driverId,
     });
 
     await booking.update(
@@ -3467,6 +3500,27 @@ exports.bookingDeliverToCustomer = async (req, res) => {
             bookingStatusId: bookingCheck.bookingStatusId,
         });
     }
+
+    const {
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+    } = req.body || {};
+    const { gateGeofenceAndRecord } = require('../../services/Agent/geofenceActionGate');
+    await gateGeofenceAndRecord({
+        bookingId,
+        leg: 'delivery',
+        action: 'complete_delivery',
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+        confirmOutOfGeofence,
+        overrideReason,
+        actorUserId: actorId,
+        shopId: bookingCheck.agentId || bookingCheck.deliveryDriverId || bookingCheck.driverId,
+    });
 
     await booking.update(
         {

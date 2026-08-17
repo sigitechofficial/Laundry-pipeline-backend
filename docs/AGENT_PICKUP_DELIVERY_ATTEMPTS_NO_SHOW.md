@@ -349,19 +349,39 @@ App UI uses `canMarkFailed` (= grace elapsed **and** `withinGeofence`) and `canM
 
 **On the Way** — no geofence.
 
-### QA bypass (env toggle — testing only)
+### Soft geofence override (Arrived + Complete)
 
-Geofence skip karne ke liye server `.env` mein sirf:
+Arrived (status 5/14) and Complete (pickup 6/7, delivery 16/17) use a **soft** gate:
 
-```env
-GEOFENCE_BYPASS_ENABLED=true
+1. Outside radius → `GEOFENCE_OUT_OF_RANGE` (same error shape as before).
+2. Agent modal: **Go back** or **Proceed anyway**.
+3. Retry with `confirmOutOfGeofence: true` (+ GPS). Success writes `agent_compliance_events` with `overrideUsed: true`.
+4. Inside radius still writes an event with `overrideUsed: false`.
+
+**Fail / unattended remain hard-in-fence** (no proceed-anyway).
+
+Global QA bypass (Runtime checks) still skips enforcement and sets `geofenceBypassedGlobal` so it does not inflate override scores.
+
+Admin: **Policies → Location compliance** for override rates; order detail shows a geofence override badge when flags are set.
+
+### Fail attempt instructions (admin checklist)
+
+`GET attempt-options` includes `failCompliance` (enabled items only). Agent must acknowledge **required** items before Mark failed. `POST …/attempt/fail` accepts:
+
+```json
+"compliance": { "setId": 1, "version": 3, "acknowledgedItemIds": [10, 11] }
 ```
 
-Band karne ke liye:
+Server rejects version mismatch / missing required ids. Snapshot stored on the fail compliance event.
 
-```env
-GEOFENCE_BYPASS_ENABLED=false
-```
+Admin: **Policies → Fail attempt instructions** (pickup/delivery tabs, enable/required toggles, zone override sets).
+
+Health: `GET /health/compliance-catalog`.
+
+### QA bypass (admin Runtime checks)
+
+Geofence skip: Admin → Policies → Runtime checks → **Bypass geofence**.
+Stored in `platformRuntimeSettings.geofenceBypassEnabled`. Env `GEOFENCE_BYPASS_ENABLED` is fallback only.
 
 **Restart required:** `pm2 restart laundary --update-env` (ya staging app name).
 

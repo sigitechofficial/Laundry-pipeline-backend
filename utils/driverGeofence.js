@@ -124,7 +124,7 @@ async function getDriverGeofenceStatus({
         console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
     }
 
-    const bypassed = isGeofenceBypassActive(geofenceBypassToken);
+    const bypassed = await isGeofenceBypassActive(geofenceBypassToken);
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: false });
 
     if (!driverPoint) {
@@ -173,7 +173,7 @@ async function assertDriverWithinCustomerRadius({
         console.warn('[driverGeofence] radius resolve failed, using default:', err.message);
     }
 
-    const bypassed = isGeofenceBypassActive(geofenceBypassToken);
+    const bypassed = await isGeofenceBypassActive(geofenceBypassToken);
     const driverPoint = parseDriverCoordinates(driverLat, driverLng, { required: true });
     const customerPoint = await loadCustomerCoordinates(bookingId, leg);
     const distanceMeters = distanceMetersBetween(driverPoint, customerPoint);
@@ -191,11 +191,69 @@ async function assertDriverWithinCustomerRadius({
     };
 }
 
+/**
+ * Soft geofence gate for Arrived / Complete.
+ * - Inside or global bypass → returns status (caller proceeds + records event).
+ * - Outside and confirmOutOfGeofence !== true → throws GeofenceOutOfRangeError.
+ * - Outside and confirmOutOfGeofence === true → returns status with overrideAllowed.
+ */
+async function evaluateDriverGeofenceForAction({
+  bookingId,
+  leg,
+  driverLat,
+  driverLng,
+  radiusMeters,
+  geofenceBypassToken,
+  confirmOutOfGeofence = false,
+}) {
+  const status = await getDriverGeofenceStatus({
+    bookingId,
+    leg,
+    driverLat,
+    driverLng,
+    radiusMeters,
+    geofenceBypassToken,
+  });
+
+  // Require GPS unless global bypass is on.
+  if (status.gpsRequired && !status.geofenceBypassed) {
+    parseDriverCoordinates(driverLat, driverLng, { required: true });
+  }
+
+  const confirmed =
+    confirmOutOfGeofence === true ||
+    confirmOutOfGeofence === 'true' ||
+    confirmOutOfGeofence === 1 ||
+    confirmOutOfGeofence === '1';
+
+  if (status.withinGeofence) {
+    return {
+      ...status,
+      overrideUsed: false,
+      proceedAllowed: true,
+    };
+  }
+
+  if (!confirmed) {
+    throw new GeofenceOutOfRangeError(
+      status.requiredRadiusMeters,
+      status.distanceMeters
+    );
+  }
+
+  return {
+    ...status,
+    overrideUsed: true,
+    proceedAllowed: true,
+  };
+}
+
 module.exports = {
-    DEFAULT_ARRIVAL_RADIUS_METERS,
-    GeofenceOutOfRangeError,
-    parseDriverCoordinates,
-    getDriverGeofenceStatus,
-    assertDriverWithinCustomerRadius,
-    ARRIVAL_RADIUS_METERS: DEFAULT_ARRIVAL_RADIUS_METERS,
+  DEFAULT_ARRIVAL_RADIUS_METERS,
+  GeofenceOutOfRangeError,
+  parseDriverCoordinates,
+  getDriverGeofenceStatus,
+  assertDriverWithinCustomerRadius,
+  evaluateDriverGeofenceForAction,
+  ARRIVAL_RADIUS_METERS: DEFAULT_ARRIVAL_RADIUS_METERS,
 };

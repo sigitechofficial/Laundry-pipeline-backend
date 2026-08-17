@@ -212,6 +212,7 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.INTEGER,
     allowNull: false,
     defaultValue: 0,
+    comment: 'Cumulative delivery fails. No cap — delivery retries stay unlimited unless product adds one.',
   },
   maxPickupAttempts: {
     type: DataTypes.INTEGER,
@@ -368,6 +369,26 @@ module.exports = (sequelize, DataTypes) => {
   deliveryCompletedAt: {
     type: DataTypes.DATE,
     allowNull: true,
+  },
+  pickupArrivedGeofenceOverride: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  deliveryArrivedGeofenceOverride: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  pickupCompleteGeofenceOverride: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  deliveryCompleteGeofenceOverride: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
   },
   }, {
     sequelize,

@@ -814,6 +814,119 @@ async function checkRepairCatalogSchema() {
   }
 }
 
+async function checkComplianceCatalogSchema() {
+  const started = nowMs();
+  const REQUIRED_TABLES = [
+    'attempt_fail_instruction_sets',
+    'attempt_fail_instructions',
+    'agent_compliance_events',
+  ];
+  const MIGRATION =
+    '20260817150000-agent-fail-instructions-and-compliance-events.js';
+
+  try {
+    const [tableRows] = await db.sequelize.query(
+      `SELECT TABLE_NAME AS name
+       FROM information_schema.tables
+       WHERE table_schema = DATABASE()
+         AND TABLE_NAME IN (:names)`,
+      { replacements: { names: REQUIRED_TABLES } }
+    );
+    const existing = new Set((tableRows || []).map((r) => r.name));
+    const tables = {};
+    for (const name of REQUIRED_TABLES) {
+      tables[name] = existing.has(name);
+    }
+    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+
+    let migrationApplied = false;
+    try {
+      const [metaRows] = await db.sequelize.query(
+        `SELECT name FROM SequelizeMeta WHERE name = :name LIMIT 1`,
+        { replacements: { name: MIGRATION } }
+      );
+      migrationApplied = Array.isArray(metaRows) && metaRows.length > 0;
+    } catch (_) {
+      migrationApplied = false;
+    }
+
+    const counts = {
+      instructionSets: null,
+      instructionsEnabled: null,
+      complianceEvents: null,
+    };
+    if (tables.attempt_fail_instruction_sets) {
+      try {
+        const [rows] = await db.sequelize.query(
+          'SELECT COUNT(*) AS c FROM attempt_fail_instruction_sets WHERE isActive = 1'
+        );
+        counts.instructionSets = Number(rows?.[0]?.c ?? 0);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (tables.attempt_fail_instructions) {
+      try {
+        const [rows] = await db.sequelize.query(
+          'SELECT COUNT(*) AS c FROM attempt_fail_instructions WHERE isEnabled = 1'
+        );
+        counts.instructionsEnabled = Number(rows?.[0]?.c ?? 0);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (tables.agent_compliance_events) {
+      try {
+        const [rows] = await db.sequelize.query(
+          'SELECT COUNT(*) AS c FROM agent_compliance_events'
+        );
+        counts.complianceEvents = Number(rows?.[0]?.c ?? 0);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    const seeded =
+      Number(counts.instructionSets || 0) >= 2 &&
+      Number(counts.instructionsEnabled || 0) > 0;
+    const ok = missingTables.length === 0 && migrationApplied && seeded;
+
+    return result(
+      ok ? 'ok' : 'fail',
+      ok
+        ? 'Compliance catalog schema present and seeded'
+        : 'Compliance catalog schema incomplete',
+      {
+        latencyMs: nowMs() - started,
+        checkType: 'schema',
+        feature: 'agentCompliance',
+        migrations: { catalog: { name: MIGRATION, applied: migrationApplied } },
+        tables,
+        missingTables,
+        counts,
+        seeded,
+        verifyEndpoints: {
+          health: 'GET /health/compliance-catalog',
+          adminSets: 'GET /admin/failAttemptInstructions',
+          adminReport: 'GET /admin/compliance/geofence-overrides',
+          deploy: 'GET /health/deploy',
+        },
+        hint: ok
+          ? null
+          : 'Deploy migrate + seed 20260817151000-attempt-fail-instruction-defaults.js',
+      }
+    );
+  } catch (err) {
+    const fields = safeErrorFields(err);
+    return result('fail', err.message || 'Compliance catalog check failed', {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'agentCompliance',
+      ...fields,
+    });
+  }
+}
+
 module.exports = {
   checkMysql,
   checkRedis,
@@ -822,6 +935,7 @@ module.exports = {
   checkZeptoMail,
   checkShopReviewSchema,
   checkRepairCatalogSchema,
+  checkComplianceCatalogSchema,
   runDependencyChecks,
   logCheck,
   logLine

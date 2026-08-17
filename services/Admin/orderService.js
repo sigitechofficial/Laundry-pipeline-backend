@@ -779,6 +779,19 @@ class OrderService {
             enriched.pickupCompletedByName || staffName(enriched.driver);
         enriched.deliveryStaffName =
             enriched.deliveryCompletedByName || staffName(enriched.deliveryDriver);
+        enriched.geofenceCompliance = {
+            pickupArrivedOverride: Boolean(enriched.pickupArrivedGeofenceOverride),
+            deliveryArrivedOverride: Boolean(enriched.deliveryArrivedGeofenceOverride),
+            pickupCompleteOverride: Boolean(enriched.pickupCompleteGeofenceOverride),
+            deliveryCompleteOverride: Boolean(
+                enriched.deliveryCompleteGeofenceOverride
+            ),
+            hasAnyOverride:
+                Boolean(enriched.pickupArrivedGeofenceOverride) ||
+                Boolean(enriched.deliveryArrivedGeofenceOverride) ||
+                Boolean(enriched.pickupCompleteGeofenceOverride) ||
+                Boolean(enriched.deliveryCompleteGeofenceOverride),
+        };
 
         return enriched;
     }

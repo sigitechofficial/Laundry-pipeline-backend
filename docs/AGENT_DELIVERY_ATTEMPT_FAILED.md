@@ -331,7 +331,7 @@ Body (optional): { "timeZone": "Europe/London" }
 - Driver must be within `requiredRadiusMeters` (from the zone's active no-show policy, default **100m**) of the customer's **drop-off address** lat/lng.
 - App must **not** hardcode 100 — always read `requiredRadiusMeters` from the API response.
 - If `driverLat`/`driverLng` are missing on `GET attempt-options`: `withinGeofence: false`, `gpsRequired: true`.
-- QA-only bypass: backend `.env` → `GEOFENCE_BYPASS_ENABLED=true` (no app changes needed, response shows `geofenceBypassed: true`). Must be `false` in production.
+- QA-only bypass: Admin → Policies → Runtime checks (`geofenceBypassEnabled`). Env `GEOFENCE_BYPASS_ENABLED` is fallback only. Response shows `geofenceBypassed: true`. Must be off on production.
 
 ---
 

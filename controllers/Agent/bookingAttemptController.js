@@ -50,7 +50,15 @@ exports.getAttemptOptions = async (req, res) => {
  */
 exports.markAttemptFailed = async (req, res) => {
     const { bookingId } = req.params;
-    const { type, reason, driverLateMinutes, driverLat, driverLng, geofenceBypassToken } = req.body;
+    const {
+        type,
+        reason,
+        driverLateMinutes,
+        driverLat,
+        driverLng,
+        geofenceBypassToken,
+        compliance,
+    } = req.body;
 
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
@@ -65,6 +73,8 @@ exports.markAttemptFailed = async (req, res) => {
         driverLng,
         geofenceBypassToken,
         wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
+        compliance,
+        actorUserId: req.actorUserId || req.user?.id,
     });
 
     return ResponseHelper.success(res, result.message || 'Attempt marked as failed', result);

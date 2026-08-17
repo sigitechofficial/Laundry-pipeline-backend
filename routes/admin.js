@@ -18,6 +18,7 @@ const actionRequiredOrdersController = require('../controllers/Admin/actionRequi
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
 const adminAlertPreferencesController = require('../controllers/Admin/adminAlertPreferencesController');
+const runtimeSettingsController = require('../controllers/Admin/runtimeSettingsController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 const shopReviewController = require('../controllers/Admin/shopReviewController');
 
@@ -187,6 +188,54 @@ router.get(
 router.patch(
     '/platformOperationalHours',
     asyncMiddleware(adminController.updatePlatformOperationalHours)
+)
+
+router.get(
+    '/runtimeSettings',
+    asyncMiddleware(runtimeSettingsController.getRuntimeSettings)
+)
+router.put(
+    '/runtimeSettings',
+    asyncMiddleware(runtimeSettingsController.updateRuntimeSettings)
+)
+
+const agentComplianceController = require('../controllers/Admin/agentComplianceController');
+
+router.get(
+    '/failAttemptInstructions',
+    asyncMiddleware(agentComplianceController.listFailInstructionSets)
+)
+router.get(
+    '/failAttemptInstructions/:setId',
+    asyncMiddleware(agentComplianceController.getFailInstructionSet)
+)
+router.post(
+    '/failAttemptInstructions/:setId/items',
+    asyncMiddleware(agentComplianceController.createFailInstruction)
+)
+router.patch(
+    '/failAttemptInstructions/items/:instructionId',
+    asyncMiddleware(agentComplianceController.updateFailInstruction)
+)
+router.post(
+    '/failAttemptInstructions/:setId/reorder',
+    asyncMiddleware(agentComplianceController.reorderFailInstructions)
+)
+router.post(
+    '/failAttemptInstructions/zone-set',
+    asyncMiddleware(agentComplianceController.createZoneFailInstructionSet)
+)
+router.patch(
+    '/failAttemptInstructions/:setId/active',
+    asyncMiddleware(agentComplianceController.setFailInstructionSetActive)
+)
+router.get(
+    '/compliance/geofence-overrides',
+    asyncMiddleware(agentComplianceController.getGeofenceOverrideReport)
+)
+router.get(
+    '/compliance/events',
+    asyncMiddleware(agentComplianceController.listComplianceEvents)
 )
 
 router.get(
