@@ -1,0 +1,57 @@
+# One-shot: insert Socket.IO WebSocket proxy rules into prod Apache .htaccess.
+# Does not rsync the app. Does not touch stage.
+name: Patch prod Socket.IO Apache proxy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: laundry-prod-socket-htaccess
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  patch:
+    name: Patch prod .htaccess over SSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Encode patch script
+        id: payload
+        run: |
+          set -euo pipefail
+          {
+            echo 'SCRIPT_B64<<ENDOFFILE'
+            base64 -w0 scripts/remote-patch-prod-socket-proxy.sh
+            echo
+            echo 'ENDOFFILE'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply .htaccess patch on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          SCRIPT_B64: ${{ steps.payload.outputs.SCRIPT_B64 }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          command_timeout: 5m
+          envs: SCRIPT_B64
+          script: |
+            set -euo pipefail
+            export HOME=/home/sigisolutions
+            if [ -z "${SCRIPT_B64:-}" ]; then
+              echo "SCRIPT_B64 empty"
+              exit 1
+            fi
+            TMP="$(mktemp)"
+            echo "$SCRIPT_B64" | base64 -d > "$TMP"
+            chmod +x "$TMP"
+            bash "$TMP"
+            rm -f "$TMP"

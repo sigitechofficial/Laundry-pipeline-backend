@@ -1,0 +1,18 @@
+RewriteEngine On
+
+# AutoSSL / Let's Encrypt — never proxy to Node
+RewriteRule ^\.well-known/ - [L]
+
+# Serve real files/directories directly
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Socket.IO WebSocket — requires proxy + proxy_wstunnel
+# Stage already returns 101; prod Apache currently returns 400 without this.
+RewriteCond %{HTTP:Upgrade} websocket [NC]
+RewriteCond %{HTTP:Connection} upgrade [NC]
+RewriteRule ^socket\.io/(.*) ws://127.0.0.1:8989/socket.io/$1 [P,L]
+
+# Everything else -> prod Node (PORT=8989)
+RewriteRule ^(.*)$ http://127.0.0.1:8989%{REQUEST_URI} [P,L]
