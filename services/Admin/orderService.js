@@ -28,6 +28,15 @@ const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
 const invoiceManagementService = require('../Agent/invoiceManagementService');
 const {
+    COMPLETED,
+    CANCELLED,
+    ORDER_CREATED,
+    PENDING_EXCLUDED,
+    ON_HOLD,
+    PENDING_EXCLUDED_SQL,
+    ACTIVE_EXCLUDED_SQL,
+} = require('../../constants/bookingStatusIds');
+const {
     resolveAgentCommissionPercent,
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
@@ -267,43 +276,43 @@ class OrderService {
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 17 THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` = ${COMPLETED} THEN 1 ELSE 0 END)`
                         ),
                         'completedOrders',
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` IN (18, 24) THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` IN (${ON_HOLD.join(', ')}) THEN 1 ELSE 0 END)`
                         ),
                         'onHoldOrders',
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 19 THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` = ${CANCELLED} THEN 1 ELSE 0 END)`
                         ),
                         'cancelledOrders',
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` NOT IN (17, 18, 19, 24) THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` NOT IN (${PENDING_EXCLUDED_SQL}) THEN 1 ELSE 0 END)`
                         ),
                         'pendingOrders',
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` = 1 THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` = ${ORDER_CREATED} THEN 1 ELSE 0 END)`
                         ),
                         'newOrders',
                     ],
                     [
                         sequelize.literal(
-                            'SUM(CASE WHEN `booking`.`bookingStatusId` NOT IN (1, 17, 18, 19, 24) THEN 1 ELSE 0 END)'
+                            `SUM(CASE WHEN \`booking\`.\`bookingStatusId\` NOT IN (${ACTIVE_EXCLUDED_SQL}) THEN 1 ELSE 0 END)`
                         ),
                         'activeOrders',
                     ],
                     [
                         sequelize.literal(
-                            "SUM(CASE WHEN `booking`.`paymentType` = 'card' AND `booking`.`paymentDeliveryGate` = 'waiting_admin' AND `booking`.`bookingStatusId` < 17 THEN 1 ELSE 0 END)"
+                            `SUM(CASE WHEN \`booking\`.\`paymentType\` = 'card' AND \`booking\`.\`paymentDeliveryGate\` = 'waiting_admin' AND \`booking\`.\`bookingStatusId\` < ${COMPLETED} THEN 1 ELSE 0 END)`
                         ),
                         'paymentFailuresCount',
                     ],
@@ -481,11 +490,12 @@ class OrderService {
      */
     async getPendingOrders(page = 1, limit = 20, filters = {}) {
         const statusId = filters.status ? parseInt(filters.status, 10) : NaN;
+        // Keep in sync with getOrderCount.pendingOrders (PENDING_EXCLUDED).
         const whereClause = !Number.isNaN(statusId)
             ? { bookingStatusId: statusId }
             : {
                 bookingStatusId: {
-                    [Op.notIn]: [17, 23],
+                    [Op.notIn]: PENDING_EXCLUDED,
                 },
             };
         this._applyPlacedDateRangeFilter(whereClause, filters);
@@ -520,7 +530,7 @@ class OrderService {
      */
     async getCancelledOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
-            bookingStatusId: 19,
+            bookingStatusId: CANCELLED,
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
@@ -554,7 +564,7 @@ class OrderService {
      */
     async getCompletedOrders(page = 1, limit = 20, filters = {}) {
         const whereClause = {
-            bookingStatusId: 17,
+            bookingStatusId: COMPLETED,
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
@@ -1438,7 +1448,7 @@ class OrderService {
     async getOnHoldBookings(page = 1, limit = 25, filters = {}) {
         const whereClause = {
             bookingStatusId: {
-                [Op.or]: [18, 24],
+                [Op.in]: ON_HOLD,
             },
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);

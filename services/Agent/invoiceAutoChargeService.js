@@ -13,6 +13,7 @@ const {
     resolveBalancePaymentMethod,
     roundMoney,
 } = require("../../utils/invoicePaymentSummary");
+const { COMPLETED } = require("../../constants/bookingStatusIds");
 const invoiceManagementService = require("./invoiceManagementService");
 const { chargeOffSession } = require("../../controllers/stripe");
 const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
@@ -871,36 +872,41 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
 }
 
 async function listPaymentFailures(options = {}) {
-    const limit = Math.min(Number(options.limit) || 100, 200);
-    const rows = await booking.findAll({
-        where: {
-            paymentType: "card",
-            paymentDeliveryGate: "waiting_admin",
-            bookingStatusId: { [Op.lt]: 17 },
-        },
-        include: [
-            {
-                model: users,
-                as: "customer",
-                attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
-            },
-            {
-                model: billingDetails,
-                as: "billingDetail",
-                required: false,
-                attributes: ["total", "paymentStatus"],
-            },
-            {
-                model: invoicePaymentAttempt,
-                as: "invoicePaymentAttempts",
-                separate: true,
-                limit: 5,
-                order: [["id", "DESC"]],
-            },
-        ],
-        order: [["lastPaymentFailureAt", "DESC"]],
-        limit,
-    });
+    const limit = Math.min(Number(options.limit) || 200, 500);
+    const where = {
+        paymentType: "card",
+        paymentDeliveryGate: "waiting_admin",
+        bookingStatusId: { [Op.lt]: COMPLETED },
+    };
+
+    const [totalCount, rows] = await Promise.all([
+        booking.count({ where }),
+        booking.findAll({
+            where,
+            include: [
+                {
+                    model: users,
+                    as: "customer",
+                    attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+                },
+                {
+                    model: billingDetails,
+                    as: "billingDetail",
+                    required: false,
+                    attributes: ["total", "paymentStatus"],
+                },
+                {
+                    model: invoicePaymentAttempt,
+                    as: "invoicePaymentAttempts",
+                    separate: true,
+                    limit: 5,
+                    order: [["id", "DESC"]],
+                },
+            ],
+            order: [["lastPaymentFailureAt", "DESC"]],
+            limit,
+        }),
+    ]);
 
     const statusLabels = {
         9: "Services added",
@@ -913,7 +919,7 @@ async function listPaymentFailures(options = {}) {
         16: "Delivered",
     };
 
-    return rows.map((row) => {
+    const failures = rows.map((row) => {
         const plain = row.get({ plain: true });
         const flags = buildPaymentGateFlags(
             plain,
@@ -933,6 +939,8 @@ async function listPaymentFailures(options = {}) {
                 `Status ${plain.bookingStatusId}`,
         };
     });
+
+    return { failures, totalCount, count: totalCount };
 }
 
 async function resolvePaymentFailure(bookingId, action, adminUserId, notes = null) {

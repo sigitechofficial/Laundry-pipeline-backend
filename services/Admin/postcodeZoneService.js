@@ -610,6 +610,32 @@ class PostcodeZoneService {
      * @param {Object} zoneData - Zone data (optional postcodes array + any zone fields to update)
      * @returns {Object} Updated zone data
      */
+    normalizePostcodeList(postcodes) {
+        let list = postcodes;
+        // Some rows store postcodes as a JSON-encoded string inside the JSON column.
+        if (typeof list === 'string') {
+            const trimmed = list.trim();
+            if (!trimmed) return [];
+            try {
+                list = JSON.parse(trimmed);
+            } catch (e) {
+                list = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
+            }
+        }
+        if (!Array.isArray(list)) return [];
+        const normalized = list
+            .map((pc) => (pc == null ? '' : this.normalizePostcode(String(pc))))
+            .filter(Boolean);
+        return [...new Set(normalized)].sort();
+    }
+
+    postcodeListsEqual(a, b) {
+        const left = this.normalizePostcodeList(a);
+        const right = this.normalizePostcodeList(b);
+        if (left.length !== right.length) return false;
+        return left.every((pc, idx) => pc === right[idx]);
+    }
+
     async editZoneByPostcodes(zoneId, zoneData) {
         const existingZone = await zone.findByPk(zoneId);
         if (!existingZone) {
@@ -618,7 +644,8 @@ class PostcodeZoneService {
 
         const { postcodes, ...otherZoneData } = zoneData;
 
-        // If postcodes provided, regenerate polygon from them
+        // UI always resends postcodes on edit. Skip London/duplicate/geocode when the
+        // set is unchanged so fee/minimum/commission updates are not blocked.
         if (postcodes !== undefined && postcodes !== null) {
             let postcodesArray = postcodes;
             if (typeof postcodes === 'string') {
@@ -630,33 +657,49 @@ class PostcodeZoneService {
             }
             if (Array.isArray(postcodesArray) && postcodesArray.length > 0) {
                 const targetCityId = otherZoneData.cityId || existingZone.cityId;
-                await this.validatePostcodesByCity(postcodesArray, targetCityId);
+                const cityChanged =
+                    otherZoneData.cityId != null &&
+                    Number(otherZoneData.cityId) !== Number(existingZone.cityId);
+                const postcodesUnchanged = this.postcodeListsEqual(
+                    postcodesArray,
+                    existingZone.postcodes
+                );
 
-                // Check for duplicate postcodes (exclude current zone)
-                await this.checkDuplicatePostcodes(postcodesArray, zoneId);
+                if (postcodesUnchanged && !cityChanged) {
+                    delete otherZoneData.coordinates;
+                    delete otherZoneData.postcodes;
+                } else {
+                    await this.validatePostcodesByCity(postcodesArray, targetCityId);
+                    await this.checkDuplicatePostcodes(postcodesArray, zoneId);
 
-                console.log('🔄 Regenerating polygon from postcodes for zone:', zoneId);
-                const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
-                const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
-                console.log('📍 New polygon coordinates structure:', JSON.stringify(polygonCoordinates, null, 2));
-                otherZoneData.coordinates = {
-                    type: 'Polygon',
-                    coordinates: polygonCoordinates
-                };
-                otherZoneData.postcodes = postcodesArray.map(pc => this.normalizePostcode(pc));
+                    console.log('🔄 Regenerating polygon from postcodes for zone:', zoneId);
+                    const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
+                    const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
+                    otherZoneData.coordinates = {
+                        type: 'Polygon',
+                        coordinates: polygonCoordinates
+                    };
+                    otherZoneData.postcodes = postcodesArray.map(pc => this.normalizePostcode(pc));
+                }
             }
         }
+
+        // Drop non-column / legacy aliases so Sequelize update stays clean
+        delete otherZoneData.isActive;
+        delete otherZoneData.paymentMethod;
+        delete otherZoneData.paymentMethods;
+        delete otherZoneData.payment_method;
 
         const updatePayload = { ...otherZoneData };
         applyAgentCommissionToZonePayload(updatePayload);
         await this.validateZoneData(updatePayload);
 
         const [affectedRows] = await zone.update(updatePayload, { where: { id: zoneId } });
+        // 0 rows can mean "values already equal" — still treat as success
         if (affectedRows === 0) {
-            throw new Error('Failed to update zone');
+            return existingZone;
         }
-        const updatedZone = await zone.findByPk(zoneId);
-        return updatedZone;
+        return zone.findByPk(zoneId);
     }
 }
 

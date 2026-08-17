@@ -5,11 +5,29 @@ const actionRequiredOrdersService = require('../../services/Admin/actionRequired
 
 /**
  * GET /admin/action-required-orders
+ * Optional query: reason, zoneId, startDate, endDate (order placed)
  */
 exports.listActionRequired = async (req, res) => {
-    const data = await actionRequiredOrdersService.listActionRequiredOrders({
-        limit: req.query.limit,
-        zoneId: req.query.zoneId,
+    const { zoneId, reason, startDate, endDate } = req.query;
+    const limit =
+        req.query.limit != null && String(req.query.limit).trim() !== ''
+            ? req.query.limit
+            : null;
+    const scope = { zoneId, startDate, endDate };
+    const [data, counts] = await Promise.all([
+        actionRequiredOrdersService.listActionRequiredOrders({
+            limit,
+            reason,
+            ...scope,
+        }),
+        actionRequiredOrdersService.countActionRequiredOrders(scope),
+    ]);
+    return ResponseHelper.success(res, 'Action required orders', {
+        ...data,
+        count: data.count,
+        filteredCount: data.count,
+        totalCount: counts.actionRequiredCount,
+        countsByReason:
+            counts.actionRequiredBreakdown || data.countsByReason,
     });
-    return ResponseHelper.success(res, 'Action required orders', data);
 };

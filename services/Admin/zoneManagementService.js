@@ -1,5 +1,30 @@
-const { zone, cities, bussinessInformation, units } = require('../../models');
+const { zone, cities, bussinessInformation, units, users, sequelize } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
+
+function normalizeZonePostcodes(raw) {
+    let list = raw;
+    if (typeof list === 'string') {
+        const trimmed = list.trim();
+        if (!trimmed) return [];
+        try {
+            list = JSON.parse(trimmed);
+        } catch (e) {
+            list = trimmed.split(/[\n,;]+/).map((p) => p.trim()).filter(Boolean);
+        }
+    }
+    if (!Array.isArray(list)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const item of list) {
+        const pc = String(item ?? '').trim();
+        if (!pc) continue;
+        const key = pc.replace(/\s+/g, '').toUpperCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(pc);
+    }
+    return out;
+}
 
 class ZoneManagementService {
     /**
@@ -26,8 +51,42 @@ class ZoneManagementService {
                         as: 'currencyUnitZ',
                         attributes: ['id', 'name', 'symbol', 'type'],
                         required: false
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name'],
+                        required: false
+                    },
+                    {
+                        model: users,
+                        as: 'zoneAdmin',
+                        attributes: ['id', 'firstName', 'lastName', 'email'],
+                        required: false
                     }
                 ]
+            });
+
+            const [shopCountRows] = await sequelize.query(`
+                SELECT a.zoneId AS zoneId, COUNT(b.id) AS shops
+                FROM bussinessInformations b
+                INNER JOIN addressDbs a ON a.id = b.shopAddressId
+                WHERE a.zoneId IS NOT NULL
+                  AND a.deletedAt IS NULL
+                  AND b.deletedAt IS NULL
+                GROUP BY a.zoneId
+            `);
+            const shopCountByZone = new Map(
+                (shopCountRows || []).map((row) => [
+                    Number(row.zoneId),
+                    Number(row.shops) || 0,
+                ])
+            );
+
+            const shapedZones = getZones.map((row) => {
+                const plain = typeof row.toJSON === 'function' ? row.toJSON() : { ...row };
+                plain.postcodes = normalizeZonePostcodes(plain.postcodes);
+                plain.shopCount = shopCountByZone.get(Number(plain.id)) || 0;
+                return plain;
             });
 
             const totalZones = await zone.count({
@@ -39,7 +98,7 @@ class ZoneManagementService {
             const totalShops = await bussinessInformation.count();
 
             return {
-                zones: getZones,
+                zones: shapedZones,
                 totalZones,
                 totalCities,
                 totalShops

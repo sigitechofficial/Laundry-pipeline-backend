@@ -5,12 +5,13 @@ const invoiceAutoChargeService = require("../../services/Agent/invoiceAutoCharge
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 
 exports.listPaymentFailures = async (req, res) => {
-    const rows = await invoiceAutoChargeService.listPaymentFailures({
+    const result = await invoiceAutoChargeService.listPaymentFailures({
         limit: req.query.limit,
     });
     return ResponseHelper.success(res, "Payment failures", {
-        failures: rows,
-        count: rows.length,
+        failures: result.failures,
+        count: result.totalCount,
+        totalCount: result.totalCount,
     });
 };
 

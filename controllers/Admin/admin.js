@@ -114,10 +114,16 @@ const customerOrderService = require('../../services/Customer/customerOrderServi
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
-    
-        const outObj = await dashboardService.getDashboardData();
-        //return res.json(responsefunc("1", "Admin Dashboard Data", outObj, ""));
-        return ResponseHelper.success(res, "Admin Dashboard Data", outObj);
+    const filters = {
+        zoneId: req.query.zoneId,
+        cityId: req.query.cityId,
+        countryId: req.query.countryId,
+        period: req.query.period || 'all',
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+    };
+    const outObj = await dashboardService.getDashboardData(filters);
+    return ResponseHelper.success(res, "Admin Dashboard Data", outObj);
 }
 
 

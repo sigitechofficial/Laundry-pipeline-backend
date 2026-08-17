@@ -204,8 +204,10 @@ function _rawDateCondition(filters, dateCol) {
         return `AND DATE(${dateCol}) = '${d}'`;
     }
     if (period === 'this_week') {
-        const day = now.getDay();
-        const ws  = new Date(now); ws.setDate(now.getDate() - day); ws.setHours(0,0,0,0);
+        // Rolling last 7 days (calendar week often has zero collections mid-week)
+        const ws = new Date(now);
+        ws.setDate(now.getDate() - 6);
+        ws.setHours(0, 0, 0, 0);
         return `AND ${dateCol} >= '${ws.toISOString().slice(0, 10)}'`;
     }
     if (period === 'this_month') {
@@ -388,7 +390,7 @@ async function getDailyEarningReport(filters = {}) {
     const [rows] = await sequelize.query(`
         SELECT
             DATE(b.collectionDate)     AS date,
-            DAYNAME(b.collectionDate)  AS dayOfWeek,
+            MAX(DAYNAME(b.collectionDate))  AS dayOfWeek,
             COUNT(b.id)                AS ordersCompleted,
             COALESCE(SUM(bd.total), 0) AS grossRevenue,
             COALESCE(AVG(bd.total), 0) AS avgOrderValue
