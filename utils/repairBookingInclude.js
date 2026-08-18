@@ -30,6 +30,7 @@ function buildRepairItemsInclude(models, { separate = false } = {}) {
       'garmentName',
       'quantity',
       'instruction',
+      'createdAt',
     ],
     include: [
       {
@@ -68,6 +69,7 @@ function normalizeRepairItem(raw) {
     bookingId: row.bookingId ?? null,
     customerSelectedServiceId: row.customerSelectedServiceId ?? null,
     serviceId: row.serviceId ?? null,
+    createdAt: row.createdAt || null,
     repairGarmentId: row.repairGarmentId,
     garmentName: row.garmentName || '',
     quantity: Number(row.quantity) || 1,
@@ -189,6 +191,7 @@ async function hydrateRepairItemsForBooking(
         'garmentName',
         'quantity',
         'instruction',
+        'createdAt',
       ],
       include: [
         {

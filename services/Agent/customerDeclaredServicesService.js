@@ -21,11 +21,34 @@ const {
     preferenceTypes,
     preferenceValues,
 } = require('../../models');
+const { Op } = require('sequelize');
 const dbModels = require('../../models');
 const {
     hydrateRepairItemsForBooking,
     normalizeRepairItems,
 } = require('../../utils/repairBookingInclude');
+
+function uniqueFirstByServiceId(rows) {
+    const firstByService = new Map();
+    for (const row of rows) {
+        const key = row.serviceId != null ? String(row.serviceId) : `row-${row.id}`;
+        if (!firstByService.has(key)) firstByService.set(key, row);
+    }
+    return [...firstByService.values()];
+}
+
+/** Customer booking rows are service-level. Invoice lines have a subcategory + price. */
+function looksLikeCustomerIntentRow(row) {
+    return row.subCategoryId == null;
+}
+
+function declaredServiceIdSet(declaredServices) {
+    return new Set(
+        (Array.isArray(declaredServices) ? declaredServices : [])
+            .map((s) => (s?.serviceId != null ? Number(s.serviceId) : null))
+            .filter((id) => Number.isFinite(id))
+    );
+}
 
 const snapshotInclude = [
     {
@@ -69,7 +92,9 @@ const snapshotInclude = [
 
 /**
  * One-time freeze of customer selections into snapshot tables.
- * Idempotent. Prefer active CSS; if none, fall back to earliest row per serviceId.
+ * Idempotent. Never freeze priced invoice lines as customer intent — those
+ * replace live CSS after AgentAddSerivces. Prefer unpriced service-level rows
+ * (including deactivated originals), then earliest row per serviceId.
  */
 async function ensureCustomerDeclaredSnapshot(bookingId) {
     const existing = await customerOriginalServiceSnapshot.count({
@@ -77,23 +102,16 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
     });
     if (existing > 0) return;
 
-    let services = await customerSelectedService.findAll({
-        where: { bookingId, status: true },
+    const allRows = await customerSelectedService.findAll({
+        where: { bookingId },
         order: [['id', 'ASC']],
     });
+    if (!allRows.length) return;
 
-    if (!services.length) {
-        const allRows = await customerSelectedService.findAll({
-            where: { bookingId },
-            order: [['id', 'ASC']],
-        });
-        const firstByService = new Map();
-        for (const row of allRows) {
-            const key = row.serviceId != null ? String(row.serviceId) : `row-${row.id}`;
-            if (!firstByService.has(key)) firstByService.set(key, row);
-        }
-        services = [...firstByService.values()];
-    }
+    const intentRows = allRows.filter(looksLikeCustomerIntentRow);
+    const services = uniqueFirstByServiceId(
+        intentRows.length ? intentRows : allRows
+    );
 
     for (const svc of services) {
         const snap = await customerOriginalServiceSnapshot.create({
@@ -270,7 +288,7 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
  * Ensure snapshot exists, then return agent-app-friendly declared services
  * including repair garments / options / images.
  */
-async function getCustomerDeclaredServices(bookingId) {
+async function loadMappedSnapshots(bookingId) {
     await ensureCustomerDeclaredSnapshot(bookingId);
 
     const rows = await customerOriginalServiceSnapshot.findAll({
@@ -279,8 +297,270 @@ async function getCustomerDeclaredServices(bookingId) {
         order: [['id', 'ASC']],
     });
 
-    const mapped = rows.map(mapSnapshotToDeclaredService);
+    return rows.map(mapSnapshotToDeclaredService);
+}
+
+/**
+ * If snapshot rows are missing (create failed, or invoice ran on an old deploy),
+ * rebuild customer intent from the earliest unpriced CSS rows.
+ */
+async function reconstructDeclaredFromOriginalCss(bookingId) {
+    const allRows = await customerSelectedService.findAll({
+        where: { bookingId },
+        order: [['id', 'ASC']],
+    });
+    if (!allRows.length) return [];
+
+    const intentRows = allRows.filter(looksLikeCustomerIntentRow);
+    const source = uniqueFirstByServiceId(
+        intentRows.length ? intentRows : allRows
+    );
+    const serviceIds = [
+        ...new Set(
+            source
+                .map((s) => (s.serviceId != null ? Number(s.serviceId) : null))
+                .filter((id) => Number.isFinite(id))
+        ),
+    ];
+    const serviceRows = serviceIds.length
+        ? await service.findAll({
+              where: { id: serviceIds },
+              attributes: ['id', 'name', 'image', 'pricingBasis'],
+          })
+        : [];
+    const serviceById = new Map(
+        serviceRows.map((s) => [Number(s.id), s.toJSON ? s.toJSON() : s])
+    );
+
+    return source.map((svc) => {
+        const plain = typeof svc.toJSON === 'function' ? svc.toJSON() : { ...svc };
+        const sid = plain.serviceId != null ? Number(plain.serviceId) : null;
+        return {
+            id: plain.id,
+            bookingId: plain.bookingId,
+            serviceId: plain.serviceId,
+            categoryId: plain.categoryId,
+            subCategoryId: plain.subCategoryId,
+            items: plain.items,
+            bags: plain.bags,
+            noOfBags: plain.bags,
+            categoryPrice:
+                plain.categoryPrice != null ? String(plain.categoryPrice) : null,
+            serviceInstruction: plain.serviceInstruction,
+            status: true,
+            service: (sid != null && serviceById.get(sid)) || null,
+            category: null,
+            subCategory: null,
+            addOns: [],
+            serviceLines: [],
+            selectedServicePreferences: [],
+            repairItems: [],
+        };
+    });
+}
+
+async function getCustomerDeclaredServices(bookingId) {
+    const mapped = await loadMappedSnapshots(bookingId);
     return attachRepairItemsToDeclaredServices(bookingId, mapped);
+}
+
+async function snapshotCreatedAt(bookingId) {
+    const first = await customerOriginalServiceSnapshot.findOne({
+        where: { bookingId },
+        order: [['id', 'ASC']],
+        attributes: ['createdAt'],
+    });
+    return first?.createdAt ? new Date(first.createdAt) : null;
+}
+
+/**
+ * Customer-app snapshot: frozen booking intent only.
+ * Does not attach garments the agent added after the snapshot was taken.
+ */
+async function getFrozenCustomerDeclaredServices(bookingId) {
+    let mapped = [];
+    try {
+        mapped = await loadMappedSnapshots(bookingId);
+    } catch (err) {
+        console.warn(
+            '[getFrozenCustomerDeclaredServices] snapshot load failed:',
+            err?.message || err
+        );
+    }
+
+    if (!mapped.length) {
+        try {
+            mapped = await reconstructDeclaredFromOriginalCss(bookingId);
+        } catch (err) {
+            console.warn(
+                '[getFrozenCustomerDeclaredServices] reconstruct failed:',
+                err?.message || err
+            );
+            return [];
+        }
+    }
+
+    const takenAt = await snapshotCreatedAt(bookingId);
+    try {
+        const hydrated = await attachRepairItemsToDeclaredServices(
+            bookingId,
+            mapped
+        );
+        if (!takenAt) return hydrated;
+        const cutoff = new Date(takenAt.getTime() + 2 * 60 * 1000);
+        return hydrated.map((svc) => {
+            const repairs = Array.isArray(svc.repairItems) ? svc.repairItems : [];
+            return {
+                ...svc,
+                repairItems: repairs.filter((item) => {
+                    const raw = item?.createdAt;
+                    if (!raw) return true;
+                    const at = new Date(raw);
+                    return !Number.isNaN(at.getTime()) && at <= cutoff;
+                }),
+            };
+        });
+    } catch (err) {
+        console.warn(
+            '[getFrozenCustomerDeclaredServices] repair attach failed:',
+            err?.message || err
+        );
+        return mapped;
+    }
+}
+
+/**
+ * Active invoice / CSS lines the agent added that were not in the customer snapshot.
+ */
+function getAgentAddedServicesFromLive(declaredServices, liveSelectedServices) {
+    const live = Array.isArray(liveSelectedServices) ? liveSelectedServices : [];
+    const declaredIds = declaredServiceIdSet(declaredServices);
+    if (!declaredIds.size) {
+        // Snapshot still missing — show invoiced lines so the customer page is not blank.
+        return live;
+    }
+
+    return live.filter((row) => {
+        const sid = row?.serviceId != null ? Number(row.serviceId) : null;
+        if (!Number.isFinite(sid)) return false;
+        return !declaredIds.has(sid);
+    });
+}
+
+/**
+ * Repair garments created after the snapshot, including extras on a service
+ * the customer already booked.
+ */
+async function getAgentAddedRepairServices(bookingId) {
+    const takenAt = await snapshotCreatedAt(bookingId);
+    if (!takenAt) return [];
+
+    const cutoff = new Date(takenAt.getTime() + 2 * 60 * 1000);
+    let rows = [];
+    try {
+        rows = await customerSelectedRepairItem.findAll({
+            where: {
+                bookingId,
+                createdAt: { [Op.gt]: cutoff },
+            },
+            order: [['id', 'ASC']],
+            include: [
+                {
+                    model: dbModels.customerSelectedRepairItemOption,
+                    as: 'options',
+                    required: false,
+                },
+                {
+                    model: dbModels.customerSelectedRepairItemImage,
+                    as: 'images',
+                    required: false,
+                },
+            ],
+        });
+    } catch (err) {
+        console.warn('[getAgentAddedRepairServices] skipped:', err?.message || err);
+        return [];
+    }
+
+    const late = normalizeRepairItems(rows);
+    if (!late.length) return [];
+
+    const byService = new Map();
+    for (const item of late) {
+        const sid = Number(item.serviceId);
+        if (!Number.isFinite(sid)) continue;
+        if (!byService.has(sid)) byService.set(sid, []);
+        byService.get(sid).push(item);
+    }
+
+    const serviceIds = [...byService.keys()];
+    const serviceRows = await service.findAll({
+        where: { id: serviceIds },
+        attributes: ['id', 'name', 'image', 'pricingBasis'],
+    });
+    const serviceById = new Map(
+        serviceRows.map((s) => [Number(s.id), s.toJSON ? s.toJSON() : s])
+    );
+
+    return serviceIds.map((serviceId) => ({
+        id: null,
+        bookingId: Number(bookingId),
+        serviceId,
+        categoryId: null,
+        subCategoryId: null,
+        items: null,
+        bags: null,
+        noOfBags: null,
+        categoryPrice: null,
+        serviceInstruction: null,
+        status: true,
+        service: serviceById.get(serviceId) || {
+            id: serviceId,
+            name: 'Alteration and Repair',
+        },
+        category: null,
+        subCategory: null,
+        addOns: [],
+        serviceLines: [],
+        selectedServicePreferences: [],
+        repairItems: byService.get(serviceId) || [],
+        addedByAgent: true,
+    }));
+}
+
+async function getAgentAddedServicesForCustomer(
+    bookingId,
+    declaredServices,
+    liveSelectedServices
+) {
+    const fromLive = getAgentAddedServicesFromLive(
+        declaredServices,
+        liveSelectedServices
+    );
+    const covered = new Set(
+        fromLive
+            .map((s) => (s?.serviceId != null ? Number(s.serviceId) : null))
+            .filter((id) => Number.isFinite(id))
+    );
+
+    const lateRepairs = await getAgentAddedRepairServices(bookingId);
+    const extraRepairs = lateRepairs.filter((row) => {
+        const sid = Number(row.serviceId);
+        return Number.isFinite(sid) && !covered.has(sid);
+    });
+
+    // If the new service is already in fromLive, attach late repairs onto it.
+    const mergedLive = fromLive.map((row) => {
+        const sid = Number(row.serviceId);
+        const extra = lateRepairs.find((r) => Number(r.serviceId) === sid);
+        if (!extra?.repairItems?.length) return row;
+        const existing = Array.isArray(row.repairItems) ? row.repairItems : [];
+        const seen = new Set(existing.map((i) => i?.id).filter((id) => id != null));
+        const add = extra.repairItems.filter((i) => i?.id == null || !seen.has(i.id));
+        return { ...row, repairItems: [...existing, ...add], addedByAgent: true };
+    });
+
+    return [...mergedLive.map((r) => ({ ...r, addedByAgent: true })), ...extraRepairs];
 }
 
 /**
@@ -314,6 +594,8 @@ async function getBookingRepairItems(bookingId) {
 module.exports = {
     ensureCustomerDeclaredSnapshot,
     getCustomerDeclaredServices,
+    getFrozenCustomerDeclaredServices,
+    getAgentAddedServicesForCustomer,
     getBookingRepairItems,
     attachRepairItemsToDeclaredServices,
 };

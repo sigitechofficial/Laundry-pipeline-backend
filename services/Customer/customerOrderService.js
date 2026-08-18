@@ -68,6 +68,10 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
+const {
+    getFrozenCustomerDeclaredServices,
+    getAgentAddedServicesForCustomer,
+} = require('../Agent/customerDeclaredServicesService');
 const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType, enrichPaymentSummary } = require('../../utils/invoicePaymentSummary');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
@@ -99,6 +103,10 @@ const cancelBookingService = require('./cancelBookingService');
 const noShowEnforcementService = require('../Agent/noShowEnforcementService');
 const { resolveNoShowPolicyForBooking } = require('../../utils/safeNoShowPolicyQuery');
 const { buildOrderTrackTimeline } = require('../../utils/orderTrackTimeline');
+const {
+    attachNoShowPolicyOnBooking,
+    attachCancellationPolicyOnBooking,
+} = require('../../utils/bookingPolicyAttach');
 
 /**
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
@@ -1598,6 +1606,18 @@ class CustomerOrderService {
             customerLocalTimeZone,
         });
 
+        try {
+            await Promise.all([
+                attachNoShowPolicyOnBooking(bookingData.id, zoneId),
+                attachCancellationPolicyOnBooking(bookingData.id, zoneId),
+            ]);
+        } catch (policyAttachErr) {
+            console.warn(
+                `[createBooking] policy snapshot attach failed for booking ${bookingData.id}:`,
+                policyAttachErr?.message || policyAttachErr
+            );
+        }
+
         // Validate booking preferences. We will create rows after selected services
         // are created so we can attach customerSelectedServiceId.
         const validatedPreferences = [];
@@ -2745,6 +2765,30 @@ class CustomerOrderService {
             bookingPlain.invoiceStatus === "draft" ||
             servicesSubtotal > 0;
 
+        let customerDeclaredServices = [];
+        let agentAddedServices = [];
+        try {
+            customerDeclaredServices =
+                await getFrozenCustomerDeclaredServices(bookingPlain.id);
+        } catch (err) {
+            console.warn(
+                '[bookingDetailsById] customerDeclaredServices skipped:',
+                err?.message || err
+            );
+        }
+        try {
+            agentAddedServices = await getAgentAddedServicesForCustomer(
+                bookingPlain.id,
+                customerDeclaredServices,
+                bookingPlain.customerSelectedServices
+            );
+        } catch (err) {
+            console.warn(
+                '[bookingDetailsById] agentAddedServices skipped:',
+                err?.message || err
+            );
+        }
+
         const proofOfDeliveriesList = Array.isArray(bookingPlain.proofOfDeliveries)
             ? bookingPlain.proofOfDeliveries
             : [];
@@ -2756,6 +2800,9 @@ class CustomerOrderService {
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
+            invoiceGenerated: hasInvoiceTotals,
+            customerDeclaredServices,
+            agentAddedServices,
             paymentSummary,
             paymentIssue,
             cardDetails,
