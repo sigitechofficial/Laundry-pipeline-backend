@@ -53,6 +53,8 @@ exports.markAttemptFailed = async (req, res) => {
     const {
         type,
         reason,
+        reasonId,
+        reasonNote,
         driverLateMinutes,
         driverLat,
         driverLng,
@@ -63,11 +65,16 @@ exports.markAttemptFailed = async (req, res) => {
     if (!type) {
         throw new ValidationError('type is required (pickup or delivery)');
     }
+    if (reasonId == null || reasonId === '') {
+        throw new ValidationError('reasonId is required');
+    }
 
     const result = await noShowEnforcementService.markAttemptFailed({
         bookingId,
         attemptType: type,
         reason,
+        reasonId,
+        reasonNote,
         driverLateMinutes: driverLateMinutes != null ? Number(driverLateMinutes) : 0,
         driverLat,
         driverLng,

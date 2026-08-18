@@ -2,6 +2,7 @@
 
 const ResponseHelper = require('../../utils/responseHelper');
 const attemptFailInstructionService = require('../../services/Agent/attemptFailInstructionService');
+const attemptFailReasonService = require('../../services/Agent/attemptFailReasonService');
 const complianceReportService = require('../../services/Admin/complianceReportService');
 
 exports.listFailInstructionSets = async (req, res) => {
@@ -59,6 +60,26 @@ exports.setFailInstructionSetActive = async (req, res) => {
     req.body.isActive
   );
   return ResponseHelper.success(res, 'Fail instruction set updated', set);
+};
+
+exports.listFailReasons = async (req, res) => {
+  const rows = await attemptFailReasonService.listAdmin({
+    scope: req.query.scope,
+  });
+  return ResponseHelper.success(res, 'Fail reasons fetched', rows);
+};
+
+exports.createFailReason = async (req, res) => {
+  const row = await attemptFailReasonService.createAdmin(req.body || {});
+  return ResponseHelper.success(res, 'Fail reason created', row);
+};
+
+exports.updateFailReason = async (req, res) => {
+  const row = await attemptFailReasonService.updateAdmin(
+    req.params.reasonId,
+    req.body || {}
+  );
+  return ResponseHelper.success(res, 'Fail reason updated', row);
 };
 
 exports.getGeofenceOverrideReport = async (req, res) => {

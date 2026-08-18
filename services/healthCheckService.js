@@ -820,9 +820,11 @@ async function checkComplianceCatalogSchema() {
     'attempt_fail_instruction_sets',
     'attempt_fail_instructions',
     'agent_compliance_events',
+    'attempt_fail_reasons',
   ];
   const MIGRATION =
     '20260817150000-agent-fail-instructions-and-compliance-events.js';
+  const REASONS_MIGRATION = '20260818140000-attempt-fail-reasons.js';
 
   try {
     const [tableRows] = await db.sequelize.query(
@@ -850,10 +852,24 @@ async function checkComplianceCatalogSchema() {
       migrationApplied = false;
     }
 
+    let reasonsMigrationApplied = false;
+    try {
+      const [reasonMeta] = await db.sequelize.query(
+        `SELECT name FROM SequelizeMeta WHERE name = :name LIMIT 1`,
+        { replacements: { name: REASONS_MIGRATION } }
+      );
+      reasonsMigrationApplied = Array.isArray(reasonMeta) && reasonMeta.length > 0;
+    } catch (_) {
+      reasonsMigrationApplied = false;
+    }
+
     const counts = {
       instructionSets: null,
       instructionsEnabled: null,
       complianceEvents: null,
+      failReasons: null,
+      failReasonsCharging: null,
+      failReasonsNoFee: null,
     };
     if (tables.attempt_fail_instruction_sets) {
       try {
@@ -885,11 +901,34 @@ async function checkComplianceCatalogSchema() {
         /* ignore */
       }
     }
+    if (tables.attempt_fail_reasons) {
+      try {
+        const [rows] = await db.sequelize.query(
+          `SELECT
+             COUNT(*) AS c,
+             SUM(CASE WHEN chargesFee = 1 AND status = 1 THEN 1 ELSE 0 END) AS feeOn,
+             SUM(CASE WHEN chargesFee = 0 AND status = 1 THEN 1 ELSE 0 END) AS feeOff
+           FROM attempt_fail_reasons`
+        );
+        counts.failReasons = Number(rows?.[0]?.c ?? 0);
+        counts.failReasonsCharging = Number(rows?.[0]?.feeOn ?? 0);
+        counts.failReasonsNoFee = Number(rows?.[0]?.feeOff ?? 0);
+      } catch (_) {
+        /* ignore */
+      }
+    }
 
     const seeded =
       Number(counts.instructionSets || 0) >= 2 &&
-      Number(counts.instructionsEnabled || 0) > 0;
-    const ok = missingTables.length === 0 && migrationApplied && seeded;
+      Number(counts.instructionsEnabled || 0) > 0 &&
+      Number(counts.failReasons || 0) > 0 &&
+      Number(counts.failReasonsCharging || 0) > 0 &&
+      Number(counts.failReasonsNoFee || 0) > 0;
+    const ok =
+      missingTables.length === 0 &&
+      migrationApplied &&
+      reasonsMigrationApplied &&
+      seeded;
 
     return result(
       ok ? 'ok' : 'fail',
@@ -900,7 +939,10 @@ async function checkComplianceCatalogSchema() {
         latencyMs: nowMs() - started,
         checkType: 'schema',
         feature: 'agentCompliance',
-        migrations: { catalog: { name: MIGRATION, applied: migrationApplied } },
+        migrations: {
+          catalog: { name: MIGRATION, applied: migrationApplied },
+          failReasons: { name: REASONS_MIGRATION, applied: reasonsMigrationApplied },
+        },
         tables,
         missingTables,
         counts,
@@ -908,12 +950,13 @@ async function checkComplianceCatalogSchema() {
         verifyEndpoints: {
           health: 'GET /health/compliance-catalog',
           adminSets: 'GET /admin/failAttemptInstructions',
+          adminReasons: 'GET /admin/failAttemptReasons',
           adminReport: 'GET /admin/compliance/geofence-overrides',
           deploy: 'GET /health/deploy',
         },
         hint: ok
           ? null
-          : 'Deploy migrate + seed 20260817151000-attempt-fail-instruction-defaults.js',
+          : 'Deploy migrate + seed attempt-fail-instruction-defaults and attempt-fail-reason-defaults',
       }
     );
   } catch (err) {

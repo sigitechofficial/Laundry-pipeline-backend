@@ -7,6 +7,10 @@ module.exports = (sequelize, DataTypes) => {
             bookingAttempt.belongsTo(models.booking, { foreignKey: 'bookingId', as: 'booking' });
             bookingAttempt.belongsTo(models.users, { foreignKey: 'driverId', as: 'driver' });
             bookingAttempt.belongsTo(models.policy, { foreignKey: 'noShowPolicyId', as: 'noShowPolicy' });
+            bookingAttempt.belongsTo(models.attemptFailReason, {
+                foreignKey: 'failureReasonId',
+                as: 'failReason',
+            });
             bookingAttempt.hasMany(models.bookingNotification, {
                 foreignKey: 'attemptId',
                 as: 'notifications',
@@ -59,6 +63,10 @@ module.exports = (sequelize, DataTypes) => {
             },
             feeWaiveReason: DataTypes.STRING(255),
             failureReason: DataTypes.STRING(500),
+            failureReasonId: DataTypes.INTEGER,
+            failureReasonCode: DataTypes.STRING(64),
+            failureReasonNote: DataTypes.STRING(500),
+            failureChargesFee: DataTypes.BOOLEAN,
             unattendedMethod: {
                 type: DataTypes.ENUM('bag_at_door', 'concierge', 'locker'),
                 allowNull: true,

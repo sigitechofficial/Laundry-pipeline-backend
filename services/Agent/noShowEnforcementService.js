@@ -601,6 +601,19 @@ class NoShowEnforcementService {
             );
         }
 
+        let failReasons = [];
+        try {
+            const attemptFailReasonService = require('./attemptFailReasonService');
+            failReasons = await attemptFailReasonService.listEnabledForAttemptType(
+                normalizedType
+            );
+        } catch (failReasonErr) {
+            console.warn(
+                `[noShowEnforcement] failReasons for booking ${bookingId}:`,
+                failReasonErr.message
+            );
+        }
+
         return {
             bookingId,
             attemptType: normalizedType,
@@ -636,6 +649,7 @@ class NoShowEnforcementService {
             // Soft signal for app — not a hard block (yet)
             contactRecommendedBeforeFail: true,
             failCompliance,
+            failReasons,
         };
     }
 
@@ -652,6 +666,8 @@ class NoShowEnforcementService {
         bookingId,
         attemptType,
         reason,
+        reasonId,
+        reasonNote,
         driverLateMinutes = 0,
         driverLat,
         driverLng,
@@ -661,6 +677,12 @@ class NoShowEnforcementService {
         actorUserId,
     }) {
         const normalizedType = this._normalizeAttemptType(attemptType);
+        const attemptFailReasonService = require('./attemptFailReasonService');
+        const resolvedReason = await attemptFailReasonService.resolveForFail({
+            reasonId,
+            reasonNote,
+            attemptType: normalizedType,
+        });
 
         await assertDriverWithinCustomerRadius({
             bookingId,
@@ -724,17 +746,25 @@ class NoShowEnforcementService {
             );
         }
 
-        const feeResult = await this.calculateNoShowFee({
+        const policyFee = await this.calculateNoShowFee({
             bookingData,
             attemptType: normalizedType,
             driverLateMinutes,
             policyRecord,
         });
+        const feeResult = attemptFailReasonService.applyReasonToFee(
+            policyFee,
+            resolvedReason
+        );
 
         await openAttempt.update({
             status: 'failed',
             failedAt: new Date(),
-            failureReason: reason || 'Customer not available',
+            failureReason: resolvedReason.displayReason,
+            failureReasonId: resolvedReason.id,
+            failureReasonCode: resolvedReason.code,
+            failureReasonNote: resolvedReason.note,
+            failureChargesFee: resolvedReason.chargesFee,
             driverLateMinutes: driverLateMinutes || null,
             feeAmount: feeResult.feeAmount,
             feeCurrency: feeResult.currency,
@@ -796,6 +826,14 @@ class NoShowEnforcementService {
             stripeChargeError: stripeCharge.stripeChargeError,
             stripePaymentIntentId: stripeCharge.stripeChargeResult?.id || null,
         };
+        const failReasonPayload = {
+            id: resolvedReason.id,
+            code: resolvedReason.code,
+            label: resolvedReason.label,
+            note: resolvedReason.note,
+            chargesFee: resolvedReason.chargesFee,
+            displayReason: resolvedReason.displayReason,
+        };
 
         const accrued = this._roundMoney(
             (parseFloat(bookingData.noShowFeeAccrued) || 0) + feeResult.feeAmount
@@ -853,6 +891,7 @@ class NoShowEnforcementService {
                     pickupRescheduleRequired: false,
                     maxPickupAttempts: maxAttempts,
                     fee: feeWithStripe,
+                    failReason: failReasonPayload,
                     bookingStatusId: CANCELLED_STATUS,
                     contacted: contactedAtFail,
                     message: 'Maximum pickup attempts reached. Booking cancelled.',
@@ -912,6 +951,7 @@ class NoShowEnforcementService {
                 pickupRescheduleRequired: true,
                 maxPickupAttempts: maxAttempts,
                 fee: feeWithStripe,
+                failReason: failReasonPayload,
                 bookingStatusId: AWAITING_COLLECTION_STATUS,
                 contacted: contactedAtFail,
                 message: 'Pickup failed. Booking returned to Awaiting Collection for retry.',
@@ -964,6 +1004,7 @@ class NoShowEnforcementService {
             attemptId: openAttempt.id,
             deliveryAttemptCount: newDeliveryCount,
             fee: feeWithStripe,
+            failReason: failReasonPayload,
             bookingStatusId: DELIVERY_FAILED_STATUS,
             contacted: contactedAtFail,
             message: 'Delivery failed. Customer must reschedule delivery.',

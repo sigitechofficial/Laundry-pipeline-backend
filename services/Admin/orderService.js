@@ -23,6 +23,8 @@ const {
     countries,
     users,
     bookingAssignmentEvent,
+    bookingAttempt,
+    attemptFailReason,
 } = require('../../models');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
@@ -752,6 +754,60 @@ class OrderService {
                 err?.message || err
             );
             enriched.assignmentEvents = [];
+        }
+
+        try {
+            const attempts = await bookingAttempt.findAll({
+                where: { bookingId: orderId },
+                order: [['id', 'ASC']],
+                include: [
+                    {
+                        model: attemptFailReason,
+                        as: 'failReason',
+                        required: false,
+                    },
+                    {
+                        model: users,
+                        as: 'driver',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                ],
+            });
+            enriched.attempts = attempts.map((row) => {
+                const a = row.get ? row.get({ plain: true }) : row;
+                const charged = Number(a.feeAmount || 0) > 0 && a.feeWaived !== true;
+                return {
+                    id: a.id,
+                    attemptType: a.attemptType,
+                    attemptNumber: a.attemptNumber,
+                    status: a.status,
+                    arrivedAt: a.arrivedAt,
+                    failedAt: a.failedAt,
+                    completedAt: a.completedAt,
+                    failureReason: a.failureReason,
+                    failureReasonCode: a.failureReasonCode || a.failReason?.code || null,
+                    failureReasonNote: a.failureReasonNote || null,
+                    failureReasonLabel: a.failReason?.label || a.failureReason || null,
+                    chargesFee: a.failureChargesFee != null
+                        ? Boolean(a.failureChargesFee)
+                        : Boolean(a.failReason?.chargesFee),
+                    feeAmount: Number(a.feeAmount || 0),
+                    feeCurrency: a.feeCurrency || 'GBP',
+                    feeWaived: Boolean(a.feeWaived),
+                    feeWaiveReason: a.feeWaiveReason || null,
+                    feeCharged: charged,
+                    driverName: a.driver
+                        ? [a.driver.firstName, a.driver.lastName].filter(Boolean).join(' ').trim()
+                        : null,
+                };
+            });
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] attempts unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.attempts = [];
         }
 
         const shopOwnerUserId =

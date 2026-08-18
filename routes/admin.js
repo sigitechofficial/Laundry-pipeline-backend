@@ -230,6 +230,18 @@ router.patch(
     asyncMiddleware(agentComplianceController.setFailInstructionSetActive)
 )
 router.get(
+    '/failAttemptReasons',
+    asyncMiddleware(agentComplianceController.listFailReasons)
+)
+router.post(
+    '/failAttemptReasons',
+    asyncMiddleware(agentComplianceController.createFailReason)
+)
+router.patch(
+    '/failAttemptReasons/:reasonId',
+    asyncMiddleware(agentComplianceController.updateFailReason)
+)
+router.get(
     '/compliance/geofence-overrides',
     asyncMiddleware(agentComplianceController.getGeofenceOverrideReport)
 )
