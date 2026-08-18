@@ -54,12 +54,67 @@ const ON_HOLD_STATUS_IDS = [18, 22, 24];
 const ACTIVE_EXCLUDED_STATUS_IDS = [17, 19, 21];
 const DELIVERY_FAILED_STATUS_ID = 15;
 const AWAITING_COLLECTION_STATUS_ID = 3;
+const HISTORY_PICKUP_LIVE_STATUSES = [3, 4, 5, 6, 7];
+/** Delivery-only staff see history only after facility complete. */
+const HISTORY_DELIVERY_VISIBLE_STATUSES = [12, 13, 14, 15, 16, 17];
 
 /**
  * Agent Order Management Service
  * Handles all agent order related business logic
  */
 class AgentOrderManagementService {
+
+    /**
+     * Field-driver history: pickup jobs while collecting / after they completed pickup;
+     * delivery jobs only once the order is ready to send (or they completed delivery).
+     */
+    _staffOrderHistoryScope(staffUserId) {
+        return {
+            [Op.or]: [
+                {
+                    driverId: staffUserId,
+                    bookingStatusId: { [Op.in]: HISTORY_PICKUP_LIVE_STATUSES },
+                },
+                { pickupCompletedByUserId: staffUserId },
+                {
+                    deliveryDriverId: staffUserId,
+                    bookingStatusId: { [Op.in]: HISTORY_DELIVERY_VISIBLE_STATUSES },
+                },
+                { deliveryCompletedByUserId: staffUserId },
+            ],
+        };
+    }
+
+    _redactHistoryForFieldDriver(plain, staffUserId, { canAccessInvoice } = {}) {
+        const sid = Number(staffUserId);
+        const statusId = Number(plain.bookingStatusId || 0);
+        const pickupMine =
+            Number(plain.driverId) === sid ||
+            Number(plain.pickupCompletedByUserId) === sid;
+        const deliveryMine =
+            Number(plain.deliveryDriverId) === sid ||
+            Number(plain.deliveryCompletedByUserId) === sid;
+
+        if (deliveryMine && !pickupMine) {
+            plain.driver = null;
+            plain.pickupCompletedBy = null;
+            plain.pickupStaffName = null;
+            plain.pickupCompletedByName = null;
+        }
+
+        if (canAccessInvoice) return plain;
+
+        plain.customerSelectedServices = [];
+        if (statusId < 12) {
+            plain.billingDetail = null;
+            plain.paymentSummary = null;
+            plain.orderAmount = 0;
+            plain.subTotal = 0;
+            plain.invoiceStatus = null;
+            plain.invoiceDraftSavedAt = null;
+        }
+        return plain;
+    }
 
     _getOrderHistoryIncludes() {
         return [
@@ -319,6 +374,7 @@ class AgentOrderManagementService {
      *   startDate?: string,
      *   endDate?: string,
      *   staffUserId?: number,
+     *   canAccessInvoice?: boolean,
      * }} options
      */
     async getOrderHistory(agentId, options = {}) {
@@ -369,12 +425,7 @@ class AgentOrderManagementService {
         }
 
         if (staffUserId && !Number.isNaN(staffUserId)) {
-            shopBaseWhere[Op.or] = [
-                { driverId: staffUserId },
-                { deliveryDriverId: staffUserId },
-                { pickupCompletedByUserId: staffUserId },
-                { deliveryCompletedByUserId: staffUserId },
-            ];
+            Object.assign(shopBaseWhere, this._staffOrderHistoryScope(staffUserId));
         }
 
         const statusWhere = this._buildOrderHistoryStatusWhere(status);
@@ -489,6 +540,11 @@ class AgentOrderManagementService {
                 staffName(plain.deliveryDriver);
             plain.pickupCompletedByName = staffName(plain.pickupCompletedBy);
             plain.deliveryCompletedByName = staffName(plain.deliveryCompletedBy);
+            if (staffUserId && !Number.isNaN(staffUserId)) {
+                this._redactHistoryForFieldDriver(plain, staffUserId, {
+                    canAccessInvoice: options.canAccessInvoice === true,
+                });
+            }
             return plain;
         });
 

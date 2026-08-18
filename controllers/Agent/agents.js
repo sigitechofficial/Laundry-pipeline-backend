@@ -1166,12 +1166,18 @@ exports.orderDetailsById = async (req, res) => {
             bookingfind.deliveryDriverId != null
                 ? Number(bookingfind.deliveryDriverId)
                 : null;
-        const mine =
-            (pickupId != null && pickupId === Number(actorId)) ||
-            (deliveryId != null && deliveryId === Number(actorId));
-        if (!mine) {
+        const pickupMine = pickupId != null && pickupId === Number(actorId);
+        const deliveryMine =
+            deliveryId != null && deliveryId === Number(actorId);
+        if (!pickupMine && !deliveryMine) {
             throw new ForbiddenError(
                 'You can only view orders assigned to you'
+            );
+        }
+        const statusId = Number(bookingfind.bookingStatusId || 0);
+        if (deliveryMine && !pickupMine && statusId < 12) {
+            throw new ForbiddenError(
+                'Delivery starts after the shop completes this order at the facility.'
             );
         }
     }
@@ -1235,6 +1241,23 @@ const AGENT_POST_PICKUP_STATUSES = [
     ...AGENT_POST_FACILITY_STATUSES,
 ];
 const AGENT_ALL_ACTIVE_STATUSES = [...AGENT_PICKUP_STATUSES, ...AGENT_POST_PICKUP_STATUSES];
+/** Delivery-only drivers see/count a job only when it is ready to send. */
+const AGENT_DELIVERY_VISIBLE_STATUSES = [12, 13, 14, 15, 16];
+
+function fieldDriverAssignedJobScope(actorId) {
+    return {
+        [Op.or]: [
+            {
+                driverId: actorId,
+                bookingStatusId: { [Op.in]: AGENT_PICKUP_STATUSES },
+            },
+            {
+                deliveryDriverId: actorId,
+                bookingStatusId: { [Op.in]: AGENT_DELIVERY_VISIBLE_STATUSES },
+            },
+        ],
+    };
+}
 
 const agentDayTabWhere = (shopId, dayStart, dayEnd) => ({
     laundryShopId: shopId,
@@ -1297,12 +1320,7 @@ exports.agentBookingFilters = async (req, res) => {
         req.isShopEmployee &&
         !actorCanViewShopBoard(req) &&
         Number.isFinite(actorId)
-            ? {
-                  [Op.or]: [
-                      { driverId: actorId },
-                      { deliveryDriverId: actorId },
-                  ],
-              }
+            ? fieldDriverAssignedJobScope(actorId)
             : null;
     const { filterType, filterDate } = req.query;
 
@@ -1640,12 +1658,7 @@ exports.getBookingCounts = async (req, res) => {
         req.isShopEmployee &&
         !actorCanViewShopBoard(req) &&
         Number.isFinite(actorId)
-            ? {
-                  [Op.or]: [
-                      { driverId: actorId },
-                      { deliveryDriverId: actorId },
-                  ],
-              }
+            ? fieldDriverAssignedJobScope(actorId)
             : null;
     const withStaffScope = (where) =>
         employeeStaffScope ? { [Op.and]: [where, employeeStaffScope] } : where;
@@ -1717,6 +1730,7 @@ exports.getAgentOrderHistory = async (req, res) => {
         limit,
         startDate,
         endDate,
+        canAccessInvoice: req.canAccessInvoice === true,
     };
 
     // Drivers / employees without shop-board view: only their legs.
@@ -1736,6 +1750,11 @@ exports.getAgentOrderHistory = async (req, res) => {
 };
 
 exports.invoiceDetailTab = async (req, res) => {
+    if (req.isShopEmployee && !req.canAccessInvoice) {
+        return ResponseHelper.success(res, "Invoice bookings", {
+            All: [],
+        });
+    }
     const agentId = req.user.id;
 
 
@@ -4241,6 +4260,33 @@ exports.invoiceCreation = async (req, res) => {
 
     // Flatten invoiceDetails and deduplicate servicePreferences
     const bookingData = invoiceDetails[0]?.toJSON();
+    const shopAddress = await addressDb.findOne({
+        where: {
+            userId: shopAgentIdFromReq(req),
+            addressType: 'LaundaryShopAddress',
+        },
+        attributes: ['id'],
+    });
+    if (
+        !shopAddress ||
+        Number(bookingData.laundryShopId) !== Number(shopAddress.id)
+    ) {
+        throw new ForbiddenError('This order does not belong to your shop');
+    }
+    if (req.isShopEmployee && !req.canAccessInvoice) {
+        const actorId = Number(actorUserIdFromReq(req));
+        const statusId = Number(bookingData.bookingStatusId || 0);
+        const pickupMine = Number(bookingData.driverId) === actorId;
+        const deliveryMine = Number(bookingData.deliveryDriverId) === actorId;
+        if (deliveryMine && !pickupMine && statusId < 12) {
+            throw new ForbiddenError(
+                'Delivery starts after the shop completes this order at the facility.'
+            );
+        }
+        if (!pickupMine && !deliveryMine && !actorCanViewShopBoard(req)) {
+            throw new ForbiddenError('You can only view orders assigned to you');
+        }
+    }
     if (bookingData?.customer) {
         bookingData.customer = redactCustomerPhone(bookingData.customer);
     }
@@ -4358,9 +4404,26 @@ exports.invoiceCreation = async (req, res) => {
         ...paymentGateFlags,
     };
 
+    let responseServicesSubtotal = servicesSubtotal;
+    if (req.isShopEmployee && !req.canAccessInvoice) {
+        bookingData.customerSelectedServices = [];
+        bookingData.customerDeclaredServices = [];
+        bookingData.repairItems = [];
+        bookingData.totalItems = 0;
+        bookingData.servicesSubtotal = 0;
+        responseServicesSubtotal = 0;
+        const statusId = Number(bookingData.bookingStatusId || 0);
+        if (statusId < 12) {
+            bookingData.billingDetail = null;
+            bookingData.orderAmount = 0;
+            bookingData.subTotal = 0;
+            bookingData.invoiceStatus = null;
+        }
+    }
+
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
-        servicesSubtotal,
+        servicesSubtotal: responseServicesSubtotal,
         totalItems: bookingData.totalItems,
         paymentSummary: paymentSummaryWithFlags,
         remainingTime,

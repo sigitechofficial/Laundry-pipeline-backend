@@ -338,7 +338,22 @@ class AgentDriverManagementService {
         const staff = await this._assertAssignableStaff(agentId, targetStaffId);
         const actedBy = actorUserId != null ? Number(actorUserId) : Number(agentId);
 
-        const legs = this._legsToAssign(assignmentType, { alsoAssignDelivery });
+        let legs = this._legsToAssign(assignmentType, { alsoAssignDelivery });
+        const statusId = Number(bookingRow.bookingStatusId);
+        // Delivery staff only when the order is ready to send (facility complete+).
+        if (statusId < 12) {
+            const wantsDeliveryOnly =
+                legs.includes('delivery') && !legs.includes('pickup');
+            if (wantsDeliveryOnly) {
+                throw new ValidationError(
+                    'Assign a delivery driver after the order is completed at the facility and ready to send.'
+                );
+            }
+            legs = legs.filter((leg) => leg !== 'delivery');
+        }
+        if (!legs.length) {
+            throw new ValidationError('No assignment to apply');
+        }
 
         const results = [];
         for (const leg of legs) {
