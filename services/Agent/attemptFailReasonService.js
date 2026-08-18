@@ -9,6 +9,13 @@ const {
   slugifyCode,
 } = require('./attemptFailReasonCatalog');
 
+function resolveRequiresCompliance(plain) {
+  if (plain.requiresCompliance == null) {
+    return Boolean(plain.chargesFee);
+  }
+  return Boolean(plain.requiresCompliance);
+}
+
 function toPublic(row, extras = {}) {
   const plain = row.get ? row.get({ plain: true }) : row;
   return {
@@ -18,6 +25,7 @@ function toPublic(row, extras = {}) {
     description: plain.description || null,
     scope: plain.scope,
     chargesFee: Boolean(plain.chargesFee),
+    requiresCompliance: resolveRequiresCompliance(plain),
     requiresNote: Boolean(plain.requiresNote),
     isOther: Boolean(plain.isOther),
     sortOrder: Number(plain.sortOrder || 0),
@@ -26,20 +34,51 @@ function toPublic(row, extras = {}) {
   };
 }
 
+function toAgentPublic(row) {
+  const pub = toPublic(row);
+  delete pub.chargesFee;
+  return pub;
+}
+
+async function backfillRequiresCompliance() {
+  try {
+    const byCode = new Map(
+      DEFAULT_ATTEMPT_FAIL_REASONS.map((r) => [String(r.code).toLowerCase(), r])
+    );
+    const rows = await attemptFailReason.findAll({
+      where: { requiresCompliance: null },
+    });
+    for (const row of rows) {
+      const def = byCode.get(String(row.code || '').toLowerCase());
+      const next =
+        def && def.requiresCompliance != null
+          ? Boolean(def.requiresCompliance)
+          : Boolean(row.chargesFee);
+      await row.update({ requiresCompliance: next });
+    }
+  } catch (err) {
+    console.warn(
+      '[failReasons] requiresCompliance backfill skipped:',
+      err.message
+    );
+  }
+}
+
 async function ensureDefaultReasons() {
   const count = await attemptFailReason.count();
-  if (count > 0) return count;
-
-  const now = new Date();
-  await attemptFailReason.bulkCreate(
-    DEFAULT_ATTEMPT_FAIL_REASONS.map((r) => ({
-      ...r,
-      status: true,
-      createdAt: now,
-      updatedAt: now,
-    })),
-    { ignoreDuplicates: true }
-  );
+  if (count === 0) {
+    const now = new Date();
+    await attemptFailReason.bulkCreate(
+      DEFAULT_ATTEMPT_FAIL_REASONS.map((r) => ({
+        ...r,
+        status: true,
+        createdAt: now,
+        updatedAt: now,
+      })),
+      { ignoreDuplicates: true }
+    );
+  }
+  await backfillRequiresCompliance();
   return attemptFailReason.count();
 }
 
@@ -52,7 +91,7 @@ async function listEnabledForAttemptType(attemptType) {
       ['id', 'ASC'],
     ],
   });
-  return rows.filter((r) => scopeMatches(r.scope, attemptType)).map((r) => toPublic(r));
+  return rows.filter((r) => scopeMatches(r.scope, attemptType)).map((r) => toAgentPublic(r));
 }
 
 async function listAdmin({ scope } = {}) {
@@ -102,6 +141,7 @@ async function resolveForFail({ reasonId, reasonNote, attemptType }) {
     label,
     description: row.description || null,
     chargesFee: Boolean(row.chargesFee),
+    requiresCompliance: resolveRequiresCompliance(row),
     requiresNote: Boolean(row.requiresNote),
     isOther: Boolean(row.isOther),
     note: note || null,
@@ -118,6 +158,10 @@ async function createAdmin(payload = {}) {
   const scope = normalizeScope(payload.scope) || 'both';
   const description = String(payload.description || '').trim() || null;
   const chargesFee = payload.chargesFee === true;
+  const requiresCompliance =
+    payload.requiresCompliance != null
+      ? payload.requiresCompliance === true
+      : chargesFee;
   const requiresNote = payload.requiresNote === true || payload.isOther === true;
   const isOther = payload.isOther === true;
   const sortOrder =
@@ -138,6 +182,7 @@ async function createAdmin(payload = {}) {
     description,
     scope,
     chargesFee,
+    requiresCompliance,
     requiresNote,
     isOther,
     sortOrder,
@@ -168,6 +213,9 @@ async function updateAdmin(id, payload = {}) {
   }
   if (payload.chargesFee !== undefined) {
     patch.chargesFee = payload.chargesFee === true;
+  }
+  if (payload.requiresCompliance !== undefined) {
+    patch.requiresCompliance = payload.requiresCompliance === true;
   }
   if (payload.requiresNote !== undefined) {
     patch.requiresNote = payload.requiresNote === true;
@@ -213,4 +261,5 @@ module.exports = {
   updateAdmin,
   applyReasonToFee,
   toPublic,
+  toAgentPublic,
 };

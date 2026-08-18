@@ -700,6 +700,7 @@ class NoShowEnforcementService {
                 compliance,
                 bookingId,
                 zoneId: bookingDataForCompliance.zoneId,
+                requireAck: resolvedReason.requiresCompliance === true,
             });
 
         const bookingData = bookingDataForCompliance;

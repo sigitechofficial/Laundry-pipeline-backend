@@ -35,6 +35,7 @@ module.exports = {
       description: r.description || null,
       scope: r.scope,
       chargesFee: r.chargesFee,
+      requiresCompliance: r.requiresCompliance,
       requiresNote: r.requiresNote,
       isOther: r.isOther,
       sortOrder: r.sortOrder,
@@ -43,13 +44,31 @@ module.exports = {
       updatedAt: now,
     }));
 
-    if (!rows.length) {
+    if (rows.length) {
+      await queryInterface.bulkInsert('attempt_fail_reasons', rows);
+      console.log(`[seed] inserted ${rows.length} attempt fail reasons`);
+    } else {
       console.log('[seed] attempt fail reasons already present');
-      return;
     }
 
-    await queryInterface.bulkInsert('attempt_fail_reasons', rows);
-    console.log(`[seed] inserted ${rows.length} attempt fail reasons`);
+    try {
+      const defs = DEFAULT_ATTEMPT_FAIL_REASONS;
+      for (const r of defs) {
+        await sequelize.query(
+          `UPDATE attempt_fail_reasons
+           SET requiresCompliance = :v
+           WHERE code = :code AND requiresCompliance IS NULL`,
+          {
+            replacements: {
+              v: r.requiresCompliance ? 1 : 0,
+              code: r.code,
+            },
+          }
+        );
+      }
+    } catch (err) {
+      console.warn('[seed] requiresCompliance backfill skipped:', err.message);
+    }
   },
 
   async down(queryInterface) {

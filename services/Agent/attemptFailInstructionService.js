@@ -91,10 +91,21 @@ async function validateFailComplianceAck({
   compliance,
   bookingId = null,
   zoneId = null,
+  requireAck = true,
 }) {
   const payload = compliance && typeof compliance === 'object' ? compliance : {};
   const catalog = await getFailComplianceForAgent({ scope, bookingId, zoneId });
   const requiredIds = catalog.items.filter((i) => i.required).map((i) => i.id);
+
+  if (!requireAck) {
+    return {
+      setId: catalog.setId,
+      version: catalog.version,
+      snapshot: catalog.items,
+      skipped: true,
+      skipReason: 'reason_does_not_require_compliance',
+    };
+  }
 
   if (!catalog.setId || requiredIds.length === 0) {
     return {

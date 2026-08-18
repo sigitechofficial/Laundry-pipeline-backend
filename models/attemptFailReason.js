@@ -41,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: false,
       },
+      requiresCompliance: {
+        type: DataTypes.BOOLEAN,
+        allowNull: true,
+      },
       requiresNote: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
