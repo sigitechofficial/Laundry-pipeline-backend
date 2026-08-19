@@ -192,6 +192,11 @@ const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
 const { redactCustomerPhone } = require("../../utils/maskPhone");
+const {
+    redactCustomerForFieldStaff,
+    hideShopFinanceOnBooking,
+    slimPaymentSummaryForFieldStaff,
+} = require("../../utils/fieldDriverPrivacy");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
@@ -1424,7 +1429,10 @@ exports.agentBookingFilters = async (req, res) => {
                         { model: preferenceValues, required: false, attributes: ["id", "value"] },
                     ],
                 },
-            ],
+                // Same garments the customer booked — pickup proof must show
+                // these as the Alteration "preferences", not only the note.
+                buildRepairItemsInclude(dbModels, { separate: true }),
+            ].filter(Boolean),
         },
     ];  // <-- end makeIncludes
 
@@ -1447,6 +1455,34 @@ exports.agentBookingFilters = async (req, res) => {
             };
             return plain;
         });
+
+    // Nested include can miss rows after invoice CSS replacement (new CSS id).
+    // Hydrate by serviceId so Alteration garments still reach pickup.
+    const hideFinance = req.isShopEmployee && !req.canAccessInvoice;
+    const decorateBoardBookings = async (rows) => {
+        const plains = addDisplayStatus(rows);
+        await Promise.all(
+            plains.map(async (plain) => {
+                if (plain?.id == null) return;
+                plain.customerSelectedServices = await hydrateRepairItemsForBooking(
+                    dbModels,
+                    plain.id,
+                    Array.isArray(plain.customerSelectedServices)
+                        ? plain.customerSelectedServices
+                        : []
+                );
+                if (plain.customer) {
+                    plain.customer = hideFinance
+                        ? redactCustomerForFieldStaff(plain.customer)
+                        : redactCustomerPhone(plain.customer);
+                }
+                if (hideFinance) {
+                    hideShopFinanceOnBooking(plain, { keepLiveServices: true });
+                }
+            })
+        );
+        return plains;
+    };
 
     // ── Date helpers ─────────────────────────────────────────────────────────
     const todayStr         = moment().format("YYYY-MM-DD");
@@ -1529,7 +1565,7 @@ exports.agentBookingFilters = async (req, res) => {
                 attributes: BOOKING_ATTRS,
                 include: makeIncludes(),
             });
-            results.New = addDisplayStatus(rows);
+            results.New = await decorateBoardBookings(rows);
         }
         if (filterType === "new") {
             results.counts = await fetchTabCounts();
@@ -1545,7 +1581,7 @@ exports.agentBookingFilters = async (req, res) => {
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
-        results.Today = addDisplayStatus(rows);
+        results.Today = await decorateBoardBookings(rows);
         if (filterType === "today") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Today's bookings fetched", results);
@@ -1560,7 +1596,7 @@ exports.agentBookingFilters = async (req, res) => {
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
-        results.Tomorrow = addDisplayStatus(rows);
+        results.Tomorrow = await decorateBoardBookings(rows);
         if (filterType === "tomorrow") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Tomorrow's bookings fetched", results);
@@ -1578,7 +1614,7 @@ exports.agentBookingFilters = async (req, res) => {
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
-        results.Orders = addDisplayStatus(rows);
+        results.Orders = await decorateBoardBookings(rows);
         if (filterType === "orders") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Orders fetched", results);
@@ -1601,7 +1637,7 @@ exports.agentBookingFilters = async (req, res) => {
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
-        results.Invoice = addDisplayStatus(rows);
+        results.Invoice = await decorateBoardBookings(rows);
         if (filterType === "invoice") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Invoice bookings fetched", results);
@@ -1624,7 +1660,7 @@ exports.agentBookingFilters = async (req, res) => {
             attributes: BOOKING_ATTRS,
             include: makeIncludes(),
         });
-        results.Processing = addDisplayStatus(rows);
+        results.Processing = await decorateBoardBookings(rows);
         if (filterType === "processing") {
             results.counts = await fetchTabCounts();
             return ResponseHelper.success(res, "Processing bookings fetched", results);
@@ -4405,27 +4441,32 @@ exports.invoiceCreation = async (req, res) => {
     };
 
     let responseServicesSubtotal = servicesSubtotal;
+    let responsePaymentSummary = paymentSummaryWithFlags;
     if (req.isShopEmployee && !req.canAccessInvoice) {
-        bookingData.customerSelectedServices = [];
-        bookingData.customerDeclaredServices = [];
-        bookingData.repairItems = [];
-        bookingData.totalItems = 0;
-        bookingData.servicesSubtotal = 0;
+        hideShopFinanceOnBooking(bookingData, { keepDeclared: true });
         responseServicesSubtotal = 0;
-        const statusId = Number(bookingData.bookingStatusId || 0);
-        if (statusId < 12) {
-            bookingData.billingDetail = null;
-            bookingData.orderAmount = 0;
-            bookingData.subTotal = 0;
-            bookingData.invoiceStatus = null;
-        }
+        responsePaymentSummary = slimPaymentSummaryForFieldStaff(
+            paymentSummaryWithFlags,
+            {
+                paymentType: paymentFlags.paymentType,
+                canCollectPaymentNow: paymentFlags.canCollectPaymentNow,
+                collectPaymentAfterDelivery:
+                    paymentFlags.collectPaymentAfterDelivery,
+                canProceedWithoutPayment: paymentFlags.canProceedWithoutPayment,
+                invoicePaymentWindowApplies:
+                    paymentFlags.invoicePaymentWindowApplies,
+                amountDueNow:
+                    paymentSummaryWithFlags.amountDueNow ??
+                    paymentFlags.amountDueNow,
+            }
+        );
     }
 
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
         servicesSubtotal: responseServicesSubtotal,
         totalItems: bookingData.totalItems,
-        paymentSummary: paymentSummaryWithFlags,
+        paymentSummary: responsePaymentSummary,
         remainingTime,
         customerHasResponded,
         amountDueNow: paymentSummaryWithFlags.amountDueNow,

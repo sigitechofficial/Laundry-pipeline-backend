@@ -21,10 +21,14 @@ Auto-charge scheduling uses **`amountDueNow`**, not `paymentConfirmed`. So a boo
 - upfront already captured (`paymentConfirmed = true`)
 - invoice balance still due → auto-charge **still schedules** and charges the remaining balance.
 
-## Env
+## Admin + env
+
+Live values: Admin → Policies → Runtime checks (`platformRuntimeSettings`).
+Env vars below are fallbacks when the DB row is missing.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
+| `INVOICE_AUTO_CHARGE_ENABLED` | `true` | Master switch |
 | `INVOICE_AUTO_CHARGE_DELAY_MS` | `7200000` (2h) | Delay after finalize |
 | `INVOICE_AUTO_CHARGE_JOB_INTERVAL_MS` | `60000` | Job poll interval |
 | `INVOICE_AUTO_CHARGE_MAX_ATTEMPTS` | `3` | Scheduled attempts |

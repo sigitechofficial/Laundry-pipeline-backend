@@ -20,6 +20,7 @@ const {
 } = require('../../models');
 const dbModels = require('../../models');
 const {
+    buildRepairItemsInclude,
     hydrateRepairItemsForBooking,
 } = require('../../utils/repairBookingInclude');
 const moment = require('moment');
@@ -46,6 +47,9 @@ const {
 } = require('./customerDeclaredServicesService');
 const { buildCollectPaymentFlags, normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { redactCustomerPhone } = require('../../utils/maskPhone');
+const {
+    hideShopFinanceOnBooking,
+} = require('../../utils/fieldDriverPrivacy');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
 const COMPLETED_STATUS_IDS = [17];
@@ -259,7 +263,8 @@ class AgentOrderManagementService {
                             },
                         ],
                     },
-                ],
+                    buildRepairItemsInclude(dbModels, { separate: true }),
+                ].filter(Boolean),
             },
         ];
     }
@@ -544,6 +549,13 @@ class AgentOrderManagementService {
                 this._redactHistoryForFieldDriver(plain, staffUserId, {
                     canAccessInvoice: options.canAccessInvoice === true,
                 });
+            }
+            if (options.canAccessInvoice === true) {
+                if (plain.customer) {
+                    plain.customer = redactCustomerPhone(plain.customer);
+                }
+            } else {
+                hideShopFinanceOnBooking(plain, {});
             }
             return plain;
         });

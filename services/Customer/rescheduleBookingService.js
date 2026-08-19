@@ -3,8 +3,6 @@ const {
     booking,
     bookingHistory,
     users,
-    policy,
-    reschedulePolicyConfig,
     addressDb,
     agentSelectServices,
     bussinessInformation,
@@ -37,6 +35,7 @@ const {
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { sendNotification } = require('../../utils/notification');
+const activePoliciesService = require('../Admin/activePoliciesService');
 
 // Booking status IDs relevant to failed-attempt recovery on reschedule.
 const AWAITING_COLLECTION_STATUS_ID = 3;
@@ -825,47 +824,13 @@ class RescheduleBookingService {
     }
 
     /**
-     * Get active reschedule policy for a specific zone.
-     * Falls back to null (free reschedule) if no zone-specific policy is configured.
+     * Get active reschedule policy for a zone, then global (`zoneId: null`).
+     * Same fallback as admin/customer getActivePolicies — do not treat a missing
+     * zone row as a free reschedule when a platform default exists.
      * @param {number} zoneId
      */
     async getActiveReschedulePolicy(zoneId) {
-        const now = new Date();
-        const activePolicy = await policy.findOne({
-            where: {
-                type: 'reschedule',
-                isActive: true,
-                zoneId: zoneId,
-                [Op.and]: [
-                    {
-                        [Op.or]: [
-                            { effectiveFrom: null },
-                            { effectiveFrom: { [Op.lte]: now } }
-                        ]
-                    },
-                    {
-                        [Op.or]: [
-                            { effectiveTo: null },
-                            { effectiveTo: { [Op.gte]: now } }
-                        ]
-                    }
-                ]
-            },
-            include: [
-                {
-                    model: reschedulePolicyConfig,
-                    as: 'rescheduleConfig',
-                    required: false
-                }
-            ],
-            order: [
-                ['isDefault', 'DESC'],
-                ['effectiveFrom', 'DESC'],
-                ['createdAt', 'DESC']
-            ]
-        });
-
-        return activePolicy || null;
+        return activePoliciesService.getActiveReschedulePolicy(zoneId);
     }
 
     /**

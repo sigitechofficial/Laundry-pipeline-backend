@@ -232,6 +232,7 @@ class BookingSlotsService {
 
     const isDelivery = String(type).toLowerCase() === "delivery";
     const resolvedDays = Number(daysCount) > 0 ? Number(daysCount) : isDelivery ? 21 : 7;
+    // Clients should omit startAfterHours so these server defaults stay the single source.
     const resolvedStartAfter = Number(startAfterHours);
     const resolvedStartAfterHours = Number.isFinite(resolvedStartAfter)
       ? resolvedStartAfter

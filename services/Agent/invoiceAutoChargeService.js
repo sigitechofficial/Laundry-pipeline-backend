@@ -23,18 +23,31 @@ const {
     formatPaymentFailureReason,
 } = require("../../utils/paymentFailureLabels");
 
-const AUTO_CHARGE_DELAY_MS = Number(
+const runtimeSettingsService = require("../Admin/runtimeSettingsService");
+
+const ENV_AUTO_CHARGE_DELAY_MS = Number(
     process.env.INVOICE_AUTO_CHARGE_DELAY_MS || 2 * 60 * 60 * 1000
 );
-const AUTO_CHARGE_JOB_INTERVAL_MS = Number(
+const ENV_AUTO_CHARGE_JOB_INTERVAL_MS = Number(
     process.env.INVOICE_AUTO_CHARGE_JOB_INTERVAL_MS || 60 * 1000
 );
-const MAX_SCHEDULED_ATTEMPTS = Number(
-    process.env.INVOICE_AUTO_CHARGE_MAX_ATTEMPTS || 3
-);
-const SCHEDULED_RETRY_GAP_MS = Number(
-    process.env.INVOICE_AUTO_CHARGE_RETRY_GAP_MS || 30 * 60 * 1000
-);
+
+async function getAutoChargeConfig() {
+    const [
+        enabled,
+        delayMs,
+        intervalMs,
+        maxAttempts,
+        retryGapMs,
+    ] = await Promise.all([
+        runtimeSettingsService.getBoolean("invoiceAutoChargeEnabled"),
+        runtimeSettingsService.getInteger("invoiceAutoChargeDelayMs"),
+        runtimeSettingsService.getInteger("invoiceAutoChargeJobIntervalMs"),
+        runtimeSettingsService.getInteger("invoiceAutoChargeMaxAttempts"),
+        runtimeSettingsService.getInteger("invoiceAutoChargeRetryGapMs"),
+    ]);
+    return { enabled, delayMs, intervalMs, maxAttempts, retryGapMs };
+}
 
 let autoChargeTimer = null;
 
@@ -138,6 +151,14 @@ async function scheduleInvoiceAutoCharge(bookingId, options = {}) {
         return buildPaymentGateFlags(bookingRow, amountDue);
     }
 
+    const autoChargeCfg = await getAutoChargeConfig();
+    if (!autoChargeCfg.enabled) {
+        console.log(
+            `[invoiceAutoCharge] disabled — not scheduling booking ${bookingId}`
+        );
+        return buildPaymentGateFlags(bookingRow, amountDue);
+    }
+
     if (bookingRow.autoChargeStatus === "succeeded" || isBookingPaid(bookingRow, amountDue)) {
         if (
             isBookingPaid(bookingRow, amountDue) &&
@@ -169,7 +190,7 @@ async function scheduleInvoiceAutoCharge(bookingId, options = {}) {
     }
 
     const finalizedAt = options.finalizedAt || new Date();
-    const dueAt = new Date(finalizedAt.getTime() + AUTO_CHARGE_DELAY_MS);
+    const dueAt = new Date(finalizedAt.getTime() + autoChargeCfg.delayMs);
 
     await bookingRow.update({
         invoiceFinalizedAt: bookingRow.invoiceFinalizedAt || finalizedAt,
@@ -600,13 +621,14 @@ async function attemptInvoiceCardCharge(bookingId, options = {}) {
 }
 
 async function persistFailure(bookingRow, failure, ctx) {
+    const autoChargeCfg = await getAutoChargeConfig();
     const shouldSoftRetry =
         ctx.attemptType === "scheduled_auto" &&
-        ctx.attemptNumber < MAX_SCHEDULED_ATTEMPTS &&
+        ctx.attemptNumber < autoChargeCfg.maxAttempts &&
         isRecoverableDecline(failure);
 
     const nextDue = shouldSoftRetry
-        ? new Date(Date.now() + SCHEDULED_RETRY_GAP_MS)
+        ? new Date(Date.now() + autoChargeCfg.retryGapMs)
         : bookingRow.autoChargeDueAt;
 
     await booking.update(
@@ -661,6 +683,11 @@ function isRecoverableDecline(failure = {}) {
  * Cron: charge bookings whose autoChargeDueAt has passed.
  */
 async function processDueInvoiceAutoCharges() {
+    const autoChargeCfg = await getAutoChargeConfig();
+    if (!autoChargeCfg.enabled) {
+        return { charged: 0, failed: 0, skipped: 0, disabled: true };
+    }
+
     const now = new Date();
     const stuckProcessingBefore = new Date(now.getTime() - 5 * 60 * 1000);
     const dueBookings = await booking.findAll({
@@ -691,7 +718,7 @@ async function processDueInvoiceAutoCharges() {
     let skipped = 0;
 
     for (const row of dueBookings) {
-        if ((row.autoChargeAttemptCount || 0) >= MAX_SCHEDULED_ATTEMPTS) {
+        if ((row.autoChargeAttemptCount || 0) >= autoChargeCfg.maxAttempts) {
             if (row.autoChargeStatus !== "failed") {
                 await booking.update(
                     { autoChargeStatus: "failed", paymentDeliveryGate: "waiting_admin" },
@@ -1016,8 +1043,11 @@ function cancelAutoChargeForBooking(bookingId, reason = "cancelled") {
     );
 }
 
-function startInvoiceAutoChargeJob() {
+async function startInvoiceAutoChargeJob() {
     if (autoChargeTimer) return;
+
+    const cfg = await getAutoChargeConfig();
+    const intervalMs = cfg.intervalMs || ENV_AUTO_CHARGE_JOB_INTERVAL_MS;
 
     const run = () => {
         processDueInvoiceAutoCharges().catch((err) => {
@@ -1026,14 +1056,23 @@ function startInvoiceAutoChargeJob() {
     };
 
     run();
-    autoChargeTimer = setInterval(run, AUTO_CHARGE_JOB_INTERVAL_MS);
+    autoChargeTimer = setInterval(run, intervalMs);
     console.log(
-        `[invoiceAutoCharge] scheduled every ${AUTO_CHARGE_JOB_INTERVAL_MS / 1000}s (delay ${AUTO_CHARGE_DELAY_MS / 60000}m)`
+        `[invoiceAutoCharge] scheduled every ${intervalMs / 1000}s (delay ${cfg.delayMs / 60000}m, enabled=${cfg.enabled})`
     );
 }
 
+async function restartInvoiceAutoChargeJob() {
+    if (autoChargeTimer) {
+        clearInterval(autoChargeTimer);
+        autoChargeTimer = null;
+    }
+    await startInvoiceAutoChargeJob();
+}
+
 module.exports = {
-    AUTO_CHARGE_DELAY_MS,
+    AUTO_CHARGE_DELAY_MS: ENV_AUTO_CHARGE_DELAY_MS,
+    getAutoChargeConfig,
     scheduleInvoiceAutoCharge,
     attemptInvoiceCardCharge,
     processDueInvoiceAutoCharges,
@@ -1043,6 +1082,7 @@ module.exports = {
     cancelAutoChargeForBooking,
     buildPaymentGateFlags,
     startInvoiceAutoChargeJob,
+    restartInvoiceAutoChargeJob,
     isCardBalanceDue,
     isBookingPaid,
 };

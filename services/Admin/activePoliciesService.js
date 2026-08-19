@@ -32,13 +32,15 @@ class ActivePoliciesService {
         return Number.isFinite(parsed) ? parsed : null;
     }
 
-    _nowWhere(type, zoneId = null) {
+    _nowWhere(type, zoneId = null, { globalOnly = false } = {}) {
         const now = new Date();
         const normalizedZoneId = this._normalizeZoneId(zoneId);
         return {
             type,
             isActive: true,
-            ...(normalizedZoneId !== null ? { zoneId: normalizedZoneId } : {}),
+            ...(globalOnly
+                ? { zoneId: null }
+                : (normalizedZoneId !== null ? { zoneId: normalizedZoneId } : { zoneId: null })),
             [Op.and]: [
                 {
                     [Op.or]: [
@@ -79,10 +81,10 @@ class ActivePoliciesService {
                 ['createdAt', 'DESC']
             ]
         });
-        // Fallback: when zone-specific policy is not found, use global active policy
+        // Fallback: when zone-specific policy is not found, use global (zoneId null)
         if (!result && normalizedZoneId !== null) {
             result = await policy.findOne({
-                where: this._nowWhere('cancellation', null),
+                where: this._nowWhere('cancellation', null, { globalOnly: true }),
                 include: [
                     {
                         model: cancellationPolicyConfig,
@@ -124,7 +126,7 @@ class ActivePoliciesService {
         });
         if (!result && normalizedZoneId !== null) {
             result = await policy.findOne({
-                where: this._nowWhere('reschedule', null),
+                where: this._nowWhere('reschedule', null, { globalOnly: true }),
                 include: [
                     {
                         model: reschedulePolicyConfig,
@@ -166,7 +168,7 @@ class ActivePoliciesService {
         });
         if (!result && normalizedZoneId !== null) {
             result = await policy.findOne({
-                where: this._nowWhere('no_show', null),
+                where: this._nowWhere('no_show', null, { globalOnly: true }),
                 include: [
                     {
                         model: noShowPolicyConfig,

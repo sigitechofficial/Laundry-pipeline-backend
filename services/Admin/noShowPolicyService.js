@@ -257,6 +257,7 @@ class NoShowPolicyService {
             isDefault,
             effectiveFrom,
             effectiveTo,
+            zoneId: _zoneId,
             ...configData
         } = updateData;
 

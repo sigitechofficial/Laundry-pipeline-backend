@@ -31,10 +31,39 @@ const {
 function uniqueFirstByServiceId(rows) {
     const firstByService = new Map();
     for (const row of rows) {
-        const key = row.serviceId != null ? String(row.serviceId) : `row-${row.id}`;
+        const sid = resolvedServiceId(row);
+        const key = sid != null ? String(sid) : `row-${row.id}`;
         if (!firstByService.has(key)) firstByService.set(key, row);
     }
     return [...firstByService.values()];
+}
+
+function firstPositiveInt(...values) {
+    for (const value of values) {
+        const n = Number(value);
+        if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    }
+    return null;
+}
+
+function resolvedServiceId(row) {
+    if (!row || typeof row !== 'object') return null;
+    const n = Number(row.serviceId ?? row.service?.id);
+    return Number.isFinite(n) ? n : null;
+}
+
+function snapshotItems(row) {
+    return firstPositiveInt(
+        row?.items,
+        row?.noOfItems,
+        row?.totalItems,
+        row?.quantity,
+        row?.qty
+    );
+}
+
+function snapshotBags(row) {
+    return firstPositiveInt(row?.bags, row?.noOfBags, row?.numberOfBags);
 }
 
 /** Customer booking rows are service-level. Invoice lines have a subcategory + price. */
@@ -45,8 +74,8 @@ function looksLikeCustomerIntentRow(row) {
 function declaredServiceIdSet(declaredServices) {
     return new Set(
         (Array.isArray(declaredServices) ? declaredServices : [])
-            .map((s) => (s?.serviceId != null ? Number(s.serviceId) : null))
-            .filter((id) => Number.isFinite(id))
+            .map((s) => resolvedServiceId(s))
+            .filter((id) => id != null)
     );
 }
 
@@ -116,11 +145,11 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
     for (const svc of services) {
         const snap = await customerOriginalServiceSnapshot.create({
             bookingId,
-            serviceId: svc.serviceId ?? null,
+            serviceId: resolvedServiceId(svc),
             categoryId: svc.categoryId ?? null,
             subCategoryId: svc.subCategoryId ?? null,
-            items: svc.items ?? null,
-            bags: svc.bags ?? null,
+            items: snapshotItems(svc),
+            bags: snapshotBags(svc),
             categoryPrice: svc.categoryPrice ?? null,
             serviceInstruction: svc.serviceInstruction ?? null,
         });
@@ -165,15 +194,17 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
 function mapSnapshotToDeclaredService(row) {
     const plain = typeof row.toJSON === 'function' ? row.toJSON() : { ...row };
     const prefs = plain.preferences || [];
+    const bags = snapshotBags(plain);
+    const items = snapshotItems(plain);
     return {
         id: plain.id,
         bookingId: plain.bookingId,
-        serviceId: plain.serviceId,
+        serviceId: resolvedServiceId(plain) ?? plain.serviceId ?? null,
         categoryId: plain.categoryId,
         subCategoryId: plain.subCategoryId,
-        items: plain.items,
-        bags: plain.bags,
-        noOfBags: plain.bags,
+        items,
+        bags,
+        noOfBags: bags,
         categoryPrice: plain.categoryPrice != null ? String(plain.categoryPrice) : null,
         serviceInstruction: plain.serviceInstruction,
         status: true,
@@ -235,11 +266,11 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
             '[attachRepairItemsToDeclaredServices] orphan lookup skipped:',
             err?.message || err
         );
-        return list;
+        return attachLeftoverRepairsToAlteration(bookingId, list);
     }
 
     if (orphanServiceIds.length === 0) {
-        return list;
+        return attachLeftoverRepairsToAlteration(bookingId, list);
     }
 
     const serviceRows = await service.findAll({
@@ -281,13 +312,89 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
         { matchByServiceIdOnly: true }
     );
 
-    return [...list, ...hydratedPlaceholders];
+    return attachLeftoverRepairsToAlteration(
+        bookingId,
+        [...list, ...hydratedPlaceholders]
+    );
+}
+
+function isAlterationDeclaredRow(row) {
+    const name = String(row?.service?.name || '').toLowerCase();
+    return name.includes('alter') || name.includes('repair');
+}
+
+/** Last-resort: garments with a missing/mismatched serviceId still land on Alteration. */
+async function attachLeftoverRepairsToAlteration(bookingId, declaredServices) {
+    const list = Array.isArray(declaredServices) ? declaredServices : [];
+    if (!list.length) return list;
+
+    let allRepair = [];
+    try {
+        allRepair = await getBookingRepairItems(bookingId);
+    } catch (err) {
+        console.warn(
+            '[attachLeftoverRepairsToAlteration] skipped:',
+            err?.message || err
+        );
+        return list;
+    }
+    if (!allRepair.length) return list;
+
+    const assigned = new Set();
+    for (const svc of list) {
+        for (const item of svc.repairItems || []) {
+            if (item?.id != null) assigned.add(Number(item.id));
+        }
+    }
+    const leftovers = allRepair.filter(
+        (item) => item?.id == null || !assigned.has(Number(item.id))
+    );
+    if (!leftovers.length) return list;
+
+    return list.map((svc) => {
+        if (Array.isArray(svc.repairItems) && svc.repairItems.length) return svc;
+        if (!isAlterationDeclaredRow(svc)) return svc;
+        const sid = Number(svc.serviceId);
+        const forThis = leftovers.filter((item) => {
+            const repairSid = Number(item.serviceId);
+            return !Number.isFinite(repairSid) || !Number.isFinite(sid) || repairSid === sid;
+        });
+        if (!forThis.length) return svc;
+        return { ...svc, repairItems: forThis };
+    });
 }
 
 /**
  * Ensure snapshot exists, then return agent-app-friendly declared services
  * including repair garments / options / images.
  */
+function hasSnapshotCounts(row) {
+    return firstPositiveInt(row?.items) != null || firstPositiveInt(row?.bags, row?.noOfBags) != null;
+}
+
+function mergeMissingCounts(primary, secondary) {
+    if (!Array.isArray(primary) || !primary.length || !Array.isArray(secondary) || !secondary.length) {
+        return primary;
+    }
+    const byService = new Map();
+    for (const row of secondary) {
+        const sid = resolvedServiceId(row);
+        if (sid == null || byService.has(sid)) continue;
+        byService.set(sid, row);
+    }
+    return primary.map((row) => {
+        if (hasSnapshotCounts(row)) return row;
+        const match = byService.get(resolvedServiceId(row));
+        if (!match || !hasSnapshotCounts(match)) return row;
+        return {
+            ...row,
+            items: match.items ?? row.items,
+            bags: match.bags ?? row.bags,
+            noOfBags: match.noOfBags ?? match.bags ?? row.noOfBags,
+        };
+    });
+}
+
 async function loadMappedSnapshots(bookingId) {
     await ensureCustomerDeclaredSnapshot(bookingId);
 
@@ -334,16 +441,18 @@ async function reconstructDeclaredFromOriginalCss(bookingId) {
 
     return source.map((svc) => {
         const plain = typeof svc.toJSON === 'function' ? svc.toJSON() : { ...svc };
-        const sid = plain.serviceId != null ? Number(plain.serviceId) : null;
+        const sid = resolvedServiceId(plain);
+        const bags = snapshotBags(plain);
+        const items = snapshotItems(plain);
         return {
             id: plain.id,
             bookingId: plain.bookingId,
-            serviceId: plain.serviceId,
+            serviceId: sid,
             categoryId: plain.categoryId,
             subCategoryId: plain.subCategoryId,
-            items: plain.items,
-            bags: plain.bags,
-            noOfBags: plain.bags,
+            items,
+            bags,
+            noOfBags: bags,
             categoryPrice:
                 plain.categoryPrice != null ? String(plain.categoryPrice) : null,
             serviceInstruction: plain.serviceInstruction,
@@ -359,8 +468,37 @@ async function reconstructDeclaredFromOriginalCss(bookingId) {
     });
 }
 
+async function loadDeclaredServicesWithCounts(bookingId) {
+    let mapped = [];
+    try {
+        mapped = await loadMappedSnapshots(bookingId);
+    } catch (err) {
+        console.warn(
+            '[loadDeclaredServicesWithCounts] snapshot load failed:',
+            err?.message || err
+        );
+    }
+
+    if (!mapped.length || !mapped.some(hasSnapshotCounts)) {
+        try {
+            const reconstructed = await reconstructDeclaredFromOriginalCss(bookingId);
+            if (!mapped.length) {
+                mapped = reconstructed;
+            } else {
+                mapped = mergeMissingCounts(mapped, reconstructed);
+            }
+        } catch (err) {
+            console.warn(
+                '[loadDeclaredServicesWithCounts] reconstruct failed:',
+                err?.message || err
+            );
+        }
+    }
+    return mapped;
+}
+
 async function getCustomerDeclaredServices(bookingId) {
-    const mapped = await loadMappedSnapshots(bookingId);
+    const mapped = await loadDeclaredServicesWithCounts(bookingId);
     return attachRepairItemsToDeclaredServices(bookingId, mapped);
 }
 
@@ -380,24 +518,12 @@ async function snapshotCreatedAt(bookingId) {
 async function getFrozenCustomerDeclaredServices(bookingId) {
     let mapped = [];
     try {
-        mapped = await loadMappedSnapshots(bookingId);
+        mapped = await loadDeclaredServicesWithCounts(bookingId);
     } catch (err) {
         console.warn(
             '[getFrozenCustomerDeclaredServices] snapshot load failed:',
             err?.message || err
         );
-    }
-
-    if (!mapped.length) {
-        try {
-            mapped = await reconstructDeclaredFromOriginalCss(bookingId);
-        } catch (err) {
-            console.warn(
-                '[getFrozenCustomerDeclaredServices] reconstruct failed:',
-                err?.message || err
-            );
-            return [];
-        }
     }
 
     const takenAt = await snapshotCreatedAt(bookingId);
@@ -430,7 +556,22 @@ async function getFrozenCustomerDeclaredServices(bookingId) {
 }
 
 /**
- * Active invoice / CSS lines the agent added that were not in the customer snapshot.
+ * Invoice lines are priced / itemized (subcategory, price, add-ons).
+ * Customer snapshot rows are service-level and typically have none of these.
+ */
+function looksLikeInvoiceLine(row) {
+    if (!row || typeof row !== 'object') return false;
+    if (row.subCategoryId != null) return true;
+    const price = Number(row.categoryPrice ?? row.categoryprice ?? 0);
+    if (Number.isFinite(price) && price > 0) return true;
+    if (Array.isArray(row.serviceLines) && row.serviceLines.length) return true;
+    if (Array.isArray(row.addOns) && row.addOns.length) return true;
+    return false;
+}
+
+/**
+ * Invoice / CSS lines the collector added.
+ * Same serviceId as the snapshot still counts when the agent itemized garments.
  */
 function getAgentAddedServicesFromLive(declaredServices, liveSelectedServices) {
     const live = Array.isArray(liveSelectedServices) ? liveSelectedServices : [];
@@ -441,6 +582,7 @@ function getAgentAddedServicesFromLive(declaredServices, liveSelectedServices) {
     }
 
     return live.filter((row) => {
+        if (looksLikeInvoiceLine(row)) return true;
         const sid = row?.serviceId != null ? Number(row.serviceId) : null;
         if (!Number.isFinite(sid)) return false;
         return !declaredIds.has(sid);

@@ -1,10 +1,10 @@
 ---
-description: Always register new seeders in run-deploy-seeds.sh
+description: Register seeders and keep live-DB migration ensure on deploy
 alwaysApply: true
 ---
 
-# Seeders must be in deploy seeds
+# Seeders + live schema on deploy
 
-Any new file under `seeders/` that provides reference/catalog data **must** be added to `scripts/run-deploy-seeds.sh` with `run_one "…"`.
-
-Pushing code + migration alone is not enough — empty tables break customer/admin until the seeder runs on deploy. Do not rely on manual SSH or “remind the user to seed.”
+- New reference/catalog seeder → `scripts/run-deploy-seeds.sh` `run_one "…"`.
+- New/changed schema → idempotent migration (`addColumnIfMissing` / `tableExists`). `scripts/ensure-live-migrations.js` must keep running on deploy (`remote-deploy-api.sh` + deploy seeds). Prod has skipped migrate / hit the wrong DB before.
+- Pushing code is not enough. Do not rely on SSH ALTERs as the source of truth.
