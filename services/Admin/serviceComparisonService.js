@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+    booking,
     customerOriginalServiceSnapshot,
     customerOriginalPreferenceSnapshot,
     customerSelectedService,
@@ -14,98 +15,109 @@ const {
     preferenceValues,
 } = require('../../models');
 
+function invoiceHasBeenGenerated(invoiceStatus) {
+    return invoiceStatus === 'draft' || invoiceStatus === 'finalized';
+}
+
 /**
- * Fetch both the frozen customer-original selections and the current agent invoice
- * for a given booking, so admin can compare side-by-side.
+ * Fetch frozen customer-original selections vs agent invoice lines.
+ *
+ * Customer side = snapshot only (stable). Falls back to live lines only when
+ * no snapshot exists (legacy bookings) — never mirrors into agent invoice.
+ *
+ * Agent side = live customerSelectedService lines ONLY after invoice draft/finalized.
+ * Until then agentInvoice.services is empty.
  *
  * GET /admin/bookings/:bookingId/service-comparison
  */
 exports.getServiceComparison = async (bookingId) => {
-    const [originalServices, agentServices] = await Promise.all([
-        // ── Customer original (snapshot) ──────────────────────────────────────
+    const bookingRow = await booking.findByPk(bookingId, {
+        attributes: ['id', 'invoiceStatus', 'invoiceDraftSavedAt'],
+    });
+
+    const invoiceStatus = bookingRow?.invoiceStatus || 'none';
+    const invoiceGenerated = invoiceHasBeenGenerated(invoiceStatus);
+
+    const [originalServices, liveServices] = await Promise.all([
         customerOriginalServiceSnapshot.findAll({
             where: { bookingId },
             include: [
-                { model: service,      as: 'service',     required: false, attributes: ['id', 'name', 'image', 'pricingBasis'] },
-                { model: categories,   as: 'category',    required: false, attributes: ['id', 'name'] },
+                { model: service, as: 'service', required: false, attributes: ['id', 'name', 'image', 'pricingBasis'] },
+                { model: categories, as: 'category', required: false, attributes: ['id', 'name'] },
                 { model: subCategories, as: 'subCategory', required: false, attributes: ['id', 'name', 'price', 'barCode', 'unitCount'] },
                 {
                     model: customerOriginalPreferenceSnapshot,
                     as: 'preferences',
                     required: false,
                     include: [
-                        { model: preferenceTypes,  as: 'preferenceType',  required: false, attributes: ['id', 'name'] },
+                        { model: preferenceTypes, as: 'preferenceType', required: false, attributes: ['id', 'name'] },
                         { model: preferenceValues, as: 'preferenceValue', required: false, attributes: ['id', 'value'] },
-                    ]
-                }
+                    ],
+                },
             ],
-            order: [['id', 'ASC']]
+            order: [['id', 'ASC']],
         }),
 
-        // ── Agent current invoice (active lines only) ─────────────────────────
+        // Live lines are shared storage — only use as "agent invoice" after invoice exists.
         customerSelectedService.findAll({
             where: { bookingId, status: true },
             include: [
-                { model: service,       required: false, attributes: ['id', 'name', 'image', 'pricingBasis'] },
-                { model: categories,    required: false, attributes: ['id', 'name'] },
+                { model: service, required: false, attributes: ['id', 'name', 'image', 'pricingBasis'] },
+                { model: categories, required: false, attributes: ['id', 'name'] },
                 { model: subCategories, required: false, attributes: ['id', 'name', 'price', 'barCode', 'unitCount'] },
                 {
                     model: customerSelectedServiceAddOn,
                     as: 'addOns',
                     required: false,
-                    include: [{ model: addOnServices, as: 'addOnService', required: false, attributes: ['id', 'name', 'price'] }]
+                    include: [{ model: addOnServices, as: 'addOnService', required: false, attributes: ['id', 'name', 'price'] }],
                 },
                 {
                     model: bookingPreference,
                     as: 'selectedServicePreferences',
                     required: false,
                     include: [
-                        { model: preferenceTypes,  required: false, attributes: ['id', 'name'] },
+                        { model: preferenceTypes, required: false, attributes: ['id', 'name'] },
                         { model: preferenceValues, required: false, attributes: ['id', 'value'] },
-                    ]
-                }
+                    ],
+                },
             ],
-            order: [['id', 'ASC']]
+            order: [['id', 'ASC']],
         }),
     ]);
 
-    // Booking-level original preferences (not tied to a service snapshot)
     const originalBookingPrefs = await customerOriginalPreferenceSnapshot.findAll({
         where: { bookingId, snapshotServiceId: null },
         include: [
-            { model: preferenceTypes,  as: 'preferenceType',  required: false, attributes: ['id', 'name'] },
+            { model: preferenceTypes, as: 'preferenceType', required: false, attributes: ['id', 'name'] },
             { model: preferenceValues, as: 'preferenceValue', required: false, attributes: ['id', 'value'] },
-        ]
+        ],
     });
 
-    // ── Fallback for old bookings: no snapshot yet → show live customerSelectedService ──
     const snapshotAvailable = originalServices.length > 0;
+    const liveJson = liveServices.map((s) => s.toJSON());
 
-    if (!snapshotAvailable) {
-        // Show current live services as "Customer Original" — they haven't been modified yet
-        // (or this is an old booking that predates the snapshot feature)
-        return {
-            snapshotAvailable: false,
-            fallbackToLive: true,
-            customerOriginal: {
-                services:           agentServices.map((s) => s.toJSON()),
-                bookingPreferences: [],
-            },
-            agentInvoice: {
-                services: agentServices.map((s) => s.toJSON()),
-            },
-        };
-    }
+    const customerOriginal = snapshotAvailable
+        ? {
+              services: originalServices.map((s) => s.toJSON()),
+              bookingPreferences: originalBookingPrefs.map((p) => p.toJSON()),
+          }
+        : {
+              // Legacy: no snapshot yet — show current lines as customer selection only.
+              services: liveJson,
+              bookingPreferences: [],
+          };
+
+    const agentInvoice = {
+        services: invoiceGenerated ? liveJson : [],
+    };
 
     return {
-        snapshotAvailable: true,
-        fallbackToLive: false,
-        customerOriginal: {
-            services:            originalServices.map((s) => s.toJSON()),
-            bookingPreferences:  originalBookingPrefs.map((p) => p.toJSON()),
-        },
-        agentInvoice: {
-            services: agentServices.map((s) => s.toJSON()),
-        },
+        snapshotAvailable,
+        fallbackToLive: !snapshotAvailable,
+        invoiceStatus,
+        invoiceGenerated,
+        invoiceDraftSavedAt: bookingRow?.invoiceDraftSavedAt || null,
+        customerOriginal,
+        agentInvoice,
     };
 };
