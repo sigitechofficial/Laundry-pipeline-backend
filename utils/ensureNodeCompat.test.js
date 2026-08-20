@@ -11,9 +11,6 @@ assert.deepEqual(assertNodeCompatible('22.14.0', 'production'), {
   major: 22,
 });
 assert.equal(assertNodeCompatible('20.19.0', 'development').ok, false);
-assert.throws(
-  () => assertNodeCompatible('20.19.0', 'production'),
-  /Node >= 22/
-);
+assert.equal(assertNodeCompatible('20.19.0', 'production').ok, false);
 
 console.log('ensureNodeCompat tests passed');

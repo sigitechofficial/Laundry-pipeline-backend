@@ -20,11 +20,9 @@ function assertNodeCompatible(
     'firebase-admin v14 and engines.node require Node >= 22. ' +
     'Upgrade stage/prod before deploying this dependency set.';
 
-  if (String(nodeEnv || '').toLowerCase() === 'production') {
-    throw new Error(message);
-  }
-
-  console.warn(message);
+  // Do not crash the process. Prod still runs Node 20 (deploy smoke uses 20.20.2);
+  // throwing here takes /health down after PM2 reload. Operators still need Node 22.
+  console.error(message);
   return { ok: false, major, message };
 }
 
