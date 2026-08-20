@@ -1,14 +1,12 @@
 require('dotenv').config();
 const nodemailer=require('nodemailer')
 
-// ZeptoMail SMTP Configuration
-// Get SMTP password from Mail Agent → Setup Details → SMTP at zeptomail.zoho.com
-const FROM_ADDRESS = 'noreply@serviprapp.com';
-const SMTP_HOST = 'smtp.zeptomail.com';
-// Try port 587 first (STARTTLS) - works better on cPanel servers
+// SMTP configuration must be injected at runtime. Never commit SMTP credentials.
+const FROM_ADDRESS = process.env.EMAIL_FROM || 'noreply@serviprapp.com';
+const SMTP_HOST = process.env.EMAIL_HOST || process.env.SMTP_HOST || 'smtp.zeptomail.com';
 const SMTP_PORT = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || '587', 10);
-const SMTP_USER = 'emailapikey';
-const SMTP_PASS ='wSsVR612/0WiW6Z7yDL4cuppng5dBVOjFUV93gel63L9Fv3FpcdpwxDIUQ+gGPUbFW9oQjoXrO8qnR8H1zNY2o5/yA0DXCiF9mqRe1U4J3x17qnvhDzPW2xVlxOBLY4Mxw5smGdoFsAr+g==';
+const SMTP_USER = process.env.EMAIL_USER || process.env.SMTP_USER;
+const SMTP_PASS = process.env.EMAIL_PASSWORD || process.env.SMTP_PASS;
 
 // Log configuration (without exposing password)
 console.log('📧 Email Configuration:');
@@ -27,12 +25,6 @@ const transpoter=nodemailer.createTransport({
     auth: {
         user: SMTP_USER,
         pass: SMTP_PASS
-    },
-    tls: {
-        // Do not fail on invalid certificates
-        rejectUnauthorized: false,
-        // For STARTTLS on port 587
-        ciphers: 'SSLv3'
     },
     // Connection timeout
     connectionTimeout: 10000,

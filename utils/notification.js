@@ -1,7 +1,8 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const admin = require('firebase-admin');
+const { cert, getApps, initializeApp } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
 const { deviceToken } = require('../models');
 const { Op } = require('sequelize');
 
@@ -25,10 +26,10 @@ function getFirebaseDatabaseUrl() {
 }
 
 function ensureFirebaseReady() {
-  if (firebaseReady && admin.apps.length) {
+  if (firebaseReady && getApps().length) {
     return true;
   }
-  if (admin.apps.length) {
+  if (getApps().length) {
     firebaseReady = true;
     firebaseInitError = null;
     return true;
@@ -41,8 +42,8 @@ function ensureFirebaseReady() {
   try {
     const serviceAccount = JSON.parse(fs.readFileSync(firebaseCredPath, 'utf8'));
     const databaseURL = getFirebaseDatabaseUrl();
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    initializeApp({
+      credential: cert(serviceAccount),
       databaseURL,
     });
     firebaseReady = true;
@@ -98,12 +99,12 @@ function getFirebaseDiagnostics() {
   }
 
   const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]);
-  const nodeTooOld = nodeMajor > 0 && nodeMajor < 18;
+  const nodeTooOld = nodeMajor > 0 && nodeMajor < 22;
 
   return {
     firebaseReady,
     firebaseInitError,
-    appsInitialized: admin.apps.length,
+    appsInitialized: getApps().length,
     credPath: firebaseCredPath,
     databaseURL: getFirebaseDatabaseUrl(),
     fileExists,
@@ -117,14 +118,14 @@ function getFirebaseDiagnostics() {
     nodeMajor,
     nodeTooOld,
     firebaseAdminHint: nodeTooOld
-      ? 'Node < 18 causes app/invalid-credential "Headers is not defined". Use Node 20 for PM2 (or firebase-admin@12.x).'
+      ? 'Firebase Admin 14 requires Node 22 or newer.'
       : null,
     hint: !parseOk
       ? 'firebase.json is invalid JSON (keys/values must be quoted). Fix FIREBASE_CONTENT_STAGE secret or replace the file on the server.'
       : !firebaseReady
         ? 'JSON parses but Admin SDK is not ready — check private_key newlines and restart PM2.'
         : nodeTooOld
-          ? 'Firebase initialized, but Node is too old for current google-auth/fetch APIs. Upgrade PM2 to Node 20.'
+          ? 'Firebase initialized, but Firebase Admin 14 requires Node 22 or newer.'
           : 'Firebase Admin looks ready.'
   };
 }
@@ -225,7 +226,7 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
   });
 
   try {
-    const response = await admin.messaging().sendEachForMulticast(message);
+    const response = await getMessaging().sendEachForMulticast(message);
     const results = response.responses.map((resp, index) => {
       const token = tokenList[index];
       if (resp.success) {
@@ -355,7 +356,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
     });
 
     // Send the notification
-    const response = await admin.messaging().sendEachForMulticast(message);
+    const response = await getMessaging().sendEachForMulticast(message);
     console.log('Successfully sent message:', response);
 
     const failedTokens = response.responses

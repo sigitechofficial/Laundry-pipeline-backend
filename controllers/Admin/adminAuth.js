@@ -7,9 +7,11 @@ const {
     AdminConflictError 
 } = require('../../middlewares/adminErrorHandler');
 const ResponseHelper = require('../../utils/responseHelper');
+const adminValidateToken = require('../../middlewares/adminValidateToken');
 
 // Import services
 const { authService } = require('../../services/Admin');
+const { getAdminJwtExpiresInMs } = require('../../utils/adminJwt');
 
 
 
@@ -41,7 +43,7 @@ async function signIn(req, res) {
         secure: true,
         sameSite: "none",
         path: "/admin",
-        maxAge: 24 * 60 * 60 * 1000
+        maxAge: getAdminJwtExpiresInMs()
     });
 
 
@@ -71,7 +73,7 @@ async function zoneAdminSignIn(req, res) {
         secure: true,
         sameSite: "none",
         path: "/admin",
-        maxAge: 24 * 60 * 60 * 1000
+        maxAge: getAdminJwtExpiresInMs()
     });
 
     return ResponseHelper.success(res, "Zone Admin Login Successful", output);
@@ -82,14 +84,17 @@ async function zoneAdminSignIn(req, res) {
  *        Admin SignOut
  */
 async function signOut(req, res) {
-    const { adminId, dvToken } = req.body;
+    const adminId = req.user?.id;
+    const dvToken = req.user?.dvToken;
 
-    // Basic validation only
+    // Never accept session identifiers from the request body: the verified
+    // access token is the authority for which Redis session may be revoked.
     if (!adminId || !dvToken) {
-        return ResponseHelper.validationError(res, "Admin ID and device token are required");
+        return ResponseHelper.validationError(res, "Authenticated admin session is required");
     }
 
     await authService.adminSignOut(adminId, dvToken);
+    adminValidateToken.invalidateCachedSession(adminId, dvToken);
 
     // Clear the cookie
     res.clearCookie("accessToken", {

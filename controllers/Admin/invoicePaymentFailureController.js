@@ -7,6 +7,8 @@ const { ValidationError, NotFoundError } = require("../../middlewares/universalE
 exports.listPaymentFailures = async (req, res) => {
     const result = await invoiceAutoChargeService.listPaymentFailures({
         limit: req.query.limit,
+        sortBy: req.query.sortBy,
+        sortDir: req.query.sortDir,
     });
     return ResponseHelper.success(res, "Payment failures", {
         failures: result.failures,

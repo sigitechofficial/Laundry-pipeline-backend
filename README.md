@@ -6,7 +6,7 @@ Node.js / Express API for the Laundry platform (customer, agent, admin, driver).
 
 | Tool | Purpose | Notes |
 |------|---------|--------|
-| **Node.js `>= 18`** | Run the API | Prefer Node 20 |
+| **Node.js `>= 22`** | Run the API | Required by Firebase Admin 14 |
 | **npm** | Install dependencies | Comes with Node |
 | **MAMP** | MySQL 8 + phpMyAdmin in browser | MySQL port **8889**, Apache/phpMyAdmin port **8888** |
 | **Redis** | Sessions / tokens cache | Default port **6379** |

@@ -4,6 +4,8 @@ require('./utils/ensureNodeCompat');
 const express = require('express');
 const db = require('./models/index');
 const cors = require('cors');
+const helmet = require('helmet');
+const { isDevPrivateLanOrigin } = require('./utils/devCorsOrigin');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
 const app = express();
@@ -11,6 +13,12 @@ const http = require("http");
 const redis = require('./redis/redis');
 const cookieParser = require('cookie-parser');
 const { intilizeSocketFunc } = require('./socket_io');
+const {
+  getDeployOrOpsToken,
+  tokensMatch,
+  tokenFromHeaderOrBody,
+} = require('./utils/opsToken');
+const sensitiveSurfaceGuard = require('./middlewares/sensitiveSurfaceGuard');
 // Routers
 const customerRouter = require('./routes/customer');
 const adminRouter = require('./routes/admin');
@@ -32,8 +40,13 @@ const corsOptions = {
       return callback(null, true);
     }
     
-    // Allow localhost
-    if (/^http:\/\/localhost:\d+$/.test(origin)) {
+    // Allow localhost / loopback on any port (Vite, CRA, etc.)
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Local Vite on a phone/LAN IP. Dev/test only — never in production.
+    if (isDevPrivateLanOrigin(origin)) {
       return callback(null, true);
     }
 
@@ -71,7 +84,15 @@ const corsOptions = {
     'Featureid',
     'featureid',
     'ngrok-skip-browser-warning',
-    'Ngrok-Skip-Browser-Warning'
+    'Ngrok-Skip-Browser-Warning',
+    'X-Ops-Token',
+    'x-ops-token',
+    'X-DB-Sync-Token',
+    'x-db-sync-token',
+    'X-FCM-Debug-Secret',
+    'X-Health-Probe-Token',
+    'X-Deploy-Token',
+    'X-Stage-Trigger-Token'
   ],
   exposedHeaders: ['Set-Cookie'],
   optionsSuccessStatus: 200
@@ -81,15 +102,26 @@ const corsOptions = {
 // APPLY MIDDLEWARE IN CORRECT ORDER
 // ============================================
 
-// 1. CORS must be FIRST
+// Reverse proxy (Apache/cPanel) — required so rate-limit + helmet see the client IP.
+app.set('trust proxy', 1);
+
+// Security headers. CSP off so Swagger UI and admin CORS keep working.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+// CORS after helmet so Access-Control-* is not overridden. Dev LAN (192.168.1.16:5174) stays allowed.
 app.use(cors(corsOptions));
 
 // 2. Cookie parser
 app.use(cookieParser());
 
-// 3. Body parsers
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 3. Body parsers — JSON/urlencoded only. Multipart uploads stay on multer (not consumed here).
+const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '1mb').trim() || '1mb';
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 
 // AutoSSL / Let's Encrypt HTTP-01 + cPanel pki-validation (stage/prod safe)
 const path = require('path');
@@ -125,9 +157,45 @@ app.get('/.well-known/acme-challenge/:file', function (req, res) {
 // Hosting proxies all HTTP to PM2/Express, so stage-trigger.php never reaches
 // PHP. Respond immediately (avoids Apache 502 on long npm), then run deploy
 // work in a detached shell. Production keeps using trigger.php (NODE_ENV=production).
+function requireStageTriggerToken(req, res) {
+  const expected = getDeployOrOpsToken();
+  if (!expected) {
+    res
+      .status(503)
+      .type('text')
+      .send('Stage trigger disabled. Set OPS_CONTROL_TOKEN (or STAGE_TRIGGER_TOKEN).');
+    return false;
+  }
+  const provided = tokenFromHeaderOrBody(req, {
+    headers: ['X-Ops-Token', 'X-Deploy-Token', 'X-Stage-Trigger-Token'],
+    bodyKeys: ['opsToken', 'token'],
+  });
+  if (!tokensMatch(provided, expected)) {
+    res.status(401).type('text').send('Unauthorized');
+    return false;
+  }
+  return true;
+}
+
+function requireDbSyncToken(req, res) {
+  const expected = String(process.env.DB_SYNC_TOKEN || '').trim();
+  const provided = tokenFromHeaderOrBody(req, {
+    headers: ['x-db-sync-token', 'X-DB-Sync-Token'],
+    bodyKeys: ['token', 'dbSyncToken'],
+  });
+  if (!expected || !tokensMatch(provided, expected)) {
+    res.status(401).send('Unauthorized');
+    return false;
+  }
+  return true;
+}
+
 app.get('/stage-trigger.php', function (req, res) {
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).send('Not found');
+  }
+  if (!requireStageTriggerToken(req, res)) {
+    return;
   }
 
   const { spawn } = require('child_process');
@@ -157,13 +225,13 @@ app.get('/stage-trigger.php', function (req, res) {
     // proceed even if lock file cannot be written
   }
 
-  // Prefer Node 20/18 (firebase-admin / google-auth need global Headers/fetch).
-  // Fall back to whatever nvm default is if newer versions are not installed.
+  // Firebase Admin 14 requires Node 22; fail the deploy instead of silently
+  // running an unsupported runtime.
   const script = [
     'source /home/sigisolutions/.nvm/nvm.sh',
     'export HOME=/home/sigisolutions',
     'cd /home/sigisolutions/stagelaundry.sigisolutions.net',
-    'nvm use 20 >/dev/null 2>&1 || nvm use 18 >/dev/null 2>&1 || nvm use 16 >/dev/null 2>&1 || true',
+    'nvm use 22 >/dev/null 2>&1 || { echo "[stage-trigger] Node 22 is required"; exit 1; }',
     'echo "[stage-trigger] node=$(command -v node) version=$(node -v)"',
     'npm install',
     // Empty / healthy DBs: db:migrate alone is enough (see docs/LOCAL_DATABASE_SETUP.md).
@@ -197,13 +265,8 @@ app.post('/internal/live-to-stage-db-sync', function (req, res) {
     return res.status(404).send('Not found');
   }
 
-  const token = process.env.DB_SYNC_TOKEN;
-  const provided =
-    (req.get('x-db-sync-token') || '') ||
-    (req.query && req.query.token) ||
-    '';
-  if (!token || provided !== token) {
-    return res.status(401).send('Unauthorized');
+  if (!requireDbSyncToken(req, res)) {
+    return;
   }
 
   const { spawn } = require('child_process');
@@ -274,13 +337,8 @@ app.get('/internal/live-to-stage-db-sync/status', function (req, res) {
     return res.status(404).send('Not found');
   }
 
-  const token = process.env.DB_SYNC_TOKEN;
-  const provided =
-    (req.get('x-db-sync-token') || '') ||
-    (req.query && req.query.token) ||
-    '';
-  if (!token || provided !== token) {
-    return res.status(401).send('Unauthorized');
+  if (!requireDbSyncToken(req, res)) {
+    return;
   }
 
   const fs = require('fs');
@@ -313,7 +371,7 @@ swaggerDocument.servers = [{
   url: swaggerUrl,
   description: `${process.env.NODE_ENV} environment`
 }];
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use('/api-docs', sensitiveSurfaceGuard, swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // ============================================
 // ROUTES
@@ -352,7 +410,6 @@ intilizeSocketFunc(server);
 // START SERVER
 // ============================================
 const server_port = process.env.PORT;
-let syncDb = 0;
 
 async function startServer() {
   try {
@@ -402,18 +459,6 @@ async function startServer() {
 ** 6) Restart only the Node process you are currently using for this app (do not touch other PM2 apps).
 `);
       throw dbErr;
-    }
-
-    if (syncDb) {
-      if (env === 'development' || env === 'test') {
-        await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 0');
-        await db.sequelize.sync({ alter: true });
-        await db.sequelize.query('SET FOREIGN_KEY_CHECKS = 1');
-      } else {
-        await db.sequelize.sync({ alter: true });
-      }
-
-      console.log('\x1b[32m%s\x1b[0m', '<================= Database synchronized =======================>');
     }
 
     const { startHeldBookingReleaseJob } = require('./services/bookingHeldReleaseService');

@@ -22,6 +22,11 @@ const { creditAgentForPaidBooking } = require("./agentWalletService");
 const {
     formatPaymentFailureReason,
 } = require("../../utils/paymentFailureLabels");
+const {
+    buildOrderListSequelizeOrder,
+    PAYMENT_FAILURE_SORT_FIELDS,
+    DEFAULT_PAYMENT_FAILURE_SORT,
+} = require("../../utils/orderListSort");
 
 const AUTO_CHARGE_DELAY_MS = Number(
     process.env.INVOICE_AUTO_CHARGE_DELAY_MS || 2 * 60 * 60 * 1000
@@ -883,6 +888,28 @@ async function listPaymentFailures(options = {}) {
         booking.count({ where }),
         booking.findAll({
             where,
+            // Keep this operational endpoint independent from unrelated booking
+            // model additions. A newly deployed model must not make the payment
+            // incident queue query columns that its migration has not added yet.
+            attributes: [
+                "id",
+                "orderTrackId",
+                "bookingStatusId",
+                "customerId",
+                "orderAmount",
+                "paymentType",
+                "balancePaymentMethod",
+                "autoChargeStatus",
+                "autoChargeDueAt",
+                "lastPaymentFailureCode",
+                "lastPaymentFailureMessage",
+                "lastPaymentFailureAt",
+                "collectionDate",
+                "paymentDeliveryGate",
+                "paymentAdminNotes",
+                "createdAt",
+                "updatedAt",
+            ],
             include: [
                 {
                     model: users,
@@ -901,9 +928,27 @@ async function listPaymentFailures(options = {}) {
                     separate: true,
                     limit: 5,
                     order: [["id", "DESC"]],
+                    attributes: [
+                        "id",
+                        "bookingId",
+                        "attemptType",
+                        "attemptNumber",
+                        "status",
+                        "amount",
+                        "currency",
+                        "stripeErrorCode",
+                        "stripeDeclineCode",
+                        "errorMessage",
+                        "triggeredBy",
+                        "createdAt",
+                    ],
                 },
             ],
-            order: [["lastPaymentFailureAt", "DESC"]],
+            order: buildOrderListSequelizeOrder(options.sortBy, options.sortDir, {
+                allowlist: PAYMENT_FAILURE_SORT_FIELDS,
+                defaultSortBy: DEFAULT_PAYMENT_FAILURE_SORT.sortBy,
+                defaultSortDir: DEFAULT_PAYMENT_FAILURE_SORT.sortDir,
+            }),
             limit,
         }),
     ]);

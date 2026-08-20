@@ -1,14 +1,15 @@
 const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
-const { 
-    ValidationError, 
-    NotFoundError, 
+const {
+    ValidationError,
+    NotFoundError,
     ConflictError,
-    UnprocessableEntityError 
+    UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
 const { literal, fn, col } = require("sequelize");
 const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
+const { clampListLimit, clampPage } = require('../../utils/listLimit');
 
 class CustomerService {
     /**
@@ -16,9 +17,12 @@ class CustomerService {
      * @returns {Array} List of customers with booking counts and amounts
      */
     async getAllCustomers(startPage = 1, endPage = 10, offset = 0) {
-        // Calculate limit based on start and end page
-        const limit = (endPage - startPage + 1) * 10; // Assuming 10 items per page
-        const calculatedOffset = offset + ((startPage - 1) * 10);
+        const start = clampPage(startPage, 1);
+        const end = clampPage(endPage, 10);
+        const span = Math.min(Math.max(end - start + 1, 1), 10);
+        const limit = clampListLimit(span * 10, 10, 100);
+        const offsetNum = Math.max(0, parseInt(offset, 10) || 0);
+        const calculatedOffset = offsetNum + ((start - 1) * 10);
 
         const findCustomers = await users.findAll({
             where: {
@@ -33,24 +37,24 @@ class CustomerService {
                 'status',
                 [
                     sequelize.literal(`(
-                SELECT COUNT(*) 
-                FROM bookings 
+                SELECT COUNT(*)
+                FROM bookings
                 WHERE bookings.customerId = users.id
               )`),
                     'bookingCount'
                 ],
                 [
                     sequelize.literal(`(
-                SELECT COALESCE(SUM(orderAmount), 0) 
-                FROM bookings 
+                SELECT COALESCE(SUM(orderAmount), 0)
+                FROM bookings
                 WHERE bookings.customerId = users.id
               )`),
                     'totalAmountSpent'
                 ],
                 [
                     sequelize.literal(`(
-                SELECT MAX(createdAt) 
-                FROM bookings 
+                SELECT MAX(createdAt)
+                FROM bookings
                 WHERE bookings.customerId = users.id
               )`),
                     'lastBookingDate'
@@ -83,11 +87,11 @@ class CustomerService {
         return {
             customers: formattedCustomers,
             pagination: {
-                currentPage: startPage,
+                currentPage: start,
                 totalPages: Math.ceil(totalCount / 10),
                 totalCount: totalCount,
-                hasNextPage: endPage < Math.ceil(totalCount / 10),
-                hasPreviousPage: startPage > 1
+                hasNextPage: end < Math.ceil(totalCount / 10),
+                hasPreviousPage: start > 1
             }
         };
     }
@@ -155,9 +159,21 @@ class CustomerService {
      * @returns {Object} Customer details with booking information
      */
     async getSpecificCustomerDetails(customerId) {
+            const normalizedCustomerId = Number(customerId);
+            if (!Number.isInteger(normalizedCustomerId) || normalizedCustomerId <= 0) {
+                throw new ValidationError('Invalid customer ID');
+            }
+            const customer = await users.findOne({
+                where: { id: normalizedCustomerId, userTypeId: 2 },
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+            });
+            if (!customer) {
+                throw new NotFoundError('Customer not found');
+            }
+
             const [bookingsFind, userInfo] = await Promise.all([
                 booking.findAll({
-                    where: { customerId },
+                    where: { customerId: normalizedCustomerId },
                     include: [
                         {
                             model: customerSelectedService,
@@ -210,7 +226,7 @@ class CustomerService {
                 }),
 
                 addressDb.findOne({
-                    where: { userId: customerId },
+                    where: { userId: normalizedCustomerId },
                     include: [
                         {
                             model: users,
@@ -222,9 +238,13 @@ class CustomerService {
                 }),
             ]);
 
+            const userDetails = userInfo ? userInfo.toJSON() : {};
+            userDetails.userId = userDetails.userId || customer.id;
+            userDetails.user = userDetails.user || customer.toJSON();
+
             return {
                 bookingDetails: bookingsFind,
-                userDetails: userInfo ? userInfo.toJSON() : {},
+                userDetails,
             };
     }
 

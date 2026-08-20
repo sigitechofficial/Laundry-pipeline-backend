@@ -46,6 +46,11 @@ jobs:
           test -f scripts/run-deploy-seeds.sh
           chmod +x scripts/remote-deploy-api.sh scripts/run-deploy-seeds.sh
 
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+
       - name: Create release metadata
         run: |
           cat > release.json <<EOF

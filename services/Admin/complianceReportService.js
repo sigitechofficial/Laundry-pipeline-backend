@@ -2,6 +2,7 @@
 
 const { Op, fn, col, literal } = require('sequelize');
 const { agentComplianceEvent, booking, users } = require('../../models');
+const { ValidationError } = require('../../middlewares/universalErrorHandler');
 
 const GEO_ACTIONS = [
   'arrived_pickup',
@@ -14,15 +15,35 @@ function parseDateRange(query = {}) {
   const where = {};
   if (query.from || query.to) {
     where.createdAt = {};
-    if (query.from) where.createdAt[Op.gte] = new Date(query.from);
-    if (query.to) where.createdAt[Op.lte] = new Date(query.to);
+    if (query.from) {
+      const from = new Date(query.from);
+      if (Number.isNaN(from.getTime())) throw new ValidationError('from must be a valid date');
+      where.createdAt[Op.gte] = from;
+    }
+    if (query.to) {
+      const to = new Date(query.to);
+      if (Number.isNaN(to.getTime())) throw new ValidationError('to must be a valid date');
+      where.createdAt[Op.lte] = to;
+    }
   }
-  if (query.shopId) where.shopId = Number(query.shopId);
+  const parsePositiveId = (value, field) => {
+    const id = Number(value);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new ValidationError(`${field} must be a positive integer`);
+    }
+    return id;
+  };
+  if (query.shopId) where.shopId = parsePositiveId(query.shopId, 'shopId');
   if (query.driverId || query.actorUserId) {
-    where.actorUserId = Number(query.driverId || query.actorUserId);
+    where.actorUserId = parsePositiveId(
+      query.driverId || query.actorUserId,
+      query.driverId ? 'driverId' : 'actorUserId'
+    );
   }
   if (query.action) where.action = query.action;
-  if (query.bookingId) where.bookingId = Number(query.bookingId);
+  if (query.bookingId) {
+    where.bookingId = parsePositiveId(query.bookingId, 'bookingId');
+  }
   return where;
 }
 

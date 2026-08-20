@@ -1,18 +1,27 @@
 require('dotenv').config();
-const { users, permissions } = require('../models');
+const { users, permissions, features, zone } = require('../models');
+const {
+    resolveAdminFeatureKey,
+    isSessionAllowlisted,
+    getAdminRoutePath,
+    toFeatureKey,
+} = require('../utils/adminRoutePermissions');
+const { isPlatformAdmin, parseZoneId } = require('../utils/adminZoneScope');
 
 const METHOD_TO_COLUMN = {
-    get:    'read',
-    post:   'create',
-    put:    'update',
-    patch:  'update',
+    get: 'read',
+    post: 'create',
+    put: 'update',
+    patch: 'update',
     delete: 'delete',
 };
 
 const USER_CACHE_TTL_MS = 60 * 1000;
 const PERM_CACHE_TTL_MS = 60 * 1000;
+const FEATURE_CACHE_TTL_MS = 60 * 1000;
 const userRoleCache = new Map();
 const permCache = new Map();
+const featureKeyCache = new Map();
 
 function cacheGet(map, key, ttlMs) {
     const hit = map.get(key);
@@ -34,110 +43,186 @@ function cacheSet(map, key, value, maxSize = 500) {
     }
 }
 
+function deny(res, error, extra = {}) {
+    return res.status(403).json({
+        status: '0',
+        message: 'Access Denied',
+        data: {},
+        error,
+        ...extra,
+    });
+}
+
+function clearPermissionCaches() {
+    userRoleCache.clear();
+    permCache.clear();
+    featureKeyCache.clear();
+}
+
+const defaultDeps = {
+    async loadUser(userId) {
+        const row = await users.findByPk(userId, {
+            attributes: ['id', 'classifiedAsId', 'roleId'],
+        });
+        if (!row) return null;
+        return {
+            id: row.id,
+            classifiedAsId: row.classifiedAsId,
+            roleId: row.roleId,
+        };
+    },
+    async loadZoneIdForAdmin(userId) {
+        const row = await zone.findOne({
+            where: { zoneAdminId: userId },
+            attributes: ['id'],
+        });
+        return parseZoneId(row?.id);
+    },
+    async loadFeatureIdByKey(featureKey) {
+        const cachedMap = cacheGet(featureKeyCache, 'map', FEATURE_CACHE_TTL_MS);
+        if (cachedMap && Object.prototype.hasOwnProperty.call(cachedMap, featureKey)) {
+            return cachedMap[featureKey];
+        }
+
+        const rows = await features.findAll({
+            where: { status: true },
+            attributes: ['id', 'key', 'title'],
+        });
+        const map = {};
+        for (const row of rows) {
+            const id = row.id;
+            if (row.key) {
+                map[String(row.key)] = id;
+                const normalizedKey = toFeatureKey(row.key);
+                if (normalizedKey && map[normalizedKey] == null) map[normalizedKey] = id;
+            }
+            const fromTitle = toFeatureKey(row.title);
+            if (fromTitle && map[fromTitle] == null) map[fromTitle] = id;
+        }
+        cacheSet(featureKeyCache, 'map', map);
+        return map[featureKey] ?? null;
+    },
+    async loadPermission(featureId, roleId) {
+        const permissionRow = await permissions.findOne({
+            where: { featureId, roleId },
+            attributes: ['create', 'read', 'update', 'delete'],
+        });
+        return permissionRow ? { ...permissionRow.dataValues } : null;
+    },
+};
+
 /**
  * Permission Middleware
  *
- * Attach ONCE after validateAccessToken on any router.
+ * Attach ONCE after validateAccessToken on the admin router.
  * req.user is already set by validateAccessToken.
  *
- * Flow:
- *  1. Get user's classifiedAsId and roleId from DB using req.user.id
- *  2. If classifiedAsId is null  → owner / super admin → full access, skip check
- *  3. If classifiedAsId is set   → zone admin / employee → check permissions
- *     a. Get featureId from request (header OR body OR query)
- *     b. Look up permissions row: roleId + featureId
- *     c. Map HTTP method to column: GET→read, POST→create, PUT/PATCH→update, DELETE→delete
- *     d. If that column is true → allow, else → 403
+ * Product rule — super admin:
+ *   classifiedAsId === null (e.g. admin@gmail.com) → full access, skip feature check.
+ *   Zone filter is NOT forced; they may pass zoneId as an optional filter.
+ *
+ * Zone admin / employee (classifiedAsId set):
+ *   Feature is resolved from the route map (utils/adminRoutePermissions).
+ *   Client featureid header / body / query is ignored.
+ *   Deny when the route has no mapping, the feature row is missing,
+ *   the role has no permissions row, or the HTTP-method column is false.
+ *   Session allowlist (signOut, notification-preferences) is the only exception.
  */
-module.exports = async function checkPermission(req, res, next) {
-    try {
-        const userId = req.user?.id;
-        let userData = cacheGet(userRoleCache, String(userId), USER_CACHE_TTL_MS);
+function createCheckPermission(overrides = {}) {
+    const deps = { ...defaultDeps, ...overrides };
 
-        if (!userData) {
-            // Get user role info from DB using the id in the token
-            const row = await users.findByPk(userId, {
-                attributes: ['id', 'classifiedAsId', 'roleId']
-            });
-            if (!row) {
-                return res.status(403).json({
-                    status: '0',
-                    message: 'Access Denied',
-                    data: {},
-                    error: 'User not found'
+    return async function checkPermission(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            let userData = cacheGet(userRoleCache, String(userId), USER_CACHE_TTL_MS);
+
+            if (!userData) {
+                const row = await deps.loadUser(userId);
+                if (!row) {
+                    return deny(res, 'User not found');
+                }
+                userData = {
+                    id: row.id,
+                    classifiedAsId: row.classifiedAsId,
+                    roleId: row.roleId,
+                };
+                cacheSet(userRoleCache, String(userId), userData);
+            }
+
+            const jwtZoneId = parseZoneId(req.user?.zoneId);
+            let zoneId = jwtZoneId;
+            if (!isPlatformAdmin(userData.classifiedAsId) && !zoneId) {
+                zoneId = await deps.loadZoneIdForAdmin(userData.id);
+            }
+
+            req.adminAuthz = {
+                isPlatformAdmin: isPlatformAdmin(userData.classifiedAsId),
+                classifiedAsId: userData.classifiedAsId ?? null,
+                roleId: userData.roleId ?? null,
+                zoneId,
+            };
+
+            // classifiedAsId == null → owner / super admin → bypass, full access
+            if (isPlatformAdmin(userData.classifiedAsId)) {
+                return next();
+            }
+
+            if (isSessionAllowlisted(req)) {
+                return next();
+            }
+
+            if (!userData.roleId) {
+                return deny(res, 'No role assigned. Please contact your admin.');
+            }
+
+            const featureKey = resolveAdminFeatureKey(req);
+            if (!featureKey) {
+                return deny(res, 'No permission is configured for this action', {
+                    path: getAdminRoutePath(req),
                 });
             }
-            userData = {
-                id: row.id,
-                classifiedAsId: row.classifiedAsId,
-                roleId: row.roleId,
-            };
-            cacheSet(userRoleCache, String(userId), userData);
-        }
 
-        // classifiedAsId === null → owner or super admin → bypass, full access
-        if (userData.classifiedAsId === null) {
+            const featureId = await deps.loadFeatureIdByKey(featureKey);
+            if (!featureId) {
+                return deny(res, 'You do not have access for this feature', {
+                    featureKey,
+                });
+            }
+
+            const permColumn = METHOD_TO_COLUMN[req.method.toLowerCase()];
+            if (!permColumn) {
+                return deny(res, 'You do not have access for this feature');
+            }
+
+            const permKey = `${userData.roleId}:${featureId}`;
+            const permHit = permCache.get(permKey);
+            let permValues;
+            if (!permHit || Date.now() - permHit.at > PERM_CACHE_TTL_MS) {
+                permValues = await deps.loadPermission(featureId, userData.roleId);
+                cacheSet(permCache, permKey, permValues);
+            } else {
+                permValues = permHit.value;
+            }
+
+            // NOTE: dataValues is used when loading from Sequelize because the
+            // column name "update" shadows instance.update().
+            const permValue = permValues ? permValues[permColumn] : undefined;
+            if (!permValues || !permValue) {
+                return deny(res, `You do not have ${permColumn} access for this feature`, {
+                    featureKey,
+                });
+            }
+
             return next();
+        } catch (err) {
+            console.error('checkPermission error:', err.message);
+            return deny(res, 'Authorization check failed');
         }
+    };
+}
 
-        // ── Zone Admin / Employee from here ──────────────────────────────────
+const checkPermission = createCheckPermission();
+checkPermission.create = createCheckPermission;
+checkPermission.clearCaches = clearPermissionCaches;
 
-        if (!userData.roleId) {
-            return res.status(403).json({
-                status: '0',
-                message: 'Access Denied',
-                data: {},
-                error: 'No role assigned. Please contact your admin.'
-            });
-        }
-
-        // featureId sent by frontend: header, body, or query
-        const featureId = req.headers['featureid'] || req.body?.featureId || req.query?.featureId;
-
-        // No featureId → general/system endpoint, allow through.
-        // Feature-specific permission is only enforced when featureId is explicitly sent.
-        if (!featureId) {
-            return next();
-        }
-
-        // Which action is being performed based on HTTP method
-        const permColumn = METHOD_TO_COLUMN[req.method.toLowerCase()];
-        const permKey = `${userData.roleId}:${featureId}`;
-        let permValues = cacheGet(permCache, permKey, PERM_CACHE_TTL_MS);
-
-        if (!permValues) {
-            // Find permission row for this role + feature
-            const permissionRow = await permissions.findOne({
-                where: { featureId, roleId: userData.roleId },
-                attributes: ['create', 'read', 'update', 'delete']
-            });
-            permValues = permissionRow ? { ...permissionRow.dataValues } : null;
-            cacheSet(permCache, permKey, permValues);
-        }
-
-        // No row found or the specific permission (read/create/update/delete) is false
-        // NOTE: permissionRow.dataValues is used intentionally because the column name
-        // "update" shadows Sequelize's built-in instance.update() method, causing
-        // permissionRow['update'] to return a function (truthy) instead of the DB value.
-        const permValue = permValues ? permValues[permColumn] : undefined;
-        if (!permValues || !permValue) {
-            return res.status(403).json({
-                status: '0',
-                message: 'Access Denied',
-                data: {},
-                error: `You do not have ${permColumn} access for this feature`
-            });
-        }
-
-        return next();
-
-    } catch (err) {
-        console.error('checkPermission error:', err.message);
-        return res.status(403).json({
-            status: '0',
-            message: 'Access Denied',
-            data: {},
-            error: 'Authorization check failed'
-        });
-    }
-};
+module.exports = checkPermission;

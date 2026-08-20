@@ -16,7 +16,8 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
-const admin = require('firebase-admin');
+const { cert, getApps, initializeApp } = require('firebase-admin/app');
+const { getDatabase } = require('firebase-admin/database');
 const fs = require('fs');
 const path = require('path');
 
@@ -225,9 +226,9 @@ async function main() {
     process.env.FIREBASE_DATABASE_URL ||
     'https://laundry-app-bf43c-default-rtdb.firebaseio.com';
 
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(sa),
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert(sa),
       databaseURL,
     });
   }
@@ -344,7 +345,7 @@ async function main() {
     );
   }
 
-  const ref = admin.database().ref(`liveTracking/${args.bookingId}`);
+  const ref = getDatabase().ref(`liveTracking/${args.bookingId}`);
   const now = Date.now();
 
   await ref.child('meta').set({

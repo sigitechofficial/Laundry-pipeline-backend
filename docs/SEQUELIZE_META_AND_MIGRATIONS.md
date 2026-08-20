@@ -40,9 +40,12 @@ node scripts/repair-sequelize-meta.js --apply --baseline --i-know-schema-matches
 mysql ... -e "SELECT COUNT(*) FROM SequelizeMeta;"
 # should be ≈ number of files in migrations/
 
-# From then on, normal:
+# From then on, inspect then migrate. Do not rewrite SequelizeMeta history.
+npm run db:migrate:status
 npx sequelize-cli db:migrate
 ```
+
+`db:migrate` has no dry-run. Always run `npm run db:migrate:status` first and keep drifted meta repairs in `scripts/repair-sequelize-meta.js` — never delete or rewrite `SequelizeMeta` rows by hand.
 
 ## Rules (enterprise)
 

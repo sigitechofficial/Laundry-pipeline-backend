@@ -244,7 +244,7 @@ async function checkFirebase() {
       hint =
         'firebase.json parses but Admin SDK init failed. Check private_key formatting and Node version, then restart.';
     } else if (diagnostics.nodeTooOld) {
-      hint = 'Upgrade Node to >=18 (prefer 20) for firebase-admin / google-auth.';
+      hint = 'Upgrade Node to >=22 for Firebase Admin 14.';
     }
 
     return result(
@@ -577,12 +577,16 @@ async function checkShopReviewSchema() {
          AND TABLE_NAME IN (:names)`,
       { replacements: { names: REQUIRED_TABLES } }
     );
-    const existing = new Set((tableRows || []).map((r) => r.name));
+    const existing = new Set(
+      (tableRows || []).map((r) => String(r.name).toLowerCase())
+    );
     const tables = {};
     for (const name of REQUIRED_TABLES) {
-      tables[name] = existing.has(name);
+      tables[name] = existing.has(name.toLowerCase());
     }
-    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+    const missingTables = REQUIRED_TABLES.filter(
+      (name) => !existing.has(name.toLowerCase())
+    );
 
     let migrationApplied = false;
     let migrationError = null;
@@ -688,12 +692,16 @@ async function checkRepairCatalogSchema() {
          AND TABLE_NAME IN (:names)`,
       { replacements: { names: REQUIRED_TABLES } }
     );
-    const existing = new Set((tableRows || []).map((r) => r.name));
+    const existing = new Set(
+      (tableRows || []).map((r) => String(r.name).toLowerCase())
+    );
     const tables = {};
     for (const name of REQUIRED_TABLES) {
-      tables[name] = existing.has(name);
+      tables[name] = existing.has(name.toLowerCase());
     }
-    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+    const missingTables = REQUIRED_TABLES.filter(
+      (name) => !existing.has(name.toLowerCase())
+    );
 
     async function migrationApplied(name) {
       try {
@@ -834,12 +842,16 @@ async function checkComplianceCatalogSchema() {
          AND TABLE_NAME IN (:names)`,
       { replacements: { names: REQUIRED_TABLES } }
     );
-    const existing = new Set((tableRows || []).map((r) => r.name));
+    const existing = new Set(
+      (tableRows || []).map((r) => String(r.name).toLowerCase())
+    );
     const tables = {};
     for (const name of REQUIRED_TABLES) {
-      tables[name] = existing.has(name);
+      tables[name] = existing.has(name.toLowerCase());
     }
-    const missingTables = REQUIRED_TABLES.filter((n) => !existing.has(n));
+    const missingTables = REQUIRED_TABLES.filter(
+      (name) => !existing.has(name.toLowerCase())
+    );
 
     let migrationApplied = false;
     try {

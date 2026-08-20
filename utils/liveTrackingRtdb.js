@@ -3,7 +3,7 @@
  * MySQL remains source of truth for booking status; RTDB is the high-frequency GPS channel.
  */
 
-const admin = require('firebase-admin');
+const { getDatabase } = require('firebase-admin/database');
 const { addressDb, users, booking } = require('../models');
 const { ensureFirebaseReady, getFirebaseDatabaseUrl } = require('./notification');
 
@@ -22,9 +22,9 @@ function getDb() {
     return null;
   }
   try {
-    return admin.database();
+    return getDatabase();
   } catch (err) {
-    console.warn('[liveTracking] admin.database() failed:', err.message);
+    console.warn('[liveTracking] getDatabase() failed:', err.message);
     return null;
   }
 }

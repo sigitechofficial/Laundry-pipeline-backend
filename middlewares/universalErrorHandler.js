@@ -1,3 +1,7 @@
+/**
+ * HTTP API compatibility: routes are unversioned (no /v1 prefix).
+ * Do not introduce a breaking /v2 mount. Additive changes stay on existing paths.
+ */
 const { StatusCodes, ReasonPhrases } = require('http-status-codes');
 const CustomException = require('./customError');
 

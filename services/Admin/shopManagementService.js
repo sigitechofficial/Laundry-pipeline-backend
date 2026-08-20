@@ -7,6 +7,7 @@ const {
     ConflictError,
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
+const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
 
 class ShopManagementService {
     /**
@@ -128,7 +129,7 @@ class ShopManagementService {
                 Object.prototype.hasOwnProperty.call(filters, 'page') ||
                 Object.prototype.hasOwnProperty.call(filters, 'limit');
             const page = Math.max(1, parseInt(filters.page, 10) || 1);
-            const limit = Math.min(100, Math.max(1, parseInt(filters.limit, 10) || 25));
+            const limit = clampListLimit(filters.limit, 25, 100);
             const offset = (page - 1) * limit;
 
             const {
@@ -218,6 +219,8 @@ class ShopManagementService {
             if (wantsPagination) {
                 listOptions.limit = limit;
                 listOptions.offset = offset;
+            } else {
+                listOptions.limit = UNBOUNDED_LIST_SAFETY_MAX;
             }
 
             const { rows: getShopData, count } = await bussinessInformation.findAndCountAll(listOptions);
@@ -322,12 +325,12 @@ class ShopManagementService {
                 topPerformingShops: formattedTopShops,
                 total,
                 page: wantsPagination ? page : 1,
-                limit: wantsPagination ? limit : total,
+                limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
                 pagination: {
                     total,
                     totalRecords: total,
                     page: wantsPagination ? page : 1,
-                    limit: wantsPagination ? limit : total,
+                    limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
                     totalPages: wantsPagination ? (Math.ceil(total / limit) || 1) : 1,
                 },
             };
@@ -530,6 +533,7 @@ class ShopManagementService {
                 classifiedAsId: 1,
                 deletedAt: { [Op.is]: null }
             },
+            limit: UNBOUNDED_LIST_SAFETY_MAX,
             attributes: [
                 'id',
                 'firstName',

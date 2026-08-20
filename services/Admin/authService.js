@@ -1,7 +1,7 @@
 const { users, features, zone, permissions, deviceToken } = require('../../models');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
+const { signAdminAccessToken } = require('../../utils/adminJwt');
 const { Op } = require('sequelize');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 
@@ -96,8 +96,7 @@ class AuthService {
                 zoneId: zoneId || "",
             };
 
-            // Generate access token
-            const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
+            const accessToken = signAdminAccessToken(payload);
 
             // Store token in Redis (session key — may be placeholder)
             if (dvToken) {
@@ -189,7 +188,7 @@ class AuthService {
             roleId: adminData.roleId
         };
 
-        const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
+        const accessToken = signAdminAccessToken(payload);
 
         // Store in Redis
         await redisCli.hSet(`tsh${adminData.id}`, { [dvToken]: accessToken });

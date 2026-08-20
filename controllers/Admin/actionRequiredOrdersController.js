@@ -2,13 +2,15 @@
 
 const ResponseHelper = require('../../utils/responseHelper');
 const actionRequiredOrdersService = require('../../services/Admin/actionRequiredOrdersService');
+const { zoneIdFromRequest } = require('../../utils/adminZoneScope');
 
 /**
  * GET /admin/action-required-orders
  * Optional query: reason, zoneId, startDate, endDate (order placed)
  */
 exports.listActionRequired = async (req, res) => {
-    const { zoneId, reason, startDate, endDate } = req.query;
+    const { reason, startDate, endDate } = req.query;
+    const zoneId = zoneIdFromRequest(req);
     const limit =
         req.query.limit != null && String(req.query.limit).trim() !== ''
             ? req.query.limit

@@ -1,11 +1,12 @@
 const { users, booking, driverInZones, proofOfDeliveries, addressDb, bussinessInformation, roles } = require('../../models');
 const { Op } = require('sequelize');
+const { UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
 const bcrypt = require('bcryptjs');
-const { 
-    ConflictError, 
-    NotFoundError, 
+const {
+    ConflictError,
+    NotFoundError,
     ValidationError,
-    UnprocessableEntityError 
+    UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
 
 class DriverService {
@@ -85,86 +86,79 @@ class DriverService {
                         model: roles,
                         attributes: ['name']
                     }
-                ]
+                ],
+                order: [['id', 'DESC']],
+                limit: UNBOUNDED_LIST_SAFETY_MAX,
             });
 
-            // Get booking counts for each driver
-            const driversWithBookingCounts = await Promise.all(
-                findDrivers.map(async (driver) => {
-                    const driverId = driver.id;
-
-                    // Get pickup orders count
-                    const pickupOrdersCount = await booking.count({
-                        where: {
-                            driverId: driverId
-                        }
+            const ids = findDrivers.map((driver) => driver.id);
+            const statsById = new Map();
+            if (ids.length > 0) {
+                const [statRows] = await booking.sequelize.query(
+                    `
+                    SELECT
+                        t.driver_id AS driverId,
+                        SUM(t.is_pickup) AS pickupOrders,
+                        SUM(t.is_delivery) AS deliveryOrders,
+                        COUNT(DISTINCT t.booking_id) AS totalOrders,
+                        COUNT(DISTINCT CASE WHEN t.bookingStatusId = 17 THEN t.booking_id END) AS completedOrders,
+                        COUNT(DISTINCT CASE WHEN t.bookingStatusId NOT IN (17, 19, 23) THEN t.booking_id END) AS pendingOrders,
+                        COALESCE(SUM(t.completed_amount), 0) AS driverEarnings
+                    FROM (
+                        SELECT
+                            b.id AS booking_id,
+                            b.driverId AS driver_id,
+                            1 AS is_pickup,
+                            0 AS is_delivery,
+                            b.bookingStatusId,
+                            CASE WHEN b.bookingStatusId = 17 THEN b.orderAmount ELSE 0 END AS completed_amount
+                        FROM bookings b
+                        WHERE b.deletedAt IS NULL AND b.driverId IN (:ids)
+                        UNION ALL
+                        SELECT
+                            b.id AS booking_id,
+                            b.deliveryDriverId AS driver_id,
+                            0 AS is_pickup,
+                            1 AS is_delivery,
+                            b.bookingStatusId,
+                            CASE
+                                WHEN b.bookingStatusId = 17
+                                 AND (b.driverId IS NULL OR b.driverId <> b.deliveryDriverId)
+                                THEN b.orderAmount ELSE 0
+                            END AS completed_amount
+                        FROM bookings b
+                        WHERE b.deletedAt IS NULL AND b.deliveryDriverId IN (:ids)
+                    ) t
+                    GROUP BY t.driver_id
+                    `,
+                    { replacements: { ids } }
+                );
+                for (const row of statRows) {
+                    statsById.set(Number(row.driverId), {
+                        DriverPickUpOrders: Number(row.pickupOrders) || 0,
+                        DriverDeliveryOrders: Number(row.deliveryOrders) || 0,
+                        totalOrders: Number(row.totalOrders) || 0,
+                        completedOrders: Number(row.completedOrders) || 0,
+                        pendingOrders: Number(row.pendingOrders) || 0,
+                        driverEarnings: parseFloat(Number(row.driverEarnings || 0).toFixed(2)),
                     });
+                }
+            }
 
-                    // Get delivery orders count
-                    const deliveryOrdersCount = await booking.count({
-                        where: {
-                            deliveryDriverId: driverId
-                        }
-                    });
-
-                    // Get total orders count
-                    const totalOrdersCount = await booking.count({
-                        where: {
-                            [Op.or]: [
-                                { driverId: driverId },
-                                { deliveryDriverId: driverId }
-                            ]
-                        }
-                    });
-
-                    // Get completed orders count
-                    const completedOrdersCount = await booking.count({
-                        where: {
-                            [Op.or]: [
-                                { driverId: driverId },
-                                { deliveryDriverId: driverId }
-                            ],
-                            bookingStatusId: 17 // Completed status
-                        }
-                    });
-
-                    // Get pending orders count
-                    const pendingOrdersCount = await booking.count({
-                        where: {
-                            [Op.or]: [
-                                { driverId: driverId },
-                                { deliveryDriverId: driverId }
-                            ],
-                            bookingStatusId: {
-                                [Op.notIn]: [17, 19, 23] // Exclude completed, cancelled, and failed
-                            }
-                        }
-                    });
-
-                    // Get driver earnings from completed orders
-                    const driverEarnings = await booking.sum('orderAmount', {
-                        where: {
-                            [Op.or]: [
-                                { driverId: driverId },
-                                { deliveryDriverId: driverId }
-                            ],
-                            bookingStatusId: 17 // Only completed orders
-                        }
-                    });
-
-                    return {
-                        ...driver.toJSON(),
-                        DriverPickUpOrders: pickupOrdersCount,
-                        DriverDeliveryOrders: deliveryOrdersCount,
-                        totalOrders: totalOrdersCount,
-                        completedOrders: completedOrdersCount,
-                        pendingOrders: pendingOrdersCount,
-                        driverEarnings: parseFloat((driverEarnings || 0).toFixed(2))
-                    };
-                })
-            );
-
-            return driversWithBookingCounts;
+            return findDrivers.map((driver) => {
+                const stats = statsById.get(driver.id) || {
+                    DriverPickUpOrders: 0,
+                    DriverDeliveryOrders: 0,
+                    totalOrders: 0,
+                    completedOrders: 0,
+                    pendingOrders: 0,
+                    driverEarnings: 0,
+                };
+                return {
+                    ...driver.toJSON(),
+                    ...stats,
+                };
+            });
         } catch (error) {
             throw new Error(`All drivers service error: ${error.message}`);
         }
@@ -177,9 +171,13 @@ class DriverService {
      */
     async getSpecificDriverDetails(driverId) {
         try {
+            const normalizedDriverId = Number(driverId);
+            if (!Number.isInteger(normalizedDriverId) || normalizedDriverId <= 0) {
+                throw new ValidationError('Invalid driver ID');
+            }
             const userInfo = await driverInZones.findOne({
                 where: {
-                    driverId: driverId,
+                    driverId: normalizedDriverId,
                 },
                 include: [
                     {
@@ -208,15 +206,14 @@ class DriverService {
 
             // Check if driver exists in driverInZones table
             if (!userInfo) {
-                throw new Error("Driver not found in the system");
+                throw new NotFoundError("Driver not found in the system");
             }
 
             const findBooking = await booking.findAll({
                 where: {
-                    driverId: driverId,
                     [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
+                        { driverId: normalizedDriverId },
+                        { deliveryDriverId: normalizedDriverId }
                     ]
                 },
                 include: [
@@ -242,10 +239,9 @@ class DriverService {
 
             const driverTotalOrders = await booking.count({
                 where: {
-                    driverId: driverId,
                     [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
+                        { driverId: normalizedDriverId },
+                        { deliveryDriverId: normalizedDriverId }
                     ]
                 }
             });
@@ -256,8 +252,8 @@ class DriverService {
                         [Op.ne]: 11
                     },
                     [Op.or]: [
-                        { driverId: driverId },
-                        { deliveryDriverId: driverId }
+                        { driverId: normalizedDriverId },
+                        { deliveryDriverId: normalizedDriverId }
                     ]
                 }
             });
@@ -269,6 +265,7 @@ class DriverService {
                 pendingOrders: pendingOrder
             };
         } catch (error) {
+            if (error instanceof NotFoundError || error instanceof ValidationError) throw error;
             throw new Error(`Specific driver details service error: ${error.message}`);
         }
     }
@@ -476,8 +473,8 @@ class DriverService {
             {
                 employeeOff: agentId
             },
-            { 
-                where: { id: user.id } 
+            {
+                where: { id: user.id }
             }
         );
 

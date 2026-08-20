@@ -4260,20 +4260,22 @@ exports.invoiceCreation = async (req, res) => {
 
     // Flatten invoiceDetails and deduplicate servicePreferences
     const bookingData = invoiceDetails[0]?.toJSON();
-    const shopAddress = await addressDb.findOne({
-        where: {
-            userId: shopAgentIdFromReq(req),
-            addressType: 'LaundaryShopAddress',
-        },
-        attributes: ['id'],
-    });
-    if (
-        !shopAddress ||
-        Number(bookingData.laundryShopId) !== Number(shopAddress.id)
-    ) {
-        throw new ForbiddenError('This order does not belong to your shop');
+    if (!req.isPlatformAdminRequest) {
+        const shopAddress = await addressDb.findOne({
+            where: {
+                userId: shopAgentIdFromReq(req),
+                addressType: 'LaundaryShopAddress',
+            },
+            attributes: ['id'],
+        });
+        if (
+            !shopAddress ||
+            Number(bookingData.laundryShopId) !== Number(shopAddress.id)
+        ) {
+            throw new ForbiddenError('This order does not belong to your shop');
+        }
     }
-    if (req.isShopEmployee && !req.canAccessInvoice) {
+    if (!req.isPlatformAdminRequest && req.isShopEmployee && !req.canAccessInvoice) {
         const actorId = Number(actorUserIdFromReq(req));
         const statusId = Number(bookingData.bookingStatusId || 0);
         const pickupMine = Number(bookingData.driverId) === actorId;

@@ -1,8 +1,11 @@
 'use strict';
 
+const { tableExists } = require('../utils/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    if (!(await tableExists(queryInterface, 'reviewReasonCodes'))) {
     await queryInterface.createTable('reviewReasonCodes', {
       id: {
         allowNull: false,
@@ -47,7 +50,9 @@ module.exports = {
         type: Sequelize.DATE,
       },
     });
+    }
 
+    if (!(await tableExists(queryInterface, 'shopReviews'))) {
     await queryInterface.createTable('shopReviews', {
       id: {
         allowNull: false,
@@ -119,7 +124,9 @@ module.exports = {
     await queryInterface.addIndex('shopReviews', ['customerId']);
     await queryInterface.addIndex('shopReviews', ['visibility']);
     await queryInterface.addIndex('shopReviews', ['submittedAt']);
+    }
 
+    if (!(await tableExists(queryInterface, 'shopReviewReasons'))) {
     await queryInterface.createTable('shopReviewReasons', {
       id: {
         allowNull: false,
@@ -166,7 +173,9 @@ module.exports = {
       ['shopReviewId', 'reasonCodeId'],
       { unique: true, name: 'shop_review_reasons_unique' }
     );
+    }
 
+    if (!(await tableExists(queryInterface, 'shopReviewStats'))) {
     await queryInterface.createTable('shopReviewStats', {
       id: {
         allowNull: false,
@@ -236,6 +245,7 @@ module.exports = {
         type: Sequelize.DATE,
       },
     });
+    }
   },
 
   async down(queryInterface) {

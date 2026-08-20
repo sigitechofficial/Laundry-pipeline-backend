@@ -1,36 +1,14 @@
 'use strict';
 
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-
-const TOKEN_FILE = path.resolve(__dirname, '..', '.ops-control-token');
-
-function readTokenFile() {
-  try {
-    if (!fs.existsSync(TOKEN_FILE)) return null;
-    const v = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
-    return v || null;
-  } catch {
-    return null;
-  }
-}
+const {
+  TOKEN_FILE,
+  getOpsControlToken,
+  tokensMatch,
+  tokenFromHeaderOrBody,
+} = require('../utils/opsToken');
 
 function getExpectedToken() {
-  const fromEnv = String(process.env.OPS_CONTROL_TOKEN || '').trim();
-  if (fromEnv) return fromEnv;
-  return readTokenFile();
-}
-
-function timingSafeEqualString(a, b) {
-  const left = Buffer.from(String(a || ''), 'utf8');
-  const right = Buffer.from(String(b || ''), 'utf8');
-  if (left.length !== right.length) {
-    // Compare against self to keep runtime roughly constant when lengths differ
-    crypto.timingSafeEqual(left, left);
-    return false;
-  }
-  return crypto.timingSafeEqual(left, right);
+  return getOpsControlToken();
 }
 
 /**
@@ -48,12 +26,12 @@ function opsControlGuard(req, res, next) {
     });
   }
 
-  const headerToken = req.get('X-Ops-Token') || '';
-  const auth = req.get('Authorization') || '';
-  const bearer = /^Bearer\s+(.+)$/i.exec(auth);
-  const provided = String(headerToken || (bearer && bearer[1]) || req.query?.opsToken || '').trim();
+  const provided = tokenFromHeaderOrBody(req, {
+    headers: ['X-Ops-Token'],
+    bodyKeys: ['opsToken'],
+  });
 
-  if (!provided || !timingSafeEqualString(provided, expected)) {
+  if (!tokensMatch(provided, expected)) {
     console.warn('[OPS] unauthorized', {
       ip: req.ip || req.connection?.remoteAddress || null,
       path: req.originalUrl || req.url,

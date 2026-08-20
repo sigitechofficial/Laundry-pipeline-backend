@@ -1,15 +1,39 @@
 /**
- * firebase-admin@13+ needs Node 18+ (global fetch/Headers).
- * Stage historically ran Node 16 — log a clear ops signal early.
+ * firebase-admin@14+ and this repo's engines field require Node 22+.
+ * Production fails fast; other environments warn before Firebase init.
  */
-const major = Number(String(process.versions.node || '0').split('.')[0]);
-
-if (major > 0 && major < 18) {
-  console.warn(
-    `[NodeCompat] Node ${process.version} detected. ` +
-      'firebase-admin v13 requires Node >= 18 (error: "Headers is not defined"). ' +
-      'Upgrade stage/prod PM2 to Node 20, or keep firebase-admin@12.x.'
-  );
+function nodeMajorFrom(version) {
+  return Number(String(version || '0').split('.')[0]);
 }
 
-module.exports = { nodeMajor: major, nodeVersion: process.version };
+function assertNodeCompatible(
+  nodeVersion = process.versions.node,
+  nodeEnv = process.env.NODE_ENV
+) {
+  const major = nodeMajorFrom(nodeVersion);
+  if (!(major > 0 && major < 22)) {
+    return { ok: true, major };
+  }
+
+  const message =
+    `[NodeCompat] Node v${nodeVersion} detected. ` +
+    'firebase-admin v14 and engines.node require Node >= 22. ' +
+    'Upgrade stage/prod before deploying this dependency set.';
+
+  if (String(nodeEnv || '').toLowerCase() === 'production') {
+    throw new Error(message);
+  }
+
+  console.warn(message);
+  return { ok: false, major, message };
+}
+
+const major = nodeMajorFrom(process.versions.node);
+assertNodeCompatible(process.versions.node, process.env.NODE_ENV);
+
+module.exports = {
+  nodeMajor: major,
+  nodeVersion: process.version,
+  assertNodeCompatible,
+  nodeMajorFrom,
+};

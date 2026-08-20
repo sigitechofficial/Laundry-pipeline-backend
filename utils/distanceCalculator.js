@@ -1,18 +1,20 @@
-const axios = require('axios');
-const googleMapApiKey = 'AIzaSyAVYbP2F93xvY4i59UVNfAfYR62dmbKNFA'
-
 module.exports = async function (userLat, userLng, orderLat, orderLng) {
-    const earth_radius = 6371;
-    const dLat = (Math.PI / 180) * (orderLat - userLat);
-    const dLon = (Math.PI / 180) * (orderLng - userLng);
+    const coordinates = [userLat, userLng, orderLat, orderLng].map(Number);
+    if (coordinates.some((coordinate) => !Number.isFinite(coordinate))) {
+        throw new TypeError('Distance coordinates must be finite numbers');
+    }
+
+    const [fromLat, fromLng, toLat, toLng] = coordinates;
+    const toRadians = (degrees) => (Math.PI / 180) * degrees;
+    const earthRadiusKm = 6371;
+    const dLat = toRadians(toLat - fromLat);
+    const dLng = toRadians(toLng - fromLng);
     const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((Math.PI / 180) * orderLat) *
-        Math.cos((Math.PI / 180) * orderLat) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.asin(Math.sqrt(a));
-    const d = earth_radius * c; // d is in mles
-    const km = d * 1.60934; // coonvert miles into kms
-    return parseFloat(km.toFixed(2));
-}
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(fromLat)) *
+        Math.cos(toRadians(toLat)) *
+        Math.sin(dLng / 2) ** 2;
+    const angularDistance = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return Number((earthRadiusKm * angularDistance).toFixed(2));
+};
