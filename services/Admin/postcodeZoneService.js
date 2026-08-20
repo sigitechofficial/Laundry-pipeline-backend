@@ -2,9 +2,17 @@ require("dotenv").config();
 const axios = require('axios');
 const turf = require('@turf/turf');
 const { Op } = require('sequelize');
-const { zone, cities, units, users } = require('../../models');
+const { zone, cities, countries, units, users } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
+const { resolveCurrencyUnitIdForCountry } = require('../../utils/resolveDisplayCurrency');
+const googleMapsGeocodeService = require('./googleMapsGeocodeService');
+const {
+    normalizeCountryIso,
+    isUkCountry,
+    validatePostalCodeForCountry,
+    validatePostalCodesForCountry,
+} = require('../../utils/postalCodeValidation');
 
 class PostcodeZoneService {
     constructor() {
@@ -16,11 +24,6 @@ class PostcodeZoneService {
     }
 
     /**
-     * Fetch coordinates for postcodes using postcodes.io API
-     * @param {Array<string>} postcodes - Array of postcode strings
-     * @returns {Array<{postcode: string, longitude: number, latitude: number}>}
-     */
-    /**
      * Detect whether a normalised postcode string is an outcode (district only, e.g. SW1A, EC1, W1)
      * or a full postcode (e.g. SW1A 2AA).
      * UK outcode pattern: 1-2 letters + 1-2 digits/letters, no incode suffix.
@@ -30,10 +33,85 @@ class PostcodeZoneService {
         return !/[0-9][A-Z]{2}$/.test(normalizedPostcode);
     }
 
-    async fetchPostcodeCoordinates(postcodes) {
+    async resolveCityWithCountry(cityId) {
+        if (!cityId) return null;
+        return cities.findByPk(cityId, {
+            attributes: ['id', 'name', 'countryId', 'lat', 'lng'],
+            include: [{
+                model: countries,
+                attributes: ['id', 'name', 'shortName'],
+                required: false,
+            }],
+        });
+    }
+
+    countryIsoFromCity(city) {
+        return normalizeCountryIso(city?.country);
+    }
+
+    /**
+     * Geocode a non-UK postal code via Google with country component filter.
+     */
+    async fetchCoordinatesViaGoogle(postcode, countryIso, cityName) {
+        const addressParts = [String(postcode).trim()];
+        if (cityName) addressParts.push(String(cityName).trim());
+        const data = await googleMapsGeocodeService.geocode({
+            address: addressParts.join(', '),
+            country: countryIso,
+        });
+        const result = Array.isArray(data?.results) ? data.results[0] : null;
+        const loc = result?.geometry?.location;
+        if (!loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) {
+            throw new ValidationError(
+                `Postal code not found in ${countryIso || 'selected country'}: ${postcode}`
+            );
+        }
+
+        const components = Array.isArray(result.address_components)
+            ? result.address_components
+            : [];
+        const countryComp = components.find((c) =>
+            Array.isArray(c.types) && c.types.includes('country')
+        );
+        const resultIso = normalizeCountryIso(countryComp?.short_name);
+        if (countryIso && resultIso && resultIso !== countryIso) {
+            throw new ValidationError(
+                `"${postcode}" resolved outside ${countryIso} (got ${resultIso}). Use a postal code valid for the selected country.`
+            );
+        }
+
+        return {
+            postcode: this.normalizePostcode(postcode),
+            longitude: Number(loc.lng),
+            latitude: Number(loc.lat),
+        };
+    }
+
+    /**
+     * Fetch coordinates for postcodes (UK → postcodes.io; other countries → Google + country bias).
+     * @param {Array<string>} postcodes
+     * @param {{ countryIso?: string, cityName?: string }} [options]
+     * @returns {Array<{postcode: string, longitude: number, latitude: number}>}
+     */
+    async fetchPostcodeCoordinates(postcodes, options = {}) {
         const coordinates = [];
-        
+        const countryIso = normalizeCountryIso(options.countryIso);
+        const cityName = options.cityName || null;
+        const useUkApi = !countryIso || isUkCountry(countryIso);
+
         for (const postcode of postcodes) {
+            const formatCheck = validatePostalCodeForCountry(postcode, countryIso || 'GB');
+            if (countryIso && !formatCheck.ok) {
+                throw new ValidationError(formatCheck.message || `Invalid postal code: ${postcode}`);
+            }
+
+            if (!useUkApi) {
+                coordinates.push(
+                    await this.fetchCoordinatesViaGoogle(postcode, countryIso, cityName)
+                );
+                continue;
+            }
+
             // Normalize postcode (remove spaces, uppercase)
             const normalizedPostcode = postcode.trim().replace(/\s+/g, '').toUpperCase();
 
@@ -273,6 +351,9 @@ class PostcodeZoneService {
             if (!currencyUnit) {
                 throw new NotFoundError('Currency unit not found');
             }
+            if (currencyUnit.type && String(currencyUnit.type).toLowerCase() !== 'currency') {
+                throw new ValidationError('currencyUnitId must reference a currency unit');
+            }
         }
 
         // Validate distanceUnitId if provided
@@ -320,26 +401,41 @@ class PostcodeZoneService {
     }
 
     async validatePostcodesByCity(postcodes, cityId) {
-        if (!cityId) return;
+        if (!cityId) return null;
 
-        const city = await cities.findByPk(cityId, { attributes: ['id', 'name'] });
+        const city = await this.resolveCityWithCountry(cityId);
         if (!city) {
             throw new NotFoundError('City not found');
         }
 
-        if (!this.isLondonCity(city.name)) {
-            return;
+        const countryIso = this.countryIsoFromCity(city);
+        if (countryIso) {
+            const batch = validatePostalCodesForCountry(postcodes, countryIso);
+            if (!batch.ok && batch.invalid.length) {
+                const first = batch.invalid[0];
+                throw new ValidationError(
+                    first.message ||
+                    `Postal codes must match country ${countryIso}. Invalid: ${batch.invalid
+                        .map((i) => i.normalized)
+                        .join(', ')}`
+                );
+            }
         }
 
-        const invalidPostcodes = postcodes
-            .map(pc => this.normalizePostcode(pc))
-            .filter(pc => !this.isLondonPostcode(pc));
+        // London district scope only applies to UK London cities.
+        if (isUkCountry(countryIso) && this.isLondonCity(city.name)) {
+            const invalidPostcodes = postcodes
+                .map(pc => this.normalizePostcode(pc))
+                .filter(pc => !this.isLondonPostcode(pc));
 
-        if (invalidPostcodes.length > 0) {
-            throw new ValidationError(
-                `Only London postcodes are allowed for city "${city.name}". Invalid postcodes: ${invalidPostcodes.join(', ')}`
-            );
+            if (invalidPostcodes.length > 0) {
+                throw new ValidationError(
+                    `Only London postcodes are allowed for city "${city.name}". Invalid postcodes: ${invalidPostcodes.join(', ')}`
+                );
+            }
         }
+
+        return { city, countryIso };
     }
 
     /**
@@ -546,14 +642,17 @@ class PostcodeZoneService {
 
         console.log(`Processing ${postcodesArray.length} postcodes...`);
 
-        // Enforce city-specific postcode scope (London-only when city is London)
-        await this.validatePostcodesByCity(postcodesArray, zoneData.cityId);
+        // Enforce country format + city-specific postcode scope (London-only when city is London)
+        const scope = await this.validatePostcodesByCity(postcodesArray, zoneData.cityId);
 
         // Check for duplicate postcodes across existing zones
         await this.checkDuplicatePostcodes(postcodesArray);
 
-        // Fetch coordinates for all postcodes
-        const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
+        // Fetch coordinates for all postcodes (country-biased for non-UK)
+        const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray, {
+            countryIso: scope?.countryIso,
+            cityName: scope?.city?.name,
+        });
         console.log('Fetched coordinates:', postcodeCoordinates.length);
 
         // Create polygon from postcode coordinates
@@ -574,6 +673,18 @@ class PostcodeZoneService {
             postcodes: normalizedPostcodes,
             status: zoneData.status !== undefined ? zoneData.status : true
         };
+
+        // Default currency from city → country when client omits currencyUnitId
+        // (prevents accidental GBP / wrong unit id for US zones, etc.).
+        if (data.currencyUnitId == null || data.currencyUnitId === '') {
+            const city = await cities.findByPk(data.cityId, {
+                attributes: ['id', 'countryId'],
+            });
+            if (city?.countryId) {
+                const resolvedId = await resolveCurrencyUnitIdForCountry(city.countryId);
+                if (resolvedId) data.currencyUnitId = resolvedId;
+            }
+        }
 
         applyAgentCommissionToZonePayload(data);
         if (
@@ -669,11 +780,14 @@ class PostcodeZoneService {
                     delete otherZoneData.coordinates;
                     delete otherZoneData.postcodes;
                 } else {
-                    await this.validatePostcodesByCity(postcodesArray, targetCityId);
+                    const scope = await this.validatePostcodesByCity(postcodesArray, targetCityId);
                     await this.checkDuplicatePostcodes(postcodesArray, zoneId);
 
                     console.log('🔄 Regenerating polygon from postcodes for zone:', zoneId);
-                    const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray);
+                    const postcodeCoordinates = await this.fetchPostcodeCoordinates(postcodesArray, {
+                        countryIso: scope?.countryIso,
+                        cityName: scope?.city?.name,
+                    });
                     const polygonCoordinates = await this.createPolygonFromPostcodes(postcodeCoordinates);
                     otherZoneData.coordinates = {
                         type: 'Polygon',

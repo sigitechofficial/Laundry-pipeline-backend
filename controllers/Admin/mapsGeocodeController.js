@@ -11,6 +11,8 @@ async function geocode(req, res) {
   const data = await googleMapsGeocodeService.geocode({
     latlng: req.query.latlng,
     address: req.query.address,
+    country: req.query.country,
+    components: req.query.components,
   });
   return ResponseHelper.success(res, "Geocode results", data);
 }

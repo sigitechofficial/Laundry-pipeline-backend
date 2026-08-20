@@ -18,6 +18,14 @@ module.exports = (sequelize, DataTypes) => {
         as: 'subCategories'
       });
 
+      // Sub-categories that explicitly opt out of inheriting this add-on category.
+      addOnCategory.belongsToMany(models.subCategories, {
+        through: models.subCategoryExcludedAddOnCategory,
+        foreignKey: 'addOnCategoryId',
+        otherKey: 'subCategoryId',
+        as: 'excludedSubCategories'
+      });
+
       // Catalog categories that inherit this add-on category for all items.
       addOnCategory.belongsToMany(models.categories, {
         through: models.categoryAddOnCategory,

@@ -263,16 +263,23 @@ class ServiceManagementService {
      * @returns {Object} Edited subcategory data
      */
     async editSubcategories(subCategoryId, subCategoryData) {
-        const { addOnCategoryIds, ...rest } = subCategoryData;
+        const { addOnCategoryIds, excludedAddOnCategoryIds, ...rest } = subCategoryData;
         const editSubcategory = await subCategories.update(rest, { where: { id: subCategoryId } });
         if (!editSubcategory) {
             throw new NotFoundError('Subcategory Not Found')
         }
         // Sync linked add-on categories only when the field was provided.
-        if (addOnCategoryIds !== undefined) {
+        if (addOnCategoryIds !== undefined || excludedAddOnCategoryIds !== undefined) {
             const row = await subCategories.findByPk(subCategoryId);
             if (row) {
-                await row.setAddOnCategories(normalizeAddOnCategoryIds(addOnCategoryIds));
+                if (addOnCategoryIds !== undefined) {
+                    await row.setAddOnCategories(normalizeAddOnCategoryIds(addOnCategoryIds));
+                }
+                if (excludedAddOnCategoryIds !== undefined) {
+                    await row.setExcludedAddOnCategories(
+                        normalizeAddOnCategoryIds(excludedAddOnCategoryIds)
+                    );
+                }
             }
         }
         return editSubcategory;
@@ -508,6 +515,11 @@ class ServiceManagementService {
                     as: 'addOnCategories',
                     attributes: ['id', 'name'],
                     through: { attributes: [] }
+                }, {
+                    model: addOnCategory,
+                    as: 'excludedAddOnCategories',
+                    attributes: ['id', 'name'],
+                    through: { attributes: [] }
                 }],
                 order: [
                     ['sortOrder', 'ASC'],
@@ -517,6 +529,7 @@ class ServiceManagementService {
 
             // Attach inherited add-on categories from the parent catalog category
             // so admin UIs can show them without writing them onto each sub-row.
+            // Exclusions opt a subcategory out of that inheritance.
             const categoryIds = [
                 ...new Set(
                     getSubcategories
@@ -555,8 +568,14 @@ class ServiceManagementService {
                 const directIds = new Set(
                     (plain.addOnCategories || []).map((a) => Number(a.id))
                 );
+                const excludedIds = new Set(
+                    (plain.excludedAddOnCategories || []).map((a) => Number(a.id))
+                );
+                // Active inherited = parent links not also direct and not opted out.
                 plain.inheritedAddOnCategories = inherited.filter(
-                    (a) => !directIds.has(Number(a.id))
+                    (a) =>
+                        !directIds.has(Number(a.id)) &&
+                        !excludedIds.has(Number(a.id))
                 );
                 return plain;
             });
@@ -982,7 +1001,7 @@ class ServiceManagementService {
                 if (categoryId) maxByCategory.set(categoryId, nextSort);
 
                 // eslint-disable-next-line no-unused-vars
-                const { addOnCategoryIds, ...rest } = cat;
+                const { addOnCategoryIds, excludedAddOnCategoryIds, ...rest } = cat;
                 return {
                     ...rest,
                     status: true,
@@ -1000,11 +1019,18 @@ class ServiceManagementService {
                 throw new Error('There is error in the request');
             }
 
-            // Link each created sub-category to its selected add-on categories.
+            // Link each created sub-category to its selected add-on categories
+            // and optional inheritance exclusions.
             await Promise.all(createSubCategories.map(async (row, idx) => {
                 const ids = normalizeAddOnCategoryIds(subCategoryData[idx]?.addOnCategoryIds);
                 if (ids.length) {
                     await row.setAddOnCategories(ids);
+                }
+                const excludedIds = normalizeAddOnCategoryIds(
+                    subCategoryData[idx]?.excludedAddOnCategoryIds
+                );
+                if (excludedIds.length) {
+                    await row.setExcludedAddOnCategories(excludedIds);
                 }
             }));
 

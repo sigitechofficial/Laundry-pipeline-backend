@@ -2,7 +2,7 @@
 
 /**
  * Enterprise currency resolution for admin aggregates and reports.
- * Order: zone → city → country (unanimous zone currency) → first active zone → GBP.
+ * Order: zone → city → country (unanimous zone currency) → country ISO map → first active zone → GBP.
  */
 
 const { Op } = require('sequelize');
@@ -48,6 +48,37 @@ function currencyKey(c) {
     return `${String(c.currencyCode || '').toUpperCase()}|${String(c.currencySymbol || '')}`;
 }
 
+function currencyFromCountryIso(shortName) {
+    const iso = shortName != null ? String(shortName).trim().toUpperCase() : '';
+    if (!iso || !COUNTRY_ISO_TO_CURRENCY[iso]) return null;
+    return { ...COUNTRY_ISO_TO_CURRENCY[iso] };
+}
+
+/**
+ * Resolve a currency units.id for a country (by shortName → ISO code → units.name).
+ * Prefers the lowest id when duplicates exist.
+ * @param {number|string} countryId
+ * @returns {Promise<number|null>}
+ */
+async function resolveCurrencyUnitIdForCountry(countryId) {
+    const id = parsePositiveInt(countryId);
+    if (!id) return null;
+    const { units, countries } = require('../models');
+    const country = await countries.findByPk(id, { attributes: ['id', 'shortName'] });
+    const mapped = currencyFromCountryIso(country?.shortName);
+    if (!mapped?.currencyCode) return null;
+
+    const unit = await units.findOne({
+        where: {
+            type: 'currency',
+            name: mapped.currencyCode,
+        },
+        order: [['id', 'ASC']],
+        attributes: ['id', 'name', 'symbol'],
+    });
+    return unit?.id != null ? Number(unit.id) : null;
+}
+
 /**
  * @param {object} filters - { zoneId, cityId, countryId }
  * @param {{ applyDefault?: boolean }} [options]
@@ -66,9 +97,32 @@ async function resolveDisplayCurrency(filters = {}, options = {}) {
 
     const zoneId = parsePositiveInt(filters.zoneId);
     if (zoneId) {
-        const z = await zone.findByPk(zoneId, { include, paranoid: true });
+        const z = await zone.findByPk(zoneId, {
+            include: [
+                ...include,
+                {
+                    model: cities,
+                    attributes: ['id', 'countryId'],
+                    required: false,
+                    include: [{
+                        model: countries,
+                        attributes: ['id', 'shortName'],
+                        required: false,
+                    }],
+                },
+            ],
+            paranoid: true,
+        });
         const fromZone = fromUnit(z?.currencyUnitZ);
         if (fromZone) return fromZone;
+        // Zone row without currency → fall through via its city/country.
+        if (z?.cityId && !filters.cityId) {
+            filters = { ...filters, cityId: z.cityId };
+        }
+        const zoneCountryId = z?.city?.countryId ?? z?.city?.country?.id;
+        if (zoneCountryId && !filters.countryId) {
+            filters = { ...filters, countryId: zoneCountryId };
+        }
     }
 
     const cityId = parsePositiveInt(filters.cityId);
@@ -81,6 +135,19 @@ async function resolveDisplayCurrency(filters = {}, options = {}) {
         });
         const fromCityZone = fromUnit(z?.currencyUnitZ);
         if (fromCityZone) return fromCityZone;
+
+        const city = await cities.findByPk(cityId, {
+            attributes: ['id', 'countryId'],
+            include: [{
+                model: countries,
+                attributes: ['id', 'shortName'],
+                required: false,
+            }],
+        });
+        const cityCountryId = city?.countryId ?? city?.country?.id;
+        if (cityCountryId && !filters.countryId) {
+            filters = { ...filters, countryId: cityCountryId };
+        }
     }
 
     const countryId = parsePositiveInt(filters.countryId);
@@ -113,12 +180,8 @@ async function resolveDisplayCurrency(filters = {}, options = {}) {
         const country = await countries.findByPk(countryId, {
             attributes: ['id', 'shortName'],
         });
-        const iso = country?.shortName
-            ? String(country.shortName).trim().toUpperCase()
-            : '';
-        if (iso && COUNTRY_ISO_TO_CURRENCY[iso]) {
-            return { ...COUNTRY_ISO_TO_CURRENCY[iso] };
-        }
+        const fromIso = currencyFromCountryIso(country?.shortName);
+        if (fromIso) return fromIso;
     }
 
     const fallbackZone = await zone.findOne({
@@ -136,5 +199,7 @@ async function resolveDisplayCurrency(filters = {}, options = {}) {
 
 module.exports = {
     DEFAULT_CURRENCY,
+    COUNTRY_ISO_TO_CURRENCY,
     resolveDisplayCurrency,
+    resolveCurrencyUnitIdForCountry,
 };

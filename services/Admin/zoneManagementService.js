@@ -1,4 +1,4 @@
-const { zone, cities, bussinessInformation, units, users, sequelize } = require('../../models');
+const { zone, cities, countries, bussinessInformation, units, users, sequelize } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 
 function normalizeZonePostcodes(raw) {
@@ -55,7 +55,12 @@ class ZoneManagementService {
                     {
                         model: cities,
                         attributes: ['id', 'name', 'countryId'],
-                        required: false
+                        required: false,
+                        include: [{
+                            model: countries,
+                            attributes: ['id', 'name', 'shortName'],
+                            required: false,
+                        }],
                     },
                     {
                         model: users,
@@ -132,7 +137,17 @@ class ZoneManagementService {
                         as: 'currencyUnitZ',
                         attributes: ['id', 'name', 'symbol', 'type'],
                         required: false
-                    }
+                    },
+                    {
+                        model: cities,
+                        attributes: ['id', 'name', 'countryId'],
+                        required: false,
+                        include: [{
+                            model: countries,
+                            attributes: ['id', 'name', 'shortName'],
+                            required: false,
+                        }],
+                    },
                 ]
             });
 

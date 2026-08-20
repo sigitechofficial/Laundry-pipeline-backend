@@ -39,10 +39,25 @@ function parseLatLng(value) {
 }
 
 /**
- * Server-side Geocoding REST. Key stays in env — never returned to the client.
- * @param {{ latlng?: string, address?: string }} query
+ * Normalize ISO-3166 alpha-2 for Google Geocoding region / components.
+ * @param {string|undefined|null} country
+ * @returns {string}
  */
-async function geocode({ latlng, address } = {}) {
+function normalizeGeocodeCountry(country) {
+  const iso = String(country || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+  if (!iso) return "";
+  if (iso === "UK") return "GB";
+  return iso.slice(0, 2);
+}
+
+/**
+ * Server-side Geocoding REST. Key stays in env — never returned to the client.
+ * @param {{ latlng?: string, address?: string, country?: string, components?: string }} query
+ */
+async function geocode({ latlng, address, country, components } = {}) {
   const apiKey = getGoogleMapsServerKey();
   if (!apiKey) {
     throw new UniversalHttpError(
@@ -52,6 +67,8 @@ async function geocode({ latlng, address } = {}) {
   }
 
   const params = { key: apiKey };
+  const countryIso = normalizeGeocodeCountry(country);
+
   if (latlng != null && String(latlng).trim() !== "") {
     const parsed = parseLatLng(latlng);
     if (!parsed) {
@@ -66,6 +83,14 @@ async function geocode({ latlng, address } = {}) {
     params.address = trimmed;
   } else {
     throw new ValidationError("Provide latlng or address");
+  }
+
+  // Country bias / hard filter so e.g. UK-looking tokens do not resolve in the US map.
+  if (components != null && String(components).trim() !== "") {
+    params.components = String(components).trim();
+  } else if (countryIso) {
+    params.components = `country:${countryIso}`;
+    params.region = countryIso.toLowerCase();
   }
 
   try {
@@ -89,5 +114,6 @@ async function geocode({ latlng, address } = {}) {
 module.exports = {
   getGoogleMapsServerKey,
   parseLatLng,
+  normalizeGeocodeCountry,
   geocode,
 };

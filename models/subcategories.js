@@ -34,6 +34,15 @@ module.exports = (sequelize, DataTypes) => {
         otherKey: 'addOnCategoryId',
         as: 'addOnCategories'
       })
+
+      // Opt-outs from parent catalog-category add-on inheritance.
+      // Effective add-ons = (category links ∪ direct links) − exclusions.
+      subCategories.belongsToMany(models.addOnCategory, {
+        through: models.subCategoryExcludedAddOnCategory,
+        foreignKey: 'subCategoryId',
+        otherKey: 'addOnCategoryId',
+        as: 'excludedAddOnCategories'
+      })
     }
   }
   subCategories.init({

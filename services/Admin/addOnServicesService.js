@@ -16,6 +16,7 @@ const CATEGORY_INCLUDE = {
 
 // Same as CATEGORY_INCLUDE but also carries the sub-categories (items) the
 // add-on category is linked to — both directly and via parent catalog categories.
+// Catalog inheritance respects per-subcategory exclusions.
 const CATEGORY_INCLUDE_WITH_LINKS = {
     model: addOnCategory,
     as: 'category',
@@ -37,21 +38,37 @@ const CATEGORY_INCLUDE_WITH_LINKS = {
                 model: subCategories,
                 attributes: ['id'],
                 required: false,
+                include: [{
+                    model: addOnCategory,
+                    as: 'excludedAddOnCategories',
+                    attributes: ['id'],
+                    through: { attributes: [] },
+                    required: false,
+                }],
             }]
         }
     ]
 };
 
 function collectLinkedSubCategoryIds(plainCategory) {
+    const addOnCategoryId = Number(plainCategory?.id);
     const ids = new Set();
+
+    // Direct subcategory ↔ add-on-category links always apply.
     for (const sc of plainCategory?.subCategories || []) {
         const id = Number(sc?.id);
         if (Number.isInteger(id) && id > 0) ids.add(id);
     }
+
+    // Inherited via catalog category, minus per-item exclusions.
     for (const catalogCat of plainCategory?.catalogCategories || []) {
         for (const sc of catalogCat?.subCategories || []) {
             const id = Number(sc?.id);
-            if (Number.isInteger(id) && id > 0) ids.add(id);
+            if (!Number.isInteger(id) || id <= 0) continue;
+            const excluded = (sc.excludedAddOnCategories || []).some(
+                (ex) => Number(ex?.id) === addOnCategoryId
+            );
+            if (!excluded) ids.add(id);
         }
     }
     return [...ids];
