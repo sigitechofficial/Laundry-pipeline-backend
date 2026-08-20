@@ -6,6 +6,7 @@ const {
     customerOriginalPreferenceSnapshot,
     customerSelectedService,
     customerSelectedServiceAddOn,
+    customerSelectedServiceLine,
     bookingPreference,
     service,
     categories,
@@ -70,6 +71,36 @@ exports.getServiceComparison = async (bookingId) => {
                     as: 'addOns',
                     required: false,
                     include: [{ model: addOnServices, as: 'addOnService', required: false, attributes: ['id', 'name', 'price'] }],
+                },
+                {
+                    model: customerSelectedServiceLine,
+                    as: 'serviceLines',
+                    required: false,
+                    separate: true,
+                    order: [['lineNum', 'ASC']],
+                    attributes: ['id', 'lineNum', 'items'],
+                    include: [
+                        {
+                            model: customerSelectedServiceAddOn,
+                            as: 'addOns',
+                            required: false,
+                            attributes: [
+                                'id',
+                                'addOnServiceId',
+                                'price',
+                                'items',
+                                'instructions',
+                            ],
+                            include: [
+                                {
+                                    model: addOnServices,
+                                    as: 'addOnService',
+                                    required: false,
+                                    attributes: ['id', 'name', 'price'],
+                                },
+                            ],
+                        },
+                    ],
                 },
                 {
                     model: bookingPreference,
