@@ -36,6 +36,15 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'serviceId',
         as: 'categories',
       })
+
+      // A catalog category can link add-on categories that all of its
+      // sub-categories inherit (in addition to per-subcategory links).
+      categories.belongsToMany(models.addOnCategory, {
+        through: models.categoryAddOnCategory,
+        foreignKey: 'categoryId',
+        otherKey: 'addOnCategoryId',
+        as: 'addOnCategories',
+      })
     }
   }
   categories.init({

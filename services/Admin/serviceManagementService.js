@@ -20,7 +20,19 @@ const {
 
 function normalizeAddOnCategoryIds(value) {
     if (value == null) return [];
-    const arr = Array.isArray(value) ? value : [value];
+    let arr = value;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+        try {
+            const parsed = JSON.parse(trimmed);
+            arr = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+            arr = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+        }
+    } else if (!Array.isArray(value)) {
+        arr = [value];
+    }
     const ids = arr
         .map((v) => Number(v))
         .filter((v) => Number.isInteger(v) && v > 0);
@@ -388,6 +400,13 @@ class ServiceManagementService {
                         attributes: ['id', 'name'],
                         required: false,
                     },
+                    {
+                        model: addOnCategory,
+                        as: 'addOnCategories',
+                        attributes: ['id', 'name'],
+                        through: { attributes: [] },
+                        required: false,
+                    },
                 ],
                 order: [
                     ['sortOrder', 'ASC'],
@@ -409,12 +428,13 @@ class ServiceManagementService {
             throw new NotFoundError('Category Not Found');
         }
 
+        const { addOnCategoryIds, ...rest } = categoryData || {};
         const payload = {};
         const allowedFields = ['name', 'description', 'image', 'serviceId', 'status', 'sortOrder'];
         allowedFields.forEach((field) => {
-            if (categoryData[field] === undefined) return;
-            if (field === 'serviceId' && categoryData[field] === '') return;
-            payload[field] = categoryData[field];
+            if (rest[field] === undefined) return;
+            if (field === 'serviceId' && rest[field] === '') return;
+            payload[field] = rest[field];
         });
 
         if (payload.serviceId != null && payload.serviceId !== '') {
@@ -425,13 +445,39 @@ class ServiceManagementService {
             }
         }
 
-        if (Object.keys(payload).length === 0) {
+        if (Object.keys(payload).length === 0 && addOnCategoryIds === undefined) {
             throw new ValidationError('No valid fields provided to update');
         }
 
-        await categories.update(payload, { where: { id: categoryId } });
+        if (Object.keys(payload).length > 0) {
+            await categories.update(payload, { where: { id: categoryId } });
+        }
 
-        const updated = await categories.findByPk(categoryId);
+        // Category-level add-on links are inherited by all current and future
+        // sub-categories under this category (resolved at read time).
+        if (addOnCategoryIds !== undefined) {
+            await existing.setAddOnCategories(
+                normalizeAddOnCategoryIds(addOnCategoryIds)
+            );
+        }
+
+        const updated = await categories.findByPk(categoryId, {
+            include: [
+                {
+                    model: service,
+                    as: 'service',
+                    attributes: ['id', 'name'],
+                    required: false,
+                },
+                {
+                    model: addOnCategory,
+                    as: 'addOnCategories',
+                    attributes: ['id', 'name'],
+                    through: { attributes: [] },
+                    required: false,
+                },
+            ],
+        });
         if (updated?.serviceId) {
             await this.syncServiceCategoryLink(updated.serviceId, updated.id);
         }
@@ -468,7 +514,52 @@ class ServiceManagementService {
                     ['id', 'ASC'],
                 ],
             });
-            return getSubcategories;
+
+            // Attach inherited add-on categories from the parent catalog category
+            // so admin UIs can show them without writing them onto each sub-row.
+            const categoryIds = [
+                ...new Set(
+                    getSubcategories
+                        .map((row) => Number(row.categoryId))
+                        .filter((id) => Number.isInteger(id) && id > 0)
+                ),
+            ];
+            const parentLinks = categoryIds.length
+                ? await categories.findAll({
+                      where: { id: categoryIds },
+                      attributes: ['id'],
+                      include: [{
+                          model: addOnCategory,
+                          as: 'addOnCategories',
+                          attributes: ['id', 'name'],
+                          through: { attributes: [] },
+                          required: false,
+                      }],
+                  })
+                : [];
+            const inheritedByCategoryId = new Map(
+                parentLinks.map((cat) => [
+                    Number(cat.id),
+                    (cat.addOnCategories || []).map((a) => ({
+                        id: a.id,
+                        name: a.name,
+                        inherited: true,
+                    })),
+                ])
+            );
+
+            return getSubcategories.map((row) => {
+                const plain = row.toJSON();
+                const inherited =
+                    inheritedByCategoryId.get(Number(plain.categoryId)) || [];
+                const directIds = new Set(
+                    (plain.addOnCategories || []).map((a) => Number(a.id))
+                );
+                plain.inheritedAddOnCategories = inherited.filter(
+                    (a) => !directIds.has(Number(a.id))
+                );
+                return plain;
+            });
     }
 
     /**

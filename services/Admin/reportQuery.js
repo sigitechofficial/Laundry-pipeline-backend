@@ -1,8 +1,8 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { zone, units } = require('../../models');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const {
     COMPLETED,
     CANCELLED,
@@ -42,6 +42,8 @@ function parseFilters(raw = {}) {
         startDate,
         endDate,
         zoneId: parsePositiveInt(raw.zoneId),
+        cityId: parsePositiveInt(raw.cityId),
+        countryId: parsePositiveInt(raw.countryId),
         shopId: parsePositiveInt(raw.shopId),
         search: parseSearch(raw.search),
         page,
@@ -140,34 +142,11 @@ function asInt(value) {
 }
 
 async function resolveReportCurrency(filters = {}) {
-    const include = [{
-        model: units,
-        as: 'currencyUnitZ',
-        attributes: ['symbol', 'name'],
-        required: false,
-    }];
-
-    if (filters.zoneId) {
-        const z = await zone.findByPk(filters.zoneId, { include, paranoid: true });
-        if (z?.currencyUnitZ) {
-            return {
-                currencySymbol: z.currencyUnitZ.symbol || '',
-                currencyCode: z.currencyUnitZ.name || '',
-            };
-        }
-    }
-
-    const z = await zone.findOne({
-        where: { status: true },
-        include,
-        order: [['id', 'ASC']],
-        paranoid: true,
+    return resolveDisplayCurrency({
+        zoneId: filters.zoneId,
+        cityId: filters.cityId,
+        countryId: filters.countryId,
     });
-
-    return {
-        currencySymbol: z?.currencyUnitZ?.symbol || '',
-        currencyCode: z?.currencyUnitZ?.name || '',
-    };
 }
 
 function envelope({ filters, data, total, page, limit, summary, currency, ...extra }) {

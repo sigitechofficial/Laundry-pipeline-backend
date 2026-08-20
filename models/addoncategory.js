@@ -17,6 +17,14 @@ module.exports = (sequelize, DataTypes) => {
         otherKey: 'subCategoryId',
         as: 'subCategories'
       });
+
+      // Catalog categories that inherit this add-on category for all items.
+      addOnCategory.belongsToMany(models.categories, {
+        through: models.categoryAddOnCategory,
+        foreignKey: 'addOnCategoryId',
+        otherKey: 'categoryId',
+        as: 'catalogCategories'
+      });
     }
   }
 

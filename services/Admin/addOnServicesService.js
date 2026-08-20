@@ -1,4 +1,4 @@
-const { addOnServices, addOnCategory, subCategories } = require('../../models');
+const { addOnServices, addOnCategory, subCategories, categories } = require('../../models');
 const { Op } = require('sequelize');
 
 const {
@@ -15,19 +15,47 @@ const CATEGORY_INCLUDE = {
 };
 
 // Same as CATEGORY_INCLUDE but also carries the sub-categories (items) the
-// category is linked to, so clients can map each item -> its add-on services.
+// add-on category is linked to — both directly and via parent catalog categories.
 const CATEGORY_INCLUDE_WITH_LINKS = {
     model: addOnCategory,
     as: 'category',
     required: false,
     attributes: ['id', 'name', 'status'],
-    include: [{
-        model: subCategories,
-        as: 'subCategories',
-        attributes: ['id'],
-        through: { attributes: [] }
-    }]
+    include: [
+        {
+            model: subCategories,
+            as: 'subCategories',
+            attributes: ['id'],
+            through: { attributes: [] }
+        },
+        {
+            model: categories,
+            as: 'catalogCategories',
+            attributes: ['id'],
+            through: { attributes: [] },
+            include: [{
+                model: subCategories,
+                attributes: ['id'],
+                required: false,
+            }]
+        }
+    ]
 };
+
+function collectLinkedSubCategoryIds(plainCategory) {
+    const ids = new Set();
+    for (const sc of plainCategory?.subCategories || []) {
+        const id = Number(sc?.id);
+        if (Number.isInteger(id) && id > 0) ids.add(id);
+    }
+    for (const catalogCat of plainCategory?.catalogCategories || []) {
+        for (const sc of catalogCat?.subCategories || []) {
+            const id = Number(sc?.id);
+            if (Number.isInteger(id) && id > 0) ids.add(id);
+        }
+    }
+    return [...ids];
+}
 
 async function assertCategoryExists(addOnCategoryId) {
     const category = await addOnCategory.findByPk(addOnCategoryId);
@@ -120,12 +148,13 @@ class AddOnServicesService {
 
         // Flatten the linked items so the frontend can filter add-on services
         // by sub-category id (e.g. show "Repair Trouser" services under Trouser).
+        // Includes items inherited from catalog-category → add-on-category links.
         return rows.map((row) => {
             const plain = row.toJSON();
-            const linked = plain.category?.subCategories || [];
-            plain.subCategoryIds = linked.map((sc) => sc.id);
+            plain.subCategoryIds = collectLinkedSubCategoryIds(plain.category);
             if (plain.category) {
                 delete plain.category.subCategories;
+                delete plain.category.catalogCategories;
             }
             return plain;
         });

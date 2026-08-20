@@ -54,7 +54,7 @@ class ZoneManagementService {
                     },
                     {
                         model: cities,
-                        attributes: ['id', 'name'],
+                        attributes: ['id', 'name', 'countryId'],
                         required: false
                     },
                     {

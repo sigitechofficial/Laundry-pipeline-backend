@@ -19,6 +19,7 @@ const {
     ORDER_CREATED,
     PENDING_EXCLUDED,
 } = require('../../constants/bookingStatusIds');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 
 /** Status buckets for Orders Management chart */
 const PIPELINE = {
@@ -397,6 +398,7 @@ class DashboardService {
             topShopsYtd,
             topServicesMtd,
             topServicesYtd,
+            displayCurrency,
         ] = await Promise.all([
             this.sumRevenueSplit(zoneIds, periodRange),
             this.sumRevenueSplit(zoneIds, thisMonthRange),
@@ -409,6 +411,7 @@ class DashboardService {
             this.getTopShops(zoneIds, ytdRange, 5),
             this.getTopServices(zoneIds, thisMonthRange, 5),
             this.getTopServices(zoneIds, ytdRange, 5),
+            resolveDisplayCurrency(filters),
         ]);
 
         // Platform revenue KPI: prefer billed commission on collected/completed orders
@@ -595,6 +598,9 @@ class DashboardService {
             adminRevenue,
             shopRevenue: scopedRevenue.shopRevenue,
             grossRevenue: scopedRevenue.grossRevenue,
+            currencySymbol: displayCurrency.currencySymbol,
+            currencyCode: displayCurrency.currencyCode,
+            currency: displayCurrency.currencyCode,
             thisMonthAdminRevenue: thisMonthSplit.adminRevenue,
             thisMonthShopRevenue: thisMonthSplit.shopRevenue,
             thisMonthGrossRevenue: thisMonthSplit.grossRevenue,
