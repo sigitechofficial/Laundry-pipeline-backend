@@ -4444,7 +4444,7 @@ exports.invoiceCreation = async (req, res) => {
 
     let responseServicesSubtotal = servicesSubtotal;
     let responsePaymentSummary = paymentSummaryWithFlags;
-    if (req.isShopEmployee && !req.canAccessInvoice) {
+    if (!req.isPlatformAdminRequest && req.isShopEmployee && !req.canAccessInvoice) {
         hideShopFinanceOnBooking(bookingData, { keepDeclared: true });
         responseServicesSubtotal = 0;
         responsePaymentSummary = slimPaymentSummaryForFieldStaff(
