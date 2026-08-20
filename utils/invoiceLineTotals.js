@@ -1,10 +1,13 @@
 'use strict';
 
-const {
-    customerSelectedService,
-    customerSelectedServiceAddOn,
-    customerSelectedServiceLine,
-} = require('../models');
+/**
+ * Load Sequelize models only when a persistence helper runs.
+ * Pure math/normalize functions must stay importable without config.json
+ * so unit tests and CI can run from committed files alone.
+ */
+function invoiceLineModels() {
+    return require('../models');
+}
 
 /**
  * Quantity for an invoice line (minimum 1).
@@ -136,6 +139,7 @@ async function replaceAddOnsForServiceLine(
     service,
     addOnServicesModel
 ) {
+    const { customerSelectedServiceAddOn } = invoiceLineModels();
     await customerSelectedServiceAddOn.destroy({
         where: { customerSelectedServiceId },
     });
@@ -244,6 +248,10 @@ async function replaceServiceLinesForSelectedService(
     addOnServicesModel
 ) {
     const customerSelectedServiceId = selectedServiceRow.id;
+    const {
+        customerSelectedServiceLine,
+        customerSelectedServiceAddOn,
+    } = invoiceLineModels();
 
     // Wipe existing lines (cascade removes their add-ons) and any legacy flat add-ons.
     await customerSelectedServiceLine.destroy({
@@ -320,6 +328,10 @@ function validateServiceLineItems(service) {
  */
 async function sumActiveBookingServicesSubtotal(bookingId, options = {}) {
     const { includeAddOns = true } = options;
+    const {
+        customerSelectedService,
+        customerSelectedServiceAddOn,
+    } = invoiceLineModels();
 
     const rows = await customerSelectedService.findAll({
         where: { bookingId, status: true },

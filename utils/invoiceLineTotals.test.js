@@ -1,6 +1,10 @@
 'use strict';
 
 const assert = require('assert');
+
+// Isolate from live Sequelize / gitignored config.json (same pattern as checkPermission tests).
+require('../tests/stubSequelizeModels').install();
+
 const {
     getLineQuantity,
     getLineSubtotal,
