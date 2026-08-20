@@ -217,7 +217,7 @@ jobs:
           echo "Triggering stage deploy via /stage-trigger.php (Express handler)..."
           body=""
           for attempt in 1 2 3 4 5; do
-            body="$(curl -sS --max-time 120 -X GET "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
+            body="$(curl -sS --max-time 120 -X GET -H "X-Ops-Token: ${{ secrets.OPS_CONTROL_TOKEN }}" "https://stagelaundry.sigisolutions.net/stage-trigger.php" || true)"
             echo "Attempt ${attempt}:"
             echo "$body"
             if echo "$body" | grep -qiE 'NPM install completed|PM2 command completed|PM2 command scheduled'; then

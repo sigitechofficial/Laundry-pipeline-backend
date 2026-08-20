@@ -1,0 +1,3 @@
+# The backend repository is CRLF-native. Treat the carriage return as part of
+# the line ending so `git diff --check` still reports real trailing spaces.
+* whitespace=cr-at-eol

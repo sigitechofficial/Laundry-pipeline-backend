@@ -7,6 +7,8 @@ const {
     billingDetails,
     bookingStatus,
     zone,
+    addressDb,
+    bussinessInformation,
 } = require('../../models');
 const {
     formatPaymentFailureReason,
@@ -109,6 +111,7 @@ function mapRow(row, reasons) {
               )
             : null,
         laundryShopId: plain.laundryShopId || null,
+        laundryShop: plain.laundryShop || null,
         pickupRescheduleRequired: Boolean(plain.pickupRescheduleRequired),
         collectionDate: plain.collectionDate || null,
         collectionTimeTo: plain.collectionTimeTo || null,
@@ -190,6 +193,17 @@ async function listActionRequiredOrders({
             as: 'zone',
             attributes: ['id', 'name'],
             required: false,
+        },
+        {
+            model: addressDb,
+            as: 'laundryShop',
+            required: false,
+            attributes: ['id', 'userId'],
+            include: {
+                model: bussinessInformation,
+                attributes: ['shopName'],
+                required: false,
+            },
         },
     ];
 

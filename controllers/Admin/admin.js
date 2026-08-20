@@ -111,11 +111,13 @@ const repairCatalogService = require('../../services/Admin/repairCatalogService'
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
+const { zoneIdFromRequest } = require('../../utils/adminZoneScope');
+const { clampListLimit, clampPage } = require('../../utils/listLimit');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
     const filters = {
-        zoneId: req.query.zoneId,
+        zoneId: zoneIdFromRequest(req),
         cityId: req.query.cityId,
         countryId: req.query.countryId,
         period: req.query.period || 'all',
@@ -328,19 +330,22 @@ async function ordersCount(req, res) {
 */
 function buildOrderListFilters(req) {
     const filters = {};
-    if (req.query.zoneId) filters.zoneId = req.query.zoneId;
+    const zoneId = zoneIdFromRequest(req);
+    if (zoneId) filters.zoneId = zoneId;
     if (req.query.status) filters.status = req.query.status;
     if (req.query.startDate) filters.startDate = req.query.startDate;
     if (req.query.endDate) filters.endDate = req.query.endDate;
     if (req.query.date) filters.date = req.query.date;
     if (req.query.search) filters.search = String(req.query.search).trim();
     if (req.query.includeCounts != null) filters.includeCounts = req.query.includeCounts;
+    if (req.query.sortBy) filters.sortBy = String(req.query.sortBy).trim();
+    if (req.query.sortDir) filters.sortDir = String(req.query.sortDir).trim();
     return filters;
 }
 
 async function allOrderDetails(req, res) {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
+        const page = clampPage(req.query.page);
+        const limit = clampListLimit(req.query.limit, 20);
         const filters = buildOrderListFilters(req);
 
         const outObj = await orderService.getAllOrderDetails(filters, page, limit);
@@ -353,8 +358,8 @@ async function allOrderDetails(req, res) {
   * Pending Orders - Optimized Version
 */
 async function pendingOrders(req, res) {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
+        const page = clampPage(req.query.page);
+        const limit = clampListLimit(req.query.limit, 20);
         const filters = buildOrderListFilters(req);
         const outObj = await orderService.getPendingOrders(page, limit, filters);
         return ResponseHelper.success(res, "All Pending Orders", outObj);
@@ -367,8 +372,8 @@ async function pendingOrders(req, res) {
   * Cancel Orders - Optimized Version
 */
 async function allCancelOrders(req, res) {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = clampPage(req.query.page);
+    const limit = clampListLimit(req.query.limit, 20);
     const filters = buildOrderListFilters(req);
     const result = await orderService.getCancelledOrders(page, limit, filters);
     return ResponseHelper.success(res, "All Cancel Orders Details", result);
@@ -381,8 +386,8 @@ async function allCancelOrders(req, res) {
   * Complete Orders - Optimized Version
 */
 async function completeOrders(req, res) {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = clampPage(req.query.page);
+    const limit = clampListLimit(req.query.limit, 20);
     const filters = buildOrderListFilters(req);
     const result = await orderService.getCompletedOrders(page, limit, filters);
     return ResponseHelper.success(res, "All Completed Orders", result);
@@ -1027,7 +1032,8 @@ async function getShopInformation(req, res) {
 */
 function buildShopListFilters(req) {
     const filters = {};
-    if (req.query.zoneId) filters.zoneId = req.query.zoneId;
+    const zoneId = zoneIdFromRequest(req);
+    if (zoneId) filters.zoneId = zoneId;
     if (req.query.status) filters.status = req.query.status;
     if (req.query.startDate) filters.startDate = req.query.startDate;
     if (req.query.endDate) filters.endDate = req.query.endDate;
@@ -1117,8 +1123,8 @@ async function getAllCancellationPoliciesController(req, res) {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
         zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
-        page: parseInt(req.query.page) || 1,
-        limit: parseInt(req.query.limit) || 10
+        page: clampPage(req.query.page),
+        limit: clampListLimit(req.query.limit, 10)
     };
     const result = await cancellationPolicyServiceImport.getAllCancellationPolicies(filters);
     return ResponseHelper.success(res, "All cancellation policies", result);
@@ -1214,8 +1220,8 @@ async function getAllNoShowPoliciesController(req, res) {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
         zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
-        page: parseInt(req.query.page) || 1,
-        limit: parseInt(req.query.limit) || 10
+        page: clampPage(req.query.page),
+        limit: clampListLimit(req.query.limit, 10)
     };
     const result = await noShowPolicyService.getAllNoShowPolicies(filters);
     return ResponseHelper.success(res, "All no-show policies", result);
@@ -1311,8 +1317,8 @@ async function getAllReschedulePoliciesController(req, res) {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
         zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
-        page: parseInt(req.query.page) || 1,
-        limit: parseInt(req.query.limit) || 10
+        page: clampPage(req.query.page),
+        limit: clampListLimit(req.query.limit, 10)
     };
     const result = await reschedulePolicyService.getAllReschedulePolicies(filters);
     return ResponseHelper.success(res, "All reschedule policies", result);
@@ -2452,8 +2458,8 @@ async function getOnHoldCustomerOptions(req, res) {
   * Get All On Hold Bookings
 */
 async function getOnHoldBookings(req, res) {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 25;
+    const page = clampPage(req.query.page);
+    const limit = clampListLimit(req.query.limit, 25);
     const filters = buildOrderListFilters(req);
     const outObj = await orderService.getOnHoldBookings(page, limit, filters);
     return ResponseHelper.success(res, "All on hold bookings fetched", outObj);

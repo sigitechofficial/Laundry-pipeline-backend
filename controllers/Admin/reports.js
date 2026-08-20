@@ -1,122 +1,121 @@
 'use strict';
 
-const reportService  = require('../../services/Admin/reportService');
+const reportService = require('../../services/Admin/reportService');
 const ResponseHelper = require('../../utils/responseHelper');
+const { zoneIdFromRequest } = require('../../utils/adminZoneScope');
 
 /**
- * Extract the shared filter object from req.query.
- * All report endpoints accept the same query params:
- *   period      - today | this_week | this_month | custom | all  (default: all)
- *   startDate   - YYYY-MM-DD  (required when period=custom)
- *   endDate     - YYYY-MM-DD  (required when period=custom)
+ * Shared allowlisted filters:
+ *   period      - today | this_week | this_month | custom | all
+ *   startDate   - YYYY-MM-DD (when period=custom)
+ *   endDate     - YYYY-MM-DD (when period=custom)
  *   zoneId      - integer
- *   search      - free text
- *   page        - integer (default: 1)
- *   limit       - integer (default: 20, max: 100)
+ *   shopId      - laundryShopId (address id)
+ *   search      - free text (max 80)
+ *   page / limit
  */
 function extractFilters(req) {
-    const { period, startDate, endDate, zoneId, search, page, limit } = req.query;
-    return { period, startDate, endDate, zoneId, search, page, limit };
+    const { period, startDate, endDate, shopId, search, page, limit } = req.query;
+    return {
+        period,
+        startDate,
+        endDate,
+        zoneId: zoneIdFromRequest(req),
+        shopId,
+        search,
+        page,
+        limit,
+    };
 }
 
-// ---------------------------------------------------------------------------
-// 1. Top Services Report
-// ---------------------------------------------------------------------------
 async function getTopServicesReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getTopServicesReport(filters);
-    return ResponseHelper.success(res, 'Top Services Report', { filters, data });
+    const data = await reportService.getTopServicesReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Top Services Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 2. Hourly Report
-// ---------------------------------------------------------------------------
 async function getHourlyReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getHourlyReport(filters);
-    return ResponseHelper.success(res, 'Hourly Report', { filters, data });
+    const data = await reportService.getHourlyReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Hourly Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 3. On Hold Report
-// ---------------------------------------------------------------------------
 async function getOnHoldReport(req, res) {
-    const filters = extractFilters(req);
-    const result  = await reportService.getOnHoldReport(filters);
-    return ResponseHelper.success(res, 'On Hold Report', { filters, ...result });
+    const data = await reportService.getOnHoldReport(extractFilters(req));
+    return ResponseHelper.success(res, 'On Hold Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 4. Service Demand Report
-// ---------------------------------------------------------------------------
 async function getServiceDemandReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getServiceDemandReport(filters);
-    return ResponseHelper.success(res, 'Service Demand Report', { filters, data });
+    const data = await reportService.getServiceDemandReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Service Demand Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 5. Top Performing Shops
-// ---------------------------------------------------------------------------
 async function getTopShopsReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getTopShopsReport(filters);
-    return ResponseHelper.success(res, 'Top Performing Shops Report', { filters, data });
+    const data = await reportService.getTopShopsReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Top Performing Shops Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 6. Daily Earning Report
-// ---------------------------------------------------------------------------
 async function getDailyEarningReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getDailyEarningReport(filters);
-    return ResponseHelper.success(res, 'Daily Earning Report', { filters, data });
+    const data = await reportService.getDailyEarningReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Daily Earning Report', data);
 }
 
-// ---------------------------------------------------------------------------
-// 7. Daily Earning Report — by Zone
-// ---------------------------------------------------------------------------
 async function getDailyEarningByZoneReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getDailyEarningByZoneReport(filters);
-    return ResponseHelper.success(res, 'Daily Earning Report by Zone', { filters, data });
+    const data = await reportService.getDailyEarningByZoneReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Daily Earning Report by Zone', data);
 }
 
-// ---------------------------------------------------------------------------
-// 8. Daily Earning Report — by Shop
-// ---------------------------------------------------------------------------
 async function getDailyEarningByShopReport(req, res) {
-    const filters = extractFilters(req);
-    const data    = await reportService.getDailyEarningByShopReport(filters);
-    return ResponseHelper.success(res, 'Daily Earning Report by Shop', { filters, data });
+    const data = await reportService.getDailyEarningByShopReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Daily Earning Report by Shop', data);
 }
 
 async function getShopRatingsReport(req, res) {
-    const filters = {
+    const data = await reportService.getShopRatingsReport({
         ...extractFilters(req),
         minReviews: req.query.minReviews,
         sort: req.query.sort,
-    };
-    const data = await reportService.getShopRatingsReport(filters);
-    return ResponseHelper.success(res, 'Shop Ratings Performance Report', { filters, data });
+    });
+    return ResponseHelper.success(res, 'Shop Ratings Performance Report', data);
 }
 
 async function getReviewReasonInsights(req, res) {
-    const filters = {
+    const data = await reportService.getReviewReasonInsights({
         ...extractFilters(req),
         sentiment: req.query.sentiment,
-    };
-    const data = await reportService.getReviewReasonInsights(filters);
-    return ResponseHelper.success(res, 'Review Reason Insights', { filters, data });
+    });
+    return ResponseHelper.success(res, 'Review Reason Insights', data);
 }
 
 async function getReasonShopBreakdown(req, res) {
-    const filters = {
+    const data = await reportService.getReasonShopBreakdown({
         ...extractFilters(req),
         reasonCode: req.query.reasonCode || req.params.reasonCode,
-    };
-    const data = await reportService.getReasonShopBreakdown(filters);
-    return ResponseHelper.success(res, 'Reason Shop Breakdown', { filters, data });
+    });
+    return ResponseHelper.success(res, 'Reason Shop Breakdown', data);
+}
+
+async function getPaymentsReport(req, res) {
+    const data = await reportService.getPaymentsReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Payments Report', data);
+}
+
+async function getCancellationsReport(req, res) {
+    const data = await reportService.getCancellationsReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Cancellations Report', data);
+}
+
+async function getCustomersReport(req, res) {
+    const data = await reportService.getCustomersReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Customers Report', data);
+}
+
+async function getDriversReport(req, res) {
+    const data = await reportService.getDriversReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Drivers Report', data);
+}
+
+async function getOverdueReport(req, res) {
+    const data = await reportService.getOverdueReport(extractFilters(req));
+    return ResponseHelper.success(res, 'Overdue Report', data);
 }
 
 module.exports = {
@@ -131,4 +130,9 @@ module.exports = {
     getShopRatingsReport,
     getReviewReasonInsights,
     getReasonShopBreakdown,
+    getPaymentsReport,
+    getCancellationsReport,
+    getCustomersReport,
+    getDriversReport,
+    getOverdueReport,
 };

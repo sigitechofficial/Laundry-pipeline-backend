@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const admin = require('firebase-admin');
+const { cert, getApp, getApps, initializeApp } = require('firebase-admin/app');
 
 const ROOT = path.join(__dirname, '..');
 const SA_PATH = path.join(ROOT, 'firebase.json');
@@ -67,12 +67,12 @@ function httpJson(method, url, headers = {}, body = null) {
 }
 
 async function getAccessToken(sa) {
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(sa),
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert(sa),
     });
   }
-  const cred = admin.app().options.credential;
+  const cred = getApp().options.credential;
   const result = await cred.getAccessToken();
   const token = result?.access_token || result?.accessToken;
   if (!token) {

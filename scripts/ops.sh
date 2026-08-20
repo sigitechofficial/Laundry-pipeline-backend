@@ -94,9 +94,11 @@ case "$CMD" in
       "$BASE_URL/ops/pm2/$CMD" | print_json
     ;;
   health)
+    curl -sS --max-time 30 "$BASE_URL/health" | print_json
+    echo "---" >&2
     curl -sS --max-time 30 "$BASE_URL/health/deploy" | print_json
     echo "---" >&2
-    curl -sS --max-time 30 "$BASE_URL/health/schema" | print_json
+    json_get "/health/schema" | print_json
     ;;
   *)
     echo "Unknown command: $CMD"

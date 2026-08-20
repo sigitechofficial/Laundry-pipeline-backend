@@ -19,5 +19,5 @@ Stage/prod use `SamKirkland/FTP-Deploy-Action` in `.github/workflows/laundary.ym
    cd /home/sigisolutions/stagelaundry.sigisolutions.net
    git pull origin stage
    npm install --production
-   curl -sS https://stagelaundry.sigisolutions.net/stage-trigger.php
+   curl -sS -H "X-Ops-Token: $OPS_CONTROL_TOKEN" https://stagelaundry.sigisolutions.net/stage-trigger.php
    ```

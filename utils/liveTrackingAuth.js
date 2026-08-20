@@ -4,7 +4,7 @@
  * Claims: { role, appUserId }
  */
 
-const admin = require('firebase-admin');
+const { getAuth } = require('firebase-admin/auth');
 const { ensureFirebaseReady, getFirebaseDatabaseUrl } = require('./notification');
 
 function firebaseUidForRole(role, appUserId) {
@@ -32,7 +32,7 @@ async function createLiveTrackingCustomToken(role, appUserId) {
   }
 
   const uid = firebaseUidForRole(normalizedRole, id);
-  const token = await admin.auth().createCustomToken(uid, {
+  const token = await getAuth().createCustomToken(uid, {
     role: normalizedRole,
     appUserId: id,
   });

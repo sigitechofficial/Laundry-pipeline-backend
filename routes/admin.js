@@ -7,7 +7,10 @@ const reportsController = require('../controllers/Admin/reports')
 const multer = require('multer')
 const path = require('path')
 const validateAccessToken = require('../middlewares/adminValidateToken')
+const adminSignInRateLimit = require('../middlewares/adminSignInRateLimit')
 const checkPermission = require('../middlewares/checkPermission')
+const enforceAdminZoneScope = require('../middlewares/enforceAdminZoneScope')
+const { markPlatformAdminRequest } = require('../middlewares/platformAdminContext')
 const { createDestinationDirectory } = require('../utils/destination')
 const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
@@ -21,9 +24,13 @@ const adminAlertPreferencesController = require('../controllers/Admin/adminAlert
 const runtimeSettingsController = require('../controllers/Admin/runtimeSettingsController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 const shopReviewController = require('../controllers/Admin/shopReviewController');
+const mapsGeocodeController = require('../controllers/Admin/mapsGeocodeController');
+const geminiController = require('../controllers/Admin/geminiController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
+const UPLOAD_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
 //upload Vehicle Type Image
 const uploadVehicleType = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -37,6 +44,7 @@ const uploadVehicleType = multer.diskStorage({
 })
 const uploadVehicleTypeImage = multer({
     storage: uploadVehicleType,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 });
 
 
@@ -53,6 +61,7 @@ const uploadCountryflagImg = multer.diskStorage({
 
 const uploadFlagImg = multer({
     storage: uploadCountryflagImg,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 })
 
 //Category Image Multer
@@ -68,7 +77,8 @@ const uploadCategoryPic = multer.diskStorage({
 });
 
 const uploadcategoryImage = multer({
-    storage: uploadCategoryPic
+    storage: uploadCategoryPic,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 })
 
 
@@ -84,7 +94,8 @@ const uploadServicePic = multer.diskStorage({
 });
 
 const uploadServiceImage = multer({
-    storage: uploadServicePic
+    storage: uploadServicePic,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 })
 
 //Driver Profile Image Multer
@@ -99,7 +110,8 @@ const uploadDriverProfilePic = multer.diskStorage({
 });
 
 const uploadDriverProfile = multer({
-    storage: uploadDriverProfilePic
+    storage: uploadDriverProfilePic,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 })
 
 //Blog Image Multer
@@ -116,12 +128,14 @@ const uploadBlogPic = multer.diskStorage({
 });
 
 const uploadBlogImage = multer({
-    storage: uploadBlogPic
+    storage: uploadBlogPic,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 });
 
 // Multer for multiple description images
 const uploadBlogDescriptionImages = multer({
-    storage: uploadBlogPic
+    storage: uploadBlogPic,
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES, files: 12 },
 });
 
 // Banner Image Multer
@@ -139,7 +153,7 @@ const uploadBannerPic = multer.diskStorage({
 
 const uploadBannerImage = multer({
     storage: uploadBannerPic,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
 });
 
 
@@ -149,10 +163,10 @@ const uploadBannerImage = multer({
 //!----------------------------------------Auth Api's----------------------------------------------//
 
 //Admin SignIn — public, no token needed
-router.post('/adminSignIn', asyncMiddleware(adminAuth.signIn))
+router.post('/adminSignIn', adminSignInRateLimit, asyncMiddleware(adminAuth.signIn))
 
 //Zone Admin SignIn — public, no token needed
-router.post('/zoneAdminSignIn', asyncMiddleware(adminAuth.zoneAdminSignIn))
+router.post('/zoneAdminSignIn', adminSignInRateLimit, asyncMiddleware(adminAuth.zoneAdminSignIn))
 
 //Get All Reasons
 router.get('/getAllReasons', asyncMiddleware(adminController.getAllReasons))
@@ -171,10 +185,14 @@ router.get('/getBlog/:blogId', asyncMiddleware(adminController.getBlogById))
 // Get All Active Policies (cancellation, reschedule, no-show)
 router.get('/getActivePolicies', asyncMiddleware(adminController.getActivePoliciesController))
 
-// Auth + permission check on all routes below this line.
-// Super admin (classifiedAsId = null) → always bypasses checkPermission, full access.
-// Zone admin / employees → pass through if no featureId; blocked only when featureId is sent and they lack that permission.
-router.use(validateAccessToken, checkPermission)
+// Auth + server-owned permission + zone scope on all routes below this line.
+// Super admin (classifiedAsId = null, e.g. admin@gmail.com) → bypasses feature check, may filter by zoneId.
+// Zone admin / employees → feature resolved from the route map (client featureid ignored).
+// Missing mapping or missing role permission → deny. JWT zoneId is forced; a mismatched client zoneId is rejected.
+router.use(validateAccessToken, checkPermission, enforceAdminZoneScope)
+
+// Revoke the authenticated Redis session before the client clears local state.
+router.post('/signOut', asyncMiddleware(adminAuth.signOut))
 
 // Support contact config
 router.get('/getSupportContact', asyncMiddleware(adminController.getSupportContact))
@@ -471,7 +489,11 @@ router.get('/completeOrders', asyncMiddleware(adminController.completeOrders))
 //Get Single Order for Editing
 router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrderForEdit))
 //Invoice creation detail (reuse agent logic) for admin panel
-router.get('/invoiceCreation/:bookingId', asyncMiddleware(agentController.invoiceCreation))
+router.get(
+    '/invoiceCreation/:bookingId',
+    markPlatformAdminRequest,
+    asyncMiddleware(agentController.invoiceCreation)
+)
 //Get service details with selected booking services
 router.get('/serviceDetailWithBookingSelection/:bookingId', asyncMiddleware(adminController.getServiceDetailWithBookingSelection))
 //Edit Order
@@ -772,6 +794,16 @@ router.get('/reports/shop-ratings', asyncMiddleware(reportsController.getShopRat
 router.get('/reports/review-reason-insights', asyncMiddleware(reportsController.getReviewReasonInsights))
 // 11. Reason × Shop breakdown
 router.get('/reports/review-reason-shops', asyncMiddleware(reportsController.getReasonShopBreakdown))
+// 12. Payments mix + failures
+router.get('/reports/payments', asyncMiddleware(reportsController.getPaymentsReport))
+// 13. Cancellations & no-shows
+router.get('/reports/cancellations', asyncMiddleware(reportsController.getCancellationsReport))
+// 14. Customers — new vs repeat / top spend
+router.get('/reports/customers', asyncMiddleware(reportsController.getCustomersReport))
+// 15. Driver collection / delivery
+router.get('/reports/drivers', asyncMiddleware(reportsController.getDriversReport))
+// 16. Overdue pickup / delivery (current SLA snapshot)
+router.get('/reports/overdue', asyncMiddleware(reportsController.getOverdueReport))
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))
@@ -834,6 +866,10 @@ router.get('/getCouponById/:id', validateAccessToken, asyncMiddleware(couponCont
 router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
 // Deactivate (soft-delete) a coupon
 router.delete('/deleteCoupon/:id', validateAccessToken, asyncMiddleware(couponController.deactivateCoupon));
+
+//!-----------------------------------Maps / Gemini server proxies (keys stay on the API host)------------------------------------>>>>
+router.get('/maps/geocode', asyncMiddleware(mapsGeocodeController.geocode));
+router.post('/gemini/generate', asyncMiddleware(geminiController.generate));
 
 //!-----------------------------------Banner & Offers------------------------------------>>>>
 // Create banner with image + payload in one request (multipart/form-data)

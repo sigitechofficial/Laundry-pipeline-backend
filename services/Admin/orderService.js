@@ -46,6 +46,10 @@ const {
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
 const {
+    buildOrderListSequelizeOrder,
+} = require('../../utils/orderListSort');
+const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
+const {
     getLineQuantity,
     getUnitCategoryCharge,
     serviceLineHasAddOnPayload,
@@ -149,7 +153,7 @@ class OrderService {
         const includes = [
             {
                 model: customerSelectedService,
-                attributes: ['id', 'serviceId'],
+                attributes: ['id', 'serviceId', 'items'],
                 include: [
                     {
                         model: service,
@@ -206,11 +210,14 @@ class OrderService {
             'id',
             'orderTrackId',
             'createdAt',
+            'updatedAt',
             'bookingStatusId',
             'zoneId',
             'collectionDate',
             'deliveryDate',
             'totalItems',
+            'onHoldReason',
+            'OnHoldOtherReason',
             'orderAmount',
             'laundryShopId',
             'adminAssignedShopId',
@@ -380,13 +387,22 @@ class OrderService {
     }
 
     /**
-     * Get optimized bookings with pagination and filtering
+     * Get optimized bookings with pagination and filtering.
+     * Sort: allowlisted sortBy + sortDir only; default createdAt DESC, id DESC.
      * @param {Object} whereClause - Sequelize where clause
      * @param {number} page - Page number
      * @param {number} limit - Records per page
+     * @param {Object|string} [filters] - search / sortBy / sortDir (string treated as search)
      * @returns {Object} Bookings with pagination info
      */
-    async getOptimizedBookings(whereClause, page = 1, limit = 50, search = '') {
+    async getOptimizedBookings(whereClause, page = 1, limit = 50, filters = {}) {
+        page = clampPage(page);
+        // Keep caller defaults (All Orders 20, this helper 50). Cap abuse only.
+        limit = clampListLimit(limit, limit || 20, DEFAULT_MAX_LIST_LIMIT);
+        const search = typeof filters === 'string' ? filters : filters.search;
+        const sortBy = typeof filters === 'string' ? undefined : filters.sortBy;
+        const sortDir = typeof filters === 'string' ? undefined : filters.sortDir;
+        const order = buildOrderListSequelizeOrder(sortBy, sortDir);
         const offset = (page - 1) * limit;
         const { where, searchActive } = this._buildWhereWithSearch(whereClause, search);
         const includes = this._bookingListIncludes(searchActive);
@@ -412,7 +428,7 @@ class OrderService {
             booking.findAll({
                 where,
                 include: includes,
-                order: [['id', 'DESC']],
+                order,
                 limit: limit,
                 offset: offset,
                 attributes: this._listBookingAttributes(),
@@ -466,7 +482,7 @@ class OrderService {
 
         if (includeCounts) {
             const [result, counts] = await Promise.all([
-                this.getOptimizedBookings(whereClause, page, limit, filters.search),
+                this.getOptimizedBookings(whereClause, page, limit, filters),
                 this.getOrderCount(filters),
             ]);
             return {
@@ -476,7 +492,7 @@ class OrderService {
             };
         }
 
-        const result = await this.getOptimizedBookings(whereClause, page, limit, filters.search);
+        const result = await this.getOptimizedBookings(whereClause, page, limit, filters);
 
         return {
             orderDetails: result.bookings,
@@ -508,7 +524,7 @@ class OrderService {
             whereClause,
             page,
             limit,
-            filters.search
+            filters
         );
         const result = includeCounts
             ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
@@ -542,7 +558,7 @@ class OrderService {
             whereClause,
             page,
             limit,
-            filters.search
+            filters
         );
         const result = includeCounts
             ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
@@ -576,7 +592,7 @@ class OrderService {
             whereClause,
             page,
             limit,
-            filters.search
+            filters
         );
         const result = includeCounts
             ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(
@@ -1528,7 +1544,7 @@ class OrderService {
             whereClause,
             page,
             limit,
-            filters.search
+            filters
         );
         const result = includeCounts
             ? await Promise.all([bookingsPromise, this.getOrderCount(filters)]).then(

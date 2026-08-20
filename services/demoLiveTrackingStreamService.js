@@ -6,7 +6,7 @@
 
 'use strict';
 
-const admin = require('firebase-admin');
+const { getDatabase } = require('firebase-admin/database');
 const {
   openLiveTrackingSession,
   getLiveTrackingSnapshot,
@@ -146,7 +146,7 @@ async function startDemoStream({
     pathPoints.push(lerp(start, dest, i / steps));
   }
   const encoded = encodePolyline(pathPoints);
-  const ref = admin.database().ref(`liveTracking/${id}`);
+  const ref = getDatabase().ref(`liveTracking/${id}`);
 
   let step = 0;
   let stopping = false;

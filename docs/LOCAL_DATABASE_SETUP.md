@@ -7,7 +7,7 @@ Verified: a wipe of `laundry_pipeline_fresh` + full `db:migrate` applies all num
 ## Prerequisites
 
 - MySQL 8 (MAMP, Docker, or system MySQL)
-- Node `>=18` (`engines` in `package.json`)
+- Node `>=22` (`engines` in `package.json`)
 - `npm install` in this repo
 
 Edit `config/config.json` → `development` (host, port, user, password, database).  
