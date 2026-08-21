@@ -137,6 +137,34 @@ async function run() {
     );
     assert.strictEqual(bypass.nextCalled, true, 'super admin must still bypass feature checks');
 
+    checkPermission.clearCaches();
+    const shopDriverMw = checkPermission.create({
+      async loadUser() {
+        return { id: 327, classifiedAsId: 1, roleId: 6 };
+      },
+      async loadZoneIdForAdmin() {
+        return null;
+      },
+      async loadFeatureIdByKey() {
+        throw new Error('shop employee must not resolve admin features');
+      },
+      async loadPermission() {
+        throw new Error('shop employee must not load admin permissions');
+      },
+    });
+    const shopDriver = await invoke(
+      shopDriverMw,
+      zoneRequest({
+        user: { id: 327, classifiedAsId: 1, roleId: 6, employeeOff: 309 },
+        path: '/agentBookingFilters',
+      })
+    );
+    assert.strictEqual(
+      shopDriver.nextCalled,
+      true,
+      'laundry shop employee must bypass admin feature checks on agent routes'
+    );
+
     console.log('checkPermission.test.js: all assertions passed');
 }
 

@@ -7,6 +7,7 @@ const {
     toFeatureKey,
 } = require('../utils/adminRoutePermissions');
 const { isPlatformAdmin, parseZoneId } = require('../utils/adminZoneScope');
+const { CLASSIFIED_AS } = require('../constants/systemRoles');
 
 const METHOD_TO_COLUMN = {
     get: 'read',
@@ -115,13 +116,19 @@ const defaultDeps = {
  * Permission Middleware
  *
  * Attach ONCE after validateAccessToken on the admin router.
+ * Also reused on some agent routes (legacy); shop employees must not be
+ * gated by the admin feature map — shop ops use shopAgentContext capabilities.
  * req.user is already set by validateAccessToken.
  *
  * Product rule — super admin:
  *   classifiedAsId === null (e.g. admin@gmail.com) → full access, skip feature check.
  *   Zone filter is NOT forced; they may pass zoneId as an optional filter.
  *
- * Zone admin / employee (classifiedAsId set):
+ * Agent shop staff (classifiedAsId === 1, roles 6/8):
+ *   Skip admin feature CRUD. Agent routes enforce requireCapability / assignee
+ *   checks and controller scoping (assigned jobs vs shop board).
+ *
+ * Zone admin / employee (classifiedAsId === 2):
  *   Feature is resolved from the route map (utils/adminRoutePermissions).
  *   Client featureid header / body / query is ignored.
  *   Deny when the route has no mapping, the feature row is missing,
@@ -164,6 +171,14 @@ function createCheckPermission(overrides = {}) {
 
             // classifiedAsId == null → owner / super admin → bypass, full access
             if (isPlatformAdmin(userData.classifiedAsId)) {
+                return next();
+            }
+
+            // Agent shop staff → admin feature map does not apply (agent routes)
+            if (
+                Number(userData.classifiedAsId) ===
+                CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE
+            ) {
                 return next();
             }
 
