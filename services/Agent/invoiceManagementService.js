@@ -485,9 +485,22 @@ class AgentInvoiceManagementService {
 
     /**
      * Recompute booking.totalItems = Σ(active service items × subCategory.unitCount).
+     * When sameBagForAllServices is true the customer declared a global item count
+     * at booking time (stored in totalItems). Preserve it — do NOT overwrite with
+     * the agent invoice count, which is tracked per-CSS row.
      * @param {number|string} bookingId
      */
     async updateBookingTotalItems(bookingId) {
+        // Check if this is an all-in-one-bag booking — if so, skip the overwrite.
+        const bookingRow = await booking.findOne({
+            where: { id: bookingId },
+            attributes: ['id', 'sameBagForAllServices', 'totalItems'],
+        });
+        if (bookingRow?.sameBagForAllServices) {
+            // Customer's declared item count is already in totalItems — preserve it.
+            return bookingRow.totalItems ?? 0;
+        }
+
         const rows = await customerSelectedService.findAll({
             where: { bookingId, status: true },
             attributes: ["id", "items"],
