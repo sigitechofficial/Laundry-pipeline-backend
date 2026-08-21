@@ -351,16 +351,32 @@ async function attachLeftoverRepairsToAlteration(bookingId, declaredServices) {
     );
     if (!leftovers.length) return list;
 
+    const alterationRows = list.filter(isAlterationDeclaredRow);
     return list.map((svc) => {
-        if (Array.isArray(svc.repairItems) && svc.repairItems.length) return svc;
         if (!isAlterationDeclaredRow(svc)) return svc;
+        const existing = Array.isArray(svc.repairItems) ? svc.repairItems : [];
+        const seen = new Set(
+            existing
+                .map((item) => (item?.id != null ? Number(item.id) : null))
+                .filter((id) => Number.isFinite(id))
+        );
         const sid = Number(svc.serviceId);
-        const forThis = leftovers.filter((item) => {
+        const onlyAlteration = alterationRows.length === 1;
+        const add = leftovers.filter((item) => {
+            if (item?.id != null && seen.has(Number(item.id))) return false;
             const repairSid = Number(item.serviceId);
-            return !Number.isFinite(repairSid) || !Number.isFinite(sid) || repairSid === sid;
+            if (
+                Number.isFinite(repairSid) &&
+                Number.isFinite(sid) &&
+                repairSid !== sid &&
+                !onlyAlteration
+            ) {
+                return false;
+            }
+            return true;
         });
-        if (!forThis.length) return svc;
-        return { ...svc, repairItems: forThis };
+        if (!add.length) return svc;
+        return { ...svc, repairItems: [...existing, ...add] };
     });
 }
 
