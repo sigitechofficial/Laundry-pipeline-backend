@@ -4379,12 +4379,23 @@ exports.invoiceCreation = async (req, res) => {
     bookingData.servicesSubtotal = servicesSubtotal;
 
     // Invoice-level item count = Σ(service.items × subCategory.unitCount).
-    bookingData.totalItems = (bookingData.customerSelectedServices || []).reduce((sum, s) => {
+    // In shared/all-in-one mode, booking.totalItems is the customer's declared
+    // global count. Do not replace it with 0 before itemisation or with the
+    // agent's partial invoice-line count while services are being added.
+    const customerDeclaredTotalItems = Number(bookingData.totalItems) || 0;
+    const invoiceLineTotalItems = (bookingData.customerSelectedServices || []).reduce((sum, s) => {
         const qty = Number(s.items) || 0;
         const rawUnit = Number(s.subCategory?.unitCount);
         const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? Math.floor(rawUnit) : 1;
         return sum + qty * unit;
     }, 0);
+    const hasSharedCustomerCount =
+        (bookingData.allInOneBag === true ||
+            bookingData.sameBagForAllServices === true) &&
+        customerDeclaredTotalItems > 0;
+    bookingData.totalItems = hasSharedCustomerCount
+        ? customerDeclaredTotalItems
+        : invoiceLineTotalItems;
 
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
