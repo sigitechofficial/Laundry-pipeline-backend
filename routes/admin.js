@@ -770,6 +770,14 @@ router.patch('/toggleBlogStatus/:blogId', asyncMiddleware(adminController.toggle
 // Get All Order Statuses
 router.get('/allOrderStatuses', asyncMiddleware(adminController.getAllOrderStatuses))
 
+//!-----------------------------------Block / Unblock Users------------------------------------>>>>
+// Block a user (customer, driver, agent, agent_employee, admin_employee)
+router.patch('/block-user', asyncMiddleware(adminController.blockUser))
+// Unblock a user
+router.patch('/unblock-user', asyncMiddleware(adminController.unblockUser))
+// Get block status
+router.get('/user-block-status/:userId', asyncMiddleware(adminController.getUserBlockStatus))
+
 
 //!-----------------------------------Reports------------------------------------>>>>
 // 1. Top Services Report

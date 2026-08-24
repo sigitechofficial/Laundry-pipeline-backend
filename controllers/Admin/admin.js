@@ -108,6 +108,7 @@ const supportContactService = require('../../services/Admin/supportContactServic
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
 const repairCatalogService = require('../../services/Admin/repairCatalogService');
+const userBlockService = require('../../services/Admin/userBlockService');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
@@ -187,8 +188,37 @@ async function updateCustomer(req, res) {
 */
 async function deleteCustomer(req, res) {
     const { customerId } = req.params;
-    const result = await customerService.deleteCustomer(customerId);
-    return ResponseHelper.success(res, "Customer deleted successfully", result);
+    const result = await userBlockService.anonymizeAndDelete(customerId, 'customer');
+    return ResponseHelper.success(res, "Customer data anonymized and account deleted", result);
+}
+
+/*
+ * Block / Unblock any user type
+ * Body: { userId, userType, reason? }
+ * userType: customer | driver | agent | agent_employee | admin_employee
+ */
+async function blockUser(req, res) {
+    const { userId, userType, reason } = req.body;
+    if (!userId || !userType) {
+        return ResponseHelper.error(res, "userId and userType are required", 400);
+    }
+    const result = await userBlockService.blockUser(userId, userType, reason || null);
+    return ResponseHelper.success(res, result.message, result);
+}
+
+async function unblockUser(req, res) {
+    const { userId, userType } = req.body;
+    if (!userId || !userType) {
+        return ResponseHelper.error(res, "userId and userType are required", 400);
+    }
+    const result = await userBlockService.unblockUser(userId, userType);
+    return ResponseHelper.success(res, result.message, result);
+}
+
+async function getUserBlockStatus(req, res) {
+    const { userId } = req.params;
+    const result = await userBlockService.getBlockStatus(userId);
+    return ResponseHelper.success(res, "Block status fetched", result);
 }
 
 
@@ -268,12 +298,12 @@ async function updateDriver(req, res) {
 }
 
 /*
- * Delete Driver
+ * Delete Driver — anonymize instead of hard delete
 */
 async function deleteDriver(req, res) {
     const { driverId } = req.params;
-    const result = await driverService.deleteDriver(driverId);
-    return ResponseHelper.success(res, "Driver deleted successfully", result);
+    const result = await userBlockService.anonymizeAndDelete(driverId, 'driver');
+    return ResponseHelper.success(res, "Driver data anonymized and account deleted", result);
 }
 
 /*
@@ -583,17 +613,15 @@ async function updateAdminEmployee(req, res) {
 }
 
 /*
- * Delete Admin Employee (Soft Delete)
+ * Delete Admin Employee — anonymize PII
  */
 async function deleteAdminEmployee(req, res) {
     const { employeeId } = req.params;
-
     if (!employeeId) {
         return ResponseHelper.error(res, "Employee ID is required", 400);
     }
-
-    const result = await employeeManagementService.deleteAdminEmployee(employeeId);
-    return ResponseHelper.success(res, "Admin Employee Deleted Successfully", result);
+    const result = await userBlockService.anonymizeAndDelete(employeeId, 'admin_employee');
+    return ResponseHelper.success(res, "Admin Employee data anonymized and account deleted", result);
 }
 
 /*
@@ -689,17 +717,15 @@ async function getAllAgentEmployees(req, res) {
 }
 
 /*
- * Delete Agent Employee (Soft Delete)
+ * Delete Agent Employee — anonymize PII
  */
 async function deleteAgentEmployee(req, res) {
     const { employeeId } = req.params;
-    
     if (!employeeId) {
         return ResponseHelper.error(res, "Employee ID is required", 400);
     }
-    
-    const result = await employeeManagementService.deleteAgentEmployee(employeeId);
-    return ResponseHelper.success(res, "Agent Employee Deleted Successfully", result);
+    const result = await userBlockService.anonymizeAndDelete(employeeId, 'agent_employee');
+    return ResponseHelper.success(res, "Agent Employee data anonymized and account deleted", result);
 }
 
 
@@ -3097,5 +3123,9 @@ module.exports = {
     deleteBlog,
     toggleBlogStatus,
     //!-------------Order Status----------------//
-    getAllOrderStatuses
+    getAllOrderStatuses,
+    //!-------------Block / Unblock Users--------//
+    blockUser,
+    unblockUser,
+    getUserBlockStatus,
 }
