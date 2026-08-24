@@ -410,7 +410,7 @@ class OrderService {
         const order = buildOrderListSequelizeOrder(sortBy, sortDir);
         const offset = (page - 1) * limit;
         const { where, searchActive } = this._buildWhereWithSearch(whereClause, search);
-        const includes = this._bookingListIncludes(searchActive);
+        const includes = this._bookingListIncludes(true);
 
         const countIncludes = searchActive
             ? [
