@@ -2393,12 +2393,18 @@ exports.AddPickupDeliveryProof = async (req, res) => {
     await proofOfDeliveries.bulkCreate(imgArr);
 
     const bookingUpdates = {};
-    if (parsedItems !== undefined) {
-        bookingUpdates.totalItems = parsedItems;
-    }
-    if (parsedBags !== undefined) {
-        bookingUpdates.noOfBags = parsedBags;
-        bookingUpdates.totalBags = parsedBags;
+    // Only write back to booking totals on delivery (dropOff) proof.
+    // Pickup proof overwrites the customer-declared totals which then leak into
+    // the delivery display as a fallback — so we leave the booking fields alone
+    // at pickup time; the proof entries themselves carry the pickup counts.
+    if (normalizedDeliveryType === 'dropOff') {
+        if (parsedItems !== undefined) {
+            bookingUpdates.totalItems = parsedItems;
+        }
+        if (parsedBags !== undefined) {
+            bookingUpdates.noOfBags = parsedBags;
+            bookingUpdates.totalBags = parsedBags;
+        }
     }
 
     if (Object.keys(bookingUpdates).length > 0) {
