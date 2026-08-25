@@ -694,6 +694,20 @@ exports.getBookingHome = async (req, res) => {
             { adminAssignedShopId: null },
             { adminAssignedShopId: agentShopId },
         ],
+        // Preferred-shop Phase-1: hide from all other shops until window expires
+        // or the preferred shop declines. A booking is visible when:
+        //   (a) no preferred shop was set, OR
+        //   (b) this agent IS the preferred shop, OR
+        //   (c) the preferred window has expired (broadcast done)
+        [Op.and]: [
+            {
+                [Op.or]: [
+                    { preferredShopAgentId: null },
+                    { preferredShopAgentId: agentId },
+                    { preferredShopBroadcastDone: true },
+                ],
+            },
+        ],
     };
 
     if (declinedBookingIds.length > 0) {
@@ -1513,6 +1527,14 @@ exports.agentBookingFilters = async (req, res) => {
                     { orderExpireTime: { [Op.gt]: new Date() } },
                 ],
             },
+            // Preferred-shop Phase-1 gate: hide from non-preferred shops until window expires
+            {
+                [Op.or]: [
+                    { preferredShopAgentId: null },
+                    { preferredShopAgentId: agentId },
+                    { preferredShopBroadcastDone: true },
+                ],
+            },
         ],
     };
 
@@ -1725,7 +1747,10 @@ exports.getBookingCounts = async (req, res) => {
                 agentBroadcastHeld: { [Op.not]: true },
                 createdAt: { [Op.gte]: twentyFourHrsAgo },
                 [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }],
-                [Op.and]: [{ [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] }],
+                [Op.and]: [
+                    { [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] },
+                    { [Op.or]: [{ preferredShopAgentId: null }, { preferredShopAgentId: agentId }, { preferredShopBroadcastDone: true }] },
+                ],
             },
         }),
         booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),

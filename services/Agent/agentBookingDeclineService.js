@@ -64,6 +64,8 @@ class AgentBookingDeclineService {
                 'agentVisibleAt',
                 'orderExpireTime',
                 'placedOutsidePlatformHours',
+                'preferredShopAgentId',
+                'preferredShopBroadcastDone',
             ],
         });
 
@@ -133,6 +135,25 @@ class AgentBookingDeclineService {
             bookingId,
             agentUserId,
         });
+
+        // If the preferred shop just declined, immediately open to all shops (Phase 2)
+        if (
+            !bookingRow.preferredShopBroadcastDone &&
+            bookingRow.preferredShopAgentId != null &&
+            Number(bookingRow.preferredShopAgentId) === Number(agentUserId)
+        ) {
+            try {
+                const { bookingEventSentCheckTheShops } = require('../Customer/customerOrderService');
+                await booking.update(
+                    { preferredShopBroadcastDone: true },
+                    { where: { id: bookingId } }
+                );
+                await bookingEventSentCheckTheShops(bookingId);
+            } catch (broadcastErr) {
+                // Non-fatal: cron will pick it up within 5 minutes
+                console.error('[decline] Phase-2 broadcast failed, cron will retry:', broadcastErr.message);
+            }
+        }
 
         return {
             bookingId: Number(bookingId),
