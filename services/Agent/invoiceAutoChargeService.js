@@ -834,12 +834,16 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
     // OFD automatic retry (once)
     if (!bookingRow.ofdAutoRetryDone) {
         await bookingRow.update({ ofdAutoRetryDone: true });
+        // Include invoice version in key so an edited invoice gets a fresh key.
+        const invoiceVersion = bookingRow.invoiceUpdatedAt
+            ? new Date(bookingRow.invoiceUpdatedAt).getTime()
+            : 'v1';
         const result = await attemptInvoiceCardCharge(bookingId, {
             attemptType: "ofd_retry",
             triggeredBy: "system",
             agentUserId: options.agentUserId,
             notifyOnFailure: true,
-            idempotencyKey: `booking_${bookingId}_ofd_retry`,
+            idempotencyKey: `booking_${bookingId}_ofd_retry_${invoiceVersion}`,
         });
 
         if (result.ok) {

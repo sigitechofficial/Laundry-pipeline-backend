@@ -709,6 +709,19 @@ class AgentInvoiceManagementService {
             preserveInvoiceStatus: isFinalized,
         });
 
+        // If invoice is being re-edited after a failed OFD charge attempt, reset
+        // the retry flag and payment gate so the new amount can be charged fresh.
+        // This also prevents Stripe idempotency key conflicts (same key, new amount).
+        if (
+            bookingRow.ofdAutoRetryDone ||
+            bookingRow.paymentDeliveryGate === 'waiting_admin'
+        ) {
+            await bookingRow.update({
+                ofdAutoRetryDone: false,
+                paymentDeliveryGate: null,
+            });
+        }
+
         return {
             bookingId,
             invoiceStatus,
@@ -779,6 +792,17 @@ class AgentInvoiceManagementService {
             zoneMinimumAmount,
             preserveInvoiceStatus: isFinalized,
         });
+
+        // Reset OFD retry flag + payment gate if invoice edited after a failed charge.
+        if (
+            bookingRow.ofdAutoRetryDone ||
+            bookingRow.paymentDeliveryGate === 'waiting_admin'
+        ) {
+            await bookingRow.update({
+                ofdAutoRetryDone: false,
+                paymentDeliveryGate: null,
+            });
+        }
 
         return {
             bookingId,
