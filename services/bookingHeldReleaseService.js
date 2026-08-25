@@ -12,6 +12,86 @@ const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
 
+// ─── Phase-2: broadcast preferred-shop bookings whose window has expired ──────
+
+/**
+ * For any booking where preferred-shop phase-1 window has passed and the
+ * booking still has no laundryShopId (not yet accepted), broadcast to all
+ * available shops as normal.
+ */
+async function broadcastExpiredPreferredBookings() {
+    const now = new Date();
+    const pending = await booking.findAll({
+        where: {
+            bookingStatusId: 1,
+            laundryShopId: null,
+            agentBroadcastHeld: false,
+            preferredShopBroadcastDone: false,
+            preferredShopExpiresAt: { [Op.lte]: now },
+            preferredShopAgentId: { [Op.ne]: null },
+        },
+        attributes: [
+            'id', 'zoneId',
+            'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
+            'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
+            'placedOutsidePlatformHours',
+        ],
+    });
+
+    if (!pending.length) return { broadcast: 0 };
+
+    let broadcast = 0;
+    const {
+        bookingEventSentCheckTheShops,
+    } = require('./Customer/customerOrderService');
+
+    for (const row of pending) {
+        try {
+            // Mark broadcast done first (idempotent — if notify fails we still
+            // don't retry endlessly; admin can reassign).
+            await booking.update(
+                { preferredShopBroadcastDone: true },
+                { where: { id: row.id } }
+            );
+
+            const services = await customerSelectedService.findAll({
+                where: { bookingId: row.id },
+                attributes: ['serviceId'],
+            });
+            const servicePayload = services.map((s) => ({ serviceId: s.serviceId }));
+
+            const countryCtx = await getCountryContextFromZoneId(row.zoneId);
+            const resolvedTz = countryCtx.ianaTimeZone;
+
+            const { notifiedCount } = await bookingEventSentCheckTheShops(
+                row.id,
+                row.zoneId,
+                row.collectionDate,
+                row.collectionTimeTo,
+                row.collectionTimeFrom,
+                row.deliveryDate,
+                row.deliveryTimeTo,
+                row.deliveryTimeFrom,
+                servicePayload,
+                resolvedTz
+            );
+
+            console.log(
+                `[preferredShop phase-2] booking ${row.id} broadcast to ${notifiedCount} agent(s)`
+            );
+            broadcast += 1;
+        } catch (err) {
+            console.error(
+                `[preferredShop phase-2] error broadcasting booking ${row.id}:`,
+                err?.message || err
+            );
+        }
+    }
+
+    return { broadcast };
+}
+
+
 async function canReleaseHeldBooking(row, countryCtx) {
     return isAnyShopOpenInZone(row.zoneId, countryCtx.ianaTimeZone);
 }
@@ -152,6 +232,9 @@ function startHeldBookingReleaseJob() {
         releaseHeldBookings().catch((err) => {
             console.error("[releaseHeldBookings] job error:", err.message);
         });
+        broadcastExpiredPreferredBookings().catch((err) => {
+            console.error("[preferredShop phase-2] job error:", err.message);
+        });
     };
 
     run();
@@ -164,5 +247,6 @@ function startHeldBookingReleaseJob() {
 module.exports = {
     releaseHeldBookings,
     releaseHeldBookingsForZone,
+    broadcastExpiredPreferredBookings,
     startHeldBookingReleaseJob,
 };

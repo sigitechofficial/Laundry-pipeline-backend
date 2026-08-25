@@ -78,6 +78,7 @@ const moment = require('moment-timezone');
 const {
     BUSINESS_TIME_ZONE,
     BOOKING_ACCEPT_WINDOW_MINUTES,
+    PREFERRED_SHOP_WINDOW_MINUTES,
     getOrderExpireTime,
     getAcceptWindowMinutesRemaining,
     formatOrderExpireTimeForApi,
@@ -437,6 +438,89 @@ async function checkIfTimeSlotBooked(
 }
 
 // Booking event sent check the shops function
+/**
+ * Find the preferred shop agent for a customer — the agent (addressDb user)
+ * whose shop last completed an order (bookingStatusId = 17) for this customer
+ * and who is currently available for the requested services + zone.
+ *
+ * Returns the matching addressDb shop row (with .user populated), or null.
+ */
+async function findPreferredShopForCustomer(customerId, zoneId, services) {
+    try {
+        const requiredServiceIds = [
+            ...new Set(
+                (services || [])
+                    .map((s) => Number(s.serviceId))
+                    .filter((id) => Number.isFinite(id) && id > 0)
+            ),
+        ];
+        if (!customerId || !zoneId) return null;
+
+        // Most recent completed booking for this customer in this zone
+        const lastCompleted = await booking.findOne({
+            where: {
+                customerId,
+                zoneId,
+                bookingStatusId: 17, // Completed
+                laundryShopId: { [Op.ne]: null },
+            },
+            attributes: ['laundryShopId'],
+            order: [['updatedAt', 'DESC']],
+        });
+
+        if (!lastCompleted?.laundryShopId) return null;
+
+        const shop = await addressDb.findOne({
+            where: {
+                id: lastCompleted.laundryShopId,
+                zoneId,
+                addressType: 'LaundaryShopAddress',
+            },
+            include: [
+                {
+                    model: users,
+                    attributes: ['id', 'firstName', 'email', 'lastName'],
+                    required: true,
+                    include: [
+                        {
+                            model: agentSelectServices,
+                            as: 'agentServices',
+                            where: {
+                                serviceId: { [Op.in]: requiredServiceIds.length ? requiredServiceIds : [0] },
+                                status: true,
+                            },
+                            attributes: ['id', 'serviceId'],
+                            required: false,
+                        },
+                        {
+                            model: bussinessInformation,
+                            as: 'businessInfo',
+                            attributes: ['shopName'],
+                            required: false,
+                        },
+                    ],
+                },
+            ],
+            attributes: ['id', 'status', 'zoneId', 'userId'],
+        });
+
+        if (!shop?.user) return null;
+
+        // Verify the shop still offers ALL required services
+        if (requiredServiceIds.length > 0) {
+            const offeredIds = new Set(
+                (shop.user.agentServices || []).map((a) => Number(a.serviceId))
+            );
+            if (!requiredServiceIds.every((id) => offeredIds.has(id))) return null;
+        }
+
+        return shop;
+    } catch (err) {
+        console.error('[findPreferredShopForCustomer] error:', err?.message || err);
+        return null;
+    }
+}
+
 async function bookingEventSentCheckTheShops(
     bookingId,
     zoneId,
@@ -776,6 +860,76 @@ async function bookingEventSentCheckTheShops(
         serviceEligibleShopCount,
         zoneShopCount: getShopsAndOwners.length,
     };
+}
+
+/**
+ * Phase-1: Notify only the preferred shop agent.
+ * Returns true if notification was sent, false otherwise.
+ */
+async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails, collectionDate, collectionTimeTo, collectionTimeFrom, deliveryDate, deliveryTimeTo, deliveryTimeFrom, timeZone) {
+    try {
+        const { sendNotification } = require('../../utils/notification');
+        const ownerId = preferredShop.user?.id || preferredShop.userId;
+        if (!ownerId) return false;
+
+        const eventData = {
+            type: 'newBookingRequest',
+            data: {
+                id: bookingDetails.id,
+                orderTrackId: bookingDetails.orderTrackId,
+                collectionDate: new Date(collectionDate).toISOString(),
+                collectionTimeTo,
+                collectionTimeFrom,
+                deliveryDate: new Date(deliveryDate).toISOString(),
+                deliveryTimeTo,
+                deliveryTimeFrom,
+                driverInstructionOptions: bookingDetails.driverInstructionOptions || null,
+                driverInstructionOptions1: bookingDetails.driverInstructionOptions1 || null,
+                driverInstruction: bookingDetails.driverInstruction || null,
+                paymentConfirmed: bookingDetails.paymentConfirmed || false,
+                partialPayment: bookingDetails.partialPayment || false,
+                totalItems: bookingDetails.totalItems || 0,
+                orderAmount: bookingDetails?.billingDetail?.total || 0,
+                frequency: bookingDetails.frequency || 'Just Once',
+                createdAt: bookingDetails.createdAt,
+                orderExpireTime: formatOrderExpireTimeForApi(bookingDetails.orderExpireTime),
+                acceptWindowMinutes: getAcceptWindowMinutesRemaining(
+                    getAcceptWindowAnchor(bookingDetails),
+                    bookingDetails.orderExpireTime,
+                    timeZone
+                ),
+                orderExpireTimeClock: formatOrderExpireTimeForApi(bookingDetails.orderExpireTime),
+                laundryShopId: preferredShop.id,
+                customerId: bookingDetails.customer?.id,
+                pickupAddress: bookingDetails.pickupAddress || {},
+                customer: {
+                    id: bookingDetails.customer?.id,
+                    firstName: bookingDetails.customer?.firstName,
+                    lastName: bookingDetails.customer?.lastName,
+                    email: bookingDetails.customer?.email,
+                    userTypeId: bookingDetails.customer?.userTypeId || 2,
+                    image: bookingDetails.customer?.image || null,
+                    phoneNum: bookingDetails.customer?.phoneNum,
+                },
+                zone: bookingDetails.zone || {},
+                isPreferredShopOffer: true,
+            },
+        };
+
+        sendEvent(ownerId, eventData);
+        sendNotification(
+            ownerId,
+            'New Booking Request (Preferred)',
+            `A returning customer placed order ${bookingDetails.orderTrackId || bookingId}. You have ${PREFERRED_SHOP_WINDOW_MINUTES} minutes to accept.`,
+            { bookingId: String(bookingId), type: 'newBookingRequest' }
+        ).catch((e) => console.error(`⚠️ FCM failed for preferred agent ${ownerId}:`, e.message));
+
+        console.log(`[preferredShop] booking ${bookingId} → phase-1 notify agent ${ownerId} (shop ${preferredShop.id}), window=${PREFERRED_SHOP_WINDOW_MINUTES}m`);
+        return true;
+    } catch (err) {
+        console.error('[notifyPreferredShopOnly] error:', err?.message || err);
+        return false;
+    }
 }
 
 /**
@@ -2030,55 +2184,113 @@ class CustomerOrderService {
         } else {
             const visibleAt = new Date();
             const expireTime = getOrderExpireTime(resolvedTz);
-            await booking.update(
-                {
-                    agentBroadcastHeld: false,
-                    agentVisibleAt: visibleAt,
-                    orderExpireTime: expireTime,
-                    placedOutsidePlatformHours: false,
-                },
-                { where: { id: bookingId } }
-            );
-            console.log(
-                `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
-            );
 
-            const {
-                notifiedCount,
-                serviceEligibleShopCount,
-                zoneShopCount,
-            } = await bookingEventSentCheckTheShops(
-                bookingId,
-                zoneId,
-                collectionDate,
-                collectionTimeTo,
-                collectionTimeFrom,
-                deliveryDate,
-                deliveryTimeTo,
-                deliveryTimeFrom,
-                services,
-                resolvedTz
-            );
+            // --- Preferred-shop Phase-1 check ---
+            // If this customer has a previous completed order, give that shop a
+            // PREFERRED_SHOP_WINDOW_MINUTES head-start before broadcasting to all.
+            const preferredShop = await findPreferredShopForCustomer(userId, zoneId, services);
 
-            if (notifiedCount === 0) {
-                agentBroadcastHeld = true;
+            if (preferredShop) {
+                const preferredShopExpiresAt = new Date(Date.now() + PREFERRED_SHOP_WINDOW_MINUTES * 60 * 1000);
                 await booking.update(
                     {
-                        agentBroadcastHeld: true,
-                        agentVisibleAt: null,
-                        orderExpireTime: null,
+                        agentBroadcastHeld: false,
+                        agentVisibleAt: visibleAt,
+                        orderExpireTime: expireTime,
+                        placedOutsidePlatformHours: false,
+                        preferredShopAgentId: preferredShop.user.id,
+                        preferredShopExpiresAt,
+                        preferredShopBroadcastDone: false,
                     },
                     { where: { id: bookingId } }
                 );
                 console.log(
-                    `[createBooking] booking ${bookingId} held — zone open but no agent notified`
+                    `[createBooking] booking ${bookingId} → preferred-shop phase-1 agent=${preferredShop.user.id} expiresAt=${preferredShopExpiresAt.toISOString()}`
                 );
-            }
 
-            // Service coverage gap: shops exist in the zone but none offer ALL of
-            // the customer's selected services → notify admin for manual assignment.
-            if (zoneShopCount > 0 && serviceEligibleShopCount === 0) {
-                await notifyAdminNoEligibleAgent(bookingId, zoneId);
+                // Fetch booking details to build the notification payload
+                const bookingDetailsForNotify = await booking.findOne({
+                    where: { id: bookingId },
+                    include: [
+                        { model: users, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'userTypeId', 'image'] },
+                        { model: addressDb, as: 'pickupAddress', attributes: ['id', 'streetAddress', 'district', 'province', 'postalcode', 'lat', 'lng', 'addressType'] },
+                        { model: billingDetails, as: 'billingDetail', attributes: ['total', 'serviceCharge', 'categoryCharge'] },
+                        { model: zone, attributes: ['id', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'] },
+                    ].filter(Boolean),
+                });
+
+                if (bookingDetailsForNotify) {
+                    const sent = await notifyPreferredShopOnly(
+                        bookingId, preferredShop, bookingDetailsForNotify,
+                        collectionDate, collectionTimeTo, collectionTimeFrom,
+                        deliveryDate, deliveryTimeTo, deliveryTimeFrom,
+                        resolvedTz
+                    );
+                    if (!sent) {
+                        // Preferred shop notify failed — fall back to full broadcast
+                        await booking.update(
+                            { preferredShopAgentId: null, preferredShopExpiresAt: null, preferredShopBroadcastDone: true },
+                            { where: { id: bookingId } }
+                        );
+                        await bookingEventSentCheckTheShops(
+                            bookingId, zoneId, collectionDate, collectionTimeTo, collectionTimeFrom,
+                            deliveryDate, deliveryTimeTo, deliveryTimeFrom, services, resolvedTz
+                        );
+                    }
+                }
+            } else {
+                // No preferred shop — broadcast to all as normal
+                await booking.update(
+                    {
+                        agentBroadcastHeld: false,
+                        agentVisibleAt: visibleAt,
+                        orderExpireTime: expireTime,
+                        placedOutsidePlatformHours: false,
+                        preferredShopBroadcastDone: true,
+                    },
+                    { where: { id: bookingId } }
+                );
+                console.log(
+                    `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
+                );
+
+                const {
+                    notifiedCount,
+                    serviceEligibleShopCount,
+                    zoneShopCount,
+                } = await bookingEventSentCheckTheShops(
+                    bookingId,
+                    zoneId,
+                    collectionDate,
+                    collectionTimeTo,
+                    collectionTimeFrom,
+                    deliveryDate,
+                    deliveryTimeTo,
+                    deliveryTimeFrom,
+                    services,
+                    resolvedTz
+                );
+
+                if (notifiedCount === 0) {
+                    agentBroadcastHeld = true;
+                    await booking.update(
+                        {
+                            agentBroadcastHeld: true,
+                            agentVisibleAt: null,
+                            orderExpireTime: null,
+                        },
+                        { where: { id: bookingId } }
+                    );
+                    console.log(
+                        `[createBooking] booking ${bookingId} held — zone open but no agent notified`
+                    );
+                }
+
+                // Service coverage gap: shops exist in the zone but none offer ALL of
+                // the customer's selected services → notify admin for manual assignment.
+                if (zoneShopCount > 0 && serviceEligibleShopCount === 0) {
+                    await notifyAdminNoEligibleAgent(bookingId, zoneId);
+                }
             }
         }
 

@@ -250,6 +250,24 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: false,
     defaultValue: false,
   },
+  // Preferred-shop Phase-1: the agent who last completed an order for this
+  // customer gets a private head-start window.  Once preferredShopExpiresAt
+  // passes (or they decline), the booking is broadcast to all shops.
+  preferredShopAgentId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    defaultValue: null,
+  },
+  preferredShopExpiresAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: null,
+  },
+  preferredShopBroadcastDone: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   operationalTimeZone: {
     type: DataTypes.STRING(64),
     allowNull: true,

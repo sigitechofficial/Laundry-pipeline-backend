@@ -10,6 +10,13 @@ const BUSINESS_TIME_ZONE = 'Europe/London';
 const BOOKING_ACCEPT_WINDOW_MINUTES = 30;
 
 /**
+ * How long (minutes) the preferred shop (who last completed a job for this
+ * customer) gets exclusive visibility before the booking opens to all shops.
+ * Must be less than BOOKING_ACCEPT_WINDOW_MINUTES so the full window stays intact.
+ */
+const PREFERRED_SHOP_WINDOW_MINUTES = 10;
+
+/**
  * Resolve IANA timezone from app headers/body (timeZone or clientTimeZone).
  * @param {string} [timeZone]
  * @param {string} [clientTimeZone]
@@ -151,6 +158,7 @@ function formatOrderExpireTimeForApi(orderExpireTime) {
 module.exports = {
     BUSINESS_TIME_ZONE,
     BOOKING_ACCEPT_WINDOW_MINUTES,
+    PREFERRED_SHOP_WINDOW_MINUTES,
     resolveBookingTimeZone,
     wallClockNow,
     getOrderExpireTime,
