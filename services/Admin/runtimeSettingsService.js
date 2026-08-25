@@ -64,6 +64,26 @@ const DEFINITIONS = {
     min: 0,
     max: 24 * 60 * 60 * 1000,
   },
+  preferredShopEnabled: {
+    type: "boolean",
+    label: "Preferred shop head-start",
+    description:
+      "When on, new bookings go first to the shop that last completed an order for that customer. If the shop does not accept within the window, the booking is broadcast to all shops.",
+    group: "booking_assignment",
+    envKey: "PREFERRED_SHOP_ENABLED",
+    defaultValue: true,
+  },
+  preferredShopWindowMinutes: {
+    type: "integer",
+    label: "Preferred shop window (minutes)",
+    description:
+      "How long (minutes) the preferred shop has exclusive access before the booking broadcasts to everyone.",
+    group: "booking_assignment",
+    envKey: "PREFERRED_SHOP_WINDOW_MINUTES",
+    defaultValue: 10,
+    min: 1,
+    max: 60,
+  },
 };
 
 let cache = { at: 0, byKey: null };

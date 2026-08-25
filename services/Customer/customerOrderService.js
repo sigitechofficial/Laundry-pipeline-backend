@@ -866,7 +866,7 @@ async function bookingEventSentCheckTheShops(
  * Phase-1: Notify only the preferred shop agent.
  * Returns true if notification was sent, false otherwise.
  */
-async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails, collectionDate, collectionTimeTo, collectionTimeFrom, deliveryDate, deliveryTimeTo, deliveryTimeFrom, timeZone) {
+async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails, collectionDate, collectionTimeTo, collectionTimeFrom, deliveryDate, deliveryTimeTo, deliveryTimeFrom, timeZone, windowMins) {
     try {
         const { sendNotification } = require('../../utils/notification');
         const ownerId = preferredShop.user?.id || preferredShop.userId;
@@ -920,11 +920,11 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
         sendNotification(
             ownerId,
             'New Booking Request (Preferred)',
-            `A returning customer placed order ${bookingDetails.orderTrackId || bookingId}. You have ${PREFERRED_SHOP_WINDOW_MINUTES} minutes to accept.`,
+            `A returning customer placed order ${bookingDetails.orderTrackId || bookingId}. You have ${windowMins} minutes to accept.`,
             { bookingId: String(bookingId), type: 'newBookingRequest' }
         ).catch((e) => console.error(`⚠️ FCM failed for preferred agent ${ownerId}:`, e.message));
 
-        console.log(`[preferredShop] booking ${bookingId} → phase-1 notify agent ${ownerId} (shop ${preferredShop.id}), window=${PREFERRED_SHOP_WINDOW_MINUTES}m`);
+        console.log(`[preferredShop] booking ${bookingId} → phase-1 notify agent ${ownerId} (shop ${preferredShop.id}), window=${windowMins}m`);
         return true;
     } catch (err) {
         console.error('[notifyPreferredShopOnly] error:', err?.message || err);
@@ -2188,10 +2188,17 @@ class CustomerOrderService {
             // --- Preferred-shop Phase-1 check ---
             // If this customer has a previous completed order, give that shop a
             // PREFERRED_SHOP_WINDOW_MINUTES head-start before broadcasting to all.
-            const preferredShop = await findPreferredShopForCustomer(userId, zoneId, services);
+            const runtimeSettings = require('../Admin/runtimeSettingsService');
+            const preferredEnabled = await runtimeSettings.getBoolean('preferredShopEnabled');
+            const preferredWindowMins = preferredEnabled
+                ? await runtimeSettings.getInteger('preferredShopWindowMinutes')
+                : 0;
+            const preferredShop = preferredEnabled
+                ? await findPreferredShopForCustomer(userId, zoneId, services)
+                : null;
 
             if (preferredShop) {
-                const preferredShopExpiresAt = new Date(Date.now() + PREFERRED_SHOP_WINDOW_MINUTES * 60 * 1000);
+                const preferredShopExpiresAt = new Date(Date.now() + preferredWindowMins * 60 * 1000);
                 await booking.update(
                     {
                         agentBroadcastHeld: false,
@@ -2204,9 +2211,9 @@ class CustomerOrderService {
                     },
                     { where: { id: bookingId } }
                 );
-                console.log(
-                    `[createBooking] booking ${bookingId} → preferred-shop phase-1 agent=${preferredShop.user.id} expiresAt=${preferredShopExpiresAt.toISOString()}`
-                );
+                    console.log(
+                        `[createBooking] booking ${bookingId} → preferred-shop phase-1 agent=${preferredShop.user.id} expiresAt=${preferredShopExpiresAt.toISOString()} window=${preferredWindowMins}m`
+                    );
 
                 // Fetch booking details to build the notification payload
                 const bookingDetailsForNotify = await booking.findOne({
@@ -2224,7 +2231,7 @@ class CustomerOrderService {
                         bookingId, preferredShop, bookingDetailsForNotify,
                         collectionDate, collectionTimeTo, collectionTimeFrom,
                         deliveryDate, deliveryTimeTo, deliveryTimeFrom,
-                        resolvedTz
+                        resolvedTz, preferredWindowMins
                     );
                     if (!sent) {
                         // Preferred shop notify failed — fall back to full broadcast
