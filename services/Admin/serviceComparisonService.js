@@ -33,7 +33,14 @@ function invoiceHasBeenGenerated(invoiceStatus) {
  */
 exports.getServiceComparison = async (bookingId) => {
     const bookingRow = await booking.findByPk(bookingId, {
-        attributes: ['id', 'invoiceStatus', 'invoiceDraftSavedAt'],
+        attributes: [
+            'id',
+            'invoiceStatus',
+            'invoiceDraftSavedAt',
+            'totalItems',
+            'totalBags',
+            'sameBagForAllServices',
+        ],
     });
 
     const invoiceStatus = bookingRow?.invoiceStatus || 'none';
@@ -127,15 +134,26 @@ exports.getServiceComparison = async (bookingId) => {
     const snapshotAvailable = originalServices.length > 0;
     const liveJson = liveServices.map((s) => s.toJSON());
 
+    // How the customer packed the order at booking time: one shared bag for all
+    // services (all-in-one) vs one bag per service. Totals are the customer's
+    // declared bag/item counts (per-service bags live on each service row's `bags`).
+    const packing = {
+        sameBagForAllServices: bookingRow?.sameBagForAllServices !== false,
+        totalItems: bookingRow?.totalItems ?? null,
+        totalBags: bookingRow?.totalBags ?? null,
+    };
+
     const customerOriginal = snapshotAvailable
         ? {
               services: originalServices.map((s) => s.toJSON()),
               bookingPreferences: originalBookingPrefs.map((p) => p.toJSON()),
+              packing,
           }
         : {
               // Legacy: no snapshot yet — show current lines as customer selection only.
               services: liveJson,
               bookingPreferences: [],
+              packing,
           };
 
     const agentInvoice = {
