@@ -624,6 +624,10 @@ class OrderService {
             include: [
                 {
                     model: customerSelectedService,
+                    // Only active invoice lines — an edited invoice deactivates removed
+                    // lines (status:false); including them double-counts items/totals.
+                    required: false,
+                    where: { status: true },
                     include: [
                         { model: service, attributes: ['id', 'name', 'image'] },
                         { model: categories, attributes: ['id', 'name', 'image'] },
