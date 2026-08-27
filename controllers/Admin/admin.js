@@ -367,6 +367,9 @@ function buildOrderListFilters(req) {
     if (req.query.endDate) filters.endDate = req.query.endDate;
     if (req.query.date) filters.date = req.query.date;
     if (req.query.search) filters.search = String(req.query.search).trim();
+    if (req.query.recurringType) {
+        filters.recurringType = String(req.query.recurringType).trim();
+    }
     if (req.query.includeCounts != null) filters.includeCounts = req.query.includeCounts;
     if (req.query.sortBy) filters.sortBy = String(req.query.sortBy).trim();
     if (req.query.sortDir) filters.sortDir = String(req.query.sortDir).trim();

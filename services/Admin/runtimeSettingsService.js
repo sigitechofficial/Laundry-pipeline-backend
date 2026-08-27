@@ -84,6 +84,26 @@ const DEFINITIONS = {
     min: 1,
     max: 60,
   },
+  recurringAutoCreateEnabled: {
+    type: "boolean",
+    label: "Recurring auto-create",
+    description:
+      "When on, non-'Just Once' bookings auto-generate the next cycle after delivery completion without customer confirmation.",
+    group: "booking_assignment",
+    envKey: "RECURRING_AUTO_CREATE_ENABLED",
+    defaultValue: true,
+  },
+  recurringMaxFailuresBeforePause: {
+    type: "integer",
+    label: "Recurring max generation failures",
+    description:
+      "Auto-pause recurring plans once generation fails this many consecutive times.",
+    group: "booking_assignment",
+    envKey: "RECURRING_MAX_FAILURES_BEFORE_PAUSE",
+    defaultValue: 3,
+    min: 1,
+    max: 10,
+  },
 };
 
 let cache = { at: 0, byKey: null };

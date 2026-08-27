@@ -72,6 +72,18 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'bookingId',
         as: 'invoicePaymentAttempts'
       })
+      booking.belongsTo(models.recurringPlan, {
+        foreignKey: 'recurringPlanId',
+        as: 'recurringPlan',
+      });
+      booking.belongsTo(models.booking, {
+        foreignKey: 'recurringSourceBookingId',
+        as: 'recurringSourceBooking',
+      });
+      booking.belongsTo(models.booking, {
+        foreignKey: 'recurringNextBookingId',
+        as: 'recurringNextBooking',
+      });
     }
   }
   booking.init({
@@ -404,6 +416,27 @@ module.exports = (sequelize, DataTypes) => {
     defaultValue: false,
   },
   deliveryCompleteGeofenceOverride: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  recurringPlanId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  recurringSourceBookingId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  recurringNextBookingId: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  recurringCycleDate: {
+    type: DataTypes.DATEONLY,
+    allowNull: true,
+  },
+  isRecurringAutoCreated: {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false,

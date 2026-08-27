@@ -109,6 +109,14 @@ const {
 /** Same default as customer booking / reschedule services (IANA). */
 const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 
+function recurringIntervalDaysFromLabel(value) {
+    const key = String(value || "").trim().toLowerCase();
+    if (key === "weekly") return 7;
+    if (key === "every two weeks") return 14;
+    if (key === "every four weeks") return 28;
+    return 0;
+}
+
 function syncLiveTrackingSafe(bookingId, bookingStatusId, extras = {}) {
     try {
         const {
@@ -3534,9 +3542,30 @@ exports.driverReachedForDelivery = async (req, res) => {
 
     syncLiveTrackingSafe(bookingId, 14, { reason: 'delivery_arrived' });
 
+    const recurringGapDays = recurringIntervalDaysFromLabel(bookingCheck.frequency);
+    const recurringHint = recurringGapDays > 0
+        ? {
+            recurringEnabled: true,
+            requiresReturnPickup: true,
+            frequency: bookingCheck.frequency,
+            nextCollectionDate: (() => {
+                const base = new Date(bookingCheck.collectionDate);
+                if (!Number.isFinite(base.getTime())) return null;
+                base.setUTCDate(base.getUTCDate() + recurringGapDays);
+                return base.toISOString().slice(0, 10);
+            })(),
+        }
+        : {
+            recurringEnabled: false,
+            requiresReturnPickup: false,
+            frequency: bookingCheck.frequency || "Just Once",
+            nextCollectionDate: null,
+        };
+
     return ResponseHelper.success(res, "Driver reached for delivery", {
         bookingId: Number(bookingId),
         bookingStatusId: 14,
+        recurringHint,
         amountDueNow: paymentSummary?.amountDueNow ?? paymentFlags.amountDueNow,
         ...paymentFlags,
         paymentSummary: paymentSummary
@@ -3701,9 +3730,25 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         );
     }
 
+    let recurringResult = null;
+    try {
+        const recurringBookingService = require("../../services/Customer/recurringBookingService");
+        recurringResult = await recurringBookingService.generateNextBookingFromCompleted({
+            bookingId: Number(bookingId),
+            actorUserId: actorId,
+            timeZone: req.body?.timeZone || null,
+        });
+    } catch (err) {
+        console.error(
+            `[bookingDeliverToCustomer] recurring generation failed for ${bookingId}:`,
+            err?.message || err
+        );
+    }
+
     return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {
         bookingId: Number(bookingId),
         bookingStatusId: 17,
+        recurringNextBooking: recurringResult,
         ...paymentFlags,
         paymentSummary: paymentSummary
             ? {

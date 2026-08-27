@@ -86,6 +86,22 @@ function adminWallClockDateTime(timeZone, clientTimeZone) {
 }
 
 class OrderService {
+    _applyRecurringTypeFilter(whereClause, filters = {}) {
+        const mode = String(filters.recurringType || "")
+            .trim()
+            .toLowerCase();
+        if (!mode || mode === "all") return;
+        if (mode === "recurring") {
+            whereClause.isRecurringAutoCreated = true;
+            return;
+        }
+        if (mode === "manual") {
+            whereClause.isRecurringAutoCreated = {
+                [Op.ne]: true,
+            };
+        }
+    }
+
     _applyZoneFilter(whereClause, filters = {}) {
         if (filters.zoneId == null || String(filters.zoneId).trim() === "") {
             return;
@@ -240,6 +256,11 @@ class OrderService {
             'lastPaymentFailureCode',
             'lastPaymentFailureMessage',
             'lastPaymentFailureAt',
+            'isRecurringAutoCreated',
+            'recurringSourceBookingId',
+            'recurringNextBookingId',
+            'recurringCycleDate',
+            'recurringPlanId',
         ];
     }
 
@@ -256,6 +277,7 @@ class OrderService {
         const scoped = {};
         this._applyZoneFilter(scoped, filters);
         this._applyPlacedDateRangeFilter(scoped, filters);
+        this._applyRecurringTypeFilter(scoped, filters);
 
         if (filters.status) {
             const statusId = parseInt(filters.status, 10);
@@ -482,6 +504,7 @@ class OrderService {
         }
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
 
@@ -523,6 +546,7 @@ class OrderService {
             };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
         const bookingsPromise = this.getOptimizedBookings(
@@ -557,6 +581,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
         const bookingsPromise = this.getOptimizedBookings(
@@ -591,6 +616,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
         const bookingsPromise = this.getOptimizedBookings(
@@ -1638,6 +1664,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
         const bookingsPromise = this.getOptimizedBookings(

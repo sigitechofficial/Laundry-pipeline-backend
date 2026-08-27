@@ -219,7 +219,7 @@ class CustomerService {
                         exclude: [
                             'updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId',
                             'driverInstructionOptions', 'driverInstructionOptions1', 'paymentConfirmed',
-                            'partialPayment', 'subTotal', 'frequency', 'onHoldReason', 'OnHoldOtherReason',
+                            'partialPayment', 'subTotal', 'onHoldReason', 'OnHoldOtherReason',
                             'paymentMethodId', 'paymentIntentId', 'pickupAddresId', 'dropOffAddressId', 'tipId'
                         ],
                     },

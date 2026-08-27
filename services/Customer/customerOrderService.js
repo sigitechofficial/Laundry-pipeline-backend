@@ -1760,6 +1760,18 @@ class CustomerOrderService {
             customerLocalTimeZone,
         });
 
+        // Prime recurring plan link early for non-"Just Once" bookings so
+        // delivery completion can generate the next cycle idempotently.
+        try {
+            const recurringBookingService = require('./recurringBookingService');
+            await recurringBookingService.ensurePlanForBooking(bookingData.id);
+        } catch (err) {
+            console.warn(
+                `[createBooking] recurring plan bootstrap skipped for booking ${bookingData.id}:`,
+                err?.message || err
+            );
+        }
+
         try {
             await Promise.all([
                 attachNoShowPolicyOnBooking(bookingData.id, zoneId),
@@ -3721,4 +3733,6 @@ class CustomerOrderService {
 
 const customerOrderService = new CustomerOrderService();
 customerOrderService.bookingEventSentCheckTheShops = bookingEventSentCheckTheShops;
+customerOrderService.findPreferredShopForCustomer = findPreferredShopForCustomer;
+customerOrderService.notifyPreferredShopOnly = notifyPreferredShopOnly;
 module.exports = customerOrderService;

@@ -78,6 +78,28 @@ module.exports = {
         settingGroup: "invoice",
         envKey: "INVOICE_AUTO_CHARGE_RETRY_GAP_MS",
       },
+      {
+        settingKey: "recurringAutoCreateEnabled",
+        settingValue: isTruthyEnv(envOr("RECURRING_AUTO_CREATE_ENABLED", "true"))
+          ? "true"
+          : "false",
+        valueType: "boolean",
+        label: "Recurring auto-create",
+        description:
+          "Auto-generate the next booking when a recurring order is delivered.",
+        settingGroup: "booking_assignment",
+        envKey: "RECURRING_AUTO_CREATE_ENABLED",
+      },
+      {
+        settingKey: "recurringMaxFailuresBeforePause",
+        settingValue: envOr("RECURRING_MAX_FAILURES_BEFORE_PAUSE", "3"),
+        valueType: "integer",
+        label: "Recurring max generation failures",
+        description:
+          "Pause recurring plans after this many consecutive auto-generation failures.",
+        settingGroup: "booking_assignment",
+        envKey: "RECURRING_MAX_FAILURES_BEFORE_PAUSE",
+      },
     ]
       .filter((row) => !have.has(row.settingKey))
       .map((row) => ({ ...row, createdAt: now, updatedAt: now }));
@@ -99,6 +121,8 @@ module.exports = {
         "invoiceAutoChargeJobIntervalMs",
         "invoiceAutoChargeMaxAttempts",
         "invoiceAutoChargeRetryGapMs",
+        "recurringAutoCreateEnabled",
+        "recurringMaxFailuresBeforePause",
       ],
     });
   },
