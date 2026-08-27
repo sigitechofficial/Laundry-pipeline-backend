@@ -7,6 +7,18 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 
+function parseOptionalBoolean(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+}
+
 class AddOnCategoryService {
     /**
      * @param {{ name: string, status?: boolean }} data
@@ -30,7 +42,7 @@ class AddOnCategoryService {
         const maxSort = await addOnCategory.max('sortOrder');
         const created = await addOnCategory.create({
             name: trimmedName,
-            status: status === undefined ? true : Boolean(status),
+            status: parseOptionalBoolean(status) ?? true,
             sortOrder: (Number(maxSort) || 0) + 1,
         });
 
@@ -50,7 +62,7 @@ class AddOnCategoryService {
                     model: addOnServices,
                     as: 'addOnServices',
                     required: false,
-                    attributes: ['id', 'name', 'price', 'addOnCategoryId', 'sortOrder'],
+                    attributes: ['id', 'name', 'price', 'status', 'addOnCategoryId', 'sortOrder'],
                 }
             ]
             : [];
@@ -85,7 +97,7 @@ class AddOnCategoryService {
                     model: addOnServices,
                     as: 'addOnServices',
                     required: false,
-                    attributes: ['id', 'name', 'price', 'addOnCategoryId', 'sortOrder'],
+                    attributes: ['id', 'name', 'price', 'status', 'addOnCategoryId', 'sortOrder'],
                 }
             ],
             order: [
@@ -136,7 +148,7 @@ class AddOnCategoryService {
 
         const payload = {
             name: nextName,
-            status: status === undefined ? row.status : Boolean(status),
+            status: parseOptionalBoolean(status) ?? row.status,
         };
         if (sortOrder !== undefined && !Number.isNaN(Number(sortOrder))) {
             payload.sortOrder = Number(sortOrder);

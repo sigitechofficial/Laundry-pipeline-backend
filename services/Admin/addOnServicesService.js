@@ -7,6 +7,18 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 
+function parseOptionalBoolean(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+}
+
 const CATEGORY_INCLUDE = {
     model: addOnCategory,
     as: 'category',
@@ -26,17 +38,17 @@ const CATEGORY_INCLUDE_WITH_LINKS = {
         {
             model: subCategories,
             as: 'subCategories',
-            attributes: ['id'],
+            attributes: ['id', 'status'],
             through: { attributes: [] }
         },
         {
             model: categories,
             as: 'catalogCategories',
-            attributes: ['id'],
+            attributes: ['id', 'status'],
             through: { attributes: [] },
             include: [{
                 model: subCategories,
-                attributes: ['id'],
+                attributes: ['id', 'status'],
                 required: false,
                 include: [{
                     model: addOnCategory,
@@ -56,13 +68,16 @@ function collectLinkedSubCategoryIds(plainCategory) {
 
     // Direct subcategory ↔ add-on-category links always apply.
     for (const sc of plainCategory?.subCategories || []) {
+        if (sc?.status === false) continue;
         const id = Number(sc?.id);
         if (Number.isInteger(id) && id > 0) ids.add(id);
     }
 
     // Inherited via catalog category, minus per-item exclusions.
     for (const catalogCat of plainCategory?.catalogCategories || []) {
+        if (catalogCat?.status === false) continue;
         for (const sc of catalogCat?.subCategories || []) {
+            if (sc?.status === false) continue;
             const id = Number(sc?.id);
             if (!Number.isInteger(id) || id <= 0) continue;
             const excluded = (sc.excludedAddOnCategories || []).some(
@@ -84,10 +99,10 @@ async function assertCategoryExists(addOnCategoryId) {
 
 class AddOnServicesService {
     /**
-     * @param {{ name: string, price: number|string, addOnCategoryId?: number|string }} data
+     * @param {{ name: string, price: number|string, addOnCategoryId?: number|string, status?: boolean|string|number }} data
      */
     async createAddOnService(data) {
-        const { name, price, addOnCategoryId } = data;
+        const { name, price, addOnCategoryId, status } = data;
 
         if (!name || String(name).trim() === '') {
             throw new ValidationError('Name is required');
@@ -123,6 +138,7 @@ class AddOnServicesService {
         const created = await addOnServices.create({
             name: trimmedName,
             price: numericPrice,
+            status: parseOptionalBoolean(status) ?? true,
             addOnCategoryId: categoryId,
             sortOrder: await this._nextSortOrder(categoryId),
         });
@@ -140,11 +156,12 @@ class AddOnServicesService {
     }
 
     /**
-     * @param {{ addOnCategoryId?: number|string }} [filters]
+     * @param {{ addOnCategoryId?: number|string, activeOnly?: boolean|string|number }} [filters]
      */
     async getAllAddOnServices(filters = {}) {
         const where = {};
         const { addOnCategoryId } = filters;
+        const activeOnly = parseOptionalBoolean(filters.activeOnly) === true;
 
         if (addOnCategoryId !== undefined && addOnCategoryId !== null && addOnCategoryId !== '') {
             const categoryId = Number(addOnCategoryId);
@@ -152,6 +169,9 @@ class AddOnServicesService {
                 throw new ValidationError('addOnCategoryId must be a valid category ID');
             }
             where.addOnCategoryId = categoryId;
+        }
+        if (activeOnly) {
+            where.status = true;
         }
 
         const rows = await addOnServices.findAll({
@@ -166,7 +186,7 @@ class AddOnServicesService {
         // Flatten the linked items so the frontend can filter add-on services
         // by sub-category id (e.g. show "Repair Trouser" services under Trouser).
         // Includes items inherited from catalog-category → add-on-category links.
-        return rows.map((row) => {
+        const mapped = rows.map((row) => {
             const plain = row.toJSON();
             plain.subCategoryIds = collectLinkedSubCategoryIds(plain.category);
             if (plain.category) {
@@ -174,6 +194,15 @@ class AddOnServicesService {
                 delete plain.category.catalogCategories;
             }
             return plain;
+        });
+
+        if (!activeOnly) {
+            return mapped;
+        }
+
+        return mapped.filter((row) => {
+            // Null category is permitted; otherwise category must also be active.
+            return row.category == null || row.category.status === true;
         });
     }
 
@@ -195,10 +224,10 @@ class AddOnServicesService {
 
     /**
      * @param {number|string} addOnServiceId
-     * @param {{ name?: string, price?: number|string }} data
+     * @param {{ name?: string, price?: number|string, status?: boolean|string|number }} data
      */
     async updateAddOnService(addOnServiceId, data) {
-        const { name, price, addOnCategoryId } = data;
+        const { name, price, addOnCategoryId, status } = data;
 
         if (!addOnServiceId) {
             throw new ValidationError('Add-on service ID is required');
@@ -253,7 +282,8 @@ class AddOnServicesService {
         await row.update({
             name: nextName,
             price: nextPrice,
-            addOnCategoryId: nextCategoryId
+            addOnCategoryId: nextCategoryId,
+            status: parseOptionalBoolean(status) ?? row.status,
         });
 
         return this.getAddOnServiceById(addOnServiceId);

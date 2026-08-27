@@ -5364,6 +5364,7 @@ exports.serviceDetail = async (req, res) => {
         include: [
             {
                 model: service,
+                where: { status: true },
                 attributes: [
                     'id',
                     'name',
@@ -5380,12 +5381,14 @@ exports.serviceDetail = async (req, res) => {
             },
             {
                 model: categories,
+                where: { status: true },
                 attributes: ['id', 'name', 'status', 'image', 'description'],
                 paranoid: true,
                 required: true,
                 include: [
                     {
                         model: subCategories,
+                        where: { status: true },
                         attributes: ['id', 'name', 'status', 'price', 'unitCount', 'description', 'deletedAt'],
                         paranoid: true,
                         required: false
@@ -7203,7 +7206,7 @@ exports.getActivePolicies = async (req, res) => {
  * Lists all add-on services from the admin-managed catalog (same data as admin getAllAddOnServices).
  */
 exports.getAllAddOnServices = async (req, res) => {
-    const rows = await addOnServicesService.getAllAddOnServices();
+    const rows = await addOnServicesService.getAllAddOnServices({ activeOnly: true });
     return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 };
 

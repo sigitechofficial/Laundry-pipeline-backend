@@ -53,6 +53,18 @@ function parseServiceBoolean(value) {
     return value === true || value === 'true' || value === 1 || value === '1';
 }
 
+function parseOptionalBoolean(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return Boolean(value);
+}
+
 const SERVICE_WRITABLE_FIELDS = [
     'name',
     'description',
@@ -88,6 +100,9 @@ function normalizeServicePayload(serviceData) {
         data.washBleedDisclaimerEnabled = parseServiceBoolean(
             data.washBleedDisclaimerEnabled
         );
+    }
+    if (data.status !== undefined) {
+        data.status = parseOptionalBoolean(data.status);
     }
     return data;
 }
@@ -264,7 +279,11 @@ class ServiceManagementService {
      */
     async editSubcategories(subCategoryId, subCategoryData) {
         const { addOnCategoryIds, excludedAddOnCategoryIds, ...rest } = subCategoryData;
-        const editSubcategory = await subCategories.update(rest, { where: { id: subCategoryId } });
+        const payload = { ...rest };
+        if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+            payload.status = parseOptionalBoolean(payload.status);
+        }
+        const editSubcategory = await subCategories.update(payload, { where: { id: subCategoryId } });
         if (!editSubcategory) {
             throw new NotFoundError('Subcategory Not Found')
         }
@@ -356,10 +375,10 @@ class ServiceManagementService {
      */
     async getAllServices() {
             const getServices = await service.findAll({
-                where: {
-                    status: true,
-                },
-                order: [['sortOrder', 'ASC']]
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                ]
             });
 
             // Create an object with service names as keys and counts as values
@@ -441,7 +460,8 @@ class ServiceManagementService {
         allowedFields.forEach((field) => {
             if (rest[field] === undefined) return;
             if (field === 'serviceId' && rest[field] === '') return;
-            payload[field] = rest[field];
+            payload[field] =
+                field === 'status' ? parseOptionalBoolean(rest[field]) : rest[field];
         });
 
         if (payload.serviceId != null && payload.serviceId !== '') {
@@ -631,7 +651,7 @@ class ServiceManagementService {
                 description: categoryData.description,
                 image: categoryData.image,
                 status:
-                    categoryData.status !== undefined ? categoryData.status : true,
+                    parseOptionalBoolean(categoryData.status) ?? true,
                 serviceId,
             };
 

@@ -2143,7 +2143,8 @@ async function createAddOnService(req, res) {
 
 async function getAllAddOnServices(req, res) {
     const rows = await addOnServicesService.getAllAddOnServices({
-        addOnCategoryId: req.query.addOnCategoryId
+        addOnCategoryId: req.query.addOnCategoryId,
+        activeOnly: req.query.activeOnly,
     });
     return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 }

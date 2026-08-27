@@ -3098,6 +3098,7 @@ class CustomerOrderService {
      */
     async allServices() {
         const rows = await service.findAll({
+            where: { status: true },
             order: [['sortOrder', 'ASC']],
         });
 
