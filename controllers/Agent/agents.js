@@ -1258,10 +1258,10 @@ exports.orderDetailsById = async (req, res) => {
 const AGENT_PICKUP_STATUSES = [3, 4, 5, 6, 7];
 /** Invoice tab — at shop / services added. Once invoice is generated (10+) leave this tab. */
 const AGENT_INVOICE_STATUSES = [8, 9];
-/** Processing tab — invoice generated through wash complete (ready for OFD assign). */
-const AGENT_PROCESSING_STATUSES = [10, 11, 12];
-/** Out for delivery through delivered — Orders / day tabs (not Processing). */
-const AGENT_POST_FACILITY_STATUSES = [13, 14, 15, 16];
+/** Processing tab — invoice generated + washing. Completed at Facility (12) leaves this tab. */
+const AGENT_PROCESSING_STATUSES = [10, 11];
+/** Facility complete through delivered — Orders / day tabs (not Processing). */
+const AGENT_POST_FACILITY_STATUSES = [12, 13, 14, 15, 16];
 const AGENT_POST_PICKUP_STATUSES = [
     ...AGENT_INVOICE_STATUSES,
     ...AGENT_PROCESSING_STATUSES,
