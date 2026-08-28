@@ -250,6 +250,14 @@ async function hydrateRepairItemsForBooking(
       }
 
       plain.repairItems = items;
+      const pieceSum = items.reduce((n, item) => {
+        const qty = Number(item?.quantity);
+        return n + (Number.isFinite(qty) && qty > 0 ? qty : 1);
+      }, 0);
+      const currentItems = Number(plain.items) || 0;
+      if (pieceSum > 0 && pieceSum > currentItems) {
+        plain.items = pieceSum;
+      }
       return plain;
     });
   } catch (err) {

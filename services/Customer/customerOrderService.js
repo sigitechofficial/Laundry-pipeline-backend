@@ -1377,6 +1377,14 @@ class CustomerOrderService {
         repairItems,
         selectedServiceIds,
     }) {
+        const linesByService = new Map();
+        for (const raw of repairItems) {
+            const sid = Number(raw.serviceId);
+            if (!sid) continue;
+            linesByService.set(sid, (linesByService.get(sid) || 0) + 1);
+        }
+        const qtyByService = new Map();
+
         for (const raw of repairItems) {
             const serviceId = Number(raw.serviceId);
             const repairGarmentId = Number(raw.repairGarmentId);
@@ -1391,7 +1399,7 @@ class CustomerOrderService {
                 : [];
             const instruction =
                 raw.instruction != null ? String(raw.instruction).trim() : '';
-            const quantity = Math.max(1, Number(raw.quantity) || 1);
+            let quantity = Math.max(1, Number(raw.quantity) || 1);
 
             if (!serviceId || !selectedServiceIds.includes(serviceId)) {
                 throw new ValidationError(
@@ -1440,6 +1448,13 @@ class CustomerOrderService {
             const cssRow =
                 serviceCreate.find((s) => Number(s.serviceId) === serviceId) || null;
 
+            // One garment + card item count (e.g. 6 shirts, same hem) must
+            // land on the repair row, not stay as a CSS-only items=6.
+            if ((linesByService.get(serviceId) || 0) === 1) {
+                const cssItems = Number(cssRow?.items) || 0;
+                if (cssItems > quantity) quantity = cssItems;
+            }
+
             const itemRow = await customerSelectedRepairItem.create({
                 bookingId,
                 customerSelectedServiceId: cssRow?.id || null,
@@ -1449,6 +1464,10 @@ class CustomerOrderService {
                 quantity,
                 instruction: instruction || null,
             });
+            qtyByService.set(
+                serviceId,
+                (qtyByService.get(serviceId) || 0) + quantity
+            );
 
             await customerSelectedRepairItemOption.bulkCreate(
                 repairOptionIds.map((optionId) => {
@@ -1470,6 +1489,15 @@ class CustomerOrderService {
                         sortOrder: index + 1,
                     }))
                 );
+            }
+        }
+
+        for (const css of serviceCreate) {
+            const sid = Number(css.serviceId);
+            const sum = qtyByService.get(sid);
+            if (!sum) continue;
+            if (Number(css.items) !== sum) {
+                await css.update({ items: sum });
             }
         }
 

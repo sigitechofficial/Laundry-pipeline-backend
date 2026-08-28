@@ -1935,7 +1935,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             {
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId', 'defaultPaymentMethodId'],
             },
             {
                 model: billingDetails,
@@ -2024,8 +2024,19 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         throw new ValidationError("Stripe customer ID not found for this booking");
     }
 
-    if (!bookingfind.paymentMethodId) {
+    const resolvedPaymentMethodId =
+        bookingfind.paymentMethodId ||
+        bookingfind.customer?.defaultPaymentMethodId ||
+        null;
+    if (!resolvedPaymentMethodId) {
         throw new ValidationError("Payment method not found. Setup Intent was not completed properly.");
+    }
+    if (!bookingfind.paymentMethodId) {
+        await booking.update(
+            { paymentMethodId: resolvedPaymentMethodId },
+            { where: { id: bookingId } }
+        );
+        bookingfind.paymentMethodId = resolvedPaymentMethodId;
     }
 
     const upfrontAmount = parseFloat(bookingfind.billingDetail?.upfrontAmount || 0) || 0;

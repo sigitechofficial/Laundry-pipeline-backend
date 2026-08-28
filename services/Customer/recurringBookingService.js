@@ -1,20 +1,24 @@
 'use strict';
 
 const otpGenerator = require('otp-generator');
-const { Op } = require('sequelize');
 const db = require('../../models');
 const {
   booking,
   recurringPlan,
   customerSelectedService,
-  customerSelectedServiceLine,
   customerSelectedServiceAddOn,
+  customerSelectedServiceLine,
   bookingPreference,
   billingDetails,
   tip,
   users,
   addressDb,
   zone,
+  customerOriginalServiceSnapshot,
+  customerOriginalPreferenceSnapshot,
+  customerSelectedRepairItem,
+  customerSelectedRepairItemOption,
+  customerSelectedRepairItemImage,
 } = db;
 const {
   getOrderExpireTime,
@@ -26,6 +30,10 @@ const {
   isAnyShopOpenInZone,
   isPlatformOpenNow,
 } = require('../../utils/shopWorkingHours');
+const {
+  looksLikeCustomerIntentRow,
+  pickCustomerIntentCloneSource,
+} = require('../../utils/recurringCloneIntent');
 
 const RECURRING_INTERVAL_DAYS = {
   'just once': 0,
@@ -106,116 +114,217 @@ async function ensurePlanForBooking(bookingId, transaction) {
   return plan;
 }
 
-async function cloneServiceRows(sourceBookingId, newBookingId, transaction) {
-  const rows = await customerSelectedService.findAll({
-    where: { bookingId: sourceBookingId, status: true },
+async function loadIntentRowsForClone(sourceBookingId, transaction) {
+  try {
+    const {
+      ensureCustomerDeclaredSnapshot,
+    } = require('../Agent/customerDeclaredServicesService');
+    await ensureCustomerDeclaredSnapshot(sourceBookingId);
+  } catch (err) {
+    console.warn(
+      `[recurring] snapshot ensure failed for ${sourceBookingId}:`,
+      err?.message || err
+    );
+  }
+
+  const snapshotRows = await customerOriginalServiceSnapshot.findAll({
+    where: { bookingId: sourceBookingId },
     include: [
       {
-        model: customerSelectedServiceLine,
-        as: 'serviceLines',
-        required: false,
-      },
-      {
-        model: customerSelectedServiceAddOn,
-        as: 'addOns',
+        model: customerOriginalPreferenceSnapshot,
+        as: 'preferences',
         required: false,
       },
     ],
-    order: [
-      ['id', 'ASC'],
-      [{ model: customerSelectedServiceLine, as: 'serviceLines' }, 'lineNum', 'ASC'],
-      [{ model: customerSelectedServiceAddOn, as: 'addOns' }, 'id', 'ASC'],
-    ],
+    order: [['id', 'ASC']],
     transaction,
   });
 
-  const oldToNewServiceId = new Map();
-  const oldToNewLineId = new Map();
-  const now = new Date();
+  const cssRows = await customerSelectedService.findAll({
+    where: { bookingId: sourceBookingId },
+    include: [
+      {
+        model: bookingPreference,
+        as: 'selectedServicePreferences',
+        required: false,
+      },
+    ],
+    order: [['id', 'ASC']],
+    transaction,
+  });
 
-  for (const row of rows) {
-    const plain = row.get({ plain: true });
+  return pickCustomerIntentCloneSource({
+    snapshotRows: snapshotRows.map((row) => row.get({ plain: true })),
+    cssRows: cssRows.map((row) => row.get({ plain: true })),
+  });
+}
+
+async function cloneCustomerDeclaredRepairs({
+  sourceBookingId,
+  newBookingId,
+  newCssByServiceId,
+  transaction,
+}) {
+  const sourceCss = await customerSelectedService.findAll({
+    where: { bookingId: sourceBookingId },
+    attributes: ['id', 'serviceId', 'subCategoryId'],
+    transaction,
+  });
+  const intentCssIds = new Set(
+    sourceCss.filter(looksLikeCustomerIntentRow).map((row) => row.id)
+  );
+  const declaredServiceIds = new Set(
+    [...newCssByServiceId.keys()].map((id) => Number(id)).filter(Number.isFinite)
+  );
+
+  const repairs = await customerSelectedRepairItem.findAll({
+    where: { bookingId: sourceBookingId },
+    include: [
+      { model: customerSelectedRepairItemOption, as: 'options', required: false },
+      { model: customerSelectedRepairItemImage, as: 'images', required: false },
+    ],
+    order: [['id', 'ASC']],
+    transaction,
+  });
+
+  for (const repair of repairs) {
+    const plain = repair.get({ plain: true });
+    const parentId = plain.customerSelectedServiceId;
+    if (parentId && intentCssIds.size && !intentCssIds.has(parentId)) {
+      continue;
+    }
+    const serviceId = Number(plain.serviceId);
+    if (Number.isFinite(serviceId) && declaredServiceIds.size && !declaredServiceIds.has(serviceId)) {
+      continue;
+    }
+    const created = await customerSelectedRepairItem.create(
+      {
+        bookingId: newBookingId,
+        customerSelectedServiceId: Number.isFinite(serviceId)
+          ? newCssByServiceId.get(serviceId) || null
+          : null,
+        serviceId,
+        repairGarmentId: plain.repairGarmentId,
+        garmentName: plain.garmentName,
+        quantity: plain.quantity || 1,
+        instruction: plain.instruction || null,
+      },
+      { transaction }
+    );
+
+    for (const option of plain.options || []) {
+      await customerSelectedRepairItemOption.create(
+        {
+          customerSelectedRepairItemId: created.id,
+          repairOptionId: option.repairOptionId,
+          optionName: option.optionName,
+          price: option.price || 0,
+        },
+        { transaction }
+      );
+    }
+    for (const image of plain.images || []) {
+      await customerSelectedRepairItemImage.create(
+        {
+          customerSelectedRepairItemId: created.id,
+          imageUrl: image.imageUrl,
+          sortOrder: image.sortOrder || 1,
+        },
+        { transaction }
+      );
+    }
+  }
+}
+
+async function cloneServiceRows(sourceBookingId, newBookingId, transaction) {
+  const picked = await loadIntentRowsForClone(sourceBookingId, transaction);
+  const rows = picked.rows || [];
+  const now = new Date();
+  const newCssByServiceId = new Map();
+
+  if (!rows.length) {
+    console.warn(
+      `[recurring] no customer-intent services to clone from booking=${sourceBookingId}`
+    );
+    return { serviceIds: [] };
+  }
+
+  for (const plain of rows) {
+    const serviceId = Number(plain.serviceId);
     const created = await customerSelectedService.create(
       {
         bookingId: newBookingId,
-        serviceId: plain.serviceId,
-        categoryId: plain.categoryId,
-        subCategoryId: plain.subCategoryId,
+        serviceId: Number.isFinite(serviceId) ? serviceId : plain.serviceId,
+        categoryId: plain.categoryId || null,
+        subCategoryId: null,
         date: plain.date || now,
         time: plain.time || '00:00:00',
-        servicePrice: plain.servicePrice,
-        categoryPrice: plain.categoryPrice,
-        items: plain.items,
-        bags: plain.bags,
+        servicePrice: null,
+        categoryPrice: plain.categoryPrice ?? null,
+        items: plain.items ?? null,
+        bags: plain.bags ?? null,
         status: true,
         serviceInstruction: plain.serviceInstruction || null,
       },
       { transaction }
     );
-    oldToNewServiceId.set(plain.id, created.id);
+    if (Number.isFinite(serviceId)) {
+      newCssByServiceId.set(serviceId, created.id);
+    }
 
-    for (const line of plain.serviceLines || []) {
-      const newLine = await customerSelectedServiceLine.create(
-        {
+    const prefs = plain.preferences || plain.selectedServicePreferences || [];
+    if (prefs.length) {
+      await bookingPreference.bulkCreate(
+        prefs.map((p) => ({
+          bookingId: newBookingId,
           customerSelectedServiceId: created.id,
-          lineNum: line.lineNum || 1,
-          items: line.items || 1,
+          preferenceTypeId: p.preferenceTypeId,
+          preferenceValueId: p.preferenceValueId,
+          parentPreferenceValueId: p.parentPreferenceValueId || null,
+          preferenceInstruction: p.preferenceInstruction || null,
           createdAt: now,
           updatedAt: now,
-        },
-        { transaction }
-      );
-      oldToNewLineId.set(line.id, newLine.id);
-    }
-  }
-
-  for (const row of rows) {
-    const plain = row.get({ plain: true });
-    const mappedServiceId = oldToNewServiceId.get(plain.id);
-    if (!mappedServiceId) continue;
-
-    for (const addOn of plain.addOns || []) {
-      await customerSelectedServiceAddOn.create(
-        {
-          customerSelectedServiceId: mappedServiceId,
-          customerSelectedServiceLineId: addOn.customerSelectedServiceLineId
-            ? oldToNewLineId.get(addOn.customerSelectedServiceLineId) || null
-            : null,
-          addOnServiceId: addOn.addOnServiceId,
-          price: addOn.price || 0,
-          items: addOn.items || 1,
-          instructions: addOn.instructions || null,
-          createdAt: now,
-          updatedAt: now,
-        },
+        })),
         { transaction }
       );
     }
   }
 
-  const oldPreferences = await bookingPreference.findAll({
-    where: { bookingId: sourceBookingId },
+  const bookingLevelPrefs = await customerOriginalPreferenceSnapshot.findAll({
+    where: { bookingId: sourceBookingId, snapshotServiceId: null },
     order: [['id', 'ASC']],
     transaction,
   });
-  if (oldPreferences.length) {
-    const prefRows = oldPreferences.map((p) => {
-      const plain = p.get({ plain: true });
-      return {
-        bookingId: newBookingId,
-        customerSelectedServiceId: plain.customerSelectedServiceId
-          ? oldToNewServiceId.get(plain.customerSelectedServiceId) || null
-          : null,
-        preferenceTypeId: plain.preferenceTypeId,
-        preferenceValueId: plain.preferenceValueId,
-        parentPreferenceValueId: plain.parentPreferenceValueId || null,
-        preferenceInstruction: plain.preferenceInstruction || null,
-        createdAt: now,
-        updatedAt: now,
-      };
-    });
-    await bookingPreference.bulkCreate(prefRows, { transaction });
+  if (bookingLevelPrefs.length) {
+    await bookingPreference.bulkCreate(
+      bookingLevelPrefs.map((p) => {
+        const plain = p.get({ plain: true });
+        return {
+          bookingId: newBookingId,
+          customerSelectedServiceId: null,
+          preferenceTypeId: plain.preferenceTypeId,
+          preferenceValueId: plain.preferenceValueId,
+          parentPreferenceValueId: plain.parentPreferenceValueId || null,
+          preferenceInstruction: plain.preferenceInstruction || null,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }),
+      { transaction }
+    );
   }
+
+  await cloneCustomerDeclaredRepairs({
+    sourceBookingId,
+    newBookingId,
+    newCssByServiceId,
+    transaction,
+  });
+
+  return {
+    serviceIds: [...newCssByServiceId.keys()],
+    cloneSource: picked.source,
+  };
 }
 
 async function applyAssignmentVisibility({
@@ -462,6 +571,16 @@ async function generateNextBookingFromCompleted({
       return { generated: false, reason: 'invalid_source_dates' };
     }
 
+    const customerUser = await users.findByPk(source.customerId, {
+      attributes: ['id', 'defaultPaymentMethodId', 'stripeCustomerId'],
+      transaction: tx,
+    });
+    const paymentType = source.paymentType || 'card';
+    const paymentMethodId =
+      paymentType === 'card'
+        ? source.paymentMethodId || customerUser?.defaultPaymentMethodId || null
+        : null;
+
     const plan = await ensurePlanForBooking(source.id, tx);
     const created = await booking.create(
       {
@@ -479,14 +598,18 @@ async function generateNextBookingFromCompleted({
         dropOffAddressId: source.dropOffAddressId,
         totalItems: source.totalItems || 0,
         totalBags: source.totalBags != null ? source.totalBags : null,
+        noOfBags: source.noOfBags != null ? source.noOfBags : null,
         sameBagForAllServices: source.sameBagForAllServices !== false,
         paymentConfirmed: false,
-        partialPayment: false,
+        partialPayment: paymentType !== 'cash',
         zoneId: source.zoneId,
         driverInstructionOptions: source.driverInstructionOptions,
         driverInstructionOptions1: source.driverInstructionOptions1,
         subTotal: source.subTotal || 0,
-        paymentType: source.paymentType || 'card',
+        paymentType,
+        paymentMethodId,
+        setupIntentId: null,
+        paymentIntentId: null,
         operationalTimeZone: source.operationalTimeZone || timeZone || null,
         customerLocalTimeZone: source.customerLocalTimeZone || null,
         recurringPlanId: plan?.id || null,
@@ -528,30 +651,48 @@ async function generateNextBookingFromCompleted({
       );
     }
 
-    await cloneServiceRows(source.id, created.id, tx);
+    const cloned = await cloneServiceRows(source.id, created.id, tx);
 
     const sourceBilling = source.billingDetail
       ? source.billingDetail.get({ plain: true })
       : null;
+    const zoneRow = source.zoneId
+      ? await zone.findByPk(source.zoneId, {
+          attributes: ['id', 'zoneMinimumAmount', 'serviceCharge'],
+          transaction: tx,
+        })
+      : null;
+    const upfrontAmount =
+      Number(zoneRow?.zoneMinimumAmount ?? sourceBilling?.upfrontAmount ?? 0) || 0;
+    const serviceCharge =
+      Number(zoneRow?.serviceCharge ?? sourceBilling?.serviceCharge ?? 0) || 0;
+    const tipAmount = Array.isArray(source.tips)
+      ? Number(source.tips[0]?.amount || 0) || 0
+      : 0;
+    const prepaidTotal = Number(
+      (upfrontAmount + serviceCharge + tipAmount).toFixed(2)
+    );
+
     await billingDetails.create(
       {
         bookingId: created.id,
-        upfrontAmount: sourceBilling?.upfrontAmount ?? 0,
+        upfrontAmount,
         discount: 0,
-        total: sourceBilling?.upfrontAmount ?? 0,
-        serviceCharge: sourceBilling?.serviceCharge ?? 0,
+        total: prepaidTotal,
+        serviceCharge,
         categoryCharge: 0,
         paymentStatus: 'Pending',
       },
       { transaction: tx }
     );
 
-    const sourceTip = Array.isArray(source.tips) ? source.tips[0] : null;
-    if (sourceTip && Number(sourceTip.amount) > 0) {
+    await created.update({ subTotal: prepaidTotal }, { transaction: tx });
+
+    if (tipAmount > 0) {
       await tip.create(
         {
           bookingId: created.id,
-          amount: Number(sourceTip.amount),
+          amount: tipAmount,
           createdAt: new Date(),
           updatedAt: new Date(),
         },
@@ -561,8 +702,20 @@ async function generateNextBookingFromCompleted({
 
     await tx.commit();
 
-    const servicesPayload = (source.customerSelectedServices || [])
-      .map((svc) => ({ serviceId: Number(svc.serviceId) }))
+    try {
+      const {
+        ensureCustomerDeclaredSnapshot,
+      } = require('../Agent/customerDeclaredServicesService');
+      await ensureCustomerDeclaredSnapshot(created.id);
+    } catch (err) {
+      console.warn(
+        `[recurring] snapshot for generated booking ${created.id} failed:`,
+        err?.message || err
+      );
+    }
+
+    const servicesPayload = (cloned.serviceIds || [])
+      .map((serviceId) => ({ serviceId: Number(serviceId) }))
       .filter((svc) => Number.isFinite(svc.serviceId) && svc.serviceId > 0);
 
     const assignmentResult = await applyAssignmentVisibility({
@@ -580,7 +733,7 @@ async function generateNextBookingFromCompleted({
     });
 
     console.log(
-      `[recurring] source=${source.id} generated booking=${created.id} mode=${assignmentResult.mode}`
+      `[recurring] source=${source.id} generated booking=${created.id} mode=${assignmentResult.mode} clone=${cloned.cloneSource || 'unknown'} paymentMethod=${paymentMethodId ? 'attached' : 'missing'}`
     );
 
     return {
