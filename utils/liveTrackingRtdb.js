@@ -8,9 +8,31 @@ const { addressDb, users, booking } = require('../models');
 const { ensureFirebaseReady, getFirebaseDatabaseUrl } = require('./notification');
 
 const LIVE_TRACKING_ROOT = 'liveTracking';
+/** Awaiting collection — demo / pre-trip pickup (one step before “I’m on the way”). */
+const PRE_TRIP_STATUS_PICKUP = 3;
 const ACTIVE_STATUS_PICKUP = 4;
+/** Facility done — demo / pre-trip delivery (one step before Out for Delivery). */
+const PRE_TRIP_STATUS_DELIVERY = 12;
 const ACTIVE_STATUS_DELIVERY = 13;
-const CLOSE_STATUSES = new Set([3, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 21, 22, 24]);
+const CLOSE_STATUSES = new Set([5, 6, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 21, 22, 24]);
+
+function isPickupTrackableStatus(statusId) {
+  const id = Number(statusId);
+  return id === PRE_TRIP_STATUS_PICKUP || id === ACTIVE_STATUS_PICKUP;
+}
+
+function isDeliveryTrackableStatus(statusId) {
+  const id = Number(statusId);
+  return id === PRE_TRIP_STATUS_DELIVERY || id === ACTIVE_STATUS_DELIVERY;
+}
+
+function isLiveTrackableStatus(statusId) {
+  return isPickupTrackableStatus(statusId) || isDeliveryTrackableStatus(statusId);
+}
+
+function legForStatus(statusId) {
+  return isDeliveryTrackableStatus(statusId) ? 'delivery' : 'pickup';
+}
 
 function getDb() {
   if (!ensureFirebaseReady()) {
@@ -95,7 +117,7 @@ async function loadAgentDisplay(agentId) {
 }
 
 /**
- * Open or refresh an active live-tracking session for pickup (4) or delivery (13).
+ * Open or refresh an active live-tracking session for pickup (3/4) or delivery (12/13).
  */
 async function openLiveTrackingSession({
   bookingId,
@@ -204,7 +226,9 @@ async function closeLiveTrackingSession(bookingId, { reason = 'ended' } = {}) {
 }
 
 /**
- * Open session for status 4 / 13; close for arrived / cancel / hold.
+ * Auto-open session only once the driver is in transit (4 / 13).
+ * Status 3 / 12 stay trackable for explicit demo / publisher start, but do not
+ * auto-open on every accept / facility-complete. Close for arrived / cancel / hold.
  * Safe to call fire-and-forget (never throws to caller).
  */
 async function syncLiveTrackingForBookingStatus(bookingId, bookingStatusId, extras = {}) {
@@ -313,9 +337,15 @@ async function getLiveTrackingSnapshot(bookingId) {
 
 module.exports = {
   LIVE_TRACKING_ROOT,
+  PRE_TRIP_STATUS_PICKUP,
+  PRE_TRIP_STATUS_DELIVERY,
   ACTIVE_STATUS_PICKUP,
   ACTIVE_STATUS_DELIVERY,
   CLOSE_STATUSES,
+  isPickupTrackableStatus,
+  isDeliveryTrackableStatus,
+  isLiveTrackableStatus,
+  legForStatus,
   openLiveTrackingSession,
   closeLiveTrackingSession,
   syncLiveTrackingForBookingStatus,

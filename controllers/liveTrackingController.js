@@ -12,8 +12,9 @@ const {
 } = require('../middlewares/universalErrorHandler');
 const {
   LIVE_TRACKING_ROOT,
-  ACTIVE_STATUS_PICKUP,
-  ACTIVE_STATUS_DELIVERY,
+  isDeliveryTrackableStatus,
+  isLiveTrackableStatus,
+  legForStatus,
   getLiveTrackingSnapshot,
   openLiveTrackingSession,
 } = require('../utils/liveTrackingRtdb');
@@ -21,12 +22,11 @@ const { createLiveTrackingCustomToken } = require('../utils/liveTrackingAuth');
 const { getFirebaseDatabaseUrl } = require('../utils/notification');
 const { StatusCodes } = require('http-status-codes');
 
-function isLiveTrackableStatus(statusId) {
-  return statusId === ACTIVE_STATUS_PICKUP || statusId === ACTIVE_STATUS_DELIVERY;
-}
-
-function legForStatus(statusId) {
-  return statusId === ACTIVE_STATUS_DELIVERY ? 'delivery' : 'pickup';
+function assignedDriverIdForTracking(bookingRow, statusId) {
+  if (isDeliveryTrackableStatus(statusId)) {
+    return bookingRow.deliveryDriverId || bookingRow.driverId;
+  }
+  return bookingRow.driverId;
 }
 
 function isWithinReadGrace(snapshot) {
@@ -166,10 +166,7 @@ exports.getAgentLiveTracking = async (req, res) => {
 
   const statusId = Number(bookingRow.bookingStatusId);
   const enabled = isLiveTrackableStatus(statusId);
-  const assignedDriverId =
-    statusId === ACTIVE_STATUS_DELIVERY
-      ? bookingRow.deliveryDriverId || bookingRow.driverId
-      : bookingRow.driverId;
+  const assignedDriverId = assignedDriverIdForTracking(bookingRow, statusId);
 
   if (!assignedDriverId) {
     throw new ForbiddenError('No driver is assigned to this booking');
@@ -245,10 +242,7 @@ exports.startDemoLiveTrackingStream = async (req, res) => {
   }
 
   const statusId = Number(bookingRow.bookingStatusId);
-  const assignedDriverId =
-    statusId === ACTIVE_STATUS_DELIVERY
-      ? bookingRow.deliveryDriverId || bookingRow.driverId
-      : bookingRow.driverId;
+  const assignedDriverId = assignedDriverIdForTracking(bookingRow, statusId);
 
   if (!assignedDriverId || Number(assignedDriverId) !== Number(agentId)) {
     throw new ForbiddenError('You are not the assigned driver for this booking');
@@ -306,10 +300,7 @@ exports.stopDemoLiveTrackingStream = async (req, res) => {
   }
 
   const statusId = Number(bookingRow.bookingStatusId);
-  const assignedDriverId =
-    statusId === ACTIVE_STATUS_DELIVERY
-      ? bookingRow.deliveryDriverId || bookingRow.driverId
-      : bookingRow.driverId;
+  const assignedDriverId = assignedDriverIdForTracking(bookingRow, statusId);
 
   if (!assignedDriverId || Number(assignedDriverId) !== Number(agentId)) {
     throw new ForbiddenError('You are not the assigned driver for this booking');

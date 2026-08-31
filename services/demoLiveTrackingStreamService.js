@@ -10,8 +10,8 @@ const { getDatabase } = require('firebase-admin/database');
 const {
   openLiveTrackingSession,
   getLiveTrackingSnapshot,
-  ACTIVE_STATUS_PICKUP,
-  ACTIVE_STATUS_DELIVERY,
+  isLiveTrackableStatus,
+  legForStatus,
 } = require('../utils/liveTrackingRtdb');
 
 /** @type {Map<number, { timer: NodeJS.Timeout, stopping: boolean }>} */
@@ -112,13 +112,15 @@ async function startDemoStream({
   stopDemoStream(id);
 
   const statusId = Number(bookingRow.bookingStatusId);
-  if (statusId !== ACTIVE_STATUS_PICKUP && statusId !== ACTIVE_STATUS_DELIVERY) {
-    const err = new Error('Booking must be status 4 (on the way) or 13 (OFD)');
+  if (!isLiveTrackableStatus(statusId)) {
+    const err = new Error(
+      'Booking must be status 3/4 (pickup) or 12/13 (delivery) to start demo tracking'
+    );
     err.code = 'NOT_IN_TRANSIT';
     throw err;
   }
 
-  const leg = statusId === ACTIVE_STATUS_DELIVERY ? 'delivery' : 'pickup';
+  const leg = legForStatus(statusId);
   const open = await openLiveTrackingSession({
     bookingId: id,
     leg,
