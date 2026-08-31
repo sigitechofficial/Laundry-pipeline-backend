@@ -937,6 +937,7 @@ class AgentInvoiceManagementService {
                 "bookingStatusId",
                 "invoiceStatus",
                 "invoiceDraftSavedAt",
+                "createdAt",
             ],
             include: [
                 {

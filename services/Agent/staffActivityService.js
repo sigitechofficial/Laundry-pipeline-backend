@@ -54,10 +54,13 @@ class StaffActivityService {
 
         const shopBookings = await booking.findAll({
             where: { laundryShopId: shopAddressId },
-            attributes: ['id'],
+            attributes: ['id', 'createdAt', 'orderTrackId'],
             raw: true,
         });
         const bookingIds = shopBookings.map((b) => b.id);
+        const bookingCreatedAtById = new Map(
+            shopBookings.map((b) => [Number(b.id), b.createdAt])
+        );
         if (!bookingIds.length) {
             return { drivers: [], from, to };
         }
@@ -138,6 +141,7 @@ class StaffActivityService {
                 'deliveryCompletedAt',
                 'bookingStatusId',
                 'updatedAt',
+                'createdAt',
             ],
             limit: 500,
         });
@@ -168,6 +172,7 @@ class StaffActivityService {
                         'collectionDate',
                         'deliveryDate',
                         'updatedAt',
+                        'createdAt',
                     ],
                     limit: 200,
                 });
@@ -238,6 +243,7 @@ class StaffActivityService {
                 action: plain.action,
                 eventSource: plain.source,
                 at: plain.createdAt,
+                createdAt: bookingCreatedAtById.get(Number(plain.bookingId)),
             });
         }
 
@@ -282,6 +288,8 @@ class StaffActivityService {
                         assignmentType: 'pickup',
                         action: 'complete',
                         at: plain.pickupCompletedAt || plain.updatedAt,
+                        createdAt: plain.createdAt
+                            || bookingCreatedAtById.get(Number(plain.id)),
                     });
                 }
             }
@@ -303,6 +311,8 @@ class StaffActivityService {
                         assignmentType: 'delivery',
                         action: 'complete',
                         at: plain.deliveryCompletedAt || plain.updatedAt,
+                        createdAt: plain.createdAt
+                            || bookingCreatedAtById.get(Number(plain.id)),
                     });
                 }
             }
@@ -340,6 +350,8 @@ class StaffActivityService {
                     action: 'assigned',
                     bookingStatusId: plain.bookingStatusId,
                     at: plain.collectionDate || plain.updatedAt,
+                    createdAt: plain.createdAt
+                        || bookingCreatedAtById.get(Number(plain.id)),
                 });
             }
             if (
@@ -356,6 +368,8 @@ class StaffActivityService {
                     action: 'assigned',
                     bookingStatusId: plain.bookingStatusId,
                     at: plain.deliveryDate || plain.updatedAt,
+                    createdAt: plain.createdAt
+                        || bookingCreatedAtById.get(Number(plain.id)),
                 });
             }
         }

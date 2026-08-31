@@ -1017,6 +1017,7 @@ exports.getAgentOrder = async (req, res) => {
             "deliveryTimeTo",
             "laundryShopId",
             "customerId",
+            "createdAt",
         ],
     });
     console.log("ðŸš€ ~ getAgentOrder ~ getBooking:", getBooking);
@@ -1038,6 +1039,7 @@ exports.getAgentOrder = async (req, res) => {
             deliveryTimeTo: b.deliveryTimeTo,
             laundryShopId: b.laundryShopId,
             customerId: b.customerId,
+            createdAt: b.createdAt,
             customer: {
                 id: b.customer?.id,
                 firstName: b.customer?.firstName,
@@ -1386,6 +1388,7 @@ exports.agentBookingFilters = async (req, res) => {
         "sameBagForAllServices", "noOfBags",
         "pickupAttemptCount", "pickupRescheduleRequired", "deliveryAttemptCount",
         "driverId", "deliveryDriverId",
+        "createdAt",
     ];
 
     // ── Fresh includes factory — returns NEW objects every call ─────────────
@@ -1857,7 +1860,8 @@ exports.invoiceDetailTab = async (req, res) => {
             "driverInstructionOptions",
             "driverInstructionOptions1",
             "driverInstruction",
-            "bookingStatusId"
+            "bookingStatusId",
+            "createdAt",
         ],
         include: [
             {
@@ -7074,6 +7078,7 @@ const getSlotBookings = async (laundryShopId, filterDate, staffScope = null) => 
                     "deliveryAttemptCount",
                     "driverId",
                     "deliveryDriverId",
+                    "createdAt",
                 ],
                 include: [
                     {

@@ -943,7 +943,8 @@ class AgentOrderManagementService {
                 "deliveryDate",
                 "driverInstructionOptions",
                 "driverInstructionOptions1",
-                "bookingStatusId"
+                "bookingStatusId",
+                "createdAt",
             ],
             include: [
                 {
@@ -1088,7 +1089,8 @@ class AgentOrderManagementService {
                         "deliveryDate",
                         "driverInstructionOptions",
                         "driverInstructionOptions1",
-                        "bookingStatusId"
+                        "bookingStatusId",
+                        "createdAt",
                     ],
                     include: [
                         {

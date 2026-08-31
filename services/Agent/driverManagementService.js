@@ -592,6 +592,7 @@ class AgentDriverManagementService {
                 'collectionDate',
                 'deliveryDate',
                 'laundryShopId',
+                'createdAt',
             ],
             include: [
                 {
