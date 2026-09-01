@@ -67,10 +67,11 @@ const {
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
-const { sumActiveBookingServicesSubtotal } = require('../../utils/invoiceLineTotals');
+const { sumActiveBookingServicesSubtotal, computePhysicalTotalItems } = require('../../utils/invoiceLineTotals');
 const {
     getFrozenCustomerDeclaredServices,
     getAgentAddedServicesForCustomer,
+    getBookingRepairItems,
 } = require('../Agent/customerDeclaredServicesService');
 const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType, enrichPaymentSummary } = require('../../utils/invoicePaymentSummary');
 const { literal, fn, col } = require("sequelize");
@@ -3056,12 +3057,29 @@ class CustomerOrderService {
 
         const track = buildOrderTrackTimeline(bookingPlain);
 
+        let bookingRepairItems = bookingPlain.repairItems || [];
+        try {
+            if (!Array.isArray(bookingRepairItems) || bookingRepairItems.length === 0) {
+                bookingRepairItems = await getBookingRepairItems(bookingPlain.id);
+            }
+        } catch (err) {
+            console.warn(
+                '[bookingDetailsById] repairItems for item count skipped:',
+                err?.message || err
+            );
+        }
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
             invoiceGenerated: hasInvoiceTotals,
             customerDeclaredServices,
             agentAddedServices,
+            totalItems: computePhysicalTotalItems({
+                customerSelectedServices: bookingPlain.customerSelectedServices,
+                customerDeclaredServices,
+                repairItems: bookingRepairItems,
+            }),
             paymentSummary,
             paymentIssue,
             cardDetails,

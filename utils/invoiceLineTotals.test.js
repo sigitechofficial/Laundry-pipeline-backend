@@ -11,6 +11,7 @@ const {
     getSelectedServiceRowSubtotal,
     getAddOnRowSubtotal,
     normalizeAddOnEntriesFromService,
+    computePhysicalTotalItems,
 } = require('./invoiceLineTotals');
 
 function runTests() {
@@ -87,6 +88,31 @@ function runTests() {
         + getAddOnRowSubtotal({ price: 3, items: 2 });
     assert.strictEqual(addons395, 17);
     assert.strictEqual(services395 + addons395, 41.75);
+
+    // Order 1357-139733 style: 3 wash pieces + 16 garments, each with many
+    // priced repair options at qty 12. Badge must stay 19, not 195.
+    assert.strictEqual(
+        computePhysicalTotalItems({
+            customerSelectedServices: [
+                { serviceId: 1, items: 2, status: true, service: { name: 'Wash & Fold' } },
+                { serviceId: 1, items: 1, status: true, service: { name: 'Wash & Fold' } },
+                {
+                    serviceId: 2,
+                    items: 12,
+                    status: true,
+                    service: { name: 'Alteration & Repair' },
+                    repairItems: [{ quantity: 1 }, { quantity: 1 }],
+                },
+                { serviceId: 2, items: 12, status: true, service: { name: 'Alteration & Repair' } },
+                { serviceId: 2, items: 12, status: true, service: { name: 'Alteration & Repair' } },
+            ],
+            repairItems: Array.from({ length: 16 }, () => ({
+                serviceId: 2,
+                quantity: 1,
+            })),
+        }),
+        19
+    );
 
     console.log('invoiceLineTotals.test.js: all assertions passed');
 }

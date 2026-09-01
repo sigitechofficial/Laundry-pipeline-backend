@@ -78,6 +78,7 @@ const {
     serviceLineHasAddOnPayload,
     replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
+    computePhysicalTotalItems,
 } = require("../../utils/invoiceLineTotals");
 const dbModels = require("../../models");
 const {
@@ -4469,24 +4470,13 @@ exports.invoiceCreation = async (req, res) => {
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
     bookingData.servicesSubtotal = servicesSubtotal;
 
-    // Invoice-level item count = Σ(service.items × subCategory.unitCount).
-    // In shared/all-in-one mode, booking.totalItems is the customer's declared
-    // global count. Do not replace it with 0 before itemisation or with the
-    // agent's partial invoice-line count while services are being added.
-    const customerDeclaredTotalItems = Number(bookingData.totalItems) || 0;
-    const invoiceLineTotalItems = (bookingData.customerSelectedServices || []).reduce((sum, s) => {
-        const qty = Number(s.items) || 0;
-        const rawUnit = Number(s.subCategory?.unitCount);
-        const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? Math.floor(rawUnit) : 1;
-        return sum + qty * unit;
-    }, 0);
-    const hasSharedCustomerCount =
-        (bookingData.allInOneBag === true ||
-            bookingData.sameBagForAllServices === true) &&
-        customerDeclaredTotalItems > 0;
-    bookingData.totalItems = hasSharedCustomerCount
-        ? customerDeclaredTotalItems
-        : invoiceLineTotalItems;
+    // Physical items (wash qty + unique repair garments). Do not Σ priced
+    // repair-option lines — that inflates e.g. 19 garments into "195 items".
+    bookingData.totalItems = computePhysicalTotalItems({
+        customerSelectedServices: bookingData.customerSelectedServices,
+        customerDeclaredServices: bookingData.customerDeclaredServices,
+        repairItems: bookingData.repairItems,
+    });
 
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);

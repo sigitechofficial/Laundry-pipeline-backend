@@ -39,6 +39,7 @@ const {
     replaceServiceLinesForSelectedService,
     validateServiceLineItems,
     sumActiveBookingServicesSubtotal,
+    computePhysicalTotalItems,
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 const {
@@ -477,48 +478,60 @@ class AgentInvoiceManagementService {
             { where: deactivateWhere }
         );
 
-        // Keep booking.totalItems in sync = Σ(items × subCategory.unitCount).
+        // Keep booking.totalItems = physical pieces (not priced repair-option Σ).
         await this.updateBookingTotalItems(bookingId);
 
         return keptActiveIds;
     }
 
     /**
-     * Recompute booking.totalItems = Σ(active service items × subCategory.unitCount).
-     * When sameBagForAllServices is true the customer declared a global item count
-     * at booking time (stored in totalItems). Preserve it — do NOT overwrite with
-     * the agent invoice count, which is tracked per-CSS row.
+     * Recompute booking.totalItems as physical garments/pieces.
+     * Repair option lines share the same garments — count them once.
      * @param {number|string} bookingId
      */
     async updateBookingTotalItems(bookingId) {
-        // Check if this is an all-in-one-bag booking — if so, skip the overwrite.
-        const bookingRow = await booking.findOne({
-            where: { id: bookingId },
-            attributes: ['id', 'sameBagForAllServices', 'totalItems'],
-        });
-        if (bookingRow?.sameBagForAllServices) {
-            // Customer's declared item count is already in totalItems — preserve it.
-            return bookingRow.totalItems ?? 0;
-        }
-
         const rows = await customerSelectedService.findAll({
             where: { bookingId, status: true },
-            attributes: ["id", "items"],
+            attributes: ["id", "items", "serviceId", "status"],
             include: [
                 {
                     model: subCategories,
                     required: false,
                     attributes: ["id", "unitCount"],
                 },
+                {
+                    model: service,
+                    required: false,
+                    attributes: ["id", "name"],
+                },
             ],
         });
+        let repairItems = [];
+        let declared = [];
+        try {
+            repairItems = await getBookingRepairItems(bookingId);
+        } catch (err) {
+            console.warn(
+                `[updateBookingTotalItems] repair items skipped:`,
+                err?.message || err
+            );
+        }
+        try {
+            declared = await getCustomerDeclaredServices(bookingId);
+        } catch (err) {
+            console.warn(
+                `[updateBookingTotalItems] declared services skipped:`,
+                err?.message || err
+            );
+        }
 
-        const totalItems = rows.reduce((sum, row) => {
-            const qty = getLineQuantity(row.items);
-            const rawUnit = Number(row.subCategory?.unitCount);
-            const unit = Number.isFinite(rawUnit) && rawUnit > 0 ? Math.floor(rawUnit) : 1;
-            return sum + qty * unit;
-        }, 0);
+        const totalItems = computePhysicalTotalItems({
+            customerSelectedServices: rows.map((row) =>
+                typeof row.get === "function" ? row.get({ plain: true }) : row
+            ),
+            customerDeclaredServices: declared,
+            repairItems,
+        });
 
         await booking.update({ totalItems }, { where: { id: bookingId } });
         return totalItems;

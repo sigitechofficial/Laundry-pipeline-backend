@@ -358,6 +358,100 @@ async function sumActiveBookingServicesSubtotal(bookingId, options = {}) {
     return parseFloat(sum.toFixed(2));
 }
 
+function sumRepairPieceCount(items) {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+    return items.reduce((sum, item) => {
+        const q = Number(item?.quantity ?? item?.qty ?? item?.pieceCount);
+        return sum + (Number.isFinite(q) && q > 0 ? Math.floor(q) : 1);
+    }, 0);
+}
+
+function isRepairLikeService(row, repairItemsForService) {
+    if (Array.isArray(repairItemsForService) && repairItemsForService.length > 0) {
+        return true;
+    }
+    if (Array.isArray(row?.repairItems) && row.repairItems.length > 0) {
+        return true;
+    }
+    const name = String(row?.service?.name || row?.serviceName || '').toLowerCase();
+    return name.includes('alter') || name.includes('repair');
+}
+
+function lineUnitCount(row) {
+    const raw = Number(row?.subCategory?.unitCount ?? row?.unitCount);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
+}
+
+/**
+ * Physical garments / pieces for the "N items" badge.
+ * Wash / dry-clean: Σ(items × unitCount).
+ * Alteration / repair: garment piece count once per service — not Σ of
+ * priced option lines (Small Repair × 12 + Patch × 12 + …).
+ */
+function computePhysicalTotalItems({
+    customerSelectedServices = [],
+    customerDeclaredServices = [],
+    repairItems = [],
+} = {}) {
+    const active = (customerSelectedServices || []).filter(
+        (row) => row && row.status !== false
+    );
+    const repairs = Array.isArray(repairItems) ? repairItems : [];
+    const repairsByService = new Map();
+    for (const item of repairs) {
+        const sid = Number(item?.serviceId);
+        if (!Number.isFinite(sid) || sid <= 0) continue;
+        if (!repairsByService.has(sid)) repairsByService.set(sid, []);
+        repairsByService.get(sid).push(item);
+    }
+
+    let total = 0;
+    const countedRepairServiceIds = new Set();
+
+    for (const row of active) {
+        const sid = Number(row.serviceId);
+        const serviceRepairs =
+            (Number.isFinite(sid) && repairsByService.get(sid)) ||
+            row.repairItems ||
+            [];
+        if (isRepairLikeService(row, serviceRepairs)) {
+            const key = Number.isFinite(sid) && sid > 0 ? sid : `row-${row.id}`;
+            if (countedRepairServiceIds.has(key)) continue;
+            countedRepairServiceIds.add(key);
+            const fromBooking =
+                Number.isFinite(sid) && repairsByService.get(sid)?.length
+                    ? repairsByService.get(sid)
+                    : serviceRepairs;
+            const pieces = sumRepairPieceCount(fromBooking);
+            if (pieces > 0) {
+                total += pieces;
+                continue;
+            }
+            const sameService = Number.isFinite(sid)
+                ? active.filter((s) => Number(s.serviceId) === sid)
+                : [row];
+            total += sameService.reduce(
+                (max, s) => Math.max(max, getLineQuantity(s.items)),
+                0
+            );
+            continue;
+        }
+
+        const qty = Number(row.items);
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        total += Math.floor(qty) * lineUnitCount(row);
+    }
+
+    if (total > 0) return total;
+
+    const declared = (customerDeclaredServices || []).reduce((sum, row) => {
+        const n = Number(row?.items);
+        return sum + (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+    }, 0);
+    if (declared > 0) return declared;
+    return sumRepairPieceCount(repairs);
+}
+
 module.exports = {
     getLineQuantity,
     getUnitCategoryCharge,
@@ -372,4 +466,6 @@ module.exports = {
     replaceServiceLinesForSelectedService,
     validateServiceLineItems,
     sumActiveBookingServicesSubtotal,
+    computePhysicalTotalItems,
+    sumRepairPieceCount,
 };
