@@ -366,27 +366,53 @@ function sumRepairPieceCount(items) {
     }, 0);
 }
 
-function isRepairLikeService(row, repairItemsForService) {
-    if (Array.isArray(repairItemsForService) && repairItemsForService.length > 0) {
-        return true;
-    }
-    if (Array.isArray(row?.repairItems) && row.repairItems.length > 0) {
-        return true;
-    }
-    const name = String(row?.service?.name || row?.serviceName || '').toLowerCase();
-    return name.includes('alter') || name.includes('repair');
-}
-
 function lineUnitCount(row) {
     const raw = Number(row?.subCategory?.unitCount ?? row?.unitCount);
     return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
 }
 
 /**
+ * Do this line's repair garments describe the line itself, or are they the
+ * service-wide list the customer declared?
+ *
+ * They describe the line when the garments were created against it, when the
+ * line is the un-priced placeholder for the whole service, or when booking
+ * already stored the garment total on it. An agent's priced line keeps its own
+ * quantity — otherwise one "Hem trousers × 1" line reports 12 items.
+ * @param {object} row
+ * @param {Array} garments
+ * @returns {boolean}
+ */
+function lineOwnsRepairGarments(row, garments) {
+    if (!row || !Array.isArray(garments) || garments.length === 0) return false;
+    const rowId = Number(row.id);
+    const ownedByRow = garments.some(
+        (g) =>
+            g?.customerSelectedServiceId != null &&
+            Number(g.customerSelectedServiceId) === rowId
+    );
+    if (ownedByRow) return true;
+    if (row.subCategoryId == null) return true;
+    return Number(row.items) === sumRepairPieceCount(garments);
+}
+
+function rowPieceCount(row) {
+    const qty = Number(row?.items);
+    if (!Number.isFinite(qty) || qty <= 0) return 0;
+    return Math.floor(qty) * lineUnitCount(row);
+}
+
+/**
  * Physical garments / pieces for the "N items" badge.
- * Wash / dry-clean: Σ(items × unitCount).
- * Alteration / repair: garment piece count once per service — not Σ of
- * priced option lines (Small Repair × 12 + Patch × 12 + …).
+ *
+ * Every priced line counts as items × unitCount — that is exactly what the agent
+ * typed on the add-services screen, so invoice / receipt / order screens agree.
+ *
+ * The one exception is the customer's un-itemised alteration booking: a single
+ * placeholder line stands for the whole service, so its declared garments count
+ * instead. Once the agent itemises, that service has one row per priced option
+ * and the booking-level garments are a per-service total — reusing them there is
+ * what produced "195 items", and collapsing those rows produced "15".
  */
 function computePhysicalTotalItems({
     customerSelectedServices = [],
@@ -405,41 +431,28 @@ function computePhysicalTotalItems({
         repairsByService.get(sid).push(item);
     }
 
-    let total = 0;
-    const countedRepairServiceIds = new Set();
-
+    const rowsByService = new Map();
     for (const row of active) {
         const sid = Number(row.serviceId);
-        const serviceRepairs =
-            (Number.isFinite(sid) && repairsByService.get(sid)) ||
-            row.repairItems ||
-            [];
-        if (isRepairLikeService(row, serviceRepairs)) {
-            const key = Number.isFinite(sid) && sid > 0 ? sid : `row-${row.id}`;
-            if (countedRepairServiceIds.has(key)) continue;
-            countedRepairServiceIds.add(key);
-            const fromBooking =
-                Number.isFinite(sid) && repairsByService.get(sid)?.length
-                    ? repairsByService.get(sid)
-                    : serviceRepairs;
-            const pieces = sumRepairPieceCount(fromBooking);
-            if (pieces > 0) {
-                total += pieces;
+        const key = Number.isFinite(sid) && sid > 0 ? sid : `row-${row.id}`;
+        if (!rowsByService.has(key)) rowsByService.set(key, []);
+        rowsByService.get(key).push(row);
+    }
+
+    let total = 0;
+    for (const [key, rows] of rowsByService) {
+        const lineTotal = rows.reduce((sum, row) => sum + rowPieceCount(row), 0);
+        if (rows.length === 1) {
+            const row = rows[0];
+            const garments = repairsByService.get(key)?.length
+                ? repairsByService.get(key)
+                : row.repairItems;
+            if (lineOwnsRepairGarments(row, garments)) {
+                total += Math.max(lineTotal, sumRepairPieceCount(garments));
                 continue;
             }
-            const sameService = Number.isFinite(sid)
-                ? active.filter((s) => Number(s.serviceId) === sid)
-                : [row];
-            total += sameService.reduce(
-                (max, s) => Math.max(max, getLineQuantity(s.items)),
-                0
-            );
-            continue;
         }
-
-        const qty = Number(row.items);
-        if (!Number.isFinite(qty) || qty <= 0) continue;
-        total += Math.floor(qty) * lineUnitCount(row);
+        total += lineTotal;
     }
 
     if (total > 0) return total;
@@ -468,4 +481,5 @@ module.exports = {
     sumActiveBookingServicesSubtotal,
     computePhysicalTotalItems,
     sumRepairPieceCount,
+    lineOwnsRepairGarments,
 };

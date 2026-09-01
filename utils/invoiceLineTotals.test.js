@@ -89,29 +89,74 @@ function runTests() {
     assert.strictEqual(addons395, 17);
     assert.strictEqual(services395 + addons395, 41.75);
 
-    // Order 1357-139733 style: 3 wash pieces + 16 garments, each with many
-    // priced repair options at qty 12. Badge must stay 19, not 195.
+    // Order 1357-139733 style: agent itemised 3 wash pieces + 16 priced repair
+    // lines while the customer had declared 12 garments on that same service.
+    // The agent's own quantities win — 19, not 195 (Σ shared garments) and not
+    // 15 (garments only, agent lines collapsed).
+    const itemisedRepairLines = Array.from({ length: 16 }, () => ({
+        serviceId: 2,
+        items: 1,
+        status: true,
+        service: { name: 'Alteration & Repair' },
+        repairItems: Array.from({ length: 12 }, () => ({ quantity: 1 })),
+    }));
     assert.strictEqual(
         computePhysicalTotalItems({
             customerSelectedServices: [
                 { serviceId: 1, items: 2, status: true, service: { name: 'Wash & Fold' } },
                 { serviceId: 1, items: 1, status: true, service: { name: 'Wash & Fold' } },
-                {
-                    serviceId: 2,
-                    items: 12,
-                    status: true,
-                    service: { name: 'Alteration & Repair' },
-                    repairItems: [{ quantity: 1 }, { quantity: 1 }],
-                },
-                { serviceId: 2, items: 12, status: true, service: { name: 'Alteration & Repair' } },
-                { serviceId: 2, items: 12, status: true, service: { name: 'Alteration & Repair' } },
+                ...itemisedRepairLines,
             ],
-            repairItems: Array.from({ length: 16 }, () => ({
+            repairItems: Array.from({ length: 12 }, () => ({
                 serviceId: 2,
                 quantity: 1,
             })),
         }),
         19
+    );
+
+    // Un-itemised customer booking: the single repair line stands for the whole
+    // service, so its declared garments count.
+    assert.strictEqual(
+        computePhysicalTotalItems({
+            customerSelectedServices: [
+                { serviceId: 1, items: 2, status: true },
+                { serviceId: 2, items: 1, status: true },
+            ],
+            repairItems: Array.from({ length: 5 }, () => ({
+                serviceId: 2,
+                quantity: 1,
+            })),
+        }),
+        7
+    );
+
+    // One agent-priced alteration line beside 12 declared garments: the line's
+    // own quantity wins, the garments hang off the deactivated snapshot row.
+    assert.strictEqual(
+        computePhysicalTotalItems({
+            customerSelectedServices: [
+                { id: 950, serviceId: 2, subCategoryId: 77, items: 1, status: true },
+            ],
+            repairItems: Array.from({ length: 12 }, () => ({
+                serviceId: 2,
+                quantity: 1,
+                customerSelectedServiceId: 900,
+            })),
+        }),
+        1
+    );
+
+    // unitCount lines are pieces, not orders. Deactivated lines never count.
+    assert.strictEqual(
+        computePhysicalTotalItems({
+            customerSelectedServices: [
+                { serviceId: 1, items: 2, status: true, subCategory: { unitCount: 3 } },
+                { serviceId: 1, items: 4, status: false, subCategory: { unitCount: 3 } },
+                { serviceId: 3, items: 1, status: true },
+            ],
+        }),
+        7
     );
 
     console.log('invoiceLineTotals.test.js: all assertions passed');

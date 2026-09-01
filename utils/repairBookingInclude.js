@@ -5,6 +5,8 @@
  * Used by customer, admin, and agent booking/invoice detail responses.
  */
 
+const { lineOwnsRepairGarments } = require('./invoiceLineTotals');
+
 function buildRepairItemsInclude(models, { separate = false } = {}) {
   const {
     customerSelectedRepairItem,
@@ -212,6 +214,17 @@ async function hydrateRepairItemsForBooking(
 
     const byCssId = {};
     const byServiceId = {};
+    // How many selected-service rows exist per service. Once an agent itemises an
+    // alteration booking there is one row per priced line, and the booking-level
+    // garments are a per-service total — copying that total onto every line is
+    // what inflated both "total items" and line subtotals.
+    const rowCountByServiceId = {};
+    for (const svc of selectedServices) {
+      const sid = svc && svc.serviceId != null ? Number(svc.serviceId) : null;
+      if (sid == null || Number.isNaN(sid)) continue;
+      if (svc && svc.status === false) continue;
+      rowCountByServiceId[sid] = (rowCountByServiceId[sid] || 0) + 1;
+    }
 
     for (const row of rows) {
       const normalized = normalizeRepairItem(row);
@@ -235,27 +248,43 @@ async function hydrateRepairItemsForBooking(
       const serviceId = plain.serviceId != null ? Number(plain.serviceId) : null;
 
       let items = [];
+      let source = null;
       // Prefer serviceId — snapshot row ids ≠ customerSelectedServiceId, so CSS-id
       // matching wrongly empties or mis-attaches repair garments / notes / photos.
       if (serviceId != null && byServiceId[serviceId]?.length) {
         items = byServiceId[serviceId];
+        source = 'service';
       } else if (
         !matchByServiceIdOnly &&
         cssId != null &&
         byCssId[cssId]?.length
       ) {
         items = byCssId[cssId];
+        source = 'line';
       } else if (Array.isArray(plain.repairItems) && plain.repairItems.length) {
         items = normalizeRepairItems(plain.repairItems);
+        source = 'line';
       }
 
       plain.repairItems = items;
+      plain.repairItemsSource = items.length ? source : null;
+
+      const singleRowForService =
+        serviceId == null || (rowCountByServiceId[serviceId] || 0) <= 1;
+      const ownsGarments =
+        items.length > 0 &&
+        (source === 'line' ||
+          (singleRowForService && lineOwnsRepairGarments(plain, items)));
+      plain.repairItemsSharedAcrossLines = items.length > 0 && !ownsGarments;
+
       const pieceSum = items.reduce((n, item) => {
         const qty = Number(item?.quantity);
         return n + (Number.isFinite(qty) && qty > 0 ? qty : 1);
       }, 0);
       const currentItems = Number(plain.items) || 0;
-      if (pieceSum > 0 && pieceSum > currentItems) {
+      // Only lift `items` on the line the garments belong to. Agent-priced lines
+      // keep their own quantity.
+      if (pieceSum > 0 && pieceSum > currentItems && ownsGarments) {
         plain.items = pieceSum;
       }
       return plain;
