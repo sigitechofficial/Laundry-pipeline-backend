@@ -14,6 +14,58 @@ let releaseTimer = null;
 
 // ─── Phase-2: broadcast preferred-shop bookings whose window has expired ──────
 
+const PHASE_TWO_BOOKING_ATTRIBUTES = [
+    'id', 'zoneId',
+    'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
+    'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
+    'placedOutsidePlatformHours',
+];
+
+/**
+ * Open a booking to every eligible shop in its zone.
+ *
+ * Callers must supply the booking row (or id) only — the schedule and selected
+ * services are read here so every Phase-2 entry point (cron, preferred-shop
+ * decline) broadcasts with identical arguments.
+ */
+async function broadcastBookingToShops(bookingOrId) {
+    const row =
+        typeof bookingOrId === 'object' && bookingOrId !== null
+            ? bookingOrId
+            : await booking.findByPk(bookingOrId, {
+                  attributes: PHASE_TWO_BOOKING_ATTRIBUTES,
+              });
+
+    if (!row) return { notifiedCount: 0 };
+
+    const services = await customerSelectedService.findAll({
+        where: { bookingId: row.id },
+        attributes: ['serviceId'],
+    });
+    const servicePayload = services.map((s) => ({ serviceId: s.serviceId }));
+
+    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
+
+    const {
+        bookingEventSentCheckTheShops,
+    } = require('./Customer/customerOrderService');
+
+    const result = await bookingEventSentCheckTheShops(
+        row.id,
+        row.zoneId,
+        row.collectionDate,
+        row.collectionTimeTo,
+        row.collectionTimeFrom,
+        row.deliveryDate,
+        row.deliveryTimeTo,
+        row.deliveryTimeFrom,
+        servicePayload,
+        countryCtx.ianaTimeZone
+    );
+
+    return result || { notifiedCount: 0 };
+}
+
 /**
  * For any booking where preferred-shop phase-1 window has passed and the
  * booking still has no laundryShopId (not yet accepted), broadcast to all
@@ -30,20 +82,12 @@ async function broadcastExpiredPreferredBookings() {
             preferredShopExpiresAt: { [Op.lte]: now },
             preferredShopAgentId: { [Op.ne]: null },
         },
-        attributes: [
-            'id', 'zoneId',
-            'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
-            'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
-            'placedOutsidePlatformHours',
-        ],
+        attributes: PHASE_TWO_BOOKING_ATTRIBUTES,
     });
 
     if (!pending.length) return { broadcast: 0 };
 
     let broadcast = 0;
-    const {
-        bookingEventSentCheckTheShops,
-    } = require('./Customer/customerOrderService');
 
     for (const row of pending) {
         try {
@@ -54,27 +98,7 @@ async function broadcastExpiredPreferredBookings() {
                 { where: { id: row.id } }
             );
 
-            const services = await customerSelectedService.findAll({
-                where: { bookingId: row.id },
-                attributes: ['serviceId'],
-            });
-            const servicePayload = services.map((s) => ({ serviceId: s.serviceId }));
-
-            const countryCtx = await getCountryContextFromZoneId(row.zoneId);
-            const resolvedTz = countryCtx.ianaTimeZone;
-
-            const { notifiedCount } = await bookingEventSentCheckTheShops(
-                row.id,
-                row.zoneId,
-                row.collectionDate,
-                row.collectionTimeTo,
-                row.collectionTimeFrom,
-                row.deliveryDate,
-                row.deliveryTimeTo,
-                row.deliveryTimeFrom,
-                servicePayload,
-                resolvedTz
-            );
+            const { notifiedCount } = await broadcastBookingToShops(row);
 
             console.log(
                 `[preferredShop phase-2] booking ${row.id} broadcast to ${notifiedCount} agent(s)`
@@ -247,6 +271,7 @@ function startHeldBookingReleaseJob() {
 module.exports = {
     releaseHeldBookings,
     releaseHeldBookingsForZone,
+    broadcastBookingToShops,
     broadcastExpiredPreferredBookings,
     startHeldBookingReleaseJob,
 };

@@ -109,6 +109,7 @@ const platformOperationalHoursService = require('../../services/Admin/platformOp
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
 const repairCatalogService = require('../../services/Admin/repairCatalogService');
 const userBlockService = require('../../services/Admin/userBlockService');
+const shopAssignmentPolicyService = require('../../services/Admin/shopAssignmentPolicyService');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
 const accountDeletionReasonService = require('../../services/Admin/accountDeletionReasonService');
 const customerOrderService = require('../../services/Customer/customerOrderService');
@@ -219,6 +220,27 @@ async function getUserBlockStatus(req, res) {
     const { userId } = req.params;
     const result = await userBlockService.getBlockStatus(userId);
     return ResponseHelper.success(res, "Block status fetched", result);
+}
+
+/*
+ * Shop routing restrictions (preferred head-start / marketplace hold).
+ * Separate from block/unblock: this controls what work reaches the shop,
+ * not whether the account can log in.
+ */
+async function getShopAssignmentPolicy(req, res) {
+    const { shopUserId } = req.params;
+    const result = await shopAssignmentPolicyService.getPolicy(shopUserId);
+    return ResponseHelper.success(res, "Shop assignment policy fetched", result);
+}
+
+async function updateShopAssignmentPolicy(req, res) {
+    const { shopUserId } = req.params;
+    const result = await shopAssignmentPolicyService.setPolicy(
+        shopUserId,
+        req.body || {},
+        req.user?.id || null
+    );
+    return ResponseHelper.success(res, "Shop assignment policy updated", result);
 }
 
 
@@ -3112,6 +3134,8 @@ module.exports = {
     updatePlatformOperationalHours,
     getBookingAssignableShops,
     assignBookingToShop,
+    getShopAssignmentPolicy,
+    updateShopAssignmentPolicy,
     //!-------------FAQ Management--------//
     createFAQ,
     getAllFAQs,

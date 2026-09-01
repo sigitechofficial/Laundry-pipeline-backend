@@ -280,6 +280,11 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: false,
     defaultValue: false,
   },
+  preferredShopSkipReason: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    defaultValue: null,
+  },
   operationalTimeZone: {
     type: DataTypes.STRING(64),
     allowNull: true,

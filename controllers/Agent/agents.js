@@ -222,6 +222,7 @@ const invoiceAutoChargeService = require('../../services/Agent/invoiceAutoCharge
 const staffActivityService = require('../../services/Agent/staffActivityService');
 const employeeCapabilityService = require('../../services/Agent/employeeCapabilityService');
 const autoAssignService = require('../../services/Agent/autoAssignService');
+const shopAssignmentPolicyService = require('../../services/Admin/shopAssignmentPolicyService');
 const {
     resolveShopAgentId,
     resolveActorUserId,
@@ -693,16 +694,21 @@ exports.getBookingHome = async (req, res) => {
 
     const agentShopId = userData.addressDb.id;
 
+    // Shops on admin marketplace hold only see work an admin assigned to them.
+    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
+
     const bookingWhere = {
         bookingStatusId: 1,
         zoneId: agentZone,
         laundryShopId: null,
         agentBroadcastHeld: { [Op.not]: true },
         createdAt: { [Op.gte]: twentyFourHoursAgo },
-        [Op.or]: [
-            { adminAssignedShopId: null },
-            { adminAssignedShopId: agentShopId },
-        ],
+        [Op.or]: marketplaceHeld
+            ? [{ adminAssignedShopId: agentShopId }]
+            : [
+                  { adminAssignedShopId: null },
+                  { adminAssignedShopId: agentShopId },
+              ],
         // Preferred-shop Phase-1: hide from all other shops until window expires
         // or the preferred shop declines. A booking is visible when:
         //   (a) no preferred shop was set, OR
@@ -1522,16 +1528,21 @@ exports.agentBookingFilters = async (req, res) => {
     const PROCESSING_STATUSES = AGENT_PROCESSING_STATUSES;
     const ALL_ACTIVE_STATUSES = AGENT_ALL_ACTIVE_STATUSES;
 
+    // Shops on admin marketplace hold only see work an admin assigned to them.
+    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
+
     const newOrdersWhere = {
         bookingStatusId: 1,
         laundryShopId: null,
         zoneId,
         agentBroadcastHeld: { [Op.not]: true },
         createdAt: { [Op.gte]: twentyFourHrsAgo },
-        [Op.or]: [
-            { adminAssignedShopId: null },
-            { adminAssignedShopId: shopId },
-        ],
+        [Op.or]: marketplaceHeld
+            ? [{ adminAssignedShopId: shopId }]
+            : [
+                  { adminAssignedShopId: null },
+                  { adminAssignedShopId: shopId },
+              ],
         [Op.and]: [
             {
                 [Op.or]: [
@@ -1747,6 +1758,7 @@ exports.getBookingCounts = async (req, res) => {
     const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
     const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
     const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
+    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
         hideNew
@@ -1758,7 +1770,9 @@ exports.getBookingCounts = async (req, res) => {
                 zoneId,
                 agentBroadcastHeld: { [Op.not]: true },
                 createdAt: { [Op.gte]: twentyFourHrsAgo },
-                [Op.or]: [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }],
+                [Op.or]: marketplaceHeld
+                    ? [{ adminAssignedShopId: shopId }]
+                    : [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }],
                 [Op.and]: [
                     { [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] },
                     { [Op.or]: [{ preferredShopAgentId: null }, { preferredShopAgentId: agentId }, { preferredShopBroadcastDone: true }] },

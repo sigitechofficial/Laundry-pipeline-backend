@@ -70,6 +70,19 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         );
     }
 
+    // A shop on marketplace hold may only take work an admin assigned to it.
+    if (bookingRow.adminAssignedShopId == null) {
+        const shopAssignmentPolicyService = require("../Admin/shopAssignmentPolicyService");
+        const held = await shopAssignmentPolicyService.isMarketplaceHeld(
+            shopOwnerUserId
+        );
+        if (held) {
+            throw new ConflictError(
+                "Your shop is on hold and cannot take new orders. Contact support."
+            );
+        }
+    }
+
     const [affectedCount] = await booking.update(
         {
             bookingStatusId: 3,

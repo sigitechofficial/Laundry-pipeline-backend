@@ -390,9 +390,23 @@ async function applyAssignmentVisibility({
   const preferredWindowMins = preferredEnabled
     ? await runtimeSettings.getInteger('preferredShopWindowMinutes')
     : PREFERRED_SHOP_WINDOW_MINUTES;
-  const preferredShop = preferredEnabled
-    ? await customerOrderService.findPreferredShopForCustomer(customerId, zoneId, servicesPayload)
-    : null;
+  const { resolvePreferredShop, SKIP_REASONS } = require('../preferredShopResolver');
+  const preferredResult = preferredEnabled
+    ? await resolvePreferredShop({
+        customerId,
+        zoneId,
+        services: servicesPayload,
+        collectionDate,
+        collectionTimeFrom,
+        collectionTimeTo,
+        deliveryDate,
+        deliveryTimeFrom,
+        deliveryTimeTo,
+        excludeBookingId: bookingId,
+        timeZone: resolvedTz,
+      })
+    : { shop: null, skipReason: SKIP_REASONS.DISABLED };
+  const preferredShop = preferredResult.shop;
   const visibleAt = new Date();
   const expireTime = getOrderExpireTime(resolvedTz);
 
@@ -407,6 +421,7 @@ async function applyAssignmentVisibility({
         preferredShopAgentId: preferredShop.user.id,
         preferredShopExpiresAt,
         preferredShopBroadcastDone: false,
+        preferredShopSkipReason: null,
       },
       { where: { id: bookingId } }
     );
@@ -466,6 +481,7 @@ async function applyAssignmentVisibility({
       preferredShopAgentId: null,
       preferredShopExpiresAt: null,
       preferredShopBroadcastDone: true,
+      preferredShopSkipReason: preferredResult.skipReason || null,
     },
     { where: { id: bookingId } }
   );

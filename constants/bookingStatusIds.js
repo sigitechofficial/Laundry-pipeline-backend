@@ -11,10 +11,18 @@
 const COMPLETED = 17;
 const ON_HOLD_CUSTOMER = 18;
 const CANCELLED = 19;
+const REFUNDED = 21;
 const ON_HOLD_AGENT = 24;
 const ORDER_CREATED = 1;
 const DELIVERY_FAILED = 15;
 const AWAITING_COLLECTION = 3;
+
+/**
+ * Statuses where a booking no longer occupies the assigned shop's capacity.
+ * Everything else (including the on-hold / issue statuses) is still live work
+ * sitting on that shop's schedule, so it must count against slot availability.
+ */
+const SLOT_RELEASING = [COMPLETED, CANCELLED, REFUNDED];
 
 /** Statuses excluded from the Pending bucket (sidebar + pendingOrders list). */
 const PENDING_EXCLUDED = [COMPLETED, ON_HOLD_CUSTOMER, CANCELLED, ON_HOLD_AGENT];
@@ -40,7 +48,9 @@ module.exports = {
     COMPLETED,
     ON_HOLD_CUSTOMER,
     CANCELLED,
+    REFUNDED,
     ON_HOLD_AGENT,
+    SLOT_RELEASING,
     ORDER_CREATED,
     DELIVERY_FAILED,
     AWAITING_COLLECTION,

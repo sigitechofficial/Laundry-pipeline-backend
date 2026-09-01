@@ -669,6 +669,9 @@ router.delete('/deleteShop/:shopId', asyncMiddleware(adminController.deleteShop)
 router.get('/getShopEmployees/:bussinessId', asyncMiddleware(adminController.getShopEmployees))
 //Get All Employees with Shop Information
 router.get('/getAllEmployeesWithShopInfo', asyncMiddleware(adminController.getAllEmployeesWithShopInfo))
+//Shop routing restrictions (preferred head-start / marketplace hold)
+router.get('/shopAssignmentPolicy/:shopUserId', asyncMiddleware(adminController.getShopAssignmentPolicy))
+router.patch('/shopAssignmentPolicy/:shopUserId', asyncMiddleware(adminController.updateShopAssignmentPolicy))
 
 
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>

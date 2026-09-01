@@ -91,6 +91,7 @@ const {
 } = require('../../utils/shopWorkingHours');
 const { getAcceptWindowAnchor } = require('../../utils/bookingAgentWindow');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
+const { isShopSlotFree } = require('../../utils/shopSlotAvailability');
 
 
 // Import stripe functions
@@ -358,168 +359,26 @@ async function addressAdder(addNew, address, type, userId, addressId, cityId, co
     }
 }
 
-// Check if time slot booked function
-async function checkIfTimeSlotBooked(
-    shopId,
-    deliveryTimeFrom,
-    deliveryTimeTo,
-    collectionTimeFrom,
-    collectionTimeTo,
-    zoneId
-) {
-    console.log("ðŸš€ ~ checkIfTimeSlotBooked ~ shopId:", shopId);
-
-    const existingTimeSlots = await booking.findAll({
-        where: {
-            laundryShopId: shopId,
-            [Op.or]: [
-                {
-                    deliveryDate: fn("DATE", col("deliveryDate")),
-                    bookingStatusId: 1,
-                    [Op.and]: [
-                        { deliveryTimeFrom: { [Op.gte]: deliveryTimeFrom } },
-                        { deliveryTimeTo: { [Op.lte]: deliveryTimeTo } },
-                    ],
-                },
-                {
-                    collectionDate: fn("DATE", col("collectionDate")),
-                    bookingStatusId: 1,
-                    [Op.and]: [
-                        { collectionTimeFrom: { [Op.gte]: collectionTimeFrom } },
-                        { collectionTimeTo: { [Op.lte]: collectionTimeTo } },
-                    ],
-                },
-            ],
-        },
-        include: [
-            {
-                model: users,
-                as: "customer",
-                attributes: ["id", "firstName", "LastName", "email"],
-            },
-            {
-                model: addressDb,
-                as: "laundryShop",
-                where: {
-                    zoneId: zoneId,
-                },
-                attributes: [
-                    "title",
-                    "customAddresstitle",
-                    "streetAddress",
-                    "district",
-                    "province",
-                    "lat",
-                    "lng",
-                    "status",
-                    "addressType",
-                    "coordinates",
-                ],
-                include: [
-                    {
-                        model: users,
-                        attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
-                    },
-                    {
-                        model: zone,
-                        required: true,
-                        attributes: ["id", "name", "status", "coordinates"],
-                    },
-                ],
-            },
-        ],
-    });
-
-    // console.log(
-    //     "ðŸš€ ~ checkIfTimeSlotBooked ~ existingTimeSlots:",
-    //     existingTimeSlots
-    // );
-
-    return existingTimeSlots;
-}
-
 // Booking event sent check the shops function
 /**
- * Find the preferred shop agent for a customer — the agent (addressDb user)
- * whose shop last completed an order (bookingStatusId = 17) for this customer
- * and who is currently available for the requested services + zone.
+ * Find the preferred shop agent for a customer — the most recent shop that
+ * completed an order for them and is still able to take the job.
+ *
+ * Walks back through earlier completed orders when the latest shop is closed,
+ * blocked, no longer offers the services, or has been taken out of preferred
+ * routing by an admin. See services/preferredShopResolver.js.
  *
  * Returns the matching addressDb shop row (with .user populated), or null.
  */
-async function findPreferredShopForCustomer(customerId, zoneId, services) {
-    try {
-        const requiredServiceIds = [
-            ...new Set(
-                (services || [])
-                    .map((s) => Number(s.serviceId))
-                    .filter((id) => Number.isFinite(id) && id > 0)
-            ),
-        ];
-        if (!customerId || !zoneId) return null;
-
-        // Most recent completed booking for this customer in this zone
-        const lastCompleted = await booking.findOne({
-            where: {
-                customerId,
-                zoneId,
-                bookingStatusId: 17, // Completed
-                laundryShopId: { [Op.ne]: null },
-            },
-            attributes: ['laundryShopId'],
-            order: [['updatedAt', 'DESC']],
-        });
-
-        if (!lastCompleted?.laundryShopId) return null;
-
-        const shop = await addressDb.findOne({
-            where: {
-                id: lastCompleted.laundryShopId,
-                zoneId,
-                addressType: 'LaundaryShopAddress',
-            },
-            include: [
-                {
-                    model: users,
-                    attributes: ['id', 'firstName', 'email', 'lastName'],
-                    required: true,
-                    include: [
-                        {
-                            model: agentSelectServices,
-                            as: 'agentServices',
-                            where: {
-                                serviceId: { [Op.in]: requiredServiceIds.length ? requiredServiceIds : [0] },
-                                status: true,
-                            },
-                            attributes: ['id', 'serviceId'],
-                            required: false,
-                        },
-                        {
-                            model: bussinessInformation,
-                            as: 'businessInfo',
-                            attributes: ['shopName'],
-                            required: false,
-                        },
-                    ],
-                },
-            ],
-            attributes: ['id', 'status', 'zoneId', 'userId'],
-        });
-
-        if (!shop?.user) return null;
-
-        // Verify the shop still offers ALL required services
-        if (requiredServiceIds.length > 0) {
-            const offeredIds = new Set(
-                (shop.user.agentServices || []).map((a) => Number(a.serviceId))
-            );
-            if (!requiredServiceIds.every((id) => offeredIds.has(id))) return null;
-        }
-
-        return shop;
-    } catch (err) {
-        console.error('[findPreferredShopForCustomer] error:', err?.message || err);
-        return null;
-    }
+async function findPreferredShopForCustomer(customerId, zoneId, services, options = {}) {
+    const { resolvePreferredShop } = require('../preferredShopResolver');
+    const result = await resolvePreferredShop({
+        customerId,
+        zoneId,
+        services,
+        ...options,
+    });
+    return result.shop;
 }
 
 async function bookingEventSentCheckTheShops(
@@ -597,6 +456,11 @@ async function bookingEventSentCheckTheShops(
         ),
     ];
 
+    // Shops an admin put on marketplace hold receive no new offers at all.
+    const shopAssignmentPolicyService = require('../Admin/shopAssignmentPolicyService');
+    const { holdExcluded } =
+        await shopAssignmentPolicyService.getRestrictedShopUserIds();
+
     // Count shops in the zone that actively offer ALL selected services,
     // independent of slot/working-hours availability. Used to detect a service
     // coverage gap (→ notify admin for manual assignment).
@@ -613,35 +477,49 @@ async function bookingEventSentCheckTheShops(
         if (!offersAllServices) {
             continue;
         }
+
+        if (holdExcluded.has(Number(shop.user?.id || shop.userId))) {
+            console.log(
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — marketplace hold`
+            );
+            continue;
+        }
+
         serviceEligibleShopCount += 1;
 
-        let checkSlots = await checkIfTimeSlotBooked(
+        const slotFree = await isShopSlotFree(
             shop.id,
-            deliveryDate,
-            collectionTimeTo,
-            collectionTimeFrom,
-            collectionDate,
-            deliveryTimeTo,
-            deliveryTimeFrom,
-            zoneId
+            {
+                collectionDate,
+                collectionTimeFrom,
+                collectionTimeTo,
+                deliveryDate,
+                deliveryTimeFrom,
+                deliveryTimeTo,
+            },
+            { excludeBookingId: bookingId }
         );
-        console.log("ðŸš€ ~ getBookingDetails ~ checkSlots:", checkSlots);
-        if (!checkSlots || checkSlots.length === 0) {
-            const ownerId = shop.user?.id || shop.userId;
-            const shopEligible = await isShopEligibleForBroadcast(
-                ownerId,
-                countryCtx.countryId,
-                resolvedTz,
-                clientTimeZone,
-                {
-                    collectionDate,
-                    collectionTimeFrom,
-                    collectionTimeTo,
-                }
+        if (!slotFree) {
+            console.log(
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — slot already taken`
             );
-            if (shopEligible) {
-                availableShops.push(shop);
+            continue;
+        }
+
+        const ownerId = shop.user?.id || shop.userId;
+        const shopEligible = await isShopEligibleForBroadcast(
+            ownerId,
+            countryCtx.countryId,
+            resolvedTz,
+            clientTimeZone,
+            {
+                collectionDate,
+                collectionTimeFrom,
+                collectionTimeTo,
             }
+        );
+        if (shopEligible) {
+            availableShops.push(shop);
         }
     }
 
@@ -2230,13 +2108,27 @@ class CustomerOrderService {
             // If this customer has a previous completed order, give that shop a
             // PREFERRED_SHOP_WINDOW_MINUTES head-start before broadcasting to all.
             const runtimeSettings = require('../Admin/runtimeSettingsService');
+            const { resolvePreferredShop, SKIP_REASONS } = require('../preferredShopResolver');
             const preferredEnabled = await runtimeSettings.getBoolean('preferredShopEnabled');
             const preferredWindowMins = preferredEnabled
                 ? await runtimeSettings.getInteger('preferredShopWindowMinutes')
                 : 0;
-            const preferredShop = preferredEnabled
-                ? await findPreferredShopForCustomer(userId, zoneId, services)
-                : null;
+            const preferredResult = preferredEnabled
+                ? await resolvePreferredShop({
+                      customerId: userId,
+                      zoneId,
+                      services,
+                      collectionDate: normalizedCollectionDate,
+                      collectionTimeFrom: normalizedCollectionTimeFrom,
+                      collectionTimeTo: normalizedCollectionTimeTo,
+                      deliveryDate: normalizedDeliveryDate,
+                      deliveryTimeFrom: normalizedDeliveryTimeFrom,
+                      deliveryTimeTo: normalizedDeliveryTimeTo,
+                      timeZone: resolvedTz,
+                      clientTimeZone,
+                  })
+                : { shop: null, skipReason: SKIP_REASONS.DISABLED };
+            const preferredShop = preferredResult.shop;
 
             if (preferredShop) {
                 const preferredShopExpiresAt = new Date(Date.now() + preferredWindowMins * 60 * 1000);
@@ -2249,11 +2141,12 @@ class CustomerOrderService {
                         preferredShopAgentId: preferredShop.user.id,
                         preferredShopExpiresAt,
                         preferredShopBroadcastDone: false,
+                        preferredShopSkipReason: null,
                     },
                     { where: { id: bookingId } }
                 );
                     console.log(
-                        `[createBooking] booking ${bookingId} → preferred-shop phase-1 agent=${preferredShop.user.id} expiresAt=${preferredShopExpiresAt.toISOString()} window=${preferredWindowMins}m`
+                        `[createBooking] booking ${bookingId} → preferred-shop phase-1 agent=${preferredShop.user.id} shop=${preferredShop.id} expiresAt=${preferredShopExpiresAt.toISOString()} window=${preferredWindowMins}m candidates=${preferredResult.candidateShopIds?.length ?? 0}`
                     );
 
                 // Fetch booking details to build the notification payload
@@ -2295,11 +2188,12 @@ class CustomerOrderService {
                         orderExpireTime: expireTime,
                         placedOutsidePlatformHours: false,
                         preferredShopBroadcastDone: true,
+                        preferredShopSkipReason: preferredResult.skipReason || null,
                     },
                     { where: { id: bookingId } }
                 );
                 console.log(
-                    `[createBooking] acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
+                    `[createBooking] booking ${bookingId} → broadcast (preferred skipped: ${preferredResult.skipReason || 'none'}) acceptWindowMinutes=${BOOKING_ACCEPT_WINDOW_MINUTES} orderExpireTimeClock=${expireTime} tz=${resolvedTz}`
                 );
 
                 const {
