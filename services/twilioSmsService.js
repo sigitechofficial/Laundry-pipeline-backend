@@ -24,16 +24,46 @@ function getTwilioClient() {
 }
 
 /**
+ * Public base URL for Twilio callbacks. Kept inline (not imported from
+ * twilioCallService) to avoid a circular require — twilioCallService already
+ * requires this module.
+ */
+function getPublicBaseUrl() {
+    const fromEnv = process.env.PUBLIC_BASE_URL;
+    if (fromEnv && String(fromEnv).trim()) {
+        return String(fromEnv).trim().replace(/\/$/, "");
+    }
+    if (process.env.NODE_ENV === "production") {
+        return "https://prodlaundry.sigisolutions.net";
+    }
+    if (process.env.NODE_ENV === "test") {
+        return "https://stagelaundry.sigisolutions.net";
+    }
+    return null;
+}
+
+/**
  * @param {{ to: string, body: string }} params
  * @returns {Promise<{ sid: string, status: string, to: string, from: string }>}
  */
 async function sendSms({ to, body }) {
     const { client, from } = getTwilioClient();
-    const message = await client.messages.create({
+
+    const payload = {
         to: String(to).trim(),
         from,
         body: String(body).trim(),
-    });
+    };
+
+    // Wire delivery status callbacks so booking_notifications reflect the final
+    // delivered/undelivered/failed outcome (admin Notify logs). Only when the
+    // public webhook URL is reachable.
+    const base = getPublicBaseUrl();
+    if (base) {
+        payload.statusCallback = `${base}/webhooks/twilio/sms/status`;
+    }
+
+    const message = await client.messages.create(payload);
 
     return {
         sid: message.sid,
@@ -46,4 +76,5 @@ async function sendSms({ to, body }) {
 module.exports = {
     sendSms,
     getTwilioClient,
+    getPublicBaseUrl,
 };

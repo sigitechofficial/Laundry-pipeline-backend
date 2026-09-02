@@ -1,4 +1,4 @@
-const { wallet, addressDb, users } = require("../../models");
+const { wallet, addressDb, users, bussinessInformation } = require("../../models");
 const { Op } = require("sequelize");
 const {
     ValidationError,
@@ -305,6 +305,15 @@ async function listAgentsWithCashDue(options = {}) {
     const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
     const offset = (page - 1) * limit;
 
+    try {
+        await agentWalletService.backfillMissingCashLedger({ limit: 200 });
+    } catch (err) {
+        console.warn(
+            "[cash-due] wallet self-heal failed:",
+            err.message
+        );
+    }
+
     const shops = await addressDb.findAll({
         where: {
             addressType: "LaundaryShopAddress",
@@ -317,6 +326,11 @@ async function listAgentsWithCashDue(options = {}) {
                 attributes: ["id", "firstName", "lastName", "email"],
                 required: false,
             },
+            {
+                model: bussinessInformation,
+                attributes: ["shopName"],
+                required: false,
+            },
         ],
     });
 
@@ -326,9 +340,14 @@ async function listAgentsWithCashDue(options = {}) {
         try {
             const summary = await agentWalletService.getWalletSummary(shop.userId);
             if (agentWalletService.hasSettlementActivity(summary)) {
+                const businessRows = shop.bussinessInformations || shop.bussinessInformation;
+                const shopName = Array.isArray(businessRows)
+                    ? businessRows[0]?.shopName
+                    : businessRows?.shopName;
                 summaries.push({
                     agentUserId: shop.userId,
                     shopId: shop.id,
+                    shopName: shopName || null,
                     shopAddress: shop.streetAddress,
                     agentName: shop.user
                         ? `${shop.user.firstName || ""} ${shop.user.lastName || ""}`.trim()
@@ -337,8 +356,11 @@ async function listAgentsWithCashDue(options = {}) {
                     ...summary,
                 });
             }
-        } catch (_) {
-            /* skip shops without valid wallet */
+        } catch (err) {
+            console.warn(
+                `[cash-due] skipped shop ${shop.id} user ${shop.userId}:`,
+                err.message
+            );
         }
     }
 

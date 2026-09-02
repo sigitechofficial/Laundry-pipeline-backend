@@ -29,17 +29,20 @@ Set at **invoice finalize** (`billingDetails.agentEarning`).
 
 | Rule | Detail |
 |------|--------|
-| Commission base | Effective laundry + driver tip |
-| Service fee | **Excluded** from commission base |
+| Commission base | Effective laundry only |
+| Driver tip | **100% to the agent** — added after the laundry split |
+| Service fee | **Excluded** from commission; platform keeps it |
 | Cash orders | Effective laundry = `max(laundry subtotal, zone minimum)` |
 | Card orders | Effective laundry = laundry subtotal only |
-| Agent % | Zone `agentCommissionPercent` (default ~80%) |
+| Agent % | Zone `agentCommissionPercent` (default ~80%), applied to laundry only |
 
 **Example (80% agent, £50 laundry + £5 tip + £5 service fee):**
 
-- Commission base = £55  
-- Agent earning = £44  
-- Platform share (from laundry+tip) = £11  
+- Commission base (laundry) = £50  
+- Agent laundry share = £40  
+- Tip to agent = £5  
+- Agent earning = £45  
+- Platform share (from laundry) = £10  
 - Service fee (£5) goes to platform via order total, not commission split
 
 ---
@@ -123,7 +126,7 @@ Cash COD does **not** use the 1-hour invoice payment window (`invoicePaymentWind
 
 ## 4. Money flow examples
 
-### 4.1 Pure cash — £60 order, £44 agent commission (80%)
+### 4.1 Pure cash — £60 order, £45 agent commission (80% of laundry + full tip)
 
 ```
 Customer pays agent £60 cash at delivery
@@ -131,28 +134,28 @@ Agent calls recordCashPayment(amountCollected: 60)
 
 Ledger:
   cash_collected     DEBIT  £60
-  booking_commission CREDIT £44
+  booking_commission CREDIT £45
   ─────────────────────────────
-  Net balance        -£16   → cashDueToPlatform = £16
+  Net balance        -£15   → cashDueToPlatform = £15
 ```
 
-Agent physically keeps £44; must remit £16 to admin.
+Agent physically keeps £45; must remit £15 to admin.
 
-### 4.2 Pure card — same commission £44
+### 4.2 Pure card — same commission £45
 
 ```
 Platform collects full amount via Stripe
 No cash_collected entry
 
 Ledger:
-  booking_commission CREDIT £44
+  booking_commission CREDIT £45
   ─────────────────────────────
-  Net balance        +£44   → platformOwesAgent = £44
+  Net balance        +£45   → platformOwesAgent = £45
 ```
 
 Admin pays agent via payout when processing earnings.
 
-### 4.3 Card upfront + cash balance — £30 upfront, £30 balance, £44 commission
+### 4.3 Card upfront + cash balance — £30 upfront, £30 balance, £45 commission
 
 ```
 Platform already has £30 from card at pickup
@@ -160,9 +163,9 @@ Agent collects £30 cash at delivery → recordCashPayment(30)
 
 Ledger:
   cash_collected     DEBIT  £30
-  booking_commission CREDIT £44
+  booking_commission CREDIT £45
   ─────────────────────────────
-  Net balance        +£14   → platform still owes agent £14
+  Net balance        +£15   → platform still owes agent £15
 ```
 
 ---

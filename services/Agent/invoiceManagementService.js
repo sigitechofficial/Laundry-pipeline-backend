@@ -43,10 +43,14 @@ const {
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 const {
-    resolveAgentCommissionPercent,
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
+const {
+    ensureRateSnapshotOnBooking,
+    RATE_SNAPSHOT_ATTRIBUTES,
+    ZONE_COMMERCIAL_ATTRIBUTES,
+} = require("../../utils/bookingRateSnapshot");
 const {
     ensureCustomerDeclaredSnapshot,
     getCustomerDeclaredServices,
@@ -116,7 +120,14 @@ class AgentInvoiceManagementService {
         return [
             {
                 model: zone,
-                attributes: ["id", "name", "zoneMinimumAmount", "serviceCharge"],
+                    attributes: [
+                        "id",
+                        "name",
+                        "zoneMinimumAmount",
+                        "serviceCharge",
+                        "zoneAdminComission",
+                        "agentCommissionPercent",
+                    ],
             },
             {
                 model: users,
@@ -298,7 +309,14 @@ class AgentInvoiceManagementService {
             include: [
                 {
                     model: zone,
-                    attributes: ["id", "name", "zoneAdminComission", "agentCommissionPercent"],
+                    attributes: [
+                        "id",
+                        "name",
+                        "zoneAdminComission",
+                        "agentCommissionPercent",
+                        "zoneMinimumAmount",
+                        "serviceCharge",
+                    ],
                 },
                 {
                     model: tip,
@@ -537,15 +555,16 @@ class AgentInvoiceManagementService {
         return totalItems;
     }
 
-    async calculateInvoiceTotals(bookingRow, bookingId, serviceCharge, zoneMinimumAmount) {
-        const zoneData = bookingRow.zone;
-        if (!zoneData) {
+    async calculateInvoiceTotals(bookingRow, bookingId, _serviceCharge, _zoneMinimumAmount) {
+        const terms = await ensureRateSnapshotOnBooking(bookingRow);
+        if (!bookingRow?.zone && !terms.locked) {
             throw new NotFoundError("Zone information not found for this booking");
         }
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
-        const parsedServiceCharge = parseFloat(serviceCharge) || 0;
-        const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
+        const parsedServiceCharge = terms.serviceCharge;
+        const parsedZoneMinimum = terms.zoneMinimumAmount;
+        const agentCommissionPercent = terms.agentCommissionPercent;
 
         const tipAmount =
             bookingRow.tips && bookingRow.tips.length > 0
@@ -575,16 +594,15 @@ class AgentInvoiceManagementService {
         const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
         const amountDueNow = paymentSummary.amountDueNow;
 
-        const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
         const commissionBase = resolveAgentCommissionBase(
             servicesSubtotal,
-            tipAmount,
             parsedZoneMinimum,
             bookingRow.paymentType
         );
         const commissionAmounts = calculateAgentCommissionAmounts(
             commissionBase,
-            agentCommissionPercent
+            agentCommissionPercent,
+            tipAmount
         );
 
         if (Number.isNaN(amountDueNow)) {
@@ -618,11 +636,12 @@ class AgentInvoiceManagementService {
                 "paymentConfirmed",
                 "balancePaymentMethod",
                 "balanceCollectedVia",
+                ...RATE_SNAPSHOT_ATTRIBUTES,
             ],
             include: [
                 {
                     model: zone,
-                    attributes: ["id", "name", "zoneAdminComission", "agentCommissionPercent", "zoneMinimumAmount", "serviceCharge"],
+                    attributes: ZONE_COMMERCIAL_ATTRIBUTES,
                 },
                 {
                     model: tip,
@@ -649,21 +668,9 @@ class AgentInvoiceManagementService {
             throw new NotFoundError("Booking not found");
         }
 
-        const billing = bookingRow.billingDetail || {};
-        const serviceCharge =
-            parseFloat(billing.serviceCharge) ||
-            parseFloat(bookingRow.zone?.serviceCharge) ||
-            0;
-        const zoneMinimum =
-            parseFloat(billing.upfrontAmount) ||
-            parseFloat(bookingRow.zone?.zoneMinimumAmount) ||
-            0;
-
         const totals = await this.calculateInvoiceTotals(
             bookingRow,
-            bookingId,
-            serviceCharge,
-            zoneMinimum
+            bookingId
         );
 
         return totals.paymentSummary;

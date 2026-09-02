@@ -154,7 +154,12 @@ exports.voiceIncoming = async (req, res) => {
     }
 
     try {
-        const xml = twilioCallService.buildConnectCustomerTwiml(customerPhone);
+        const statusCallbackUrl = twilioCallService.getVoiceStatusWebhookUrl(
+            session.id
+        );
+        const xml = twilioCallService.buildConnectCustomerTwiml(customerPhone, {
+            statusCallbackUrl,
+        });
         return sendTwiml(res, xml);
     } catch (err) {
         console.error("[twilioVoice] twiml error:", err.message);
@@ -165,4 +170,109 @@ exports.voiceIncoming = async (req, res) => {
             )
         );
     }
+};
+
+/**
+ * POST /webhooks/twilio/voice/status?sessionId=:id
+ * Twilio dial status callback — fired when the bridged customer leg ends.
+ * Closes the matching active call session so the admin panel stops showing it
+ * as "Active" after the agent ends the call.
+ */
+exports.voiceStatus = async (req, res) => {
+    const signature = req.get("X-Twilio-Signature");
+    const params = req.body || {};
+
+    // Twilio signs the exact status callback URL, including the query string.
+    const base = twilioCallService.getPublicBaseUrl();
+    const fullUrl = base ? `${base}${req.originalUrl}` : null;
+
+    try {
+        if (
+            !twilioCallService.validateVoiceSignatureForUrl(
+                signature,
+                params,
+                fullUrl
+            )
+        ) {
+            console.warn("[twilioVoice] status: invalid or missing signature");
+            // Always ACK Twilio (avoid retries); do not mutate state.
+            return res.status(204).end();
+        }
+    } catch (err) {
+        console.error("[twilioVoice] status signature error:", err.message);
+        return res.status(204).end();
+    }
+
+    const now = new Date();
+    const sessionId = req.query?.sessionId;
+    const callStatus = String(params.CallStatus || params.DialCallStatus || "")
+        .toLowerCase()
+        .trim();
+    const callSid = params.CallSid ? String(params.CallSid).trim() : null;
+    const durationRaw = params.DialCallDuration || params.CallDuration;
+    const callDurationSec =
+        durationRaw != null && String(durationRaw).trim() !== "" && !Number.isNaN(Number(durationRaw))
+            ? Math.max(0, Math.trunc(Number(durationRaw)))
+            : null;
+
+    // "answered" / "in-progress" mark the moment the customer leg connected.
+    const connectedStates = ["answered", "in-progress"];
+    const isConnected = connectedStates.includes(callStatus);
+
+    // Terminal states for a leg — any of these means the call is over.
+    const terminalStates = [
+        "completed",
+        "busy",
+        "no-answer",
+        "canceled",
+        "failed",
+    ];
+    const isTerminal = !callStatus || terminalStates.includes(callStatus);
+
+    try {
+        let session = null;
+        if (sessionId != null && String(sessionId).trim() !== "") {
+            session = await bookingCallSession.findByPk(Number(sessionId));
+        }
+
+        // Fallback: resolve by agent phone (parent leg From) when id missing.
+        if (!session) {
+            const agentPhone = normalizePhoneNumber(params.From, null);
+            if (agentPhone) {
+                session = await bookingCallSession.findOne({
+                    where: { agentPhoneE164: agentPhone, status: "active" },
+                    order: [["id", "DESC"]],
+                });
+            }
+        }
+
+        if (session) {
+            const updates = {};
+            if (callSid && !session.callSid) updates.callSid = callSid;
+            if (callStatus) updates.callStatus = callStatus;
+            if (callDurationSec != null) updates.callDurationSec = callDurationSec;
+            if (isConnected && !session.connectedAt) updates.connectedAt = now;
+
+            if (isTerminal) {
+                if (!session.endedAt) updates.endedAt = now;
+                // Only flip an active session to closed on a terminal ping;
+                // never re-open an already closed/expired one.
+                if (session.status === "active") {
+                    updates.status = "closed";
+                    updates.closedAt = now;
+                    updates.closeReason = callStatus
+                        ? `call_${callStatus.replace(/-/g, "_")}`
+                        : "call_completed";
+                }
+            }
+
+            if (Object.keys(updates).length > 0) {
+                await session.update(updates);
+            }
+        }
+    } catch (err) {
+        console.error("[twilioVoice] status update error:", err.message);
+    }
+
+    return res.status(204).end();
 };

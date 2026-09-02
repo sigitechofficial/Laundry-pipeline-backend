@@ -267,6 +267,16 @@ class AdminBookingAssignService {
         );
 
         try {
+            const { lockBookingRateSnapshot } = require("../../utils/bookingRateSnapshot");
+            await lockBookingRateSnapshot(bookingId, { source: "assigned" });
+        } catch (snapErr) {
+            console.error(
+                "[assignBookingToShop] rate snapshot lock failed:",
+                snapErr.message
+            );
+        }
+
+        try {
             const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
             // Close any active trip tracking when admin reassigns shop/driver.
             syncLiveTrackingForBookingStatus(bookingId, 3, {

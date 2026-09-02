@@ -66,6 +66,10 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.DATE,
                 allowNull: false,
             },
+            deliveredAt: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
         },
         {
             sequelize,

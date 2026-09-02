@@ -63,9 +63,41 @@ function formatNotificationRow(row) {
         twilioStatus: plain.twilioStatus,
         bodyPreview: plain.bodyPreview,
         sentAt: plain.sentAt,
+        deliveredAt: plain.deliveredAt || null,
         createdAt: plain.createdAt,
         updatedAt: plain.updatedAt,
     };
+}
+
+/**
+ * Human-readable call outcome from the Twilio call status / close reason.
+ */
+function deriveCallOutcome(callStatus, closeReason) {
+    const status = String(callStatus || "").toLowerCase().trim();
+    const reason = String(closeReason || "").toLowerCase().trim();
+    const key = status || reason.replace(/^call_/, "").replace(/_/g, "-");
+
+    switch (key) {
+        case "completed":
+            return "Completed";
+        case "answered":
+        case "in-progress":
+            return "Answered";
+        case "no-answer":
+            return "No answer";
+        case "busy":
+            return "Busy";
+        case "failed":
+            return "Failed";
+        case "canceled":
+        case "cancelled":
+            return "Canceled";
+        default:
+            if (reason === "replaced") return "Replaced";
+            if (reason === "ttl_expired") return "Expired (no call)";
+            if (reason === "booking_missing") return "Booking missing";
+            return null;
+    }
 }
 
 function formatSessionRow(row) {
@@ -90,6 +122,13 @@ function formatSessionRow(row) {
         expiresAt: plain.expiresAt,
         closedAt: plain.closedAt,
         closeReason: plain.closeReason,
+        callSid: plain.callSid || null,
+        callStatus: plain.callStatus || null,
+        callDurationSec:
+            plain.callDurationSec != null ? Number(plain.callDurationSec) : null,
+        connectedAt: plain.connectedAt || null,
+        endedAt: plain.endedAt || null,
+        outcome: deriveCallOutcome(plain.callStatus, plain.closeReason),
         createdAt: plain.createdAt,
         updatedAt: plain.updatedAt,
     };
@@ -162,7 +201,15 @@ async function listNotifyLogs(query = {}) {
 
     if (wantNotifications) {
         const where = {};
-        if (channel) where.channel = String(channel).toLowerCase().trim();
+        if (channel) {
+            // Explicit channel filter (sms / push / call) is respected as-is.
+            where.channel = String(channel).toLowerCase().trim();
+        } else {
+            // Default notifications view = messaging only. Dialer "call" rows are
+            // session markers that belong in the Call Sessions tab, so exclude
+            // them here (otherwise they leak into the SMS/notifications list).
+            where.channel = { [Op.in]: ["sms", "push"] };
+        }
         if (bookingId) where.bookingId = Number(bookingId);
         if (agentUserId) where.agentUserId = Number(agentUserId);
         if (leg) where.leg = String(leg).toLowerCase().trim();
@@ -187,6 +234,30 @@ async function listNotifyLogs(query = {}) {
     }
 
     if (wantSessions) {
+        // Safety net for missed Twilio status callbacks: any session still
+        // marked "active" past its TTL is reconciled to "expired" before we
+        // read, so the admin panel never shows a stale Active session forever.
+        try {
+            await bookingCallSession.update(
+                {
+                    status: "expired",
+                    closedAt: new Date(),
+                    closeReason: "ttl_expired",
+                },
+                {
+                    where: {
+                        status: "active",
+                        expiresAt: { [Op.lt]: new Date() },
+                    },
+                }
+            );
+        } catch (err) {
+            console.error(
+                "[notifyLogs] expire stale sessions failed:",
+                err.message
+            );
+        }
+
         const where = {};
         if (bookingId) where.bookingId = Number(bookingId);
         if (agentUserId) where.agentUserId = Number(agentUserId);

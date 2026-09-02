@@ -342,19 +342,23 @@ class ShopManagementService {
      * @returns {Object} Single shop data with detailed information
      */
     async getSingleShopData(shopId) {
-            const shopData = await bussinessInformation.findOne({
-                where: {
-                    id: shopId
-                },
-                include: [
+            const id = parseInt(shopId, 10);
+            if (!Number.isFinite(id) || id <= 0) {
+                throw new NotFoundError("Shop not found");
+            }
+
+            const shopIncludes = [
                     {
                         model: users,
                         as: 'businessInfo',
+                        required: false,
                         attributes: [
                             'id',
                             'firstName',
                             'lastName',
                             'email',
+                            'phoneNum',
+                            'status',
                             [
                                 sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
                                 'TotalEmployees',
@@ -363,14 +367,13 @@ class ShopManagementService {
                         include: [
                             {
                                 model: bussinessWorkingHours,
-                                where: {
-                                    status: true
-                                },
-                                attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime']
+                                required: false,
+                                attributes: ['id', 'dayOfWeek', 'openTime', 'closeTime', 'status']
                             },
                             {
                                 model: agentSelectServices,
                                 as: 'agentServices',
+                                required: false,
                                 attributes: ['id', 'serviceId', 'status', 'serviceTimeRequired'],
                                 include: [
                                     {
@@ -391,7 +394,8 @@ class ShopManagementService {
                     },
                     {
                         model: addressDb,
-                        attributes: ['id', 'streetAddress', 'province', 'district', 'addressType', 'cityId', 'countryId',
+                        required: false,
+                        attributes: ['id', 'streetAddress', 'province', 'district', 'postalcode', 'addressType', 'cityId', 'countryId',
                             [
                                 sequelize.literal(
                                     `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
@@ -420,8 +424,27 @@ class ShopManagementService {
                             }
                         ]
                     }
-                ]
+            ];
+
+            let shopData = await bussinessInformation.findOne({
+                where: { id },
+                include: shopIncludes,
             });
+            if (!shopData) {
+                shopData = await bussinessInformation.findOne({
+                    where: { agentId: id },
+                    include: shopIncludes,
+                });
+            }
+            if (!shopData) {
+                shopData = await bussinessInformation.findOne({
+                    where: { shopAddressId: id },
+                    include: shopIncludes,
+                });
+            }
+            if (!shopData) {
+                throw new NotFoundError("Shop not found");
+            }
 
             // Fetch all orders for this shop
             let orders = [];
@@ -498,7 +521,7 @@ class ShopManagementService {
                 result.orders = orders;
             }
 
-            return result || shopData;
+            return result;
     }
 
     /**

@@ -227,19 +227,24 @@ class AgentRegistrationService {
         if (bussinessWorkingDays && bussinessWorkingDays.length > 0) {
             await Promise.all(
                 bussinessWorkingDays.map(async (ele) => {
-                    await bussinessWorkingHours.update(
-                        {
+                    const [row] = await bussinessWorkingHours.findOrCreate({
+                        where: {
+                            dayOfWeek: ele.dayOfWeek,
+                            userId: userId,
+                        },
+                        defaults: {
+                            dayOfWeek: ele.dayOfWeek,
+                            userId: userId,
                             openTime: ele.openTime,
                             closeTime: ele.closeTime,
-                            status: ele.status !== undefined ? ele.status : true
+                            status: ele.status !== undefined ? ele.status : true,
                         },
-                        {
-                            where: {
-                                dayOfWeek: ele.dayOfWeek,
-                                userId: userId
-                            }
-                        }
-                    );
+                    });
+                    await row.update({
+                        openTime: ele.openTime,
+                        closeTime: ele.closeTime,
+                        status: ele.status !== undefined ? ele.status : true,
+                    });
                 })
             );
         }

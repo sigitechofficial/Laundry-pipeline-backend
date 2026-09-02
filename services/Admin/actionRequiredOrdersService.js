@@ -201,7 +201,7 @@ async function listActionRequiredOrders({
             attributes: ['id', 'userId'],
             include: {
                 model: bussinessInformation,
-                attributes: ['shopName'],
+                attributes: ['id', 'shopName'],
                 required: false,
             },
         },

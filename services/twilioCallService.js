@@ -52,6 +52,19 @@ function getVoiceIncomingWebhookUrl() {
     return `${base}/webhooks/twilio/voice/incoming`;
 }
 
+/**
+ * Twilio calls this when the bridged customer leg ends (call completed / agent
+ * hung up). Carries sessionId so the handler can close the exact call session.
+ * Returns null when the base URL is unknown so callers can skip wiring it.
+ */
+function getVoiceStatusWebhookUrl(sessionId) {
+    const base = getPublicBaseUrl();
+    if (!base) return null;
+    const suffix =
+        sessionId != null ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+    return `${base}/webhooks/twilio/voice/status${suffix}`;
+}
+
 function sessionTtlMinutes() {
     const n = Number(process.env.PHONE_CALL_SESSION_TTL_MINUTES);
     if (Number.isFinite(n) && n >= 5 && n <= 180) return n;
@@ -61,7 +74,7 @@ function sessionTtlMinutes() {
 /**
  * Validate X-Twilio-Signature against the configured public webhook URL.
  */
-function validateIncomingVoiceSignature(signature, params) {
+function validateVoiceSignatureForUrl(signature, params, url) {
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     if (!authToken) return false;
 
@@ -73,10 +86,17 @@ function validateIncomingVoiceSignature(signature, params) {
         return true;
     }
 
-    if (!signature) return false;
+    if (!signature || !url) return false;
 
-    const url = getVoiceIncomingWebhookUrl();
     return twilio.validateRequest(authToken, signature, url, params || {});
+}
+
+function validateIncomingVoiceSignature(signature, params) {
+    return validateVoiceSignatureForUrl(
+        signature,
+        params,
+        getVoiceIncomingWebhookUrl()
+    );
 }
 
 /**
@@ -98,7 +118,16 @@ function buildConnectCustomerTwiml(customerPhoneE164, options = {}) {
         timeout,
         answerOnBridge: true,
     });
-    dial.number(String(customerPhoneE164).trim());
+    // Twilio pings the status callback across the call lifecycle so we can record
+    // when the customer leg connected/ended and mark the session closed in real
+    // time. "answered" gives us connectedAt; "completed" gives duration + outcome.
+    const numberAttrs = {};
+    if (options.statusCallbackUrl) {
+        numberAttrs.statusCallback = options.statusCallbackUrl;
+        numberAttrs.statusCallbackMethod = "POST";
+        numberAttrs.statusCallbackEvent = "initiated ringing answered completed";
+    }
+    dial.number(numberAttrs, String(customerPhoneE164).trim());
     return twiml.toString();
 }
 
@@ -117,8 +146,10 @@ module.exports = {
     getTwilioFromNumber,
     getPublicBaseUrl,
     getVoiceIncomingWebhookUrl,
+    getVoiceStatusWebhookUrl,
     sessionTtlMinutes,
     validateIncomingVoiceSignature,
+    validateVoiceSignatureForUrl,
     buildConnectCustomerTwiml,
     buildRejectTwiml,
 };

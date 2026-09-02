@@ -546,6 +546,223 @@ exports.getShopAddress = async (req, res) => {
 
 //!------------------------------------------Get Order For Agent----------------------------------------//
 
+/**
+ * Canonical "visible New bookings" for an agent — the SINGLE source of truth
+ * shared by the New list AND the New badge count.
+ *
+ * Historically the New tab list (getBookingHome) applied per-row visibility
+ * filters (agent must offer every selected service, pickup must fall inside
+ * shop working hours, accept window must be open, orderExpireTime must exist,
+ * booking not already declined) while the badge counters (bookingCounts /
+ * fetchTabCounts) only ran the coarse SQL `where`. Result: badge showed N
+ * (e.g. 3) while the list was empty. Both now derive from this function so
+ * they can never drift again.
+ *
+ * @param {number} agentId
+ * @param {object} [opts]
+ * @param {string} [opts.timeZone]
+ * @param {string} [opts.clientTimeZone]
+ * @param {boolean} [opts.withDetails=false] include display joins (list) vs lean (count)
+ * @returns {Promise<Array>} filtered plain booking rows visible to this agent
+ */
+async function fetchVisibleNewBookings(agentId, opts = {}) {
+    const { timeZone, clientTimeZone, withDetails = false } = opts;
+
+    const shopAddr = await addressDb.findOne({
+        where: { userId: agentId, deletedAt: null },
+        attributes: ["id", "zoneId"],
+    });
+    if (!shopAddr || !shopAddr.zoneId) return [];
+
+    const agentShopId = shopAddr.id;
+    const agentZone = shopAddr.zoneId;
+
+    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
+    const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
+    const resolvedAgentTz = timeZone || agentCountryCtx.ianaTimeZone;
+
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
+    const declinedBookingIds =
+        await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
+
+    const bookingWhere = {
+        bookingStatusId: 1,
+        zoneId: agentZone,
+        laundryShopId: null,
+        agentBroadcastHeld: { [Op.not]: true },
+        createdAt: { [Op.gte]: twentyFourHoursAgo },
+        [Op.or]: marketplaceHeld
+            ? [{ adminAssignedShopId: agentShopId }]
+            : [
+                  { adminAssignedShopId: null },
+                  { adminAssignedShopId: agentShopId },
+              ],
+        [Op.and]: [
+            {
+                [Op.or]: [
+                    { preferredShopAgentId: null },
+                    { preferredShopAgentId: agentId },
+                    { preferredShopBroadcastDone: true },
+                ],
+            },
+        ],
+    };
+    if (declinedBookingIds.length > 0) {
+        bookingWhere.id = { [Op.notIn]: declinedBookingIds };
+    }
+
+    const detailIncludes = [
+        {
+            model: addressDb,
+            as: "pickupAddress",
+            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+            include: [
+                { model: countries, attributes: ['id', 'name', 'shortName'] },
+                { model: cities, attributes: ['id', 'name'] },
+            ],
+        },
+        {
+            model: users,
+            as: 'customer',
+            attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum'],
+        },
+        {
+            model: users,
+            as: 'driver',
+            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'image'],
+        },
+        {
+            model: users,
+            as: 'deliveryDriver',
+            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'image'],
+        },
+        {
+            model: zone,
+            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+        },
+    ];
+
+    const bookingData = await booking.findAll({
+        where: bookingWhere,
+        include: withDetails ? detailIncludes : [],
+        attributes: ['id',
+            'orderTrackId',
+            'collectionDate',
+            'collectionTimeTo',
+            'collectionTimeFrom',
+            'driverInstructionOptions',
+            'driverInstructionOptions1',
+            'driverInstruction',
+            'paymentConfirmed',
+            "partialPayment",
+            "totalItems",
+            "totalBags",
+            "sameBagForAllServices",
+            "orderAmount",
+            "frequency",
+            "deliveryDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
+            "pickupAddresId",
+            "dropOffAddressId",
+            "laundryShopId",
+            "customerId",
+            "driverId",
+            "deliveryDriverId",
+            "createdAt",
+            "orderExpireTime",
+            "adminAssignedShopId",
+            "agentVisibleAt",
+            "placedOutsidePlatformHours",
+        ],
+    });
+
+    // Agent's actively-offered service IDs. A broadcast booking is only shown if
+    // the agent offers EVERY service the customer selected on that booking.
+    const agentServiceRows = await agentSelectServices.findAll({
+        where: { agentServiceId: agentId, status: true },
+        attributes: ["serviceId"],
+    });
+    const agentServiceIdSet = new Set(
+        agentServiceRows.map((r) => Number(r.serviceId))
+    );
+
+    const bookingIds = bookingData.map((b) => b.id);
+    const bookingServiceIds = new Map();
+    if (bookingIds.length > 0) {
+        const selectedServiceRows = await customerSelectedService.findAll({
+            where: { bookingId: { [Op.in]: bookingIds } },
+            attributes: ["bookingId", "serviceId"],
+        });
+        for (const row of selectedServiceRows) {
+            const bId = Number(row.bookingId);
+            const sId = Number(row.serviceId);
+            if (!Number.isFinite(sId) || sId <= 0) continue;
+            if (!bookingServiceIds.has(bId)) bookingServiceIds.set(bId, new Set());
+            bookingServiceIds.get(bId).add(sId);
+        }
+    }
+
+    const out = [];
+    for (const row of bookingData) {
+        const plain = row.get({ plain: true });
+        if (!plain.orderExpireTime) continue;
+
+        const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
+        if (
+            !requiredServiceIds ||
+            requiredServiceIds.size === 0 ||
+            ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
+        ) {
+            continue;
+        }
+
+        if (
+            !isBookingAcceptWindowOpen(
+                getAcceptWindowAnchor(plain),
+                plain.orderExpireTime,
+                timeZone,
+                clientTimeZone
+            )
+        ) {
+            continue;
+        }
+
+        const pickupOk = await isPickupWithinShopWorkingHours(
+            agentId,
+            plain.collectionDate,
+            plain.collectionTimeFrom,
+            plain.collectionTimeTo,
+            resolvedAgentTz,
+            clientTimeZone,
+            agentCountryCtx.countryId
+        );
+        if (!pickupOk) continue;
+
+        if (withDetails) {
+            const minutesLeft = getAcceptWindowMinutesRemaining(
+                getAcceptWindowAnchor(plain),
+                plain.orderExpireTime,
+                timeZone,
+                clientTimeZone
+            );
+            out.push({
+                ...plain,
+                createdAt: plain.createdAt,
+                orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
+                acceptWindowMinutes: minutesLeft,
+            });
+        } else {
+            out.push(plain);
+        }
+    }
+
+    return out;
+}
+
 /*
  * Get Agent Order Home Api
  */
@@ -689,197 +906,14 @@ exports.getBookingHome = async (req, res) => {
     const { releaseHeldBookingsForZone } = require("../../services/bookingHeldReleaseService");
     await releaseHeldBookingsForZone(agentZone);
 
-    const declinedBookingIds =
-        await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
-
-    const agentShopId = userData.addressDb.id;
-
-    // Shops on admin marketplace hold only see work an admin assigned to them.
-    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
-
-    const bookingWhere = {
-        bookingStatusId: 1,
-        zoneId: agentZone,
-        laundryShopId: null,
-        agentBroadcastHeld: { [Op.not]: true },
-        createdAt: { [Op.gte]: twentyFourHoursAgo },
-        [Op.or]: marketplaceHeld
-            ? [{ adminAssignedShopId: agentShopId }]
-            : [
-                  { adminAssignedShopId: null },
-                  { adminAssignedShopId: agentShopId },
-              ],
-        // Preferred-shop Phase-1: hide from all other shops until window expires
-        // or the preferred shop declines. A booking is visible when:
-        //   (a) no preferred shop was set, OR
-        //   (b) this agent IS the preferred shop, OR
-        //   (c) the preferred window has expired (broadcast done)
-        [Op.and]: [
-            {
-                [Op.or]: [
-                    { preferredShopAgentId: null },
-                    { preferredShopAgentId: agentId },
-                    { preferredShopBroadcastDone: true },
-                ],
-            },
-        ],
-    };
-
-    if (declinedBookingIds.length > 0) {
-        bookingWhere.id = { [Op.notIn]: declinedBookingIds };
-    }
-
-    const bookingData = await booking.findAll({
-        where: bookingWhere,
-        include: [
-            {
-                model: addressDb,
-                as: "pickupAddress",
-                attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ['id', 'name', 'shortName']
-                    },
-                    {
-                        model: cities,
-                        attributes: ['id', 'name']
-                    }
-                ]
-            },
-            {
-                model: users,
-                as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum']
-            },
-            {
-                model: users,
-                as: 'driver',
-                required: false,
-                attributes: ['id', 'firstName', 'lastName', 'image'],
-            },
-            {
-                model: users,
-                as: 'deliveryDriver',
-                required: false,
-                attributes: ['id', 'firstName', 'lastName', 'image'],
-            },
-            {
-                model: zone,
-                attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId']
-            }
-        ],
-        attributes: ['id',
-            'orderTrackId',
-            'collectionDate',
-            'collectionTimeTo',
-            'collectionTimeFrom',
-            'driverInstructionOptions',
-            'driverInstructionOptions1',
-            'driverInstruction',
-            'paymentConfirmed',
-            "partialPayment",
-            "totalItems",
-            "totalBags",
-            "sameBagForAllServices",
-            "orderAmount",
-            "frequency",
-            "deliveryDate",
-            "deliveryTimeFrom",
-            "deliveryTimeTo",
-            "pickupAddresId",
-            "dropOffAddressId",
-            "laundryShopId",
-            "customerId",
-            "driverId",
-            "deliveryDriverId",
-            "createdAt",
-            "orderExpireTime",
-            "adminAssignedShopId",
-            "agentVisibleAt",
-            "placedOutsidePlatformHours",
-        ],
+    // Single source of truth for the New list — the badge counters
+    // (bookingCounts / fetchTabCounts) call this same helper so list and
+    // count can never diverge again.
+    const bookingDataForResponse = await fetchVisibleNewBookings(agentId, {
+        timeZone: queryTimeZone,
+        clientTimeZone: queryClientTimeZone,
+        withDetails: true,
     });
-
-    // Agent's actively-offered service IDs. A broadcast booking is only shown if
-    // the agent offers EVERY service the customer selected on that booking.
-    const agentServiceRows = await agentSelectServices.findAll({
-        where: { agentServiceId: agentId, status: true },
-        attributes: ["serviceId"],
-    });
-    const agentServiceIdSet = new Set(
-        agentServiceRows.map((r) => Number(r.serviceId))
-    );
-
-    // Map each booking → the distinct service IDs the customer selected on it.
-    const bookingIds = bookingData.map((b) => b.id);
-    const bookingServiceIds = new Map();
-    if (bookingIds.length > 0) {
-        const selectedServiceRows = await customerSelectedService.findAll({
-            where: { bookingId: { [Op.in]: bookingIds } },
-            attributes: ["bookingId", "serviceId"],
-        });
-        for (const row of selectedServiceRows) {
-            const bId = Number(row.bookingId);
-            const sId = Number(row.serviceId);
-            if (!Number.isFinite(sId) || sId <= 0) continue;
-            if (!bookingServiceIds.has(bId)) bookingServiceIds.set(bId, new Set());
-            bookingServiceIds.get(bId).add(sId);
-        }
-    }
-
-    const bookingDataForResponse = [];
-
-    for (const row of bookingData) {
-        const plain = row.get({ plain: true });
-        if (!plain.orderExpireTime) continue;
-
-        // Skip bookings whose selected services this agent does not fully offer.
-        const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
-        if (
-            !requiredServiceIds ||
-            requiredServiceIds.size === 0 ||
-            ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
-        ) {
-            continue;
-        }
-
-        if (
-            !isBookingAcceptWindowOpen(
-                getAcceptWindowAnchor(plain),
-                plain.orderExpireTime,
-                queryTimeZone,
-                queryClientTimeZone
-            )
-        ) {
-            continue;
-        }
-
-        const pickupOk = await isPickupWithinShopWorkingHours(
-            agentId,
-            plain.collectionDate,
-            plain.collectionTimeFrom,
-            plain.collectionTimeTo,
-            resolvedAgentTz,
-            queryClientTimeZone,
-            agentCountryCtx.countryId
-        );
-        if (!pickupOk) continue;
-
-        const minutesLeft = getAcceptWindowMinutesRemaining(
-            getAcceptWindowAnchor(plain),
-            plain.orderExpireTime,
-            queryTimeZone,
-            queryClientTimeZone
-        );
-
-        bookingDataForResponse.push({
-            ...plain,
-            createdAt: plain.createdAt,
-            orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
-            acceptWindowMinutes: minutesLeft,
-        });
-    }
 
     return ResponseHelper.success(res, "Agent Orders fetched", {
         bookingData: bookingDataForResponse,
@@ -1371,7 +1405,6 @@ exports.agentBookingFilters = async (req, res) => {
     }
 
     const shopId  = addressFound.id;
-    const zoneId  = addressFound.zoneId;
 
     // Must AND staff scope — spreading Op.or would wipe day/slot date branches.
     const withStaffScope = (where) =>
@@ -1520,7 +1553,6 @@ exports.agentBookingFilters = async (req, res) => {
     const todayStr         = moment().format("YYYY-MM-DD");
     const tomorrowStr      = moment().add(1, "day").format("YYYY-MM-DD");
     const dayAfterStr      = moment().add(2, "day").format("YYYY-MM-DD");
-    const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
 
     // Status groups (shared constants — see AGENT_* above)
     const PICKUP_STATUSES = AGENT_PICKUP_STATUSES;
@@ -1528,43 +1560,28 @@ exports.agentBookingFilters = async (req, res) => {
     const PROCESSING_STATUSES = AGENT_PROCESSING_STATUSES;
     const ALL_ACTIVE_STATUSES = AGENT_ALL_ACTIVE_STATUSES;
 
-    // Shops on admin marketplace hold only see work an admin assigned to them.
-    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
-
-    const newOrdersWhere = {
-        bookingStatusId: 1,
-        laundryShopId: null,
-        zoneId,
-        agentBroadcastHeld: { [Op.not]: true },
-        createdAt: { [Op.gte]: twentyFourHrsAgo },
-        [Op.or]: marketplaceHeld
-            ? [{ adminAssignedShopId: shopId }]
-            : [
-                  { adminAssignedShopId: null },
-                  { adminAssignedShopId: shopId },
-              ],
-        [Op.and]: [
-            {
-                [Op.or]: [
-                    { orderExpireTime: null },
-                    { orderExpireTime: { [Op.gt]: new Date() } },
-                ],
-            },
-            // Preferred-shop Phase-1 gate: hide from non-preferred shops until window expires
-            {
-                [Op.or]: [
-                    { preferredShopAgentId: null },
-                    { preferredShopAgentId: agentId },
-                    { preferredShopBroadcastDone: true },
-                ],
-            },
-        ],
+    // New list + New badge share ONE code path (fetchVisibleNewBookings) so the
+    // count can never show orders the visible list would drop (services not
+    // offered, pickup outside working hours, accept window closed, missing
+    // orderExpireTime, already declined). Memoised so list + count reuse it.
+    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
+    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
+    let _visibleNewRowsCache;
+    const getVisibleNewRows = async () => {
+        if (_visibleNewRowsCache === undefined) {
+            _visibleNewRowsCache = await fetchVisibleNewBookings(agentId, {
+                timeZone: queryTimeZone,
+                clientTimeZone: queryClientTimeZone,
+                withDetails: true,
+            });
+        }
+        return _visibleNewRowsCache;
     };
 
     const fetchTabCounts = async () => {
         const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
         const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
-            hideNew ? Promise.resolve(0) : booking.count({ where: newOrdersWhere }),
+            hideNew ? Promise.resolve(0) : getVisibleNewRows().then((rows) => rows.length),
             booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),
             booking.count({ where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)) }),
             booking.count({
@@ -1604,13 +1621,7 @@ exports.agentBookingFilters = async (req, res) => {
         if (req.isShopEmployee && !actorCanAcceptOrders(req)) {
             results.New = [];
         } else {
-            const rows = await booking.findAll({
-                where: newOrdersWhere,
-                order: [["id", "DESC"]],
-                attributes: BOOKING_ATTRS,
-                include: makeIncludes(),
-            });
-            results.New = await decorateBoardBookings(rows);
+            results.New = await getVisibleNewRows();
         }
         if (filterType === "new") {
             results.counts = await fetchTabCounts();
@@ -1751,34 +1762,23 @@ exports.getBookingCounts = async (req, res) => {
     if (!shopRow) return ResponseHelper.success(res, "Booking counts", { counts: { new: 0, today: 0, tomorrow: 0, orders: 0, invoice: 0, processing: 0 } });
 
     const shopId = shopRow.id;
-    const zoneId = shopRow.zoneId;
 
     const todayStr        = moment().format("YYYY-MM-DD");
     const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
     const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
-    const twentyFourHrsAgo = moment().subtract(24, "hours").toDate();
     const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
-    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
+    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
+    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
+        // Same visibility pipeline as the New list (getBookingHome) so the badge
+        // never shows orders the list would drop. See fetchVisibleNewBookings.
         hideNew
             ? Promise.resolve(0)
-            : booking.count({
-            where: {
-                bookingStatusId: 1,
-                laundryShopId: null,
-                zoneId,
-                agentBroadcastHeld: { [Op.not]: true },
-                createdAt: { [Op.gte]: twentyFourHrsAgo },
-                [Op.or]: marketplaceHeld
-                    ? [{ adminAssignedShopId: shopId }]
-                    : [{ adminAssignedShopId: null }, { adminAssignedShopId: shopId }],
-                [Op.and]: [
-                    { [Op.or]: [{ orderExpireTime: null }, { orderExpireTime: { [Op.gt]: new Date() } }] },
-                    { [Op.or]: [{ preferredShopAgentId: null }, { preferredShopAgentId: agentId }, { preferredShopBroadcastDone: true }] },
-                ],
-            },
-        }),
+            : fetchVisibleNewBookings(agentId, {
+                  timeZone: queryTimeZone,
+                  clientTimeZone: queryClientTimeZone,
+              }).then((rows) => rows.length),
         booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),
         booking.count({ where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)) }),
         booking.count({
@@ -2954,6 +2954,7 @@ exports.recordCashPayment = async (req, res) => {
         : bookingRow.billingDetail?.paymentStatus === "Paid" && amountDue <= 0;
 
     if (alreadySettled) {
+        await tryCreditAgentWallet(bookingId);
         const paymentFlags = buildCollectPaymentFlags({
             paymentType: bookingRow.paymentType || "cash",
             paymentConfirmed: true,
@@ -3718,6 +3719,8 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
+    await tryCreditAgentWallet(bookingId);
+
     // Prompt customer to leave a shop review (fire-and-forget).
     try {
         const { notifyCustomerRequestReview } = require('../../utils/reviewNotify');
@@ -3821,7 +3824,14 @@ exports.driverAddSerivces = async (req, res) => {
         include: [
             {
                 model: zone,
-                attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
+                attributes: [
+                    'id',
+                    'name',
+                    'zoneAdminComission',
+                    'agentCommissionPercent',
+                    'zoneMinimumAmount',
+                    'serviceCharge',
+                ]
             },
             {
                 model: tip,
@@ -6793,7 +6803,14 @@ exports.updateInvoice = async (req, res) => {
         include: [
             {
                 model: zone,
-                attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
+                attributes: [
+                    'id',
+                    'name',
+                    'zoneAdminComission',
+                    'agentCommissionPercent',
+                    'zoneMinimumAmount',
+                    'serviceCharge',
+                ]
             },
             {
                 model: tip,

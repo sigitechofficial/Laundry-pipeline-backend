@@ -446,6 +446,36 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: false,
     defaultValue: false,
   },
+  appliedZoneMinimum: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true,
+    comment: "Zone minimum frozen at accept/assign",
+  },
+  appliedServiceCharge: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: true,
+    comment: "Zone service fee frozen at accept/assign",
+  },
+  appliedAgentCommissionPercent: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "Agent commission % frozen at accept/assign",
+  },
+  appliedPlatformCommissionPercent: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "Platform commission % frozen at accept/assign",
+  },
+  rateSnapshotLockedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: "When commercial terms were frozen",
+  },
+  rateSnapshotSource: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: "accepted | assigned | backfill",
+  },
   }, {
     sequelize,
     modelName: 'booking',

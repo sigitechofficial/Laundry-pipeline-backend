@@ -384,6 +384,9 @@ function buildOrderListFilters(req) {
     const filters = {};
     const zoneId = zoneIdFromRequest(req);
     if (zoneId) filters.zoneId = zoneId;
+    if (req.query.shopId != null && String(req.query.shopId).trim() !== "") {
+        filters.shopId = req.query.shopId;
+    }
     if (req.query.status) filters.status = req.query.status;
     if (req.query.startDate) filters.startDate = req.query.startDate;
     if (req.query.endDate) filters.endDate = req.query.endDate;

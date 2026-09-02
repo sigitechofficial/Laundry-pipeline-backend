@@ -103,6 +103,16 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         throw new ConflictError("This order was already taken");
     }
 
+    try {
+        const { lockBookingRateSnapshot } = require("../../utils/bookingRateSnapshot");
+        await lockBookingRateSnapshot(bookingId, { source: "accepted" });
+    } catch (snapErr) {
+        console.error(
+            "[acceptOrder] rate snapshot lock failed:",
+            snapErr.message
+        );
+    }
+
     const now = new Date();
     const dateStr = now.toISOString().split("T")[0];
     const timeStr = now.toTimeString().slice(0, 8);

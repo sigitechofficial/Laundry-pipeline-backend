@@ -50,6 +50,26 @@ module.exports = (sequelize, DataTypes) => {
                 type: DataTypes.STRING(64),
                 allowNull: true,
             },
+            callSid: {
+                type: DataTypes.STRING(64),
+                allowNull: true,
+            },
+            callStatus: {
+                type: DataTypes.STRING(32),
+                allowNull: true,
+            },
+            callDurationSec: {
+                type: DataTypes.INTEGER,
+                allowNull: true,
+            },
+            connectedAt: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
+            endedAt: {
+                type: DataTypes.DATE,
+                allowNull: true,
+            },
         },
         {
             sequelize,

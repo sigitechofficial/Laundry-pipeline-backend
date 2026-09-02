@@ -6,11 +6,13 @@ const {
     wallet,
     units,
     zone,
+    tip,
 } = require("../../models");
 const { Op } = require("sequelize");
 const { NotFoundError } = require("../../middlewares/universalErrorHandler");
 const invoiceManagementService = require("./invoiceManagementService");
 const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
+const { RATE_SNAPSHOT_ATTRIBUTES } = require("../../utils/bookingRateSnapshot");
 
 const COMMISSION_REFERENCE = "booking_commission";
 const CASH_COLLECTED_REFERENCE = "cash_collected";
@@ -185,10 +187,40 @@ async function recordCashCollectedForBooking({
     };
 }
 
+async function healAgentEarningIfMissing(bookingRow, billing) {
+    const stored = parseFloat(billing?.agentEarning || 0);
+    if (stored > 0) return stored;
+    if (!bookingRow?.zone) return 0;
+
+    try {
+        const totals = await invoiceManagementService.calculateInvoiceTotals(
+            bookingRow,
+            bookingRow.id
+        );
+        const healed = parseFloat(totals.finalAgentEarningAmount || 0);
+        if (healed > 0) {
+            await billingDetails.update(
+                {
+                    agentEarning: healed,
+                    zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
+                },
+                { where: { bookingId: bookingRow.id } }
+            );
+        }
+        return healed;
+    } catch (err) {
+        console.warn(
+            `[agentWallet] Could not heal agentEarning for booking ${bookingRow.id}:`,
+            err.message
+        );
+        return 0;
+    }
+}
+
 /**
  * Credit agent wallet when booking is fully paid. Idempotent per booking.
- * Cash orders also record cash_collected debit (agent physically holds customer cash).
- * @returns {{ credited: boolean, cashRecorded?: boolean, amount?: number, walletId?: number, reason?: string }}
+ * Cash orders record cash_collected even when commission is still 0, so admin
+ * cash-due can show the amount the platform must collect from the shop.
  */
 async function creditAgentForPaidBooking(bookingId, options = {}) {
     const bookingRow = await booking.findByPk(bookingId, {
@@ -198,8 +230,10 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
             "laundryShopId",
             "zoneId",
             "paymentType",
+            "paymentConfirmed",
             "balancePaymentMethod",
             "balanceCollectedVia",
+            ...RATE_SNAPSHOT_ATTRIBUTES,
         ],
         include: [
             {
@@ -210,7 +244,27 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
                     "paymentStatus",
                     "agentEarning",
                     "total",
+                    "serviceCharge",
+                    "upfrontAmount",
                 ],
+            },
+            {
+                model: zone,
+                attributes: [
+                    "id",
+                    "name",
+                    "zoneAdminComission",
+                    "agentCommissionPercent",
+                    "zoneMinimumAmount",
+                    "serviceCharge",
+                ],
+                required: false,
+            },
+            {
+                model: tip,
+                as: "tips",
+                attributes: ["id", "amount"],
+                required: false,
             },
         ],
     });
@@ -220,20 +274,24 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
     }
 
     const billing = bookingRow.billingDetail;
-    if (!billing || billing.paymentStatus !== "Paid") {
+    const channel = classifyAgentEarningChannel(bookingRow);
+    const explicitCashAmount = parseFloat(options.cashCollectedAmount);
+    const hasExplicitCash =
+        Number.isFinite(explicitCashAmount) && explicitCashAmount > 0;
+    const billingPaid = billing?.paymentStatus === "Paid";
+    const cashConfirmed =
+        channel === "cash" &&
+        (Boolean(bookingRow.paymentConfirmed) || hasExplicitCash);
+
+    if (!billingPaid && !cashConfirmed) {
         return { credited: false, reason: "not_paid" };
     }
 
-    const agentEarning = parseFloat(billing.agentEarning || 0);
-    if (!agentEarning || agentEarning <= 0) {
-        return { credited: false, reason: "no_agent_earning" };
-    }
-
-    const paymentSummary =
-        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
-    const amountDue = Number(paymentSummary?.amountDueNow ?? 0);
-    if (amountDue > 0.02) {
-        return { credited: false, reason: "balance_still_due" };
+    if (cashConfirmed && billing && billing.paymentStatus !== "Paid") {
+        await billingDetails.update(
+            { paymentStatus: "Paid" },
+            { where: { bookingId } }
+        );
     }
 
     const agentUserId = await resolveShopOwnerUserId(bookingRow.laundryShopId);
@@ -241,9 +299,16 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
         return { credited: false, reason: "no_shop_owner" };
     }
 
+    const paymentSummary =
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    const amountDue = Number(paymentSummary?.amountDueNow ?? 0);
+    if (!hasExplicitCash && !cashConfirmed && amountDue > 0.02) {
+        return { credited: false, reason: "balance_still_due" };
+    }
+
     const currency = await resolveCurrencyForBooking(bookingRow);
     const orderLabel = bookingRow.orderTrackId || String(bookingId);
-    const channel = classifyAgentEarningChannel(bookingRow);
+    const agentEarning = await healAgentEarningIfMissing(bookingRow, billing);
 
     let cashRecorded = false;
     if (channel === "cash") {
@@ -252,18 +317,17 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
             bookingRow,
             options
         );
-        if (!cashCollectedAmount || cashCollectedAmount <= 0) {
-            return { credited: false, reason: "cash_not_recorded" };
+        if (cashCollectedAmount > 0) {
+            const cashResult = await recordCashCollectedForBooking({
+                bookingId,
+                agentUserId,
+                cashCollectedAmount,
+                currency,
+                orderLabel,
+            });
+            cashRecorded =
+                cashResult.recorded || cashResult.reason === "already_recorded";
         }
-
-        const cashResult = await recordCashCollectedForBooking({
-            bookingId,
-            agentUserId,
-            cashCollectedAmount,
-            currency,
-            orderLabel,
-        });
-        cashRecorded = cashResult.recorded;
     }
 
     if (await hasCommissionCredit(bookingId)) {
@@ -271,6 +335,18 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
             credited: false,
             cashRecorded,
             reason: "already_credited",
+            agentUserId,
+            channel,
+        };
+    }
+
+    if (!agentEarning || agentEarning <= 0) {
+        return {
+            credited: false,
+            cashRecorded,
+            reason: "no_agent_earning",
+            agentUserId,
+            channel,
         };
     }
 
@@ -521,7 +597,6 @@ async function backfillWalletsFromPaidBookings(options = {}) {
     const rows = await billingDetails.findAll({
         where: {
             paymentStatus: "Paid",
-            agentEarning: { [Op.gt]: 0 },
         },
         attributes: ["bookingId", "agentEarning"],
         include: [
@@ -553,10 +628,72 @@ async function backfillWalletsFromPaidBookings(options = {}) {
         if (result.cashRecorded) {
             stats.cashRecorded += 1;
         }
-        if (!result.credited && result.reason && result.reason !== "already_credited") {
+        if (
+            !result.credited &&
+            !result.cashRecorded &&
+            result.reason &&
+            result.reason !== "already_credited"
+        ) {
             stats.skipped.push({
                 bookingId: row.bookingId,
                 orderTrackId: row.booking?.orderTrackId || null,
+                reason: result.reason,
+            });
+        }
+    }
+
+    return stats;
+}
+
+/**
+ * Paid cash bookings that never got a wallet row (new shops, missed credit).
+ * Safe to run on the admin cash-due list so settlement appears without a manual sync.
+ */
+async function backfillMissingCashLedger(options = {}) {
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 200, 1), 500);
+
+    const rows = await booking.findAll({
+        where: {
+            laundryShopId: { [Op.ne]: null },
+            [Op.or]: [
+                { paymentType: "cash", paymentConfirmed: true },
+                { balanceCollectedVia: "cash" },
+            ],
+        },
+        attributes: ["id", "orderTrackId"],
+        order: [["id", "DESC"]],
+        limit,
+    });
+
+    const stats = {
+        processed: 0,
+        credited: 0,
+        cashRecorded: 0,
+        skipped: [],
+    };
+
+    for (const row of rows) {
+        const hasCash = await hasWalletEntry(
+            row.id,
+            CASH_COLLECTED_REFERENCE,
+            "debit"
+        );
+        const hasCommission = await hasCommissionCredit(row.id);
+        if (hasCash && hasCommission) continue;
+
+        stats.processed += 1;
+        const result = await creditAgentForPaidBooking(row.id);
+        if (result.credited) stats.credited += 1;
+        if (result.cashRecorded) stats.cashRecorded += 1;
+        if (
+            !result.credited &&
+            !result.cashRecorded &&
+            result.reason &&
+            result.reason !== "already_credited"
+        ) {
+            stats.skipped.push({
+                bookingId: row.id,
+                orderTrackId: row.orderTrackId || null,
                 reason: result.reason,
             });
         }
@@ -671,6 +808,7 @@ module.exports = {
     classifyAgentEarningChannel,
     creditAgentForPaidBooking,
     backfillWalletsFromPaidBookings,
+    backfillMissingCashLedger,
     hasSettlementActivity,
     getWalletSummary,
     getWalletTransactions,

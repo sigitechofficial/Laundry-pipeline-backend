@@ -1,5 +1,7 @@
 /**
- * Commission % applies to effective laundry + driver tip (service fee excluded).
+ * Commission % applies to effective laundry only.
+ * Driver tip is added in full to the agent after that split.
+ * Service fee is excluded (platform keeps it).
  */
 
 function normalizePaymentType(value) {
@@ -24,21 +26,18 @@ function resolveEffectiveLaundrySubtotal(
 }
 
 /**
- * Base amount for agent commission: effective laundry + tip (no service fee).
+ * Base amount the zone % is applied to: effective laundry only (no tip, no fee).
  */
 function resolveAgentCommissionBase(
     laundrySubtotal,
-    driverTip,
     zoneMinimumAmount,
     paymentType
 ) {
-    const effectiveLaundry = resolveEffectiveLaundrySubtotal(
+    return resolveEffectiveLaundrySubtotal(
         laundrySubtotal,
         zoneMinimumAmount,
         paymentType
     );
-    const tip = Number(driverTip) || 0;
-    return parseFloat((effectiveLaundry + tip).toFixed(2));
 }
 
 const DEFAULT_PLATFORM_COMMISSION_PERCENT = 20;
@@ -75,19 +74,30 @@ function resolveAgentCommissionPercent(zone) {
 }
 
 /**
- * @param {number} commissionBaseAmount - effective laundry + tip (service fee excluded)
+ * @param {number} commissionBaseAmount - effective laundry only
  * @param {number} agentCommissionPercent
+ * @param {number} [driverTip=0] - added in full to the agent, not split
  */
-function calculateAgentCommissionAmounts(commissionBaseAmount, agentCommissionPercent) {
-    const total = Number(commissionBaseAmount) || 0;
+function calculateAgentCommissionAmounts(
+    commissionBaseAmount,
+    agentCommissionPercent,
+    driverTip = 0
+) {
+    const laundry = Number(commissionBaseAmount) || 0;
+    const tip = Number(driverTip) || 0;
     const agentPct = clampPercent(agentCommissionPercent) ?? 0;
-    const agentEarning = parseFloat(((total * agentPct) / 100).toFixed(2));
-    const platformCommissionAmount = parseFloat((total - agentEarning).toFixed(2));
+    const laundryAgentShare = parseFloat(((laundry * agentPct) / 100).toFixed(2));
+    const agentEarning = parseFloat((laundryAgentShare + tip).toFixed(2));
+    const platformCommissionAmount = parseFloat(
+        (laundry - laundryAgentShare).toFixed(2)
+    );
 
     return {
         agentCommissionPercent: agentPct,
         agentEarning,
         platformCommissionAmount,
+        laundryAgentShare,
+        driverTip: parseFloat(tip.toFixed(2)),
     };
 }
 

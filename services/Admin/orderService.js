@@ -39,11 +39,6 @@ const {
     PENDING_EXCLUDED_SQL,
     ACTIVE_EXCLUDED_SQL,
 } = require('../../constants/bookingStatusIds');
-const {
-    resolveAgentCommissionPercent,
-    resolveAgentCommissionBase,
-    calculateAgentCommissionAmounts,
-} = require('../../utils/agentCommission');
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
 const {
@@ -55,10 +50,9 @@ const {
     getUnitCategoryCharge,
     serviceLineHasAddOnPayload,
     replaceAddOnsForServiceLine,
-    sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
-const { getPrepaidInvoiceDeduction } = require('../../utils/invoicePrepaidDeduction');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const { attachCommercialTerms } = require('../../utils/bookingRateSnapshot');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -190,13 +184,19 @@ class OrderService {
                 attributes: ['id', 'userId'],
                 include: {
                     model: bussinessInformation,
-                    attributes: ['shopName'],
+                    attributes: ['id', 'shopName'],
                     required: false,
                 },
             },
             {
                 model: bookingStatus,
                 attributes: ['id', 'title'],
+            },
+            {
+                model: billingDetails,
+                as: 'billingDetail',
+                required: false,
+                attributes: ['upfrontAmount', 'total', 'paymentStatus'],
             },
             {
                 model: users,
@@ -251,6 +251,8 @@ class OrderService {
             'deliveryDriverId',
             'customerId',
             'paymentType',
+            'balancePaymentMethod',
+            'balanceCollectedVia',
             'paymentDeliveryGate',
             'autoChargeStatus',
             'lastPaymentFailureCode',
@@ -812,7 +814,7 @@ class OrderService {
                 },
                 {
                     model: proofOfDeliveries,
-                    attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'note', 'deliveryType', 'bookingId', 'userId']
+                    attributes: ['id', 'imgUpload', 'noOfItems', 'noOfBags', 'note', 'deliveryType', 'bookingId', 'userId', 'createdAt', 'updatedAt']
                 },
                 {
                     model: tip,
@@ -822,7 +824,14 @@ class OrderService {
                 },
                 {
                     model: zone,
-                    attributes: ['id', 'name'],
+                    attributes: [
+                        'id',
+                        'name',
+                        'zoneMinimumAmount',
+                        'serviceCharge',
+                        'zoneAdminComission',
+                        'agentCommissionPercent',
+                    ],
                     required: false,
                 }
             ].filter(Boolean)
@@ -844,6 +853,7 @@ class OrderService {
         );
         plain.repairItems = normalizeRepairItems(plain.repairItems);
         plain.zoneName = plain.zone?.name || null;
+        plain.commercialTerms = attachCommercialTerms(plain, plain.zone);
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,
@@ -1749,8 +1759,6 @@ class OrderService {
         const {
             services,
             bookingId,
-            zoneMinimumAmount,
-            serviceCharge,
             timeZone,
             clientTimeZone,
         } = data;
@@ -1768,7 +1776,14 @@ class OrderService {
             include: [
                 {
                     model: zone,
-                    attributes: ['id', 'name', 'zoneAdminComission', 'agentCommissionPercent']
+                    attributes: [
+                        "id",
+                        "name",
+                        "zoneAdminComission",
+                        "agentCommissionPercent",
+                        "zoneMinimumAmount",
+                        "serviceCharge",
+                    ],
                 },
                 {
                     model: tip,
@@ -1797,51 +1812,31 @@ class OrderService {
             });
         }
 
-        const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
-
-        const parsedServiceCharge = parseFloat(serviceCharge) || 0;
-        const parsedZoneMinimum = parseFloat(zoneMinimumAmount) || 0;
-        const tipAmount = bookings.tips && bookings.tips.length > 0
-            ? bookings.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-            : 0;
-
-        let subTotal =
-            servicesSubtotal + parsedServiceCharge + parsedZoneMinimum + tipAmount;
-        const prepaidDeduction = getPrepaidInvoiceDeduction(
-            parsedZoneMinimum,
-            parsedServiceCharge,
-            tipAmount
+        const totals = await invoiceManagementService.calculateInvoiceTotals(
+            bookings,
+            bookingId
         );
-        let total = subTotal - prepaidDeduction;
-
-        subTotal = parseFloat(subTotal.toFixed(2));
-        total = parseFloat(total.toFixed(2));
-
-        const agentCommissionPercent = resolveAgentCommissionPercent(zoneData);
-        const commissionBase = resolveAgentCommissionBase(
+        const {
             servicesSubtotal,
-            tipAmount,
-            parsedZoneMinimum,
-            bookings.paymentType
-        );
-        const commissionAmounts = calculateAgentCommissionAmounts(
-            commissionBase,
-            agentCommissionPercent
-        );
-        const finalZoneAdminCommissionAmount = commissionAmounts.platformCommissionAmount;
-        const finalAgentEarningAmount = commissionAmounts.agentEarning;
+            subTotal,
+            total,
+            agentCommissionPercent,
+            finalZoneAdminCommissionAmount,
+            finalAgentEarningAmount,
+        } = totals;
 
-        if (isNaN(total)) {
+        if (Number.isNaN(total)) {
             throw new Error("Calculated total is NaN. Please check your input values.");
         }
 
         await billingDetails.update(
             {
                 total,
-                discount: 0,
+                discount: totals.existingDiscount || 0,
                 paymentStatus: "Pending",
                 zoneAdminCommission: finalZoneAdminCommissionAmount,
                 agentEarning: finalAgentEarningAmount,
+                serviceCharge: totals.parsedServiceCharge,
             },
             { where: { bookingId } }
         );
