@@ -97,6 +97,7 @@ async function listPendingRemittances(options = {}) {
         include: [
             {
                 model: users,
+                as: "user",
                 attributes: ["id", "firstName", "lastName", "email"],
                 required: false,
             },
