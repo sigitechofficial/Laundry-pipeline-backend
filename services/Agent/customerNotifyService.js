@@ -174,18 +174,63 @@ function normalizePhoneNumber(rawPhone, rawCountryCode = null) {
  */
 async function resolveBookingCountryShortName(bookingRow) {
     try {
+        // Gather every address the booking touches (shop, pickup, drop-off) plus
+        // the booking zone. Any one of these carries the country context needed to
+        // pick the right dial code for a customer saved without a countryCode.
+        let { pickupAddresId, dropOffAddressId, zoneId } = bookingRow || {};
         const shopAddressId = bookingRow?.laundryShopId;
-        if (!shopAddressId) return null;
-        const shopAddress = await addressDb.findByPk(shopAddressId, {
-            attributes: ["countryId", "zoneId"],
-        });
-        let ctx = null;
-        if (shopAddress?.countryId) {
-            ctx = await getCountryContextById(shopAddress.countryId);
-        } else if (shopAddress?.zoneId) {
-            ctx = await getCountryContextFromZoneId(shopAddress.zoneId);
+
+        if (pickupAddresId == null && dropOffAddressId == null && zoneId == null) {
+            const b = await booking.findByPk(bookingRow?.id, {
+                attributes: ["pickupAddresId", "dropOffAddressId", "zoneId"],
+            });
+            pickupAddresId = b?.pickupAddresId ?? null;
+            dropOffAddressId = b?.dropOffAddressId ?? null;
+            zoneId = b?.zoneId ?? null;
         }
-        return ctx?.shortName || null;
+
+        // Preference order: shop → pickup → drop-off (all are the same country
+        // in practice; ordering just keeps behaviour deterministic).
+        const orderedAddressIds = [
+            shopAddressId,
+            pickupAddresId,
+            dropOffAddressId,
+        ].filter((id) => id != null);
+
+        let addrById = new Map();
+        if (orderedAddressIds.length) {
+            const addrs = await addressDb.findAll({
+                where: { id: { [Op.in]: orderedAddressIds } },
+                attributes: ["id", "countryId", "zoneId"],
+            });
+            addrById = new Map(addrs.map((a) => [Number(a.id), a]));
+        }
+
+        // 1) Country directly on any related address.
+        for (const id of orderedAddressIds) {
+            const addr = addrById.get(Number(id));
+            if (addr?.countryId) {
+                const ctx = await getCountryContextById(addr.countryId);
+                if (ctx?.shortName) return ctx.shortName;
+            }
+        }
+
+        // 2) Zone on any related address.
+        for (const id of orderedAddressIds) {
+            const addr = addrById.get(Number(id));
+            if (addr?.zoneId) {
+                const ctx = await getCountryContextFromZoneId(addr.zoneId);
+                if (ctx?.shortName) return ctx.shortName;
+            }
+        }
+
+        // 3) Booking zone.
+        if (zoneId != null) {
+            const ctx = await getCountryContextFromZoneId(zoneId);
+            if (ctx?.shortName) return ctx.shortName;
+        }
+
+        return null;
     } catch (_err) {
         return null;
     }
@@ -203,12 +248,28 @@ async function resolveCustomerE164(bookingRow) {
     let phone = normalizePhoneNumber(rawPhone, bookingRow?.customer?.countryCode);
     if (phone) return phone;
 
+    let fallbackShortName = null;
     if (rawPhone != null && String(rawPhone).trim() !== "") {
-        const fallbackShortName = await resolveBookingCountryShortName(bookingRow);
+        fallbackShortName = await resolveBookingCountryShortName(bookingRow);
         if (fallbackShortName) {
             phone = normalizePhoneNumber(rawPhone, fallbackShortName);
         }
     }
+
+    if (!phone) {
+        // Diagnostic (masked): surfaces the exact stored format + resolved country
+        // context so an "invalid phone" report can be root-caused from prod logs
+        // without exposing the full number.
+        const rawStr = rawPhone == null ? "" : String(rawPhone).trim();
+        console.warn("[notifyCustomer] Unresolvable customer phone", {
+            bookingId: bookingRow?.id,
+            phoneMasked: maskPhone(rawStr),
+            phoneLen: rawStr.replace(/[\s()+-]/g, "").length,
+            storedCountryCode: bookingRow?.customer?.countryCode ?? null,
+            inferredCountry: fallbackShortName,
+        });
+    }
+
     return phone || null;
 }
 
