@@ -300,6 +300,63 @@ async function getAgentSettlementSummary(agentUserId) {
     return agentWalletService.getWalletSummary(agentUserId);
 }
 
+/**
+ * Full enterprise-grade settlement detail for one agent: identity, aggregate
+ * summary, the complete wallet ledger (every credit/debit that fed the
+ * summary numbers), and the per-order breakdown of what was collected/earned
+ * on each completed order. Powers the admin "view" detail page so nothing is
+ * hidden behind a single modal with just the totals.
+ */
+async function getAgentSettlementDetail(agentUserId, options = {}) {
+    const shop = await resolveAgentShop(agentUserId);
+
+    const [agentUser, businessInfo, summary, ledger, orders] = await Promise.all([
+        users.findByPk(agentUserId, {
+            attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
+        }),
+        bussinessInformation.findOne({
+            where: { shopAddressId: shop.id },
+            attributes: ["shopName", "connectAccountId", "isConnectAccountConnected"],
+        }),
+        agentWalletService.getWalletSummary(agentUserId),
+        agentWalletService.listAdminSettlementLedger(agentUserId, {
+            page: options.ledgerPage,
+            limit: options.ledgerLimit,
+        }),
+        agentWalletService.listAgentOrderBreakdown(agentUserId, {
+            page: options.ordersPage,
+            limit: options.ordersLimit,
+        }),
+    ]);
+
+    return {
+        agent: {
+            id: agentUser?.id || agentUserId,
+            name: agentUser
+                ? `${agentUser.firstName || ""} ${agentUser.lastName || ""}`.trim()
+                : null,
+            email: agentUser?.email || null,
+            phone: agentUser?.phoneNum || null,
+            status: agentUser?.status,
+            joinedAt: agentUser?.createdAt || null,
+        },
+        shop: {
+            id: shop.id,
+            name: businessInfo?.shopName || null,
+            address: shop.streetAddress || null,
+            district: shop.district || null,
+            connectAccountConnected: Boolean(
+                businessInfo?.connectAccountId && businessInfo?.isConnectAccountConnected
+            ),
+        },
+        summary,
+        ledger: ledger.transactions,
+        ledgerPagination: ledger.pagination,
+        orders: orders.orders,
+        ordersPagination: orders.pagination,
+    };
+}
+
 async function listAgentsWithCashDue(options = {}) {
     const page = Math.max(parseInt(options.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
@@ -395,6 +452,7 @@ module.exports = {
     adminRecordAdjustment,
     recordAgentPayout,
     getAgentSettlementSummary,
+    getAgentSettlementDetail,
     listAgentsWithCashDue,
     syncAgentWalletsFromBookings,
 };

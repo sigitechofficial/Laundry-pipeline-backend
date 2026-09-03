@@ -797,6 +797,230 @@ async function getWalletTransactions(agentUserId, options = {}) {
     };
 }
 
+/**
+ * Human-readable label for a ledger row, for the admin cash-settlement detail screen.
+ */
+function describeWalletReferenceType(referenceType, type) {
+    switch (referenceType) {
+        case CASH_COLLECTED_REFERENCE:
+            return "Cash collected from customer";
+        case CASH_REMITTED_REFERENCE:
+            return "Cash handed to platform";
+        case COMMISSION_REFERENCE:
+            return "Commission earned";
+        case ADMIN_SETTLEMENT_REFERENCE:
+            return type === "debit" ? "Admin adjustment (debit)" : "Admin adjustment (credit)";
+        case AGENT_PAYOUT_REFERENCE:
+            return "Payout released to agent";
+        case WITHDRAWAL_REFERENCE:
+            return "Agent withdrawal";
+        case PAYOUT_REFERENCE:
+            return "Legacy payout";
+        default:
+            return referenceType || "Wallet entry";
+    }
+}
+
+/**
+ * Full, unfiltered chronological ledger for one agent — every wallet row
+ * (cash collected, cash remitted, commission, admin adjustment, payout,
+ * withdrawal). Used by the admin cash-settlement detail screen so nothing
+ * is hidden behind the aggregate summary numbers.
+ */
+async function listAdminSettlementLedger(agentUserId, options = {}) {
+    const page = Math.max(parseInt(options.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 200);
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await wallet.findAndCountAll({
+        where: { userId: agentUserId },
+        order: [
+            ["createdAt", "DESC"],
+            ["id", "DESC"],
+        ],
+        limit,
+        offset,
+        attributes: [
+            "id",
+            "amount",
+            "currency",
+            "type",
+            "status",
+            "description",
+            "bookingId",
+            "referenceType",
+            "stripeTransferId",
+            "failureReason",
+            "createdAt",
+        ],
+        include: [
+            {
+                model: booking,
+                as: "booking",
+                attributes: ["id", "orderTrackId"],
+                required: false,
+            },
+        ],
+    });
+
+    const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+
+    return {
+        transactions: rows.map((row) => {
+            const plain = row.get({ plain: true });
+            return {
+                id: plain.id,
+                amount: parseFloat(plain.amount || 0),
+                currency: plain.currency,
+                type: plain.type,
+                status: plain.status,
+                description: plain.description,
+                bookingId: plain.bookingId,
+                orderTrackId: plain.booking?.orderTrackId || null,
+                referenceType: plain.referenceType,
+                label: describeWalletReferenceType(plain.referenceType, plain.type),
+                createdAt: plain.createdAt,
+            };
+        }),
+        pagination: {
+            page,
+            limit,
+            total: count,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
+    };
+}
+
+/**
+ * Per-order breakdown for one agent: which completed/paid orders contributed
+ * to cash collected and commission earned, cross-referenced against the
+ * actual wallet ledger rows (not re-derived) so the admin detail screen
+ * always matches the summary numbers exactly.
+ */
+async function listAgentOrderBreakdown(agentUserId, options = {}) {
+    const page = Math.max(parseInt(options.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const shop = await addressDb.findOne({
+        where: { userId: agentUserId, addressType: "LaundaryShopAddress" },
+        attributes: ["id"],
+    });
+    if (!shop) {
+        throw new NotFoundError("Agent shop address not found");
+    }
+
+    const { count, rows } = await billingDetails.findAndCountAll({
+        where: { paymentStatus: "Paid" },
+        include: [
+            {
+                model: booking,
+                as: "booking",
+                required: true,
+                where: { laundryShopId: shop.id },
+                attributes: [
+                    "id",
+                    "orderTrackId",
+                    "paymentType",
+                    "balanceCollectedVia",
+                    "balancePaymentMethod",
+                    "pickupCompletedAt",
+                    "deliveryCompletedAt",
+                    "createdAt",
+                ],
+            },
+        ],
+        attributes: [
+            "bookingId",
+            "agentEarning",
+            "zoneAdminCommission",
+            "total",
+            "serviceCharge",
+            "upfrontAmount",
+            "discount",
+            "updatedAt",
+        ],
+        order: [
+            [{ model: booking, as: "booking" }, "deliveryCompletedAt", "DESC"],
+            ["updatedAt", "DESC"],
+        ],
+        limit,
+        offset,
+        distinct: true,
+    });
+
+    const bookingIds = rows.map((r) => r.bookingId).filter(Boolean);
+    const walletRows = bookingIds.length
+        ? await wallet.findAll({
+              where: {
+                  bookingId: { [Op.in]: bookingIds },
+                  referenceType: {
+                      [Op.in]: [CASH_COLLECTED_REFERENCE, COMMISSION_REFERENCE],
+                  },
+                  status: "completed",
+              },
+              attributes: ["bookingId", "referenceType", "amount", "createdAt"],
+              raw: true,
+          })
+        : [];
+
+    const walletByBooking = new Map();
+    for (const row of walletRows) {
+        if (!walletByBooking.has(row.bookingId)) {
+            walletByBooking.set(row.bookingId, {});
+        }
+        walletByBooking.get(row.bookingId)[row.referenceType] = row;
+    }
+
+    const orders = rows.map((row) => {
+        const plain = row.get({ plain: true });
+        const bookingRow = plain.booking || {};
+        const channel = classifyAgentEarningChannel(bookingRow);
+        const ledger = walletByBooking.get(plain.bookingId) || {};
+        const cashEntry = ledger[CASH_COLLECTED_REFERENCE];
+        const commissionEntry = ledger[COMMISSION_REFERENCE];
+        const orderTotal = parseFloat(plain.total || 0);
+
+        return {
+            bookingId: plain.bookingId,
+            orderTrackId: bookingRow.orderTrackId || String(plain.bookingId),
+            paymentType: bookingRow.paymentType || null,
+            channel,
+            completedAt:
+                bookingRow.deliveryCompletedAt ||
+                bookingRow.pickupCompletedAt ||
+                plain.updatedAt,
+            orderTotal,
+            commissionAmount: commissionEntry
+                ? parseFloat(commissionEntry.amount || 0)
+                : parseFloat(plain.agentEarning || 0),
+            commissionCreditedAt: commissionEntry ? commissionEntry.createdAt : null,
+            cashCollectedAmount: cashEntry
+                ? parseFloat(cashEntry.amount || 0)
+                : channel === "cash"
+                  ? orderTotal
+                  : 0,
+            cashRecordedAt: cashEntry ? cashEntry.createdAt : null,
+        };
+    });
+
+    const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+
+    return {
+        orders,
+        pagination: {
+            page,
+            limit,
+            total: count,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
+    };
+}
+
 module.exports = {
     COMMISSION_REFERENCE,
     CASH_COLLECTED_REFERENCE,
@@ -812,6 +1036,8 @@ module.exports = {
     hasSettlementActivity,
     getWalletSummary,
     getWalletTransactions,
+    listAdminSettlementLedger,
+    listAgentOrderBreakdown,
     hasCommissionCredit,
     resolveShopOwnerUserId,
 };

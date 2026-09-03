@@ -639,6 +639,10 @@ router.get(
     '/agents/:agentId/settlement',
     asyncMiddleware(agentSettlementController.getAgentSettlement)
 )
+router.get(
+    '/agents/:agentId/settlement-detail',
+    asyncMiddleware(agentSettlementController.getAgentSettlementDetail)
+)
 router.post(
     '/agents/:agentId/cash-settlement',
     asyncMiddleware(agentSettlementController.recordCashSettlement)

@@ -7,6 +7,18 @@ exports.getAgentSettlement = async (req, res) => {
     return ResponseHelper.success(res, "Agent settlement summary", data);
 };
 
+exports.getAgentSettlementDetail = async (req, res) => {
+    const agentUserId = parseInt(req.params.agentId, 10);
+    const { ledgerPage, ledgerLimit, ordersPage, ordersLimit } = req.query;
+    const data = await agentSettlementService.getAgentSettlementDetail(agentUserId, {
+        ledgerPage,
+        ledgerLimit,
+        ordersPage,
+        ordersLimit,
+    });
+    return ResponseHelper.success(res, "Agent settlement detail", data);
+};
+
 exports.listAgentsWithCashDue = async (req, res) => {
     const { page, limit } = req.query;
     const data = await agentSettlementService.listAgentsWithCashDue({ page, limit });
