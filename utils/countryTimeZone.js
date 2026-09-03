@@ -7,6 +7,11 @@ const {
 const { BUSINESS_TIME_ZONE } = require("./bookingTimeZone");
 
 const ZONE_CONTEXT_TTL_MS = 5 * 60 * 1000;
+// This deployment is UK-only (BUSINESS_TIME_ZONE=Europe/London, UK address
+// lookup APIs, UK Twilio number) — used only when no country can be resolved
+// from DB rows at all (empty countries table, or the found row has no
+// shortName), so callers like phone-dial-code inference never get stuck.
+const DEFAULT_COUNTRY_SHORT_NAME = "GB";
 const zoneContextCache = new Map();
 let defaultCountryContextCache = null;
 let defaultCountryContextCachedAt = 0;
@@ -43,11 +48,19 @@ async function getDefaultCountryContext() {
     ? {
         countryId: 1,
         countryName: null,
+        shortName: DEFAULT_COUNTRY_SHORT_NAME,
         ianaTimeZone: BUSINESS_TIME_ZONE,
       }
     : {
         countryId: row.id,
         countryName: row.name,
+        // `shortName` was previously omitted here entirely, so every caller
+        // that fell back to the default context (missing/unresolvable
+        // countryId or zoneId — the common case for customer-entered
+        // pickup/drop-off addresses) got shortName=undefined and could never
+        // resolve a dial code from it (e.g. agent notify-customer phone
+        // resolution failing on every booking).
+        shortName: row.shortName || DEFAULT_COUNTRY_SHORT_NAME,
         ianaTimeZone: row.ianaTimeZone || BUSINESS_TIME_ZONE,
       };
 
