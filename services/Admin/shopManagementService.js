@@ -8,6 +8,10 @@ const {
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
 const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
+// Keep the shop "pending" count in sync with the admin order sidebar / pendingOrders
+// list (services/Admin/orderService.js). Canonical exclusions: Completed, On-Hold
+// (customer + agent), Cancelled — see constants/bookingStatusIds.js.
+const { PENDING_EXCLUDED_SQL } = require('../../constants/bookingStatusIds');
 
 class ShopManagementService {
     /**
@@ -153,7 +157,7 @@ class ShopManagementService {
                     ],
                     [
                         sequelize.literal(
-                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (12))`
+                            `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (${PENDING_EXCLUDED_SQL}))`
                         ),
                         'PendingBookingCount',
                     ],
@@ -401,6 +405,12 @@ class ShopManagementService {
                                     `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
                                 ),
                                 'TotalBookingCount',
+                            ],
+                            [
+                                sequelize.literal(
+                                    `(SELECT COUNT(*) FROM bookings WHERE bookings.laundryShopId = addressDb.id AND bookings.bookingStatusId NOT IN (${PENDING_EXCLUDED_SQL}))`
+                                ),
+                                'PendingBookingCount',
                             ],
                             [
                                 sequelize.literal(
