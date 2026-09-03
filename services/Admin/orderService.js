@@ -50,9 +50,14 @@ const {
     getUnitCategoryCharge,
     serviceLineHasAddOnPayload,
     replaceAddOnsForServiceLine,
+    sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { attachCommercialTerms } = require('../../utils/bookingRateSnapshot');
+const {
+    resolveAgentCommissionBase,
+    calculateAgentCommissionAmounts,
+} = require('../../utils/agentCommission');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -854,6 +859,36 @@ class OrderService {
         plain.repairItems = normalizeRepairItems(plain.repairItems);
         plain.zoneName = plain.zone?.name || null;
         plain.commercialTerms = attachCommercialTerms(plain, plain.zone);
+
+        // Show the actual £ split alongside the agent/platform commission %,
+        // not just the percentages, using the same frozen rate terms and
+        // effective laundry base the invoice itself was calculated from.
+        try {
+            const servicesSubtotal = await sumActiveBookingServicesSubtotal(orderId);
+            const tipAmount = Array.isArray(plain.tips)
+                ? plain.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
+                : 0;
+            const commissionBase = resolveAgentCommissionBase(
+                servicesSubtotal,
+                plain.commercialTerms.zoneMinimumAmount,
+                plain.paymentType
+            );
+            const commissionAmounts = calculateAgentCommissionAmounts(
+                commissionBase,
+                plain.commercialTerms.agentCommissionPercent,
+                tipAmount
+            );
+            plain.commercialTerms.commissionBaseAmount = commissionBase;
+            plain.commercialTerms.agentCommissionAmount = commissionAmounts.laundryAgentShare;
+            plain.commercialTerms.platformCommissionAmount = commissionAmounts.platformCommissionAmount;
+            plain.commercialTerms.agentEarningWithTip = commissionAmounts.agentEarning;
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] commission amount breakdown unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
+
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,
