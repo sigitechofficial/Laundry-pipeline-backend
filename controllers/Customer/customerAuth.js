@@ -87,7 +87,7 @@ async function verifyOTpSignUp(req, res) {
  * Register Customer 
 */
 async function registerCustomer(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId } = req.body
+    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId, countryCode } = req.body
     console.log("ðŸš€ ~ registerCustomer ~ req.body:", req.body)
 
     let profileImg = null;
@@ -153,6 +153,7 @@ async function registerCustomer(req, res) {
         password: hashpass,
         dvToken,
         phoneNum,
+        ...(countryCode != null && String(countryCode).trim() !== "" ? { countryCode } : {}),
         stripeCustomerId: stripeCustomer,
         image: profileImg,
         cityId,

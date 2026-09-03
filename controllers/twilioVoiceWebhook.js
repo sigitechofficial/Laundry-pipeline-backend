@@ -10,6 +10,7 @@ const {
 } = require("../models");
 const {
     normalizePhoneNumber,
+    resolveCustomerE164,
 } = require("../services/Agent/customerNotifyService");
 const { Op } = require("sequelize");
 
@@ -131,10 +132,7 @@ exports.voiceIncoming = async (req, res) => {
         );
     }
 
-    const customerPhone = normalizePhoneNumber(
-        bookingRow.customer?.phoneNum,
-        bookingRow.customer?.countryCode
-    );
+    const customerPhone = await resolveCustomerE164(bookingRow);
     if (!customerPhone) {
         return sendTwiml(
             res,

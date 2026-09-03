@@ -23,6 +23,10 @@ const twilioSmsService = require("../twilioSmsService");
 const twilioCallService = require("../twilioCallService");
 const { maskPhoneNumber } = require("../../utils/maskPhone");
 const { sendNotification } = require("../../utils/notification");
+const {
+    getCountryContextById,
+    getCountryContextFromZoneId,
+} = require("../../utils/countryTimeZone");
 
 const RATE_LIMIT_MS = 2 * 60 * 1000;
 /** Push notifies before SMS is used for the same booking+leg */
@@ -67,7 +71,23 @@ function normalizeChannel(channel) {
 }
 
 /**
- * Map users.countryCode (+44 / 44 / GB / PK / +92) → dial prefix like "+44".
+ * ISO country code (alpha-2 / alpha-3) → dial prefix. Covers the codes stored in
+ * the `countries` table so a customer with a missing/blank countryCode can still
+ * be resolved from the order's country context.
+ */
+const ISO_DIAL_CODES = {
+    GB: "+44", GBR: "+44", UK: "+44",
+    PK: "+92", PAK: "+92",
+    US: "+1", USA: "+1",
+    AE: "+971", ARE: "+971",
+    IN: "+91", IND: "+91",
+    CA: "+1", CAN: "+1",
+    AU: "+61", AUS: "+61",
+    SA: "+966", SAU: "+966",
+};
+
+/**
+ * Map users.countryCode (+44 / 44 / GB / PK / +92 / GBR …) → dial prefix like "+44".
  */
 function normalizeCountryDialCode(rawCountryCode) {
     if (rawCountryCode == null) return null;
@@ -75,8 +95,7 @@ function normalizeCountryDialCode(rawCountryCode) {
     if (!code) return null;
 
     const upper = code.toUpperCase();
-    if (upper === "GB" || upper === "UK") return "+44";
-    if (upper === "PK") return "+92";
+    if (ISO_DIAL_CODES[upper]) return ISO_DIAL_CODES[upper];
 
     if (code.startsWith("00")) {
         code = `+${code.slice(2)}`;
@@ -146,6 +165,51 @@ function normalizePhoneNumber(rawPhone, rawCountryCode = null) {
         return null;
     }
     return phone;
+}
+
+/**
+ * When users.countryCode is missing/unresolvable, infer the dial code from the
+ * order's country (shop address → country / zone). Returns an ISO short name
+ * (e.g. "GB") that normalizeCountryDialCode understands, or null.
+ */
+async function resolveBookingCountryShortName(bookingRow) {
+    try {
+        const shopAddressId = bookingRow?.laundryShopId;
+        if (!shopAddressId) return null;
+        const shopAddress = await addressDb.findByPk(shopAddressId, {
+            attributes: ["countryId", "zoneId"],
+        });
+        let ctx = null;
+        if (shopAddress?.countryId) {
+            ctx = await getCountryContextById(shopAddress.countryId);
+        } else if (shopAddress?.zoneId) {
+            ctx = await getCountryContextFromZoneId(shopAddress.zoneId);
+        }
+        return ctx?.shortName || null;
+    } catch (_err) {
+        return null;
+    }
+}
+
+/**
+ * Resolve the customer's dialable E.164 number for a booking.
+ * 1) Try the stored phoneNum + countryCode.
+ * 2) If that fails but a phone exists, retry using the dial code inferred from
+ *    the order's country (covers customers saved without a countryCode).
+ * Returns null only when the phone is genuinely absent or unusable.
+ */
+async function resolveCustomerE164(bookingRow) {
+    const rawPhone = bookingRow?.customer?.phoneNum;
+    let phone = normalizePhoneNumber(rawPhone, bookingRow?.customer?.countryCode);
+    if (phone) return phone;
+
+    if (rawPhone != null && String(rawPhone).trim() !== "") {
+        const fallbackShortName = await resolveBookingCountryShortName(bookingRow);
+        if (fallbackShortName) {
+            phone = normalizePhoneNumber(rawPhone, fallbackShortName);
+        }
+    }
+    return phone || null;
 }
 
 function maskPhone(phone) {
@@ -368,13 +432,15 @@ async function notifyCustomer({
         shopOwnerId,
     });
 
-    const customerPhone = normalizePhoneNumber(
-        bookingRow.customer?.phoneNum,
-        bookingRow.customer?.countryCode
-    );
+    const customerPhone = await resolveCustomerE164(bookingRow);
     if (!customerPhone) {
+        const hasAnyPhone =
+            bookingRow.customer?.phoneNum != null &&
+            String(bookingRow.customer.phoneNum).trim() !== "";
         throw new ValidationError(
-            "Customer phone number is missing or invalid. Cannot notify customer."
+            hasAnyPhone
+                ? "Customer's saved phone number is invalid. Please update it before notifying."
+                : "Customer has no phone number on file. Please add one before notifying."
         );
     }
 
@@ -928,6 +994,7 @@ module.exports = {
     getContactSummary,
     normalizePhoneNumber,
     normalizeCountryDialCode,
+    resolveCustomerE164,
     normalizeLeg,
     normalizeChannel,
 };
