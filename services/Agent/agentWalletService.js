@@ -373,11 +373,16 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
 
 /**
  * Lifetime agent commission from billing, split by collection channel.
+ * Only counts orders that actually reached payment — matches the wallet
+ * ledger (booking_commission is only credited for Paid bookings) and the
+ * admin order breakdown, so "Commission earned" / "Payable" never outgrow
+ * what the Orders/Ledger tabs can show.
  */
 async function sumAgentEarningsBreakdown(laundryShopId) {
     const rows = await billingDetails.findAll({
         where: {
             agentEarning: { [Op.gt]: 0 },
+            paymentStatus: "Paid",
         },
         attributes: ["agentEarning"],
         include: [
