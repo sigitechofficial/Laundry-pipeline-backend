@@ -406,7 +406,8 @@ class RescheduleBookingService {
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
                 'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId',
-                'pickupAttemptCount', 'pickupRescheduleRequired', 'deliveryAttemptCount'
+                'pickupAttemptCount', 'pickupRescheduleRequired', 'deliveryAttemptCount',
+                'invoiceStatus'
             ]
         });
 
@@ -456,7 +457,24 @@ class RescheduleBookingService {
             throw new ValidationError("New delivery date and time must be in the future");
         }
 
-        let rescheduleServiceIds = (services || []).map((s) => s.serviceId).filter(Boolean);
+        // Once the agent has finalized/drafted an invoice, or once we're past pickup
+        // (delivery-only reschedule after a failed delivery attempt), the agent's
+        // invoice lines are authoritative. A customer reschedule must NOT wipe them —
+        // otherwise destroy()+bulkCreate() below deletes the agent's added services and
+        // the invoice vanishes in both apps. In those states this is a schedule-only
+        // reschedule; ignore any services payload.
+        const invoiceLocked = ["finalized", "draft"].includes(
+            String(bookingData.invoiceStatus || "").toLowerCase()
+        );
+        const servicesUpdated =
+            Array.isArray(services) &&
+            services.length > 0 &&
+            !isDeliveryOnlyReschedule &&
+            !invoiceLocked;
+
+        let rescheduleServiceIds = servicesUpdated
+            ? services.map((s) => s.serviceId).filter(Boolean)
+            : [];
         if (!rescheduleServiceIds.length) {
             const existingRows = await customerSelectedService.findAll({
                 where: { bookingId, status: true },
@@ -478,9 +496,10 @@ class RescheduleBookingService {
         // Step 5: Calculate reschedule fee based on booking phase
         const feeDetails = await this.calculateRescheduleFee(bookingData, activePolicy, customerId);
 
-        // Step 6: Update services if provided
+        // Step 6: Update services only when this is a safe, pre-invoice reschedule
+        // (see servicesUpdated computed above — invoice-locked / delivery-only
+        // reschedules keep the agent's finalized invoice lines untouched).
         let newOrderAmount = bookingData.orderAmount; // keep existing amount if no services sent
-        const servicesUpdated = services && services.length > 0;
 
         if (servicesUpdated) {
             const currentDate = new Date().toISOString().split('T')[0];
@@ -503,7 +522,10 @@ class RescheduleBookingService {
                     bookingId,
                     serviceId: s.serviceId,
                     date: currentDate,
-                    time: currentTime
+                    time: currentTime,
+                    // Model default is status:false; without this the recreated lines
+                    // are invisible to both apps (all reads filter status:true).
+                    status: true
                 };
                 if (s.categoryId)    row.categoryId    = s.categoryId;
                 if (s.subCategoryId) row.subCategoryId = s.subCategoryId;
