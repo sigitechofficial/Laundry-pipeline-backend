@@ -2,6 +2,7 @@
 
 const { coupon, couponRedemption } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
+const { getCouponLifecycle } = require('../../utils/couponValidity');
 
 /**
  * Calculate the actual discount amount for a given coupon and order total.
@@ -42,7 +43,6 @@ class CouponService {
         }
 
         const amount = parseFloat(orderAmount);
-        const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
         const couponData = await coupon.findOne({
             where: { code: code.trim().toUpperCase(), isActive: true }
@@ -52,11 +52,11 @@ class CouponService {
             throw new NotFoundError('Coupon code is invalid or inactive');
         }
 
-        // Date checks
-        if (couponData.startDate && couponData.startDate > today) {
+        const lifecycle = getCouponLifecycle(couponData);
+        if (lifecycle === 'scheduled') {
             throw new ValidationError('This coupon is not yet active');
         }
-        if (couponData.expiryDate && couponData.expiryDate < today) {
+        if (lifecycle === 'expired') {
             throw new ValidationError('This coupon has expired');
         }
 

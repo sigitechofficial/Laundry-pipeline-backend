@@ -1,6 +1,7 @@
 'use strict';
 
 const { coupon, couponRedemption, users, booking } = require('../../models');
+const { getCouponLifecycle } = require('../../utils/couponValidity');
 const { Op } = require('sequelize');
 const {
     ValidationError,
@@ -88,9 +89,17 @@ class AdminCouponService {
             offset
         });
 
+        const data = rows.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            return {
+                ...plain,
+                status: getCouponLifecycle(plain),
+            };
+        });
+
         return {
             message: 'Coupons fetched successfully',
-            data: rows,
+            data,
             meta: {
                 total: count,
                 page: parseInt(page),
@@ -131,9 +140,13 @@ class AdminCouponService {
             throw new NotFoundError('Coupon not found');
         }
 
+        const plain = couponData.get ? couponData.get({ plain: true }) : couponData;
         return {
             message: 'Coupon details fetched',
-            data: couponData
+            data: {
+                ...plain,
+                status: getCouponLifecycle(plain),
+            }
         };
     }
 
@@ -193,6 +206,13 @@ class AdminCouponService {
         if (startDate !== undefined) couponData.startDate = startDate || null;
         if (expiryDate !== undefined) couponData.expiryDate = expiryDate || null;
         if (isActive !== undefined) couponData.isActive = isActive;
+        if (data.usedCount !== undefined) {
+            const used = parseInt(data.usedCount, 10);
+            if (Number.isNaN(used) || used < 0) {
+                throw new ValidationError('usedCount cannot be negative');
+            }
+            couponData.usedCount = used;
+        }
 
         await couponData.save();
 
