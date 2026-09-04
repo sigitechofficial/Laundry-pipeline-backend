@@ -46,6 +46,7 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
+const { bookingTipAmountFromTips, summarizeTips } = require("../../utils/bookingTips");
 const {
     ensureRateSnapshotOnBooking,
     RATE_SNAPSHOT_ATTRIBUTES,
@@ -290,7 +291,7 @@ class AgentInvoiceManagementService {
                 model: tip,
                 as: "tips",
                 required: false,
-                attributes: ["id", "amount"],
+                attributes: ["id", "amount", "source", "paymentType", "paidAt", "createdAt"],
             },
             {
                 model: bookingStatus,
@@ -321,7 +322,7 @@ class AgentInvoiceManagementService {
                 {
                     model: tip,
                     as: "tips",
-                    attributes: ["id", "amount"],
+                    attributes: ["id", "amount", "source", "paymentType", "paidAt", "createdAt"],
                     required: false,
                 },
             ],
@@ -566,10 +567,7 @@ class AgentInvoiceManagementService {
         const parsedZoneMinimum = terms.zoneMinimumAmount;
         const agentCommissionPercent = terms.agentCommissionPercent;
 
-        const tipAmount =
-            bookingRow.tips && bookingRow.tips.length > 0
-                ? bookingRow.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-                : 0;
+        const tipAmount = bookingTipAmountFromTips(bookingRow.tips);
 
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
         const existingDiscount = parseFloat(existingBilling?.discount || 0);
@@ -646,7 +644,7 @@ class AgentInvoiceManagementService {
                 {
                     model: tip,
                     as: "tips",
-                    attributes: ["id", "amount"],
+                    attributes: ["id", "amount", "source", "paymentType", "paidAt", "createdAt"],
                     required: false,
                 },
                 {
@@ -897,10 +895,7 @@ class AgentInvoiceManagementService {
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
         const billing = bookingData.billingDetail || {};
-        const tipAmount =
-            bookingData.tips && bookingData.tips.length > 0
-                ? bookingData.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-                : 0;
+        const tipAmount = bookingTipAmountFromTips(bookingData.tips);
 
         const paymentSummary = buildPaymentSummary({
             laundrySubtotal: servicesSubtotal,
@@ -919,6 +914,7 @@ class AgentInvoiceManagementService {
             subTotal: bookingData.subTotal,
             total: bookingData.orderAmount,
             paymentSummary,
+            extraTip: summarizeTips(bookingData.tips || []),
         };
     }
 

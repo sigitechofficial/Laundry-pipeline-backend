@@ -28,10 +28,32 @@ module.exports = (sequelize, DataTypes) => {
     amount: {
       type: DataTypes.DECIMAL(10,2),
       allowNull: true
-    }
+    },
+    source: {
+      type: DataTypes.STRING(32),
+      allowNull: false,
+      defaultValue: 'booking',
+    },
+    paymentType: {
+      type: DataTypes.STRING(16),
+      allowNull: true,
+    },
+    stripePaymentIntentId: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    paidAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    createdByUserId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   }, {
     sequelize,
     modelName: 'tip',
+    tableName: 'tips',
   });
   return tip;
 };

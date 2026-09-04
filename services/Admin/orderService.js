@@ -58,6 +58,7 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require('../../utils/agentCommission');
+const { bookingTipAmountFromTips, summarizeTips } = require('../../utils/bookingTips');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -858,7 +859,7 @@ class OrderService {
                     model: tip,
                     as: 'tips',
                     required: false,
-                    attributes: ['id', 'bookingId', 'amount']
+                    attributes: ['id', 'bookingId', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt']
                 },
                 {
                     model: zone,
@@ -898,9 +899,7 @@ class OrderService {
         // effective laundry base the invoice itself was calculated from.
         try {
             const servicesSubtotal = await sumActiveBookingServicesSubtotal(orderId);
-            const tipAmount = Array.isArray(plain.tips)
-                ? plain.tips.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0)
-                : 0;
+            const tipAmount = bookingTipAmountFromTips(plain.tips);
             const commissionBase = resolveAgentCommissionBase(
                 servicesSubtotal,
                 plain.commercialTerms.zoneMinimumAmount,
@@ -1068,6 +1067,7 @@ class OrderService {
                 Boolean(enriched.pickupCompleteGeofenceOverride) ||
                 Boolean(enriched.deliveryCompleteGeofenceOverride),
         };
+        enriched.extraTip = summarizeTips(enriched.tips || []);
 
         return enriched;
     }
@@ -1339,7 +1339,7 @@ class OrderService {
                     model: tip,
                     as: 'tips',
                     required: false,
-                    attributes: ['id', 'amount']
+                    attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt']
                 }
             ]
         });
@@ -1666,7 +1666,7 @@ class OrderService {
                     model: tip,
                     as: 'tips',
                     required: false,
-                    attributes: ['id', 'amount']
+                    attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt']
                 },
                 {
                     model: zone,
@@ -1857,7 +1857,7 @@ class OrderService {
                 {
                     model: tip,
                     as: 'tips',
-                    attributes: ['id', 'amount'],
+                    attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
                     required: false
                 }
             ]

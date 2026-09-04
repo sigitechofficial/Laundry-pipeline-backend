@@ -101,6 +101,9 @@ function hideShopFinanceOnBooking(plain, options = {}) {
         };
     }
 
+    plain.extraTip = null;
+    plain.tips = [];
+
     if (plain.paymentSummary && typeof plain.paymentSummary === 'object') {
         plain.paymentSummary = {
             paymentType: plain.paymentSummary.paymentType,

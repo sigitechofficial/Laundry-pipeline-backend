@@ -97,6 +97,8 @@ const { isShopSlotFree } = require('../../utils/shopSlotAvailability');
 // Import stripe functions
 const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
 const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
+const extraTipService = require('./extraTipService');
+const { bookingTipAmountFromTips } = require('../../utils/bookingTips');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 
@@ -2684,7 +2686,7 @@ class CustomerOrderService {
                 {
                     model: tip,
                     as: 'tips',
-                    attributes: ["id", "amount"],
+                    attributes: ["id", "amount", "source", "paymentType", "paidAt", "createdAt"],
                     required: false,
                 },
                 {
@@ -2847,13 +2849,10 @@ class CustomerOrderService {
         );
 
         const billing = bookingPlain.billingDetail || {};
-        const tipAmount =
-            bookingPlain.tips && bookingPlain.tips.length > 0
-                ? bookingPlain.tips.reduce(
-                      (sum, t) => sum + parseFloat(t.amount || 0),
-                      0
-                  )
-                : 0;
+        const tipAmount = bookingTipAmountFromTips(bookingPlain.tips);
+        const extraTip = extraTipService.buildExtraTipPayload(bookingPlain, {
+            canAdd: extraTipService.isCompletedStatus(bookingPlain.bookingStatusId),
+        });
         const serviceFee =
             parseFloat(billing.serviceCharge) ||
             parseFloat(bookingPlain.zone?.serviceCharge) ||
@@ -2984,6 +2983,7 @@ class CustomerOrderService {
             orderStatusContext,
             pickupProofNote,
             deliveryProofNote,
+            extraTip,
             trackTimeline: track.timeline,
             trackCurrentStatus: track.currentStatus,
             actionRequired: track.actionRequired,

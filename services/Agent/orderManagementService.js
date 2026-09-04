@@ -10,6 +10,7 @@ const {
     customerSelectedServiceAddOn,
     addOnServices,
     billingDetails,
+    tip,
     categories,
     subCategories,
     service,
@@ -50,6 +51,7 @@ const { redactCustomerPhone } = require('../../utils/maskPhone');
 const {
     hideShopFinanceOnBooking,
 } = require('../../utils/fieldDriverPrivacy');
+const { summarizeTips } = require('../../utils/bookingTips');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
 const COMPLETED_STATUS_IDS = [17];
@@ -217,6 +219,12 @@ class AgentOrderManagementService {
                     'agentEarning',
                     'paymentStatus',
                 ],
+            },
+            {
+                model: tip,
+                as: 'tips',
+                required: false,
+                attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
             },
             {
                 model: customerSelectedService,
@@ -574,6 +582,7 @@ class AgentOrderManagementService {
         const ordersWithReviews = mappedOrders.map((plain) => ({
             ...plain,
             shopReview: reviewByBookingId[plain.id] || null,
+            extraTip: summarizeTips(plain.tips || []),
         }));
 
         return {

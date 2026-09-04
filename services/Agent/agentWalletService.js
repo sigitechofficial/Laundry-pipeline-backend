@@ -24,6 +24,7 @@ const PAYOUT_REFERENCE = "payout";
 // wallet "Credit" / available balance. Order commissions are tracked separately
 // as earnings and are NOT shown as wallet credit until an admin pays out.
 const AGENT_PAYOUT_REFERENCE = "agent_payout";
+const EXTRA_TIP_REFERENCE = "extra_tip";
 // Debit created ONLY when an agent withdraws their balance to their own
 // (Stripe Connect) account. Nothing else counts as agent-facing "Debited".
 // Reserved now; the Stripe transfer flow is added later.
@@ -372,6 +373,56 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
 }
 
 /**
+ * 100% of a post-complete extra tip goes to the shop owner.
+ * Card charge hits the platform Stripe account, so this is a payable
+ * credit — it must NOT change cash-due (excluded from settlementCredits).
+ */
+async function creditExtraTipForBooking({ bookingId, amount, tipId } = {}) {
+    const tipAmount = parseFloat(amount || 0);
+    if (!bookingId || !Number.isFinite(tipAmount) || tipAmount <= 0) {
+        return { credited: false, reason: "invalid_amount" };
+    }
+
+    if (await hasWalletEntry(bookingId, EXTRA_TIP_REFERENCE, "credit")) {
+        return { credited: false, reason: "already_credited" };
+    }
+
+    const bookingRow = await booking.findByPk(bookingId, {
+        attributes: ["id", "orderTrackId", "laundryShopId"],
+    });
+    if (!bookingRow) {
+        return { credited: false, reason: "booking_not_found" };
+    }
+
+    const agentUserId = await resolveShopOwnerUserId(bookingRow.laundryShopId);
+    if (!agentUserId) {
+        return { credited: false, reason: "no_shop_owner" };
+    }
+
+    const currency = await resolveCurrencyForBooking(bookingRow);
+    const orderLabel = bookingRow.orderTrackId || bookingRow.id;
+    const entry = await wallet.create({
+        userId: agentUserId,
+        bookingId,
+        referenceType: EXTRA_TIP_REFERENCE,
+        amount: parseFloat(tipAmount.toFixed(2)),
+        currency,
+        type: "credit",
+        status: "completed",
+        description: `Extra tip after delivery for order #${orderLabel}${
+            tipId ? ` (tip ${tipId})` : ""
+        }`,
+    });
+
+    return {
+        credited: true,
+        amount: parseFloat(tipAmount.toFixed(2)),
+        walletId: entry.id,
+        agentUserId,
+    };
+}
+
+/**
  * Lifetime agent commission from billing, split by collection channel.
  * Only counts orders that actually reached payment — matches the wallet
  * ledger (booking_commission is only credited for Paid bookings) and the
@@ -474,7 +525,11 @@ async function getWalletSummary(agentUserId) {
     // Internal cash-settlement balance (drives cash-due accounting). It only
     // considers settlement-type entries: agent payouts (money released to the
     // agent), withdrawals, and legacy payouts must NOT affect it.
-    const settlementCredits = totalCreditedAll - agentPayoutCredits;
+    const extraTipCredits = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: EXTRA_TIP_REFERENCE,
+    });
+
+    const settlementCredits = totalCreditedAll - agentPayoutCredits - extraTipCredits;
     const settlementDebits = totalDebitedAll - totalPayouts - totalWithdrawn;
     const balance = parseFloat((settlementCredits - settlementDebits).toFixed(2));
 
@@ -536,8 +591,16 @@ async function getWalletSummary(agentUserId) {
     // "Payable" to the agent = card earnings the platform holds that have NOT yet
     // been paid out. Each admin payout reduces this so the same earnings can't be
     // paid twice. Cash earnings are physically held by the agent, so excluded.
+    // Extra post-complete tips are card credits the platform holds.
+    // They increase payable, but must not inflate "commission earned"
+    // (that figure offsets cash due).
+    const totalEarningCard = parseFloat(
+        (earnings.totalEarningCard + extraTipCredits).toFixed(2)
+    );
+    const totalEarning = parseFloat(earnings.totalEarning.toFixed(2));
+
     const platformOwesAgent = parseFloat(
-        Math.max(earnings.totalEarningCard - agentPayoutCredits, 0).toFixed(2)
+        Math.max(totalEarningCard - agentPayoutCredits, 0).toFixed(2)
     );
 
     return {
@@ -547,9 +610,10 @@ async function getWalletSummary(agentUserId) {
         cashDueToPlatform,
         platformOwesAgent,
         availableBalance,
-        totalEarning: earnings.totalEarning,
+        totalEarning,
         totalEarningCash: earnings.totalEarningCash,
-        totalEarningCard: earnings.totalEarningCard,
+        totalEarningCard,
+        totalExtraTips: parseFloat(extraTipCredits.toFixed(2)),
         totalCashCollected: parseFloat(totalCashCollected.toFixed(2)),
         totalCashRemitted: parseFloat(totalCashRemitted.toFixed(2)),
         pendingCashRemittance: parseFloat(pendingCashRemitted.toFixed(2)),
@@ -821,6 +885,8 @@ function describeWalletReferenceType(referenceType, type) {
             return "Agent withdrawal";
         case PAYOUT_REFERENCE:
             return "Legacy payout";
+        case EXTRA_TIP_REFERENCE:
+            return "Extra tip after delivery";
         default:
             return referenceType || "Wallet entry";
     }
@@ -962,7 +1028,11 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
               where: {
                   bookingId: { [Op.in]: bookingIds },
                   referenceType: {
-                      [Op.in]: [CASH_COLLECTED_REFERENCE, COMMISSION_REFERENCE],
+                      [Op.in]: [
+                          CASH_COLLECTED_REFERENCE,
+                          COMMISSION_REFERENCE,
+                          EXTRA_TIP_REFERENCE,
+                      ],
                   },
                   status: "completed",
               },
@@ -986,6 +1056,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         const ledger = walletByBooking.get(plain.bookingId) || {};
         const cashEntry = ledger[CASH_COLLECTED_REFERENCE];
         const commissionEntry = ledger[COMMISSION_REFERENCE];
+        const extraTipEntry = ledger[EXTRA_TIP_REFERENCE];
         const orderTotal = parseFloat(plain.total || 0);
 
         return {
@@ -1002,6 +1073,10 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
                 ? parseFloat(commissionEntry.amount || 0)
                 : parseFloat(plain.agentEarning || 0),
             commissionCreditedAt: commissionEntry ? commissionEntry.createdAt : null,
+            extraTipAmount: extraTipEntry
+                ? parseFloat(extraTipEntry.amount || 0)
+                : 0,
+            extraTipCreditedAt: extraTipEntry ? extraTipEntry.createdAt : null,
             cashCollectedAmount: cashEntry
                 ? parseFloat(cashEntry.amount || 0)
                 : channel === "cash"
@@ -1028,6 +1103,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
 
 module.exports = {
     COMMISSION_REFERENCE,
+    EXTRA_TIP_REFERENCE,
     CASH_COLLECTED_REFERENCE,
     CASH_REMITTED_REFERENCE,
     ADMIN_SETTLEMENT_REFERENCE,
@@ -1036,6 +1112,7 @@ module.exports = {
     WITHDRAWAL_REFERENCE,
     classifyAgentEarningChannel,
     creditAgentForPaidBooking,
+    creditExtraTipForBooking,
     backfillWalletsFromPaidBookings,
     backfillMissingCashLedger,
     hasSettlementActivity,

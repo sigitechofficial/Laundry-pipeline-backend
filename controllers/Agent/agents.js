@@ -67,6 +67,7 @@ const { literal } = require("sequelize");
 const getdistance = require("../../utils/distanceCalculator");
 const { type } = require("os");
 const { sendEvent } = require("../../socket_io");
+const { bookingTipAmountFromTips, summarizeTips } = require("../../utils/bookingTips");
 const moment = require("moment");
 const momentTz = require("moment-timezone");
 const axios = require("axios");
@@ -1965,7 +1966,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             {
                 model: tip,
                 as: 'tips',
-                attributes: ['id', 'amount'],
+                attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
                 required: false,
             },
         ],
@@ -2060,13 +2061,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
 
     const upfrontAmount = parseFloat(bookingfind.billingDetail?.upfrontAmount || 0) || 0;
     const serviceCharge = parseFloat(bookingfind.billingDetail?.serviceCharge || 0) || 0;
-    const driverTip =
-        bookingfind.tips && bookingfind.tips.length > 0
-            ? bookingfind.tips.reduce(
-                  (sum, t) => sum + (parseFloat(t.amount) || 0),
-                  0
-              )
-            : 0;
+    const driverTip = bookingTipAmountFromTips(bookingfind.tips);
     const basePickupCharge = getPickupChargeAmount(upfrontAmount, serviceCharge, 0);
     const initialChargeAmount = getPickupChargeAmount(
         upfrontAmount,
@@ -3836,7 +3831,7 @@ exports.driverAddSerivces = async (req, res) => {
             {
                 model: tip,
                 as: 'tips',
-                attributes: ['id', 'amount'],
+                attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
                 required: false
             }
         ]
@@ -4361,7 +4356,7 @@ exports.invoiceCreation = async (req, res) => {
                 model: tip,
                 as: 'tips',
                 required: false,
-                attributes: ["id", "amount"]
+                attributes: ["id", "amount", "source", "paymentType", "paidAt", "createdAt"]
             },
             {
                 model: bookingStatus,
@@ -4504,6 +4499,7 @@ exports.invoiceCreation = async (req, res) => {
 
     const paymentSummary =
         await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+    bookingData.extraTip = summarizeTips(bookingData.tips || []);
 
     const paymentFlags = buildCollectPaymentFlags({
         paymentType: bookingData.paymentType,
@@ -4582,6 +4578,7 @@ exports.invoiceCreation = async (req, res) => {
 
     return ResponseHelper.success(res, "Invoice Details", {
         invoiceDetails: bookingData,
+        extraTip: bookingData.extraTip,
         servicesSubtotal: responseServicesSubtotal,
         totalItems: bookingData.totalItems,
         paymentSummary: responsePaymentSummary,
@@ -6815,7 +6812,7 @@ exports.updateInvoice = async (req, res) => {
             {
                 model: tip,
                 as: 'tips',
-                attributes: ['id', 'amount'],
+                attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
                 required: false
             },
             {
