@@ -204,12 +204,10 @@ async function listNotifyLogs(query = {}) {
         if (channel) {
             // Explicit channel filter (sms / push / call) is respected as-is.
             where.channel = String(channel).toLowerCase().trim();
-        } else {
-            // Default notifications view = messaging only. Dialer "call" rows are
-            // session markers that belong in the Call Sessions tab, so exclude
-            // them here (otherwise they leak into the SMS/notifications list).
-            where.channel = { [Op.in]: ["sms", "push"] };
         }
+        // No channel filter → return every notification row (sms + push + call).
+        // The admin UI has a dedicated Channel column so call markers are
+        // distinguishable from SMS/push; filtering is optional via ?channel=.
         if (bookingId) where.bookingId = Number(bookingId);
         if (agentUserId) where.agentUserId = Number(agentUserId);
         if (leg) where.leg = String(leg).toLowerCase().trim();

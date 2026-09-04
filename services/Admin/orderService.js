@@ -111,6 +111,20 @@ class OrderService {
         }
     }
 
+    /**
+     * Filter to a single laundry shop. filters.shopId is an addressDb.id
+     * (admin panel sends shopAddressId), same as booking.laundryShopId.
+     */
+    _applyShopFilter(whereClause, filters = {}) {
+        if (filters.shopId == null || String(filters.shopId).trim() === "") {
+            return;
+        }
+        const shopId = parseInt(filters.shopId, 10);
+        if (!Number.isNaN(shopId)) {
+            whereClause.laundryShopId = shopId;
+        }
+    }
+
     _applyPlacedDateRangeFilter(whereClause, filters = {}) {
         const { startDate, endDate, date } = filters;
         if (startDate && endDate) {
@@ -236,7 +250,11 @@ class OrderService {
             'bookingStatusId',
             'zoneId',
             'collectionDate',
+            'collectionTimeFrom',
+            'collectionTimeTo',
             'deliveryDate',
+            'deliveryTimeFrom',
+            'deliveryTimeTo',
             'totalItems',
             'totalBags',
             'noOfBags',
@@ -283,6 +301,7 @@ class OrderService {
     async getOrderCount(filters = {}) {
         const scoped = {};
         this._applyZoneFilter(scoped, filters);
+        this._applyShopFilter(scoped, filters);
         this._applyPlacedDateRangeFilter(scoped, filters);
         this._applyRecurringTypeFilter(scoped, filters);
 
@@ -511,6 +530,7 @@ class OrderService {
         }
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyShopFilter(whereClause, filters);
         this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
@@ -553,6 +573,7 @@ class OrderService {
             };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyShopFilter(whereClause, filters);
         this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
@@ -588,6 +609,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyShopFilter(whereClause, filters);
         this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
@@ -623,6 +645,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyShopFilter(whereClause, filters);
         this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
@@ -767,10 +790,20 @@ class OrderService {
                         {
                             model: bussinessInformation,
                             required: false,
-                            attributes: ['id', 'shopName', 'agentId', 'shopAddressId']
+                            attributes: ['id', 'shopName', 'agentId', 'shopAddressId'],
+                            include: [
+                                {
+                                    // Shop owner/agent contact info — powers the
+                                    // "Call shop" action on Order Details.
+                                    model: users,
+                                    as: 'businessInfo',
+                                    required: false,
+                                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
+                                },
+                            ],
                         }
                     ],
-                    attributes: ['id', 'userId', 'zoneId', 'addressType']
+                    attributes: ['id', 'userId', 'zoneId', 'addressType', 'streetAddress', 'district', 'province', 'postalcode']
                 },
                 {
                     model: billingDetails,
@@ -1709,6 +1742,7 @@ class OrderService {
         };
         this._applyPlacedDateRangeFilter(whereClause, filters);
         this._applyZoneFilter(whereClause, filters);
+        this._applyShopFilter(whereClause, filters);
         this._applyRecurringTypeFilter(whereClause, filters);
 
         const includeCounts = ['1', 'true', true].includes(filters.includeCounts);
