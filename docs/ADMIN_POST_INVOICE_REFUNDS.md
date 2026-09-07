@@ -52,3 +52,5 @@ Deploy path already runs `ensure-live-migrations.js`.
 ## Admin UI
 
 Order details → **Issue refund** → modal with economics, charge buckets, customer/agent/platform impact, settlement deltas.
+
+After confirm, customer and shop agent get a push with the refund amount. Customer order details include a public `refunds` summary (`totalRefunded`, `history`). Agent is notified because commission is clawed and cash refunds must be handed back.

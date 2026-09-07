@@ -46,6 +46,7 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
+const { getPublicRefundSummary } = require('../Admin/adminRefundService');
 const serviceManagementService = require('../Admin/serviceManagementService');
 const addOnServicesService = require('../Admin/addOnServicesService');
 const repairCatalogService = require('../Admin/repairCatalogService');
@@ -2903,7 +2904,7 @@ class CustomerOrderService {
                   paymentFailureAt: bookingPlain.lastPaymentFailureAt || null,
                   canUpdatePaymentMethod:
                       bookingPlain.paymentType === "card" &&
-                      ![17, 19, 20].includes(Number(bookingPlain.bookingStatusId)),
+                      ![17, 19, 20, 21].includes(Number(bookingPlain.bookingStatusId)),
               }
             : {
                   paymentFailed: false,
@@ -2963,6 +2964,28 @@ class CustomerOrderService {
             );
         }
 
+        let refunds = {
+            totalRefunded: 0,
+            count: 0,
+            isFullyRefunded: Number(bookingPlain.bookingStatusId) === 21,
+            latest: null,
+            history: [],
+        };
+        try {
+            refunds = await getPublicRefundSummary(bookingPlain.id);
+            refunds.isFullyRefunded =
+                Number(bookingPlain.bookingStatusId) === 21 ||
+                (refunds.totalRefunded > 0 &&
+                    Number(paymentSummary?.amountDueNow || 0) <= 0.02 &&
+                    refunds.totalRefunded + 0.02 >=
+                        Number(paymentSummary?.orderSummary?.totalOrderAmount || 0));
+        } catch (err) {
+            console.warn(
+                '[bookingDetailsById] refunds summary skipped:',
+                err?.message || err
+            );
+        }
+
         const resultData = {
             ...bookingPlain,
             servicesSubtotal,
@@ -2985,6 +3008,7 @@ class CustomerOrderService {
             pickupProofNote,
             deliveryProofNote,
             extraTip,
+            refunds,
             trackTimeline: track.timeline,
             trackCurrentStatus: track.currentStatus,
             actionRequired: track.actionRequired,

@@ -7,8 +7,10 @@ const {
   tip,
   wallet,
   bookingRefund,
+  bookingHistory,
   users,
 } = require('../../models');
+const { sendNotification } = require('../../utils/notification');
 const {
   ValidationError,
   NotFoundError,
@@ -793,7 +795,33 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
       { bookingStatusId: REFUNDED },
       { where: { id: bookingId } }
     );
+    const now = new Date();
+    try {
+      await bookingHistory.create({
+        bookingId,
+        date: now.toISOString().slice(0, 10),
+        time: now.toTimeString().slice(0, 5),
+        bookingStatusId: REFUNDED,
+      });
+    } catch (histErr) {
+      console.error(
+        `[adminRefund] booking history failed booking ${bookingId}:`,
+        histErr.message
+      );
+    }
   }
+
+  notifyRefundParties({
+    bookingRow,
+    amount,
+    channel,
+    mode: refundRow.mode,
+    reason,
+    commissionClawback,
+    cashCollectedReversal,
+    agentUserId,
+    remainingRefundable: after.refundableNow,
+  });
 
   let settlement = null;
   if (agentUserId) {
@@ -837,8 +865,113 @@ async function listRefundsForBooking(bookingId) {
   return rows;
 }
 
+function publicRefundItem(row) {
+  return {
+    id: row.id,
+    amount: money(row.amount),
+    mode: row.mode,
+    channel: row.channel,
+    reason: row.reason || null,
+    createdAt: row.createdAt,
+    status: row.status,
+  };
+}
+
+async function getPublicRefundSummary(bookingId) {
+  const rows = await bookingRefund.findAll({
+    where: { bookingId },
+    attributes: [
+      'id',
+      'amount',
+      'mode',
+      'channel',
+      'reason',
+      'createdAt',
+      'status',
+    ],
+    order: [['id', 'DESC']],
+  });
+  const history = rows.map(publicRefundItem);
+  const totalRefunded = money(history.reduce((s, r) => s + r.amount, 0));
+  return {
+    totalRefunded,
+    count: history.length,
+    isFullyRefunded: false,
+    latest: history[0] || null,
+    history,
+  };
+}
+
+function notifyRefundParties({
+  bookingRow,
+  amount,
+  channel,
+  mode,
+  reason,
+  commissionClawback,
+  cashCollectedReversal,
+  agentUserId,
+  remainingRefundable,
+}) {
+  const orderLabel = bookingRow.orderTrackId || String(bookingRow.id);
+  const amountLabel = money(amount).toFixed(2);
+  const isCash = channel === 'cash' || channel === 'mixed';
+  const isFull = mode === 'full' || remainingRefundable <= 0.02;
+  const customerTitle = isFull ? 'Refund issued' : 'Partial refund issued';
+  const customerBody = isCash
+    ? `£${amountLabel} cash refund is recorded for order ${orderLabel}. Please collect it from the shop or driver.`
+    : `£${amountLabel} has been refunded to your card for order ${orderLabel}. It can take a few working days to appear on your statement.`;
+
+  const payload = {
+    bookingId: String(bookingRow.id),
+    orderId: String(bookingRow.id),
+    orderTrackId: String(bookingRow.orderTrackId || ''),
+    type: 'ORDER_REFUNDED',
+    amount: amountLabel,
+    mode: String(mode || ''),
+    channel: String(channel || ''),
+    remainingRefundable: money(remainingRefundable).toFixed(2),
+  };
+
+  if (bookingRow.customerId) {
+    sendNotification(
+      bookingRow.customerId,
+      customerTitle,
+      customerBody,
+      payload
+    ).catch((err) =>
+      console.error(
+        `[adminRefund] customer notify failed booking ${bookingRow.id}:`,
+        err.message
+      )
+    );
+  }
+
+  if (agentUserId) {
+    const claw = money(commissionClawback).toFixed(2);
+    const cashBack = money(cashCollectedReversal).toFixed(2);
+    const agentTitle = `Refund on order ${orderLabel}`;
+    const agentBody = isCash
+      ? `Admin recorded a £${amountLabel} cash refund. Return £${cashBack} cash to the customer. Your commission on this order is reduced by £${claw}.`
+      : `Admin refunded £${amountLabel} to the customer. Your commission on this order is reduced by £${claw}.`;
+    sendNotification(agentUserId, agentTitle, agentBody, {
+      ...payload,
+      type: 'ORDER_UPDATE',
+      commissionClawback: claw,
+      cashToReturn: cashBack,
+      reason: String(reason || '').slice(0, 120),
+    }).catch((err) =>
+      console.error(
+        `[adminRefund] agent notify failed booking ${bookingRow.id}:`,
+        err.message
+      )
+    );
+  }
+}
+
 module.exports = {
   buildRefundPreview,
   issueRefund,
   listRefundsForBooking,
+  getPublicRefundSummary,
 };
