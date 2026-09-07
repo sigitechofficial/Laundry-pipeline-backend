@@ -503,6 +503,37 @@ async function getIntent(paymentIntentId) {
     }
 }
 
+/**
+ * List PaymentIntents for a Stripe customer (newest first).
+ * Used to rediscover pickup + invoice charges when booking.paymentIntentId was overwritten.
+ */
+async function listPaymentIntentsForCustomer(stripeCustomerId, options = {}) {
+    if (!stripeCustomerId) return [];
+    const maxPages = Math.min(Number(options.maxPages) || 3, 5);
+    const out = [];
+    let startingAfter;
+    try {
+        for (let page = 0; page < maxPages; page += 1) {
+            const pageResult = await stripe.paymentIntents.list({
+                customer: stripeCustomerId,
+                limit: 100,
+                ...(startingAfter ? { starting_after: startingAfter } : {}),
+            });
+            const rows = pageResult.data || [];
+            out.push(...rows);
+            if (!pageResult.has_more || !rows.length) break;
+            startingAfter = rows[rows.length - 1].id;
+        }
+        return out;
+    } catch (error) {
+        console.error(
+            "[stripe] listPaymentIntentsForCustomer failed:",
+            error.message
+        );
+        return out;
+    }
+}
+
 
 
 /*
@@ -967,6 +998,7 @@ module.exports = {
     paymentIntentGet,
     confirmIntend,
     getIntent,
+    listPaymentIntentsForCustomer,
     confirmAndCapturePayment,
     createAuthorizationHold,
     capturePaymentIntent,

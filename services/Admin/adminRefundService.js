@@ -16,6 +16,7 @@ const {
 const {
   refundPaymentIntent,
   getIntent,
+  listPaymentIntentsForCustomer,
 } = require('../../controllers/stripe');
 const {
   summarizeTips,
@@ -53,6 +54,7 @@ async function loadBookingForRefund(bookingId) {
       'zoneId',
       'bookingStatusId',
       'paymentIntentId',
+      'pickupPaymentIntentId',
       'paymentConfirmed',
       'paymentType',
       'balancePaymentMethod',
@@ -81,6 +83,12 @@ async function loadBookingForRefund(bookingId) {
         model: bookingRefund,
         as: 'refunds',
         required: false,
+      },
+      {
+        model: users,
+        as: 'customer',
+        required: false,
+        attributes: ['id', 'stripeCustomerId'],
       },
     ],
   });
@@ -127,45 +135,111 @@ async function piRefundable(paymentIntentId) {
   }
 }
 
+const PICKUP_CHARGE_TYPES = new Set(['pickup', 'booking_auth_hold']);
+
+function chargeTypeFromIntent(intent) {
+  return String(intent?.metadata?.chargeType || '').toLowerCase();
+}
+
+function isPickupChargeType(chargeType) {
+  return PICKUP_CHARGE_TYPES.has(String(chargeType || '').toLowerCase());
+}
+
+function labelForChargeType(chargeType, fallback) {
+  const type = String(chargeType || '').toLowerCase();
+  if (isPickupChargeType(type)) {
+    return 'Pickup prepaid (minimum + service fee)';
+  }
+  if (type === 'delivery_balance') {
+    return 'Invoice / delivery balance';
+  }
+  return fallback;
+}
+
+function intentMatchesBooking(intent, bookingRow) {
+  const meta = intent?.metadata || {};
+  const bookingId = String(bookingRow.id);
+  const trackId = String(bookingRow.orderTrackId || '');
+  if (meta.bookingId && String(meta.bookingId) === bookingId) return true;
+  if (trackId && meta.orderTrackId && String(meta.orderTrackId) === trackId) {
+    return true;
+  }
+  return false;
+}
+
+async function persistPickupPaymentIntentId(bookingRow, paymentIntentId) {
+  if (!paymentIntentId || bookingRow.pickupPaymentIntentId === paymentIntentId) {
+    return;
+  }
+  try {
+    await booking.update(
+      { pickupPaymentIntentId: paymentIntentId },
+      { where: { id: bookingRow.id } }
+    );
+    bookingRow.pickupPaymentIntentId = paymentIntentId;
+  } catch (err) {
+    console.error(
+      `[adminRefund] failed to persist pickupPaymentIntentId for booking ${bookingRow.id}:`,
+      err.message
+    );
+  }
+}
+
 /**
  * Discover refundable charge buckets for a booking.
- * Order: invoice attempts → booking PI (if distinct) → extra tip PIs.
+ * Invoice attempts + pickup PI + booking PI + Stripe customer list
+ * (invoice success used to overwrite paymentIntentId and hide prepaid).
  */
 async function collectChargeBuckets(bookingRow) {
   const buckets = [];
   const seen = new Set();
+
+  const addPiBucket = async ({ key, kind, label, extra = {}, paymentIntentId }) => {
+    if (!paymentIntentId || seen.has(paymentIntentId)) return;
+    seen.add(paymentIntentId);
+    const live = await piRefundable(paymentIntentId);
+    buckets.push({
+      key,
+      kind,
+      label,
+      channel: 'card',
+      ...extra,
+      ...live,
+    });
+  };
 
   const attempts = (Array.isArray(bookingRow.invoicePaymentAttempts)
     ? bookingRow.invoicePaymentAttempts
     : []
   ).filter((a) => a.status === 'succeeded' && a.paymentIntentId);
   for (const attempt of attempts) {
-    const pi = attempt.paymentIntentId;
-    if (!pi || seen.has(pi)) continue;
-    seen.add(pi);
-    const live = await piRefundable(pi);
-    buckets.push({
+    await addPiBucket({
       key: `invoice_${attempt.id}`,
       kind: 'invoice_charge',
       label: `Invoice charge #${attempt.attemptNumber || attempt.id}`,
-      channel: 'card',
-      attemptType: attempt.attemptType,
-      amountRecorded: money(attempt.amount),
-      ...live,
+      extra: {
+        attemptType: attempt.attemptType,
+        amountRecorded: money(attempt.amount),
+      },
+      paymentIntentId: attempt.paymentIntentId,
     });
   }
 
-  const bookingPi = bookingRow.paymentIntentId;
-  if (bookingPi && !seen.has(bookingPi)) {
-    seen.add(bookingPi);
-    const live = await piRefundable(bookingPi);
-    buckets.push({
+  if (bookingRow.pickupPaymentIntentId) {
+    await addPiBucket({
+      key: 'pickup_payment_intent',
+      kind: 'pickup_prepaid',
+      label: 'Pickup prepaid (minimum + service fee)',
+      paymentIntentId: bookingRow.pickupPaymentIntentId,
+    });
+  }
+
+  if (bookingRow.paymentIntentId) {
+    await addPiBucket({
       key: 'booking_payment_intent',
       kind: 'booking_capture',
-      label: 'Booking / prepaid capture',
-      channel: 'card',
-      amountRecorded: live.received,
-      ...live,
+      label: 'Booking / latest card capture',
+      paymentIntentId: bookingRow.paymentIntentId,
     });
   }
 
@@ -188,6 +262,44 @@ async function collectChargeBuckets(bookingRow) {
       ...live,
     });
   }
+
+  const stripeCustomerId = bookingRow.customer?.stripeCustomerId;
+  if (stripeCustomerId) {
+    const intents = await listPaymentIntentsForCustomer(stripeCustomerId);
+    for (const intent of intents) {
+      if (!intent?.id || seen.has(intent.id)) continue;
+      if (!intentMatchesBooking(intent, bookingRow)) continue;
+      const chargeType = chargeTypeFromIntent(intent);
+      const kind = isPickupChargeType(chargeType)
+        ? 'pickup_prepaid'
+        : chargeType === 'delivery_balance'
+          ? 'invoice_charge'
+          : 'card_charge';
+      await addPiBucket({
+        key: `stripe_${intent.id}`,
+        kind,
+        label: labelForChargeType(chargeType, 'Card charge for this order'),
+        extra: { chargeType, amountRecorded: centsToMajor(intent.amount_received || intent.amount) },
+        paymentIntentId: intent.id,
+      });
+    }
+  }
+
+  const discoveredPickup = buckets.find(
+    (b) => isPickupChargeType(b.chargeType) || b.kind === 'pickup_prepaid'
+  );
+  if (discoveredPickup?.paymentIntentId && !bookingRow.pickupPaymentIntentId) {
+    await persistPickupPaymentIntentId(bookingRow, discoveredPickup.paymentIntentId);
+  }
+
+  const kindRank = (kind) => {
+    if (kind === 'pickup_prepaid') return 0;
+    if (kind === 'invoice_charge' || kind === 'booking_capture') return 1;
+    if (kind === 'booking_tip') return 2;
+    if (kind === 'extra_tip') return 3;
+    return 4;
+  };
+  buckets.sort((a, b) => kindRank(a.kind) - kindRank(b.kind));
 
   return buckets;
 }

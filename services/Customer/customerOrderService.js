@@ -2026,6 +2026,7 @@ class CustomerOrderService {
                 await booking.update(
                     {
                         paymentIntentId: authHold.id,
+                        pickupPaymentIntentId: authHold.id,
                         // Captured later at On the Way — hold is not a capture
                         paymentConfirmed: false,
                     },

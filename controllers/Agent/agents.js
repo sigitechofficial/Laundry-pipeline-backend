@@ -2217,6 +2217,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         {
             bookingStatusId: 4,
             paymentIntentId: paymentIntent.id,
+            pickupPaymentIntentId: paymentIntent.id,
             paymentConfirmed: true,
         },
         { where: { id: bookingId } }
@@ -2778,20 +2779,28 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         { where: { bookingId } }
     );
 
-    await booking.update(
-        {
-            orderAmount: fullOrderTotal,
-            paymentIntentId: paymentIntent.id,
-            balanceCollectedVia: "card",
-            paymentConfirmed: true,
-            autoChargeStatus: "succeeded",
-            paymentDeliveryGate: "open",
-            lastPaymentFailureCode: null,
-            lastPaymentFailureMessage: null,
-            lastPaymentFailureAt: null,
-        },
-        { where: { id: bookingId } }
-    );
+    const pickupPaymentIntentId =
+        invoiceAutoChargeService.resolvePickupPaymentIntentId(
+            bookingRow,
+            paymentIntent.id
+        );
+
+    const balanceSuccessUpdate = {
+        orderAmount: fullOrderTotal,
+        paymentIntentId: paymentIntent.id,
+        balanceCollectedVia: "card",
+        paymentConfirmed: true,
+        autoChargeStatus: "succeeded",
+        paymentDeliveryGate: "open",
+        lastPaymentFailureCode: null,
+        lastPaymentFailureMessage: null,
+        lastPaymentFailureAt: null,
+    };
+    if (pickupPaymentIntentId) {
+        balanceSuccessUpdate.pickupPaymentIntentId = pickupPaymentIntentId;
+    }
+
+    await booking.update(balanceSuccessUpdate, { where: { id: bookingId } });
 
     await tryCreditAgentWallet(bookingId);
 

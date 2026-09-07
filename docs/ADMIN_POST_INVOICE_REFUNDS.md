@@ -11,6 +11,8 @@ Admin can issue **full or partial** refunds after invoice generation / payment â
 
 **Share rule:** `refundShare = thisRefund / remainingRefundable`. Agent commission (laundry share + booking tip) and platform laundry share reduce by that share. Extra tip is clawed only when that Stripe/cash tip bucket is actually refunded. Service fee is not in the agent base; on a Stripe refund that covers the original charge the customer still receives it.
 
+Card orders have **two** Stripe charges: pickup prepaid (zone minimum + service fee + booking tip) and invoice balance. Invoice success used to overwrite `bookings.paymentIntentId`, so refunds only saw the balance. Refund discovery now includes `pickupPaymentIntentId`, invoice attempts, and Stripe PaymentIntents for that customer with `metadata.bookingId`. `pickupPaymentIntentId` is preserved before overwrite and self-healed on preview.
+
 ## APIs
 
 | Method | Path | Purpose |
@@ -42,7 +44,10 @@ Admin can issue **full or partial** refunds after invoice generation / payment â
 
 ## Schema
 
-Table `booking_refunds` â€” migration `20260907120000-create-booking-refunds.js` (idempotent create via `tableExists`). Deploy path already runs `ensure-live-migrations.js`.
+- `booking_refunds` â€” `20260907120000-create-booking-refunds.js` (`tableExists`)
+- `bookings.pickupPaymentIntentId` â€” `20260907140000-add-pickup-payment-intent-to-bookings.js` (`addColumnIfMissing`)
+
+Deploy path already runs `ensure-live-migrations.js`.
 
 ## Admin UI
 

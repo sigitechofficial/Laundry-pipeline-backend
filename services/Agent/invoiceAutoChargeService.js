@@ -268,9 +268,21 @@ function extractStripeError(err) {
     };
 }
 
+function resolvePickupPaymentIntentId(bookingRow, incomingPaymentIntentId) {
+    const stored = bookingRow.pickupPaymentIntentId;
+    if (stored) return stored;
+    const current = bookingRow.paymentIntentId;
+    if (current && current !== incomingPaymentIntentId) return current;
+    return null;
+}
+
 async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSummary) {
     const fullOrderTotal =
         paymentSummary?.orderSummary?.totalOrderAmount ?? amount;
+    const pickupPaymentIntentId = resolvePickupPaymentIntentId(
+        bookingRow,
+        paymentIntent.id
+    );
 
     await billingDetails.update(
         {
@@ -280,21 +292,23 @@ async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSumma
         { where: { bookingId: bookingRow.id } }
     );
 
-    await booking.update(
-        {
-            orderAmount: fullOrderTotal,
-            paymentIntentId: paymentIntent.id,
-            balanceCollectedVia: "card",
-            paymentConfirmed: true,
-            autoChargeStatus: "succeeded",
-            paymentDeliveryGate: "open",
-            lastPaymentFailureCode: null,
-            lastPaymentFailureMessage: null,
-            lastPaymentFailureAt: null,
-            ofdAutoRetryDone: false,
-        },
-        { where: { id: bookingRow.id } }
-    );
+    const invoiceSuccessUpdate = {
+        orderAmount: fullOrderTotal,
+        paymentIntentId: paymentIntent.id,
+        balanceCollectedVia: "card",
+        paymentConfirmed: true,
+        autoChargeStatus: "succeeded",
+        paymentDeliveryGate: "open",
+        lastPaymentFailureCode: null,
+        lastPaymentFailureMessage: null,
+        lastPaymentFailureAt: null,
+        ofdAutoRetryDone: false,
+    };
+    if (pickupPaymentIntentId) {
+        invoiceSuccessUpdate.pickupPaymentIntentId = pickupPaymentIntentId;
+    }
+
+    await booking.update(invoiceSuccessUpdate, { where: { id: bookingRow.id } });
 
     try {
         await creditAgentForPaidBooking(bookingRow.id);
@@ -1134,4 +1148,5 @@ module.exports = {
     restartInvoiceAutoChargeJob,
     isCardBalanceDue,
     isBookingPaid,
+    resolvePickupPaymentIntentId,
 };
