@@ -46,10 +46,7 @@ const {
 } = require('../../utils/orderListSort');
 const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
 const {
-    getLineQuantity,
-    getUnitCategoryCharge,
     serviceLineHasAddOnPayload,
-    replaceAddOnsForServiceLine,
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
@@ -1183,7 +1180,14 @@ class OrderService {
                     model: customerSelectedServiceAddOn,
                     as: 'addOns',
                     required: false,
-                    attributes: ['id', 'addOnServiceId', 'price'],
+                    attributes: [
+                        'id',
+                        'addOnServiceId',
+                        'price',
+                        'items',
+                        'instructions',
+                        'customerSelectedServiceLineId',
+                    ],
                     include: [
                         {
                             model: addOnServices,
@@ -1307,7 +1311,10 @@ class OrderService {
             services,
             billingData,
             preferencesArray,
-            tipAmount
+            tipAmount,
+            driverId,
+            deliveryDriverId,
+            laundryShopId,
         } = orderData;
 
         // Check if order exists
@@ -1340,7 +1347,18 @@ class OrderService {
                     as: 'tips',
                     required: false,
                     attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt']
-                }
+                },
+                {
+                    model: zone,
+                    attributes: [
+                        'id',
+                        'name',
+                        'zoneAdminComission',
+                        'agentCommissionPercent',
+                        'zoneMinimumAmount',
+                        'serviceCharge',
+                    ],
+                },
             ]
         });
 
@@ -1359,9 +1377,16 @@ class OrderService {
         if (driverInstruction !== undefined) orderUpdateData.driverInstruction = driverInstruction;
         if (driverInstructionOptions !== undefined) orderUpdateData.driverInstructionOptions = driverInstructionOptions;
         if (driverInstructionOptions1 !== undefined) orderUpdateData.driverInstructionOptions1 = driverInstructionOptions1;
-        if (frequency !== undefined) orderUpdateData.frequency = frequency;
+        if (frequency !== undefined) {
+            // Admin UI uses "Every week"; DB enum is "Weekly"
+            orderUpdateData.frequency =
+                frequency === "Every week" ? "Weekly" : frequency;
+        }
         if (totalItems !== undefined) orderUpdateData.totalItems = totalItems;
         if (bookingStatusId !== undefined) orderUpdateData.bookingStatusId = bookingStatusId;
+        if (driverId !== undefined) orderUpdateData.driverId = driverId;
+        if (deliveryDriverId !== undefined) orderUpdateData.deliveryDriverId = deliveryDriverId;
+        if (laundryShopId !== undefined) orderUpdateData.laundryShopId = laundryShopId;
 
         // Handle pickup address update
         let pickupAddressId = existingOrder.pickupAddresId;
@@ -1420,164 +1445,36 @@ class OrderService {
             );
         }
 
-        // Calculate totals from services
-        let categoryCharge = 0;
-        let orderAmount = 0;
+        // Invoice line payload (category/subCategory/items/addOns) — same path as agent invoice sync.
+        // Stub-only `{ serviceId }` arrays must not create orphan lines or wipe add-ons.
+        const hasInvoiceLineDetails =
+            Array.isArray(services) &&
+            services.some(
+                (svc) =>
+                    svc?.categoryId != null ||
+                    svc?.subCategoryId != null ||
+                    (svc?.id != null && Number.isFinite(Number(svc.id))) ||
+                    serviceLineHasAddOnPayload(svc) ||
+                    (svc?.items != null && Number(svc.items) > 0)
+            );
 
-            // Update services if provided (merge with existing rows, do not delete old entries)
-            if (Array.isArray(services) && services.length > 0) {
-                const currentTime = new Date().toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: false,
-                });
-                const currentDate = new Date().toISOString().split("T")[0];
+        let syncedInvoiceLines = false;
 
-                const existingServices = await customerSelectedService.findAll({
-                    where: { bookingId: orderId }
-                });
-
-                const getServiceKey = (svc) => [
-                    String(svc.serviceId ?? ""),
-                    String(svc.categoryId ?? ""),
-                    String(svc.subCategoryId ?? "")
-                ].join("|");
-
-                const existingByKey = new Map();
-                for (const existingSvc of existingServices) {
-                    existingByKey.set(getServiceKey(existingSvc), existingSvc);
-                }
-
-                for (const svc of services) {
-                    const serviceKey = getServiceKey(svc);
-                    const matchedService = existingByKey.get(serviceKey);
-
-                    const servicePayload = {
-                        bookingId: orderId,
-                        serviceId: svc.serviceId,
-                        date: svc.date || currentDate,
-                        time: svc.time || currentTime,
-                        items: svc.items || 1,
-                        categoryPrice: svc.categoryCharge || 0
-                    };
-
-                    if (svc.categoryId) servicePayload.categoryId = svc.categoryId;
-                    if (svc.subCategoryId) servicePayload.subCategoryId = svc.subCategoryId;
-                    if (svc.servicePrice) servicePayload.servicePrice = svc.servicePrice;
-                    if (svc.status !== undefined) servicePayload.status = svc.status;
-                    if (svc.serviceInstruction) servicePayload.serviceInstruction = svc.serviceInstruction;
-                    const bagVal = svc.bags ?? svc.bagsCount;
-                    if (bagVal != null && bagVal !== "") {
-                        const n = Number(bagVal);
-                        if (Number.isFinite(n) && n > 0) servicePayload.bags = Math.floor(n);
-                    }
-
-                    if (matchedService) {
-                        await matchedService.update(servicePayload);
-                    } else {
-                        await customerSelectedService.create(servicePayload);
-                    }
-                }
-
-                const allBookingServices = await customerSelectedService.findAll({
-                    where: { bookingId: orderId }
-                });
-
-                // Recalculate from all services so previously saved lines are preserved
-                categoryCharge = allBookingServices.reduce(
-                    (acc, svc) => acc + parseFloat(svc.categoryPrice || 0),
-                    0
-                );
-                orderAmount = categoryCharge;
-
-                if (orderAmount > 0) {
-                    orderUpdateData.orderAmount = orderAmount;
-                    orderUpdateData.subTotal = orderAmount;
-                }
-            }
-
-        // Update booking preferences
-        if (preferencesArray && Array.isArray(preferencesArray)) {
-            // Delete existing preferences
-            await bookingPreference.destroy({ where: { bookingId: orderId } });
-
-            if (preferencesArray.length > 0) {
-                // Get service IDs from the booking
-                const serviceIds = services ? services.map(s => s.serviceId) :
-                    existingOrder.customerSelectedServices.map(s => s.serviceId);
-
-                const bookingPreferencesToCreate = [];
-
-                for (const pref of preferencesArray) {
-                    const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
-
-                    if (!preferenceTypeId || !preferenceValueId) {
-                        throw new ValidationError(
-                            "preferenceTypeId and preferenceValueId are required for each preference"
-                        );
-                    }
-
-                    // Validate preference belongs to service
-                    if (serviceId) {
-                        const servicePreferenceExists = await serviceWithPreferences.findOne({
-                            where: {
-                                serviceId: serviceId,
-                                preferenceTypeId: preferenceTypeId,
-                                status: true
-                            }
-                        });
-
-                        if (!servicePreferenceExists) {
-                            throw new ValidationError(
-                                `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
-                            );
-                        }
-                    } else {
-                        const servicePreferenceExists = await serviceWithPreferences.findOne({
-                            where: {
-                                serviceId: { [Op.in]: serviceIds },
-                                preferenceTypeId: preferenceTypeId,
-                                status: true
-                            }
-                        });
-
-                        if (!servicePreferenceExists) {
-                            throw new ValidationError(
-                                `Preference type ${preferenceTypeId} is not available for any selected services`
-                            );
-                        }
-                    }
-
-                    // Validate preference value
-                    const preferenceValue = await preferenceValues.findOne({
-                        where: {
-                            id: preferenceValueId,
-                            preferenceTypeId: preferenceTypeId,
-                            status: true
-                        }
-                    });
-
-                    if (!preferenceValue) {
-                        throw new ValidationError(
-                            `Preference value ${preferenceValueId} is invalid or does not belong to preference type ${preferenceTypeId}`
-                        );
-                    }
-
-                    bookingPreferencesToCreate.push({
-                        bookingId: orderId,
-                        preferenceTypeId: preferenceTypeId,
-                        preferenceValueId: preferenceValueId,
-                        parentPreferenceValueId: parentPreferenceValueId || null
-                    });
-                }
-
-                if (bookingPreferencesToCreate.length > 0) {
-                    await bookingPreference.bulkCreate(bookingPreferencesToCreate);
-                }
-            }
+        if (hasInvoiceLineDetails) {
+            const { date: currentDate, time: currentTime } = adminWallClockDateTime(
+                orderData.timeZone,
+                orderData.clientTimeZone
+            );
+            await invoiceManagementService.syncInvoiceDraftServiceLines({
+                bookingId: orderId,
+                services,
+                currentDate,
+                currentTime,
+            });
+            syncedInvoiceLines = true;
         }
 
-        // Update tip if provided
+        // Update tip if provided (tips table only — bookings has no tipId column)
         if (tipAmount !== undefined) {
             const existingTip = Array.isArray(existingOrder.tips) && existingOrder.tips.length > 0
                 ? existingOrder.tips[0]
@@ -1589,23 +1486,79 @@ class OrderService {
                     { where: { id: existingTip.id } }
                 );
             } else {
-                const newTip = await tip.create({
+                await tip.create({
                     bookingId: orderId,
-                    amount: tipAmount
+                    amount: tipAmount,
                 });
-                orderUpdateData.tipId = newTip.id;
             }
         }
 
-        // Update billing details if provided
-        if (billingData) {
+        // After line/tip changes, recompute invoice like agent updateInvoice
+        if (syncedInvoiceLines) {
+            const refreshedBooking = await booking.findByPk(orderId, {
+                include: [
+                    {
+                        model: zone,
+                        attributes: [
+                            'id',
+                            'name',
+                            'zoneAdminComission',
+                            'agentCommissionPercent',
+                            'zoneMinimumAmount',
+                            'serviceCharge',
+                        ],
+                    },
+                    {
+                        model: tip,
+                        as: 'tips',
+                        attributes: ['id', 'amount', 'source', 'paymentType', 'paidAt', 'createdAt'],
+                        required: false,
+                    },
+                ],
+            });
+            const totals = await invoiceManagementService.calculateInvoiceTotals(
+                refreshedBooking,
+                orderId
+            );
+            const serviceCharge =
+                billingData?.serviceCharge !== undefined
+                    ? billingData.serviceCharge
+                    : totals.parsedServiceCharge;
+            const upfrontAmount =
+                billingData?.upfrontAmount !== undefined
+                    ? billingData.upfrontAmount
+                    : totals.parsedZoneMinimum;
+
+            orderUpdateData.orderAmount = totals.total;
+            orderUpdateData.subTotal = totals.subTotal;
+            // syncInvoiceDraftServiceLines already wrote physical totalItems
+            delete orderUpdateData.totalItems;
+
+            const existingBilling = await billingDetails.findOne({ where: { bookingId: orderId } });
+            const billingPayload = {
+                total: totals.total,
+                discount: totals.existingDiscount || 0,
+                categoryCharge: totals.servicesSubtotal,
+                serviceCharge,
+                upfrontAmount,
+                zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
+                agentEarning: totals.finalAgentEarningAmount,
+            };
+            if (existingBilling) {
+                await billingDetails.update(billingPayload, { where: { bookingId: orderId } });
+            } else {
+                await billingDetails.create({
+                    bookingId: orderId,
+                    ...billingPayload,
+                });
+            }
+        } else if (billingData) {
             const billingUpdateData = {};
             if (billingData.upfrontAmount !== undefined) billingUpdateData.upfrontAmount = billingData.upfrontAmount;
             if (billingData.discount !== undefined) billingUpdateData.discount = billingData.discount;
             if (billingData.total !== undefined) billingUpdateData.total = billingData.total;
             if (billingData.serviceCharge !== undefined) billingUpdateData.serviceCharge = billingData.serviceCharge;
             if (billingData.categoryCharge !== undefined) billingUpdateData.categoryCharge = billingData.categoryCharge;
-            if (categoryCharge > 0) billingUpdateData.categoryCharge = categoryCharge;
             if (billingData.zoneAdminCommission !== undefined) billingUpdateData.zoneAdminCommission = billingData.zoneAdminCommission;
             if (billingData.pickupDriverEarning !== undefined) billingUpdateData.pickupDriverEarning = billingData.pickupDriverEarning;
             if (billingData.deliveryDriverEarning !== undefined) billingUpdateData.deliveryDriverEarning = billingData.deliveryDriverEarning;
@@ -1621,6 +1574,82 @@ class OrderService {
                     bookingId: orderId,
                     ...billingUpdateData
                 });
+            }
+        }
+
+        // Replace preferences only when the client sends a non-empty list (empty would wipe agent prefs)
+        if (Array.isArray(preferencesArray) && preferencesArray.length > 0) {
+            await bookingPreference.destroy({ where: { bookingId: orderId } });
+
+            const serviceIds = services
+                ? services.map((s) => s.serviceId)
+                : existingOrder.customerSelectedServices.map((s) => s.serviceId);
+
+            const bookingPreferencesToCreate = [];
+
+            for (const pref of preferencesArray) {
+                const { preferenceTypeId, preferenceValueId, serviceId, parentPreferenceValueId } = pref;
+
+                if (!preferenceTypeId || !preferenceValueId) {
+                    throw new ValidationError(
+                        "preferenceTypeId and preferenceValueId are required for each preference"
+                    );
+                }
+
+                if (serviceId) {
+                    const servicePreferenceExists = await serviceWithPreferences.findOne({
+                        where: {
+                            serviceId: serviceId,
+                            preferenceTypeId: preferenceTypeId,
+                            status: true
+                        }
+                    });
+
+                    if (!servicePreferenceExists) {
+                        throw new ValidationError(
+                            `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
+                        );
+                    }
+                } else {
+                    const servicePreferenceExists = await serviceWithPreferences.findOne({
+                        where: {
+                            serviceId: { [Op.in]: serviceIds },
+                            preferenceTypeId: preferenceTypeId,
+                            status: true
+                        }
+                    });
+
+                    if (!servicePreferenceExists) {
+                        throw new ValidationError(
+                            `Preference type ${preferenceTypeId} is not available for any selected services`
+                        );
+                    }
+                }
+
+                const preferenceValue = await preferenceValues.findOne({
+                    where: {
+                        id: preferenceValueId,
+                        preferenceTypeId: preferenceTypeId,
+                        status: true
+                    }
+                });
+
+                if (!preferenceValue) {
+                    throw new ValidationError(
+                        `Preference value ${preferenceValueId} is invalid or does not belong to preference type ${preferenceTypeId}`
+                    );
+                }
+
+                bookingPreferencesToCreate.push({
+                    bookingId: orderId,
+                    preferenceTypeId: preferenceTypeId,
+                    preferenceValueId: preferenceValueId,
+                    parentPreferenceValueId: parentPreferenceValueId || null
+                });
+            }
+
+            if (bookingPreferencesToCreate.length > 0) {
+                await bookingPreference.bulkCreate(bookingPreferencesToCreate);
             }
         }
 
