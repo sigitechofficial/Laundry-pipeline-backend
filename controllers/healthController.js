@@ -177,6 +177,41 @@ async function complianceCatalogSchemaInfo(req, res) {
 }
 
 /**
+ * GET /health/catalog-resolver
+ * Overlay tables + inherit sample (flag off ⇒ master prices).
+ */
+async function catalogResolverInfo(req, res) {
+  const meta = requestMeta(req);
+  const zoneCatalogService = require("../services/Admin/zoneCatalogService");
+  let check;
+  try {
+    check = await zoneCatalogService.healthProbe();
+    check.status = check.ok ? "ok" : "error";
+    check.message = check.ok
+      ? "Catalog resolver healthy"
+      : "Resolver inherit sample did not match master";
+  } catch (err) {
+    check = {
+      status: "error",
+      message: err.message || "Catalog resolver probe failed",
+      ok: false,
+    };
+  }
+  logCheck("schema.catalogResolver", check);
+  const httpStatus = check.status === "ok" ? 200 : 503;
+  return res.status(httpStatus).json({
+    status: check.status === "ok" ? "1" : "0",
+    message: check.message,
+    data: {
+      ...check,
+      deploy: getDeploymentInfo(),
+      serverTime: new Date().toISOString(),
+      request: meta,
+    },
+  });
+}
+
+/**
  * GET /health/:dependency
  * dependency = mysql | redis | firebase | stripe | zeptomail
  */
@@ -219,5 +254,6 @@ module.exports = {
   schemaInfo,
   repairCatalogSchemaInfo,
   complianceCatalogSchemaInfo,
+  catalogResolverInfo,
   singleDependency
 };

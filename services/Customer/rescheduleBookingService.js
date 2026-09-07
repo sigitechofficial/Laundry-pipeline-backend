@@ -510,14 +510,11 @@ class RescheduleBookingService {
             // Delete all existing selected services for this booking
             await customerSelectedService.destroy({ where: { bookingId } });
 
-            // Recalculate total from new services
-            const categoryCharge = services.reduce(
-                (acc, s) => acc + parseFloat(s.categoryCharge || 0), 0
-            );
-            newOrderAmount = categoryCharge;
-
-            // Build and bulk-insert new service rows
-            const serviceRows = services.map((s) => {
+            // Build and bulk-insert new service rows (zone catalog resolver)
+            const zoneCatalogService = require("../Admin/zoneCatalogService");
+            const serviceRows = [];
+            let categoryCharge = 0;
+            for (const s of services) {
                 const row = {
                     bookingId,
                     serviceId: s.serviceId,
@@ -529,7 +526,18 @@ class RescheduleBookingService {
                 };
                 if (s.categoryId)    row.categoryId    = s.categoryId;
                 if (s.subCategoryId) row.subCategoryId = s.subCategoryId;
-                if (s.categoryCharge) row.categoryPrice = parseFloat(s.categoryCharge);
+                if (s.subCategoryId) {
+                    await zoneCatalogService.assertLineEnabled(bookingData.zoneId, {
+                        serviceId: s.serviceId,
+                        categoryId: s.categoryId,
+                        subCategoryId: s.subCategoryId,
+                    });
+                    const resolved = await zoneCatalogService.resolvePrice(
+                        bookingData.zoneId,
+                        { subCategoryId: s.subCategoryId }
+                    );
+                    row.categoryPrice = resolved.price;
+                }
                 if (s.serviceInstruction) row.serviceInstruction = s.serviceInstruction;
                 if (s.items != null && s.items !== "") row.items = Number(s.items);
                 const bagVal = s.bags ?? s.bagsCount;
@@ -537,8 +545,11 @@ class RescheduleBookingService {
                     const n = Number(bagVal);
                     if (Number.isFinite(n) && n > 0) row.bags = Math.floor(n);
                 }
-                return row;
-            });
+                const qty = Number(row.items) > 0 ? Number(row.items) : 1;
+                categoryCharge += parseFloat(row.categoryPrice || 0) * qty;
+                serviceRows.push(row);
+            }
+            newOrderAmount = categoryCharge;
             await customerSelectedService.bulkCreate(serviceRows);
             console.log(`✅ Reschedule: replaced ${serviceRows.length} service(s) for booking ${bookingId}`);
 

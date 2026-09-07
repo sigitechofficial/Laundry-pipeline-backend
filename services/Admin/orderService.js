@@ -1079,81 +1079,59 @@ class OrderService {
             throw new ValidationError('bookingId is required');
         }
 
-        const bookingExists = await booking.findByPk(bookingId, { attributes: ['id'] });
+        const bookingExists = await booking.findByPk(bookingId, { attributes: ['id', 'zoneId'] });
         if (!bookingExists) {
             throw new NotFoundError('Booking not found');
         }
 
-        const serviceData = await serviceCategories.findAll({
+        const serviceManagementService = require('./serviceManagementService');
+        const zoneCatalogService = require('./zoneCatalogService');
+        const allServices = await service.findAll({
             where: { status: true },
-            include: [
-                {
-                    model: service,
-                    attributes: ['id', 'name', 'status', 'image', 'description', 'timeRequired'],
-                    required: true
-                },
-                {
-                    model: categories,
-                    attributes: ['id', 'name', 'status', 'image', 'description'],
-                    required: true,
-                    include: [
-                        {
-                            model: subCategories,
-                            attributes: ['id', 'name', 'status', 'price', 'unitCount'],
-                            required: false
-                        }
-                    ]
-                }
-            ]
+            attributes: ['id', 'name', 'status', 'image', 'description', 'timeRequired'],
         });
-
         const grouped = {};
-        for (const item of serviceData) {
-            const plainItem = item.toJSON ? item.toJSON() : item;
-            const serviceObj = plainItem.service;
-            const categoryObj = plainItem.category || plainItem.categories;
-
-            if (!serviceObj || !categoryObj) continue;
-
-            if (!grouped[serviceObj.id]) {
-                grouped[serviceObj.id] = {
-                    serviceId: serviceObj.id,
-                    service: {
-                        id: serviceObj.id,
-                        name: serviceObj.name,
-                        status: serviceObj.status,
-                        image: serviceObj.image || null,
-                        description: serviceObj.description || null,
-                        turnAroundTime: serviceObj.timeRequired || null
-                    },
-                    categories: []
-                };
-            }
-
-            const existingCategory = grouped[serviceObj.id].categories.find(
-                cat => cat.categoryId === categoryObj.id
+        for (const svc of allServices) {
+            let tree = await serviceManagementService.getServiceCategoriesDataForService(svc.id);
+            tree = await zoneCatalogService.applyToServiceCategoriesData(
+                tree,
+                bookingExists.zoneId,
+                svc.id
             );
-
-            if (!existingCategory) {
-                grouped[serviceObj.id].categories.push({
-                    categoryId: categoryObj.id,
+            if (!tree.length) continue;
+            grouped[svc.id] = {
+                serviceId: svc.id,
+                service: {
+                    id: svc.id,
+                    name: svc.name,
+                    status: svc.status,
+                    image: svc.image || null,
+                    description: svc.description || null,
+                    turnAroundTime: svc.timeRequired || null,
+                },
+                categories: tree.map((row) => ({
+                    categoryId: row.categoryId,
                     category: {
-                        id: categoryObj.id,
-                        name: categoryObj.name,
-                        status: categoryObj.status,
-                        image: categoryObj.image || null,
-                        description: categoryObj.description || null
+                        id: row.category.id,
+                        name: row.category.name,
+                        status: true,
+                        image: row.category.image || null,
+                        description: row.category.description || null,
                     },
-                    subCategories: (categoryObj.subCategories || []).map(subCat => ({
-                        id: subCat.id,
-                        name: subCat.name,
-                        status: subCat.status,
-                        price: subCat.price,
-                        unitCount: subCat.unitCount ?? null
-                    }))
-                });
-            }
+                    subCategories: (row.category.subCategories || []).map((subCat) => {
+                        const plain = subCat.toJSON ? subCat.toJSON() : subCat;
+                        return {
+                            id: plain.id,
+                            name: plain.name,
+                            status: plain.status,
+                            price: plain.price,
+                            unitCount: plain.unitCount ?? null,
+                        };
+                    }),
+                })),
+            };
         }
+        const ServiceCategoriesList = Object.values(grouped);
 
         const selectedServices = await customerSelectedService.findAll({
             where: {
@@ -1250,7 +1228,7 @@ class OrderService {
                 .filter(Boolean)
         );
 
-        const catalogWithSelectionFlag = Object.values(grouped).map(serviceItem => ({
+        const catalogWithSelectionFlag = ServiceCategoriesList.map(serviceItem => ({
             ...serviceItem,
             isSelectedInBooking: selectedServiceIdSet.has(serviceItem.serviceId)
         }));
@@ -1729,33 +1707,8 @@ class OrderService {
      * @returns {Array} Zone data
      */
     async findZones(lat, lng) {
-        const findZone = await zone.findAll({
-            where: {
-                status: true,
-                coordinates: sequelize.where(
-                    sequelize.fn(
-                        "ST_Contains",
-                        sequelize.col("coordinates"),
-                        sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
-                    ),
-                    true
-                ),
-            },
-            include: [
-                {
-                    model: cities,
-                    attributes: ["id", "name", "lat", "lng", "status"],
-                    include: [
-                        {
-                            model: countries,
-                            attributes: ["id", "name", "shortName", "status"],
-                        },
-                    ],
-                },
-            ],
-            attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status"],
-        });
-        return findZone;
+        const { findZones } = require("../../utils/findZones");
+        return findZones(lat, lng);
     }
     /**
      * Get on-hold bookings (paginated)

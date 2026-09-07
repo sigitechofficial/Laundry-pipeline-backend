@@ -171,6 +171,7 @@ const ROUTE_FEATURE_PREFIXES = [
     ['/getZoneById', K.ZONE_RECORD],
     ['/delete-zone', K.ZONE_RECORD],
     ['/updateZone', K.ZONE_RECORD],
+    ['/zones', K.ZONE_RECORD],
 
     ['/addvehicle', K.COUNTRIES_AND_CITIES],
     ['/addCountries', K.COUNTRIES_AND_CITIES],

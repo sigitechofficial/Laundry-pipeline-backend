@@ -91,6 +91,18 @@ module.exports = {
         envKey: "RECURRING_AUTO_CREATE_ENABLED",
       },
       {
+        settingKey: "zoneCatalogOverridesEnabled",
+        settingValue: isTruthyEnv(envOr("ZONE_CATALOG_OVERRIDES", "false"))
+          ? "true"
+          : "false",
+        valueType: "boolean",
+        label: "Zone catalog overlays",
+        description:
+          "When on, browse and charge use per-zone price / availability. Off = inherit master.",
+        settingGroup: "catalog",
+        envKey: "ZONE_CATALOG_OVERRIDES",
+      },
+      {
         settingKey: "recurringMaxFailuresBeforePause",
         settingValue: envOr("RECURRING_MAX_FAILURES_BEFORE_PAUSE", "3"),
         valueType: "integer",
@@ -122,6 +134,7 @@ module.exports = {
         "invoiceAutoChargeMaxAttempts",
         "invoiceAutoChargeRetryGapMs",
         "recurringAutoCreateEnabled",
+        "zoneCatalogOverridesEnabled",
         "recurringMaxFailuresBeforePause",
       ],
     });

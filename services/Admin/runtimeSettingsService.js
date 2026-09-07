@@ -93,6 +93,15 @@ const DEFINITIONS = {
     envKey: "RECURRING_AUTO_CREATE_ENABLED",
     defaultValue: true,
   },
+  zoneCatalogOverridesEnabled: {
+    type: "boolean",
+    label: "Zone catalog overlays",
+    description:
+      "When on, browse and charge use per-zone price / availability overlays. Off = inherit master everywhere (today).",
+    group: "catalog",
+    envKey: "ZONE_CATALOG_OVERRIDES",
+    defaultValue: false,
+  },
   recurringMaxFailuresBeforePause: {
     type: "integer",
     label: "Recurring max generation failures",

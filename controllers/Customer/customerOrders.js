@@ -261,8 +261,8 @@ async function allServices(req, res) {
  */
 async function serviceDetail(req, res) {
     // Call service to handle business logic
-    const { lat, lng } = req.query;
-    const result = await customerOrderService.serviceDetail({ lat, lng });
+    const { lat, lng, zoneId } = req.query;
+    const result = await customerOrderService.serviceDetail({ lat, lng, zoneId });
 
     // Return response using ResponseHelper success method
     return ResponseHelper.success(res, result.message, result.data);
@@ -287,10 +287,13 @@ async function customerAddresses(req, res) {
  *  fetch Specific Zone and Charges
  */
 async function fetchZoneAndCharges(req, res) {
-    const { lat, lng } = req.query;
+    const { lat, lng, subCategoryIds, addOnServiceIds, repairOptionIds } = req.query;
     const result = await customerOrderService.fetchZoneAndCharges({
         lat,
-        lng
+        lng,
+        subCategoryIds,
+        addOnServiceIds,
+        repairOptionIds,
     });
 
     // Return response using ResponseHelper success method
@@ -430,7 +433,7 @@ async function getAllServiceWithPreferenceDetails(req, res) {
  */
 async function getRepairCatalog(req, res) {
     const { serviceId } = req.params;
-    const result = await customerOrderService.getRepairCatalog(serviceId);
+    const result = await customerOrderService.getRepairCatalog(serviceId, req.query);
     return ResponseHelper.success(res, result.message, result.data);
 }
 
@@ -696,36 +699,11 @@ let responsefunc = (status, message, data, error) => {
 };
 
 async function findZones(lat, lng) {
-    const findZone = await zone.findAll({
-        where: {
-            status: true,
-            coordinates: sequelize.where(
-                sequelize.fn(
-                    "ST_Contains",
-                    sequelize.col("coordinates"),
-                    sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
-                ),
-                true
-            ),
-        },
-        include: [
-            {
-                model: cities,
-                attributes: ["id", "name", "lat", "lng", "status"],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["id", "name", "shortName", "status"],
-                    },
-                ],
-            },
-        ],
-    });
-
-    if (findZone.length === 0) {
+    const { findZones: resolveZonesShared } = require("../../utils/findZones");
+    const findZone = await resolveZonesShared(lat, lng);
+    if (!findZone || findZone.length === 0) {
         throw new customError("No Zone found for these lat,lngs and coordinates");
     }
-
     return findZone;
 }
 

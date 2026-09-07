@@ -43,6 +43,18 @@ function run() {
         resolveAdminFeatureKey({ path: '/getAllCustomers' }),
         ADMIN_FEATURE_KEYS.CUSTOMER_MANAGEMENT
     );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/zones/3/catalog' }),
+        ADMIN_FEATURE_KEYS.ZONE_RECORD
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/zones/3/catalog/overrides' }),
+        ADMIN_FEATURE_KEYS.ZONE_RECORD
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ originalUrl: '/admin/zones/12/catalog/overrides/reset' }),
+        ADMIN_FEATURE_KEYS.ZONE_RECORD
+    );
     assert.strictEqual(resolveAdminFeatureKey({ path: '/signOut' }), null);
     assert.strictEqual(resolveAdminFeatureKey({ path: '/not-a-real-admin-route' }), null);
 

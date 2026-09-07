@@ -102,6 +102,13 @@ const extraTipService = require('./extraTipService');
 const { bookingTipAmountFromTips } = require('../../utils/bookingTips');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
+const {
+    findZones,
+    findZoneByPostcode,
+    zoneInclude,
+    zoneAttributes,
+} = require('../../utils/findZones');
+const zoneCatalogService = require('../Admin/zoneCatalogService');
 
 // Import coupon service
 const couponService = require('./couponService');
@@ -118,225 +125,6 @@ const {
  * Helper Functions (moved from customerOrders controller to avoid circular dependency)
  */
 
-
-// Shared include config for zone queries
-const zoneInclude = [
-    {
-        model: cities,
-        required: true,
-        attributes: ["id", "name", "lat", "lng", "status"],
-        where: { deletedAt: { [Op.is]: null } },
-        include: [
-            {
-                model: countries,
-                required: true,
-                attributes: ["id", "name", "shortName", "status", "ianaTimeZone"],
-                where: { deletedAt: { [Op.is]: null } },
-            },
-        ],
-    },
-    {
-        model: units,
-        as: 'currencyUnitZ',
-        required: false,
-        attributes: ["id", "name", "symbol"]
-    }
-];
-
-const zoneAttributes = ["id", "name", "zoneMinimumAmount", "serviceCharge", "status", "coordinates", "currencyUnitId", "postcodes"];
-
-/**
- * Extract UK outcode from a full postcode.
- * e.g. "SW1A 1AA" → "SW1A", "NW11AA" → "NW1"
- */
-function extractOutcode(postcode) {
-    const normalized = postcode.trim().replace(/\s+/g, '').toUpperCase();
-    // Remove last 3 chars (incode: digit + 2 letters) to get outcode
-    return normalized.slice(0, normalized.length - 3);
-}
-
-/**
- * Find zone by postcode using JSON_CONTAINS.
- * Checks for exact full postcode match AND outcode match so that a zone
- * stored as "SW1A" will be found when the address postcode is "SW1A 1AA".
- */
-async function findZoneByPostcode(postcode) {
-    const normalized = postcode.trim().replace(/\s+/g, '').toUpperCase();
-    const outcode = extractOutcode(normalized);
-
-    console.log(`🔍 Postcode lookup — full: "${normalized}", outcode: "${outcode}"`);
-
-    // 1) Prefer exact full-postcode match first (most specific)
-    const exactZones = await zone.findAll({
-        where: {
-            status: true,
-            [Op.and]: [
-                sequelize.where(
-                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(normalized)),
-                    true
-                )
-            ]
-        },
-        include: zoneInclude,
-        attributes: zoneAttributes,
-    });
-
-    if (exactZones.length > 0) {
-        console.log(`📮 Postcode exact lookup found ${exactZones.length} zone(s)`);
-        return exactZones;
-    }
-
-    // 2) Fallback to outcode match (can be broader and return multiple)
-    const outcodeZones = await zone.findAll({
-        where: {
-            status: true,
-            [Op.and]: [
-                sequelize.where(
-                    sequelize.fn('JSON_CONTAINS', sequelize.col('postcodes'), JSON.stringify(outcode)),
-                    true
-                )
-            ]
-        },
-        include: zoneInclude,
-        attributes: zoneAttributes,
-    });
-
-    console.log(`📮 Postcode outcode lookup found ${outcodeZones.length} zone(s)`);
-    return outcodeZones;
-}
-
-/**
- * If multiple zones match, choose the nearest zone by centroid distance.
- * This avoids deterministic-but-wrong "lowest id wins" behavior.
- */
-async function pickNearestZoneByCentroid(candidateZones, lat, lng) {
-    if (!Array.isArray(candidateZones) || candidateZones.length <= 1) {
-        return candidateZones || [];
-    }
-
-    const zoneIds = candidateZones
-        .map((z) => z?.id)
-        .filter((id) => Number.isInteger(id));
-
-    if (zoneIds.length <= 1) {
-        return [candidateZones[0]];
-    }
-
-    const safeLat = Number(lat);
-    const safeLng = Number(lng);
-    if (!Number.isFinite(safeLat) || !Number.isFinite(safeLng)) {
-        console.warn("⚠️ Invalid coordinates for nearest-zone tie-break; using first candidate");
-        return [candidateZones[0]];
-    }
-
-    const pointWkt = `POINT(${safeLng} ${safeLat})`;
-
-    const nearestZone = await zone.findOne({
-        where: {
-            status: true,
-            id: { [Op.in]: zoneIds }
-        },
-        include: zoneInclude,
-        attributes: [
-            ...zoneAttributes,
-            [
-                sequelize.fn(
-                    "ST_Distance",
-                    sequelize.fn("ST_Centroid", sequelize.col("coordinates")),
-                    sequelize.fn("ST_GeomFromText", pointWkt)
-                ),
-                "centroidDistance"
-            ]
-        ],
-        order: [
-            [sequelize.literal("centroidDistance"), "ASC"],
-            ["id", "ASC"]
-        ]
-    });
-
-    if (nearestZone) {
-        console.log(`📍 Multiple zones matched; nearest centroid zoneId=${nearestZone.id}`);
-        return [nearestZone];
-    }
-
-    return [candidateZones[0]];
-}
-
-// Find zones function
-async function findZones(lat, lng) {
-    console.log("Finding zones for coordinates:", { lat, lng });
-
-    // ── Step 1: Reverse-geocode lat/lng → postcode via postcodes.io ──────────
-    let postcodeLookupResult = null;
-    try {
-        const axios = require('axios');
-        const response = await axios.get(
-            `https://api.postcodes.io/postcodes?lon=${lng}&lat=${lat}`,
-            { timeout: 5000 }
-        );
-        if (response.data.status === 200 && response.data.result && response.data.result.length > 0) {
-            postcodeLookupResult = response.data.result[0].postcode;
-            console.log(`📮 Reverse geocode result: "${postcodeLookupResult}"`);
-        }
-    } catch (err) {
-        console.warn("⚠️ postcodes.io reverse geocode failed, falling back to geometry:", err.message);
-    }
-
-    // ── Step 2: Try postcode-based zone lookup first ──────────────────────────
-    if (postcodeLookupResult) {
-        const postcodeZones = await findZoneByPostcode(postcodeLookupResult);
-        if (postcodeZones.length === 1) {
-            console.log("✅ Zone found via postcode lookup:", postcodeZones[0].name);
-            return postcodeZones;
-        }
-        if (postcodeZones.length > 1) {
-            console.log("⚠️ Multiple zones matched by postcode/outcode, choosing nearest zone...");
-            return await pickNearestZoneByCentroid(postcodeZones, lat, lng);
-        }
-        if (postcodeZones.length === 0) {
-            console.log("⚠️ No zone matched by postcode, falling back to geometry...");
-        }
-    }
-
-    // ── Step 3: Fallback — geometry-based lookup (ST_Contains) ───────────────
-    console.log("🗺️ Trying geometry-based zone lookup...");
-    const findZone = await zone.findAll({
-        where: {
-            status: true,
-            coordinates: sequelize.where(
-                sequelize.fn(
-                    "ST_Contains",
-                    sequelize.col("coordinates"),
-                    sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
-                ),
-                true
-            ),
-        },
-        include: zoneInclude,
-        attributes: zoneAttributes,
-        order: [['id', 'ASC']],
-    });
-    
-    console.log(`Found ${findZone.length} zone(s) via geometry`);
-    if (findZone.length > 0) {
-        console.log("Zone details:", {
-            id: findZone[0].id,
-            name: findZone[0].name,
-            cityId: findZone[0].city?.id,
-            cityName: findZone[0].city?.name,
-            countryName: findZone[0].city?.country?.name
-        });
-    }
-    
-    // Final safety: if overlapping polygons produce multiple zones,
-    // choose nearest zone instead of lowest-id deterministic pick.
-    if (findZone.length > 1) {
-        console.log(`⚠️ Multiple geometry zones (${findZone.length}) found; choosing nearest zone...`);
-        return await pickNearestZoneByCentroid(findZone, lat, lng);
-    }
-
-    return findZone;
-}
 
 // Address adder function
 async function addressAdder(addNew, address, type, userId, addressId, cityId, countryId) {
@@ -1254,8 +1042,13 @@ class CustomerOrderService {
      * Dedicated repair/alteration catalog (garments + repair options).
      * Not wash categories / subcategories / add-ons.
      */
-    async getRepairCatalog(serviceId) {
-        return repairCatalogService.getCatalogForCustomer(serviceId);
+    async getRepairCatalog(serviceId, data = {}) {
+        let zoneId = data.zoneId ? Number(data.zoneId) : null;
+        if (!zoneId && data.lat != null && data.lng != null) {
+            const matched = await findZones(Number(data.lat), Number(data.lng));
+            zoneId = matched?.[0]?.id || null;
+        }
+        return repairCatalogService.getCatalogForCustomer(serviceId, { zoneId });
     }
 
     /**
@@ -1360,17 +1153,36 @@ class CustomerOrderService {
                 (qtyByService.get(serviceId) || 0) + quantity
             );
 
-            await customerSelectedRepairItemOption.bulkCreate(
-                repairOptionIds.map((optionId) => {
-                    const opt = allowed.get(optionId);
-                    return {
-                        customerSelectedRepairItemId: itemRow.id,
+            let repairZoneId = null;
+            try {
+                const bookingRow = await booking.findByPk(bookingId, {
+                    attributes: ["id", "zoneId"],
+                });
+                repairZoneId = bookingRow?.zoneId || null;
+            } catch (_) {
+                repairZoneId = null;
+            }
+
+            const optionRows = [];
+            for (const optionId of repairOptionIds) {
+                const opt = allowed.get(optionId);
+                let price = Number(opt.price) || 0;
+                try {
+                    const resolved = await zoneCatalogService.resolvePrice(repairZoneId, {
                         repairOptionId: optionId,
-                        optionName: opt.name,
-                        price: Number(opt.price) || 0,
-                    };
-                })
-            );
+                    });
+                    price = resolved.price;
+                } catch (_) {
+                    /* master price */
+                }
+                optionRows.push({
+                    customerSelectedRepairItemId: itemRow.id,
+                    repairOptionId: optionId,
+                    optionName: opt.name,
+                    price,
+                });
+            }
+            await customerSelectedRepairItemOption.bulkCreate(optionRows);
 
             if (imageUrls.length > 0) {
                 await customerSelectedRepairItemImage.bulkCreate(
@@ -1802,16 +1614,22 @@ class CustomerOrderService {
 
         let serviceCreate = [];
         if (services && services.length > 0) {
-            categoryCharge = services.reduce(
-                (acc, service) => acc + parseFloat(service.categoryCharge || 0),
-                0
-            );
-            // Calculate total amount
-            total = categoryCharge;
+            const serviceData = [];
+            for (const service of services) {
+                let unitPrice = null;
+                await zoneCatalogService.assertLineEnabled(zoneId, {
+                    serviceId: service.serviceId,
+                    categoryId: service.categoryId,
+                    subCategoryId: service.subCategoryId,
+                });
+                if (service.subCategoryId) {
+                    const resolved = await zoneCatalogService.resolvePrice(zoneId, {
+                        subCategoryId: service.subCategoryId,
+                    });
+                    unitPrice = resolved.price;
+                }
 
-            // Prepare the serviceData to be inserted
-            const serviceData = services.map((service) => {
-                let serviceObj = {
+                const serviceObj = {
                     bookingId: bookingData.id,
                     serviceId: service.serviceId,
                     date: currentDate,
@@ -1819,8 +1637,10 @@ class CustomerOrderService {
                     status: true,
                 };
                 if (service.categoryId) serviceObj.categoryId = service.categoryId;
-                if (service.subCategoryId) serviceObj.categoryId = service.categoryId;
-                if (service.categoryCharge) serviceObj.categoryPrice = total;
+                if (service.subCategoryId) serviceObj.subCategoryId = service.subCategoryId;
+                if (Number.isFinite(unitPrice) && unitPrice >= 0) {
+                    serviceObj.categoryPrice = unitPrice;
+                }
                 if (service.serviceInstruction) serviceObj.serviceInstruction = service.serviceInstruction;
                 if (service.items != null && service.items !== '') {
                     serviceObj.items = Number(service.items);
@@ -1831,8 +1651,13 @@ class CustomerOrderService {
                     if (Number.isFinite(n) && n > 0) serviceObj.bags = Math.floor(n);
                 }
 
-                return serviceObj;
-            });
+                serviceData.push(serviceObj);
+            }
+            categoryCharge = serviceData.reduce((acc, row) => {
+                const qty = Number(row.items) > 0 ? Number(row.items) : 1;
+                return acc + parseFloat(row.categoryPrice || 0) * qty;
+            }, 0);
+            total = parseFloat(categoryCharge.toFixed(2));
             console.log("🚀 ~ createBooking ~ serviceData:", serviceData);
             serviceCreate = await customerSelectedService.bulkCreate(serviceData);
             console.log("🚀 ~ createBooking ~ serviceCreate:", serviceCreate);
@@ -3114,7 +2939,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with service details
      */
     async serviceDetail(data = {}) {
-        const { lat, lng } = data;
+        const { lat, lng, zoneId: requestedZoneId } = data;
         const activeServices = await service.findAll({
             where: { status: true },
             attributes: [
@@ -3137,10 +2962,25 @@ class CustomerOrderService {
         }
 
         const result = [];
+        let catalogZoneId = Number(requestedZoneId) > 0 ? Number(requestedZoneId) : null;
+        if (!catalogZoneId && lat != null && lng != null) {
+            const parsedLat = parseFloat(lat);
+            const parsedLng = parseFloat(lng);
+            if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
+                const matchedZones = await findZones(parsedLat, parsedLng);
+                catalogZoneId = matchedZones?.[0]?.id || null;
+            }
+        }
 
         for (const svc of activeServices) {
-            const serviceCategoriesData =
+            let serviceCategoriesData =
                 await serviceManagementService.getServiceCategoriesDataForService(
+                    svc.id
+                );
+            serviceCategoriesData =
+                await zoneCatalogService.applyToServiceCategoriesData(
+                    serviceCategoriesData,
+                    catalogZoneId,
                     svc.id
                 );
 
@@ -3227,7 +3067,12 @@ class CustomerOrderService {
 
         return {
             message: 'Service Details',
-            data: { serviceData: result, currency },
+            data: {
+                serviceData: result,
+                currency,
+                catalogZoneId,
+                pricesFinal: Boolean(catalogZoneId),
+            },
         };
     }
 
@@ -3275,7 +3120,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with zone and charge information
      */
     async fetchZoneAndCharges(data) {
-        const { lat, lng } = data;
+        const { lat, lng, subCategoryIds, addOnServiceIds, repairOptionIds } = data;
 
         console.log("=== Fetch Zone and Charges ===");
         console.log("Coordinates:", { lat, lng });
@@ -3325,6 +3170,16 @@ class CustomerOrderService {
 
         console.log("Zone found successfully:", { zoneId, zoneName, cityName, countryName, currency: currencyUnit?.name });
 
+        const zoneCatalogService = require("../Admin/zoneCatalogService");
+        let cart = null;
+        if (subCategoryIds || addOnServiceIds || repairOptionIds) {
+            cart = await zoneCatalogService.repriceCart(zoneId, {
+                subCategoryIds,
+                addOnServiceIds,
+                repairOptionIds,
+            });
+        }
+
         return {
             message: "Zone and Charges",
             data: { 
@@ -3343,7 +3198,8 @@ class CustomerOrderService {
                     id: currencyUnit.id,
                     name: currencyUnit.name,
                     symbol: currencyUnit.symbol
-                } : null
+                } : null,
+                cart,
             }
         };
     }

@@ -163,6 +163,7 @@ async function cloneCustomerDeclaredRepairs({
   sourceBookingId,
   newBookingId,
   newCssByServiceId,
+  zoneId,
   transaction,
 }) {
   const sourceCss = await customerSelectedService.findAll({
@@ -213,12 +214,24 @@ async function cloneCustomerDeclaredRepairs({
     );
 
     for (const option of plain.options || []) {
+      let optionPrice = option.price || 0;
+      if (option.repairOptionId && zoneId) {
+        try {
+          const zoneCatalogService = require("../Admin/zoneCatalogService");
+          const resolved = await zoneCatalogService.resolvePrice(zoneId, {
+            repairOptionId: option.repairOptionId,
+          });
+          optionPrice = resolved.price;
+        } catch (_) {
+          /* keep snapshot if catalog gone */
+        }
+      }
       await customerSelectedRepairItemOption.create(
         {
           customerSelectedRepairItemId: created.id,
           repairOptionId: option.repairOptionId,
           optionName: option.optionName,
-          price: option.price || 0,
+          price: optionPrice,
         },
         { transaction }
       );
@@ -236,7 +249,7 @@ async function cloneCustomerDeclaredRepairs({
   }
 }
 
-async function cloneServiceRows(sourceBookingId, newBookingId, transaction) {
+async function cloneServiceRows(sourceBookingId, newBookingId, zoneId, transaction) {
   const picked = await loadIntentRowsForClone(sourceBookingId, transaction);
   const rows = picked.rows || [];
   const now = new Date();
@@ -249,18 +262,31 @@ async function cloneServiceRows(sourceBookingId, newBookingId, transaction) {
     return { serviceIds: [] };
   }
 
+  const zoneCatalogService = require("../Admin/zoneCatalogService");
   for (const plain of rows) {
     const serviceId = Number(plain.serviceId);
+    let categoryPrice = plain.categoryPrice ?? null;
+    const subCategoryId = plain.subCategoryId || null;
+    if (subCategoryId && zoneId) {
+      try {
+        const resolved = await zoneCatalogService.resolvePrice(zoneId, {
+          subCategoryId,
+        });
+        categoryPrice = resolved.price;
+      } catch (_) {
+        /* keep prior snapshot if item disappeared */
+      }
+    }
     const created = await customerSelectedService.create(
       {
         bookingId: newBookingId,
         serviceId: Number.isFinite(serviceId) ? serviceId : plain.serviceId,
         categoryId: plain.categoryId || null,
-        subCategoryId: null,
+        subCategoryId,
         date: plain.date || now,
         time: plain.time || '00:00:00',
         servicePrice: null,
-        categoryPrice: plain.categoryPrice ?? null,
+        categoryPrice,
         items: plain.items ?? null,
         bags: plain.bags ?? null,
         status: true,
@@ -318,6 +344,7 @@ async function cloneServiceRows(sourceBookingId, newBookingId, transaction) {
     sourceBookingId,
     newBookingId,
     newCssByServiceId,
+    zoneId,
     transaction,
   });
 
@@ -667,7 +694,7 @@ async function generateNextBookingFromCompleted({
       );
     }
 
-    const cloned = await cloneServiceRows(source.id, created.id, tx);
+    const cloned = await cloneServiceRows(source.id, created.id, created.zoneId || source.zoneId, tx);
 
     const sourceBilling = source.billingDetail
       ? source.billingDetail.get({ plain: true })

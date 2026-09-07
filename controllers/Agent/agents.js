@@ -197,6 +197,8 @@ const {
     getBookingRepairItems,
 } = require("../../services/Agent/customerDeclaredServicesService");
 const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
+const serviceManagementService = require("../../services/Admin/serviceManagementService");
+const zoneCatalogService = require("../../services/Admin/zoneCatalogService");
 const { sendNotification } = require("../../utils/notification");
 const {
     assertBookingNotCancelledForAgent,
@@ -4788,7 +4790,7 @@ exports.customerServices = async (req, res) => {
         const subCategory = {
             id: item.subCategory.id,
             name: item.subCategory.name,
-            price: item.subCategory.price,
+            price: item.categoryPrice != null ? item.categoryPrice : item.subCategory.price,
             recordId: item.id
         };
 
@@ -5435,81 +5437,48 @@ exports.serviceDetail = async (req, res) => {
 
     const serviceIds = agentServiceFind.map(service => service.serviceId);
 
-
-    const serviceData = await serviceCategories.findAll({
-        where: {
-            serviceId: { [Op.in]: serviceIds },
-            status: true
-        },
-        include: [
-            {
-                model: service,
-                where: { status: true },
-                attributes: [
-                    'id',
-                    'name',
-                    'status',
-                    'image',
-                    'description',
-                    'timeRequired',
-                    'pricingBasis',
-                    'numberOfBags',
-                    'numberOfItems',
-                ],
-                paranoid: true,
-                required: true,
-            },
-            {
-                model: categories,
-                where: { status: true },
-                attributes: ['id', 'name', 'status', 'image', 'description'],
-                paranoid: true,
-                required: true,
-                include: [
-                    {
-                        model: subCategories,
-                        where: { status: true },
-                        attributes: ['id', 'name', 'status', 'price', 'unitCount', 'description', 'deletedAt'],
-                        paranoid: true,
-                        required: false
-                    }
-                ]
-            }
-        ]
+    const shop = await addressDb.findOne({
+        where: { userId: agentId, addressType: "LaundaryShopAddress" },
+        attributes: ["id", "zoneId"],
     });
-
-
+    const shopZoneId = shop?.zoneId || null;
 
     const grouped = {};
-
-    for (const item of serviceData) {
-        const serviceId = item.service.id;
-        const serviceName = item.service.name;
-        const image = item.service.image
-
-        if (!grouped[serviceId]) {
-            grouped[serviceId] = {
-                serviceId: serviceId,
-                serviceName: serviceName,
-                image: image,
-                categories: []
-            };
-        }
-
-
-        const categoryExists = grouped[serviceId].categories.find(cat => cat.id === item.category.id);
-        if (!categoryExists) {
-            grouped[serviceId].categories.push({
-                id: item.category.id,
-                name: item.category.name,
-                status: item.category.status,
-                image: item.category.image,
-                description: item.category.description,
-                subCategories: (item.category.subCategories || [])
-                    .filter(sc => sc.deletedAt === null || sc.deletedAt === undefined)
-                    .map(({ deletedAt, ...sc }) => sc)
-            });
-        }
+    for (const sid of serviceIds) {
+        const svc = await service.findByPk(sid, {
+            attributes: ["id", "name", "image", "status"],
+        });
+        if (!svc || svc.status === false) continue;
+        let tree = await serviceManagementService.getServiceCategoriesDataForService(sid);
+        tree = await zoneCatalogService.applyToServiceCategoriesData(
+            tree,
+            shopZoneId,
+            sid
+        );
+        if (!tree.length) continue;
+        grouped[sid] = {
+            serviceId: sid,
+            serviceName: svc.name,
+            image: svc.image,
+            categories: tree.map((row) => ({
+                id: row.category.id,
+                name: row.category.name,
+                status: true,
+                image: row.category.image || null,
+                description: row.category.description,
+                subCategories: (row.category.subCategories || []).map((sc) => {
+                    const plain = sc.toJSON ? sc.toJSON() : sc;
+                    return {
+                        id: plain.id,
+                        name: plain.name,
+                        status: plain.status,
+                        price: plain.price,
+                        unitCount: plain.unitCount ?? null,
+                        description: plain.description || null,
+                    };
+                }),
+            })),
+        };
     }
 
     const ServiceCategoriesList = Object.values(grouped);
@@ -5587,7 +5556,7 @@ exports.getCustomerServicestoUpdateInvoice = async (req, res) => {
         categoryName: item.category.name,
         subCategoryId: item.subCategory.id,
         subCategoryName: item.subCategory.name,
-        subCategoryPrice: item.subCategory.price,
+        subCategoryPrice: item.categoryPrice != null ? item.categoryPrice : item.subCategory.price,
         categoryPrice: item.categoryPrice,
         items: item.items,
         bags: item.bags ?? null,
@@ -5945,7 +5914,9 @@ exports.printLabelData = async (req, res) => {
                     subCategoryId: selectedService.subCategoryId,
                     subCategoryName: subCategory.name,
                     subCategoryBarCode: subCategory.barCode || null,
-                    subCategoryPrice: subCategory.price,
+                    subCategoryPrice: selectedService.categoryPrice != null
+                        ? selectedService.categoryPrice
+                        : subCategory.price,
                     unitsPerItem,
                     unitCount: subCategory.unitCount,
                     serviceOrder: serviceIndex + 1,
@@ -6988,65 +6959,14 @@ const findZoneByPostcode = async (postcode) => {
     return zones;
 };
 
-/**
- * Find zones — 3-step:
- * 1. Reverse-geocode lat/lng → postcode via postcodes.io
- * 2. Match zone by postcode (outcode or full)
- * 3. Fallback to geometry ST_Contains
- */
+const { findZones: resolveZonesShared } = require("../../utils/findZones");
 const findZones = async (lat, lng) => {
-    console.log(`[Agent] Finding zone for coordinates: { lat: ${lat}, lng: ${lng} }`);
-
-    // ── Step 1: Reverse-geocode lat/lng → postcode ────────────────────────────
-    let postcodeLookupResult = null;
-    try {
-        const response = await axios.get(
-            `https://api.postcodes.io/postcodes?lon=${lng}&lat=${lat}`,
-            { timeout: 5000 }
-        );
-        if (response.data.status === 200 && response.data.result && response.data.result.length > 0) {
-            postcodeLookupResult = response.data.result[0].postcode;
-            console.log(`📮 [Agent] Reverse geocode result: "${postcodeLookupResult}"`);
-        }
-    } catch (err) {
-        console.warn("⚠️ [Agent] postcodes.io reverse geocode failed, falling back to geometry:", err.message);
-    }
-
-    // ── Step 2: Try postcode-based zone lookup ────────────────────────────────
-    if (postcodeLookupResult) {
-        const postcodeZones = await findZoneByPostcode(postcodeLookupResult);
-        if (postcodeZones.length > 0) {
-            console.log("✅ [Agent] Zone found via postcode lookup:", postcodeZones[0].id);
-            return postcodeZones;
-        }
-        console.log("⚠️ [Agent] No zone matched by postcode, falling back to geometry...");
-    }
-
-    // ── Step 3: Fallback — geometry-based lookup (ST_Contains) ───────────────
-    console.log("🗺️ [Agent] Trying geometry-based zone lookup...");
-    const findZone = await zone.findAll({
-        where: {
-            status: true,
-            coordinates: sequelize.where(
-                sequelize.fn(
-                    "ST_Contains",
-                    sequelize.col("coordinates"),
-                    sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
-                ),
-                true
-            ),
-        },
-        include: agentZoneInclude,
-        attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status", "postcodes"],
-    });
-
-    if (findZone.length === 0) {
+    const rows = await resolveZonesShared(lat, lng);
+    if (!rows.length) {
         throw new NotFoundError("No Zone found for these lat,lngs and coordinates");
     }
-
-    console.log(`✅ [Agent] Zone found via geometry: ${findZone[0].id}`);
-    return findZone;
-}
+    return rows;
+};
 
 /**
  * Slot bookings for agent home.
@@ -7294,7 +7214,16 @@ exports.getActivePolicies = async (req, res) => {
  * Lists all add-on services from the admin-managed catalog (same data as admin getAllAddOnServices).
  */
 exports.getAllAddOnServices = async (req, res) => {
-    const rows = await addOnServicesService.getAllAddOnServices({ activeOnly: true });
+    const agentId = req.user.id;
+    const shop = await addressDb.findOne({
+        where: { userId: agentId, addressType: "LaundaryShopAddress" },
+        attributes: ["id", "zoneId"],
+    });
+    const rows = await addOnServicesService.getAllAddOnServices({
+        activeOnly: true,
+        zoneId: shop?.zoneId || null,
+        subCategoryId: req.query.subCategoryId,
+    });
     return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
 };
 

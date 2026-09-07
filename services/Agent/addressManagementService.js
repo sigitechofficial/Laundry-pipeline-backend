@@ -1,7 +1,6 @@
 require("dotenv").config();
 const { addressDb, countries, cities, zone, sequelize } = require('../../models');
 const { Op } = require('sequelize');
-const axios = require('axios');
 const { 
     UnauthorizedError, 
     NotFoundError, 
@@ -339,57 +338,12 @@ class AgentAddressManagementService {
      * @returns {Array} Zone data
      */
     async findZones(lat, lng) {
-        console.log(`[Agent] Finding zone for coordinates: { lat: ${lat}, lng: ${lng} }`);
-
-        // ── Step 1: Reverse-geocode lat/lng → postcode ────────────────────────
-        let postcodeLookupResult = null;
-        try {
-            const response = await axios.get(
-                `https://api.postcodes.io/postcodes?lon=${lng}&lat=${lat}`,
-                { timeout: 5000 }
-            );
-            if (response.data.status === 200 && response.data.result && response.data.result.length > 0) {
-                postcodeLookupResult = response.data.result[0].postcode;
-                console.log(`📮 [Agent] Reverse geocode result: "${postcodeLookupResult}"`);
-            }
-        } catch (err) {
-            console.warn("⚠️ [Agent] postcodes.io reverse geocode failed, falling back to geometry:", err.message);
-        }
-
-        // ── Step 2: Try postcode-based zone lookup ────────────────────────────
-        if (postcodeLookupResult) {
-            const postcodeZones = await this.findZoneByPostcode(postcodeLookupResult);
-            if (postcodeZones.length > 0) {
-                console.log("✅ [Agent] Zone found via postcode lookup:", postcodeZones[0].id);
-                return postcodeZones;
-            }
-            console.log("⚠️ [Agent] No zone matched by postcode, falling back to geometry...");
-        }
-
-        // ── Step 3: Fallback — geometry-based lookup (ST_Contains) ───────────
-        console.log("🗺️ [Agent] Trying geometry-based zone lookup...");
-        const findZone = await zone.findAll({
-            where: {
-                status: true,
-                coordinates: sequelize.where(
-                    sequelize.fn(
-                        "ST_Contains",
-                        sequelize.col("coordinates"),
-                        sequelize.fn("ST_GeomFromText", `POINT(${lng} ${lat})`)
-                    ),
-                    true
-                ),
-            },
-            include: this.zoneInclude,
-            attributes: ["id", "zoneMinimumAmount", "serviceCharge", "status", "postcodes"],
-        });
-
-        if (!findZone || findZone.length === 0) {
+        const { findZones } = require("../../utils/findZones");
+        const rows = await findZones(lat, lng);
+        if (!rows || rows.length === 0) {
             throw new NotFoundError("No zone found for these coordinates");
         }
-
-        console.log(`✅ [Agent] Zone found via geometry: ${findZone[0].id}`);
-        return findZone;
+        return rows;
     }
 }
 

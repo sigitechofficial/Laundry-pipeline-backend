@@ -423,6 +423,14 @@ if ! printf '%s' "$DEPLOY_BODY" | grep -q "$SHORT"; then
 fi
 echo "Deploy fingerprint OK ($SHORT)"
 
+echo "Smoke check $APP_URL/health/catalog-resolver ..."
+CATALOG_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$APP_URL/health/catalog-resolver" || echo 000)"
+echo "catalog-resolver HTTP=$CATALOG_CODE"
+if [ "$CATALOG_CODE" != "200" ]; then
+  echo "Smoke check failed: /health/catalog-resolver returned HTTP=$CATALOG_CODE"
+  exit 1
+fi
+
 # Keep last 10
 ls -1dt "$DEPLOY_ROOT/releases"/* 2>/dev/null | tail -n +11 | xargs -r rm -rf
 ls -1t "$DEPLOY_ROOT/backups"/file-before-*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f

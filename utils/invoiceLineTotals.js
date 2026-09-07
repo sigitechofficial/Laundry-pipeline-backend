@@ -153,6 +153,30 @@ async function replaceAddOnsForServiceLine(
     const priceById = new Map(
         catalog.map((row) => [row.id, getUnitCategoryCharge(row.price)])
     );
+    try {
+        const { booking, customerSelectedService } = invoiceLineModels();
+        const line = await customerSelectedService.findByPk(customerSelectedServiceId, {
+            attributes: ["id", "bookingId"],
+        });
+        const bookingRow = line?.bookingId
+            ? await booking.findByPk(line.bookingId, { attributes: ["id", "zoneId"] })
+            : null;
+        if (bookingRow?.zoneId) {
+            const zoneCatalogService = require("../services/Admin/zoneCatalogService");
+            for (const { addOnServiceId } of entries) {
+                const resolved = await zoneCatalogService.resolvePrice(
+                    bookingRow.zoneId,
+                    { addOnServiceId }
+                );
+                priceById.set(addOnServiceId, getUnitCategoryCharge(resolved.price));
+            }
+        }
+    } catch (err) {
+        console.warn(
+            "[invoiceLineTotals] zone add-on resolve failed, using master:",
+            err.message
+        );
+    }
 
     let lineAddOnSubtotal = 0;
     for (const { addOnServiceId, items } of entries) {
@@ -276,6 +300,29 @@ async function replaceServiceLinesForSelectedService(
         catalog.forEach((row) =>
             priceById.set(row.id, getUnitCategoryCharge(row.price))
         );
+        try {
+            const { booking } = invoiceLineModels();
+            const zoneCatalogService = require("../services/Admin/zoneCatalogService");
+            const bookingRow = selectedServiceRow.bookingId
+                ? await booking.findByPk(selectedServiceRow.bookingId, {
+                      attributes: ["id", "zoneId"],
+                  })
+                : null;
+            if (bookingRow?.zoneId) {
+                for (const addOnId of allIds) {
+                    const resolved = await zoneCatalogService.resolvePrice(
+                        bookingRow.zoneId,
+                        { addOnServiceId: addOnId }
+                    );
+                    priceById.set(addOnId, getUnitCategoryCharge(resolved.price));
+                }
+            }
+        } catch (err) {
+            console.warn(
+                "[invoiceLineTotals] zone add-on resolve failed, using master:",
+                err.message
+            );
+        }
     }
 
     let addOnSubtotal = 0;

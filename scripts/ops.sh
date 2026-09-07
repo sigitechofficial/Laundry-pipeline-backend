@@ -97,6 +97,8 @@ case "$CMD" in
     curl -sS --max-time 30 "$BASE_URL/health" | print_json
     echo "---" >&2
     curl -sS --max-time 30 "$BASE_URL/health/deploy" | print_json
+    echo "--- catalog-resolver ---"
+    curl -sS --max-time 30 "$BASE_URL/health/catalog-resolver" | print_json
     echo "---" >&2
     json_get "/health/schema" | print_json
     ;;

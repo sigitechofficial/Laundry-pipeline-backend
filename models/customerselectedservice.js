@@ -49,6 +49,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: true
     },
+    subCategoryId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     items: {
       type: DataTypes.INTEGER,
       allowNull: true

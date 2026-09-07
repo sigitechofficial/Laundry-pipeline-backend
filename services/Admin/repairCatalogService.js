@@ -48,7 +48,7 @@ class RepairCatalogService {
     return svc;
   }
 
-  async getCatalogForCustomer(serviceId) {
+  async getCatalogForCustomer(serviceId, options = {}) {
     const numericServiceId = Number(serviceId);
     if (!numericServiceId || Number.isNaN(numericServiceId)) {
       throw new ValidationError('Valid serviceId is required');
@@ -100,12 +100,36 @@ class RepairCatalogService {
       })
       .filter((g) => g.options.length > 0);
 
+    const zoneId = options.zoneId != null ? Number(options.zoneId) : null;
+    let garmentsResolved = garmentsOut;
+    if (Number.isFinite(zoneId) && zoneId > 0) {
+      const zoneCatalogService = require("./zoneCatalogService");
+      const shaped = garmentsOut.map((g) => ({
+        id: g.repairGarmentId,
+        name: g.name,
+        description: g.description,
+        options: g.options,
+      }));
+      const applied = await zoneCatalogService.applyToRepairGarments(shaped, zoneId);
+      garmentsResolved = applied.map((g) => ({
+        repairGarmentId: g.id,
+        name: g.name,
+        description: g.description || null,
+        options: (g.options || []).map((o) => ({
+          id: o.id,
+          name: o.name,
+          description: o.description || null,
+          price: Number(o.price) || 0,
+        })),
+      }));
+    }
+
     return {
       message: 'Repair catalog fetched successfully',
       data: {
         serviceId: numericServiceId,
         serviceName: svc.name,
-        garments: garmentsOut,
+        garments: garmentsResolved,
       },
     };
   }

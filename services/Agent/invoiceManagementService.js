@@ -420,9 +420,34 @@ class AgentInvoiceManagementService {
         await ensureCustomerDeclaredSnapshot(bookingId);
 
         const keptActiveIds = [];
+        const zoneCatalogService = require("../Admin/zoneCatalogService");
+        const bookingRow = await booking.findByPk(bookingId, {
+            attributes: ["id", "zoneId"],
+        });
 
         for (const serviceLine of services) {
-            const unitPrice = getUnitCategoryCharge(serviceLine.categoryCharge);
+            const existingForPrice = await this.findExistingInvoiceLineForSync(
+                bookingId,
+                serviceLine
+            );
+            let unitPrice = getUnitCategoryCharge(serviceLine.categoryCharge);
+            const isNewLine = !existingForPrice;
+            if (isNewLine && serviceLine.subCategoryId) {
+                try {
+                    const resolved = await zoneCatalogService.resolvePrice(
+                        bookingRow?.zoneId,
+                        { subCategoryId: serviceLine.subCategoryId }
+                    );
+                    unitPrice = resolved.price;
+                } catch (err) {
+                    console.warn(
+                        "[syncInvoice] resolvePrice failed, using payload charge:",
+                        err.message
+                    );
+                }
+            } else if (!isNewLine && (serviceLine.categoryCharge == null || serviceLine.categoryCharge === "")) {
+                unitPrice = getUnitCategoryCharge(existingForPrice.categoryPrice);
+            }
             const qty = getLineQuantity(serviceLine.items);
             const lineActive = serviceLine.status !== false;
 
@@ -434,10 +459,7 @@ class AgentInvoiceManagementService {
                 );
             }
 
-            let selectedServiceRow = await this.findExistingInvoiceLineForSync(
-                bookingId,
-                serviceLine
-            );
+            let selectedServiceRow = existingForPrice;
 
             if (serviceLine.id && !selectedServiceRow) {
                 throw new ValidationError(

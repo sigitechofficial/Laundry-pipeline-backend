@@ -196,14 +196,22 @@ class AddOnServicesService {
             return plain;
         });
 
-        if (!activeOnly) {
-            return mapped;
-        }
+        const filtered = !activeOnly
+            ? mapped
+            : mapped.filter((row) => {
+                  return row.category == null || row.category.status === true;
+              });
 
-        return mapped.filter((row) => {
-            // Null category is permitted; otherwise category must also be active.
-            return row.category == null || row.category.status === true;
-        });
+        const zoneId = filters.zoneId != null ? Number(filters.zoneId) : null;
+        const subCategoryId =
+            filters.subCategoryId != null ? Number(filters.subCategoryId) : null;
+        if (Number.isFinite(zoneId) && zoneId > 0) {
+            const zoneCatalogService = require("./zoneCatalogService");
+            return zoneCatalogService.applyToAddOnRows(filtered, zoneId, {
+                subCategoryId: Number.isFinite(subCategoryId) ? subCategoryId : undefined,
+            });
+        }
+        return filtered;
     }
 
     async getAddOnServiceById(addOnServiceId) {

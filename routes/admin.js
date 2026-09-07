@@ -27,6 +27,7 @@ const serviceComparisonController = require('../controllers/Admin/serviceCompari
 const shopReviewController = require('../controllers/Admin/shopReviewController');
 const mapsGeocodeController = require('../controllers/Admin/mapsGeocodeController');
 const geminiController = require('../controllers/Admin/geminiController');
+const zoneCatalogController = require('../controllers/Admin/zoneCatalogController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -314,6 +315,10 @@ router.get('/getZoneById/:zoneId', asyncMiddleware(adminController.getZoneById))
 router.delete('/delete-zone', asyncMiddleware(adminController.deleteZone))
 //Update Zone
 router.patch('/updateZone/:zoneId', asyncMiddleware(adminController.updateZone))
+router.get('/zones/:zoneId/catalog', asyncMiddleware(zoneCatalogController.getEffectiveCatalog))
+router.post('/zones/:zoneId/catalog/overrides', asyncMiddleware(zoneCatalogController.upsertOverride))
+router.post('/zones/:zoneId/catalog/overrides/reset', asyncMiddleware(zoneCatalogController.resetOverride))
+router.post('/zones/:zoneId/catalog/overrides/copy', asyncMiddleware(zoneCatalogController.copyOverrides))
 //!---------------------------------------Units-----------------------------------------//
 //Get Units
 router.get('/getUnitsDistanceAndCurrency', asyncMiddleware(adminController.getUnitsDistanceAndCurrency))
