@@ -854,11 +854,19 @@ function normalizeSelectedServiceAddOn(addOn) {
     const items =
         parseInt(plain.items, 10) > 0 ? parseInt(plain.items, 10) : 1;
 
+    const instructions =
+        plain.instructions != null && String(plain.instructions).trim() !== ""
+            ? String(plain.instructions).trim()
+            : plain.instruction != null && String(plain.instruction).trim() !== ""
+              ? String(plain.instruction).trim()
+              : null;
+
     return {
         id: plain.id,
         addOnServiceId: plain.addOnServiceId,
         price: plain.price,
         items,
+        instructions,
         lineTotal: parseFloat((unitPrice * items).toFixed(2)),
         addOnService: plain.addOnService || null,
     };
@@ -915,6 +923,7 @@ async function hydrateBookingSelectedServiceAddOns(bookingId, selectedServices) 
                 "addOnServiceId",
                 "price",
                 "items",
+                "instructions",
             ],
             include: [
                 {
@@ -2586,7 +2595,7 @@ class CustomerOrderService {
                             model: customerSelectedServiceAddOn,
                             as: 'addOns',
                             required: false,
-                            attributes: ['id', 'addOnServiceId', 'price', 'items'],
+                            attributes: ['id', 'addOnServiceId', 'price', 'items', 'instructions'],
                             include: [
                                 {
                                     model: addOnServices,
