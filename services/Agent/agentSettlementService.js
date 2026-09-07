@@ -179,7 +179,7 @@ async function rejectCashRemittance(remittanceId, adminNote) {
 /**
  * Admin directly records cash received from agent (no pending step).
  */
-async function adminRecordCashSettlement(agentUserId, { amount, note }) {
+async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserId }) {
     const parsedAmount = parseFloat(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         throw new ValidationError("amount must be a positive number");
@@ -187,7 +187,21 @@ async function adminRecordCashSettlement(agentUserId, { amount, note }) {
 
     await resolveAgentShop(agentUserId);
     const summary = await agentWalletService.getWalletSummary(agentUserId);
+    const availableToCollect = parseFloat(
+        (summary.cashDueToPlatform - (summary.pendingCashRemittance || 0)).toFixed(2)
+    );
 
+    if (availableToCollect <= 0) {
+        throw new ValidationError("No cash is currently due from this agent");
+    }
+
+    if (parsedAmount > availableToCollect + 0.02) {
+        throw new ValidationError(
+            `Amount exceeds cash still due (${availableToCollect.toFixed(2)})`
+        );
+    }
+
+    const adminSuffix = adminUserId ? ` (admin #${adminUserId})` : "";
     const entry = await wallet.create({
         userId: agentUserId,
         bookingId: null,
@@ -197,8 +211,8 @@ async function adminRecordCashSettlement(agentUserId, { amount, note }) {
         type: "credit",
         status: "completed",
         description: note
-            ? `Cash settlement recorded by admin: ${note}`
-            : "Cash settlement recorded by admin",
+            ? `Cash settlement recorded by admin${adminSuffix}: ${note}`
+            : `Cash settlement recorded by admin${adminSuffix}`,
     });
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
@@ -256,7 +270,7 @@ async function adminRecordAdjustment(agentUserId, { amount, direction, note }) {
  * The payable amount is capped at the agent's card earnings not yet paid out,
  * so the same earnings can never be paid twice.
  */
-async function recordAgentPayout(agentUserId, { amount, note }) {
+async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
     const parsedAmount = parseFloat(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         throw new ValidationError("amount must be a positive number");
@@ -283,7 +297,9 @@ async function recordAgentPayout(agentUserId, { amount, note }) {
         currency: summary.currency || DEFAULT_CURRENCY,
         type: "credit",
         status: "completed",
-        description: note || "Agent earnings payout",
+        description: note
+            ? `${note}${adminUserId ? ` (admin #${adminUserId})` : ""}`
+            : `Agent earnings payout${adminUserId ? ` (admin #${adminUserId})` : ""}`,
     });
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
@@ -310,7 +326,7 @@ async function getAgentSettlementSummary(agentUserId) {
 async function getAgentSettlementDetail(agentUserId, options = {}) {
     const shop = await resolveAgentShop(agentUserId);
 
-    const [agentUser, businessInfo, summary, ledger, orders] = await Promise.all([
+    const [agentUser, businessInfo, summary, ledger, orders, recentActivity] = await Promise.all([
         users.findByPk(agentUserId, {
             attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
         }),
@@ -322,11 +338,14 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         agentWalletService.listAdminSettlementLedger(agentUserId, {
             page: options.ledgerPage,
             limit: options.ledgerLimit,
+            rail: options.ledgerRail,
+            referenceType: options.ledgerType,
         }),
         agentWalletService.listAgentOrderBreakdown(agentUserId, {
             page: options.ordersPage,
             limit: options.ordersLimit,
         }),
+        agentWalletService.listRecentSettlementActivity(agentUserId, 12),
     ]);
 
     return {
@@ -354,6 +373,17 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         ledgerPagination: ledger.pagination,
         orders: orders.orders,
         ordersPagination: orders.pagination,
+        recentActivity,
+        formulas: {
+            cashDue:
+                "Ledger cash due = cash collected − cash refunded − commission credited (cash + card, net of clawbacks) − cash remitted ± admin adjustments. Recording cash raises remitted and can make live due £0 — remitted history stays.",
+            cashInTill:
+                "Physical cash still with the agent before commission netting = collected − refunded − remitted.",
+            payable:
+                "Still payable = card commission + extra tips − extra-tip clawbacks − payouts already released to the agent wallet.",
+            withdrawn:
+                "Payouts released sit in the agent wallet until they withdraw to Stripe Connect. That is when money actually leaves the platform.",
+        },
     };
 }
 

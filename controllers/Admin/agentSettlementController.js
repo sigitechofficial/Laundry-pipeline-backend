@@ -9,12 +9,15 @@ exports.getAgentSettlement = async (req, res) => {
 
 exports.getAgentSettlementDetail = async (req, res) => {
     const agentUserId = parseInt(req.params.agentId, 10);
-    const { ledgerPage, ledgerLimit, ordersPage, ordersLimit } = req.query;
+    const { ledgerPage, ledgerLimit, ordersPage, ordersLimit, ledgerRail, ledgerType } =
+        req.query;
     const data = await agentSettlementService.getAgentSettlementDetail(agentUserId, {
         ledgerPage,
         ledgerLimit,
         ordersPage,
         ordersLimit,
+        ledgerRail,
+        ledgerType,
     });
     return ResponseHelper.success(res, "Agent settlement detail", data);
 };
@@ -60,7 +63,7 @@ exports.recordCashSettlement = async (req, res) => {
     const { amount, note } = req.body;
     const data = await agentSettlementService.adminRecordCashSettlement(
         agentUserId,
-        { amount, note }
+        { amount, note, adminUserId: req.user?.id }
     );
     return ResponseHelper.success(res, "Cash settlement recorded", data);
 };
@@ -82,6 +85,7 @@ exports.recordAgentPayout = async (req, res) => {
     const data = await agentSettlementService.recordAgentPayout(agentUserId, {
         amount,
         note,
+        adminUserId: req.user?.id,
     });
     return ResponseHelper.success(res, "Agent payout recorded", data);
 };

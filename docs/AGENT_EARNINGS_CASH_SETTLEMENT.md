@@ -569,7 +569,24 @@ flowchart TD
 
 ---
 
-## 11. Roman Urdu summary (agent ke liye)
+## 11. Admin cash settlement rails (why due can be £0)
+
+Admin **Cash Settlement** is two rails, not one number:
+
+| Rail | Live balance | Lifetime trail |
+|------|----------------|----------------|
+| Cash from agent | `cashDueToPlatform` | `totalCashRemitted` — stays after Record |
+| Payable to agent (card) | `platformOwesAgent` | `totalAgentPayouts` — wallet credit, not a bank transfer |
+
+**Ledger cash due** = cash collected − cash refunded − commission credited (cash + card, net of clawbacks) − cash remitted ± admin adjustments.
+
+Recording cash (`POST /admin/agents/:id/cash-settlement`) writes `cash_remitted`. Live due can become £0; remitted history and Recent activity stay. Payout (`POST /admin/agents/:id/payout`) writes `agent_payout` and reduces payable. Stripe leaves the platform only on `agent_withdrawal`.
+
+Detail API: `GET /admin/agents/:id/settlement-detail` — `summary.rails`, `recentActivity`, `orders` (tips + clawbacks), `ledger` (`ledgerRail=cash|payable|refunds`).
+
+---
+
+## 12. Roman Urdu summary (agent ke liye)
 
 1. **Card order:** delivery par card se charge karo ya cash record karo — commission wallet mein a jayegi.  
 2. **Cash order:** delivery par customer se cash lo aur **`recordCashPayment`** zaroor call karo.  
@@ -580,7 +597,7 @@ flowchart TD
 
 ---
 
-## 12. Related backend files
+## 13. Related backend files
 
 | Area | Path |
 |------|------|

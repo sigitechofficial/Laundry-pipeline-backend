@@ -8,6 +8,10 @@ const {
     zone,
     tip,
 } = require("../../models");
+const {
+    bookingTipAmountFromTips,
+    extraTipAmountFromTips,
+} = require("../../utils/bookingTips");
 const { Op } = require("sequelize");
 const { NotFoundError } = require("../../middlewares/universalErrorHandler");
 const invoiceManagementService = require("./invoiceManagementService");
@@ -301,6 +305,22 @@ async function clawbackExtraTipForRefund({
         status: "completed",
     });
     return { recorded: true, amount: apply, walletId: row.id };
+}
+
+async function latestWalletCreatedAt(userId, referenceType) {
+    const row = await wallet.findOne({
+        where: {
+            userId,
+            referenceType,
+            status: "completed",
+        },
+        order: [
+            ["createdAt", "DESC"],
+            ["id", "DESC"],
+        ],
+        attributes: ["createdAt"],
+    });
+    return row?.createdAt || null;
 }
 
 async function sumWalletAmount(userId, type, options = {}) {
@@ -838,6 +858,39 @@ async function getWalletSummary(agentUserId) {
         Math.max(totalEarningCard - agentPayoutCredits, 0).toFixed(2)
     );
 
+    const totalCashRefunded = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: CASH_REFUNDED_REFERENCE,
+    });
+    const totalCommissionCredits = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: COMMISSION_REFERENCE,
+    });
+    const totalCommissionClawback = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: COMMISSION_CLAWBACK_REFERENCE,
+    });
+    const adminAdjustmentDebits = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: ADMIN_SETTLEMENT_REFERENCE,
+    });
+    const netCommissionOffset = parseFloat(
+        Math.max(0, totalCommissionCredits - totalCommissionClawback).toFixed(2)
+    );
+    const adminAdjustmentNet = parseFloat(
+        (totalAdminSettlements - adminAdjustmentDebits).toFixed(2)
+    );
+    const cashInTill = parseFloat(
+        Math.max(
+            0,
+            totalCashCollected - totalCashRefunded - totalCashRemitted
+        ).toFixed(2)
+    );
+    const cashRemainingAfterPending = parseFloat(
+        Math.max(cashDueToPlatform - pendingCashRemitted, 0).toFixed(2)
+    );
+    const commissionCardOnly = parseFloat(earnings.totalEarningCard.toFixed(2));
+    const [lastCashRemittedAt, lastPayoutAt] = await Promise.all([
+        latestWalletCreatedAt(agentUserId, CASH_REMITTED_REFERENCE),
+        latestWalletCreatedAt(agentUserId, AGENT_PAYOUT_REFERENCE),
+    ]);
+
     return {
         balance,
         currency,
@@ -866,6 +919,45 @@ async function getWalletSummary(agentUserId) {
         // Agent-facing "Debited" = withdrawals only (0 until they withdraw).
         totalDebited: parseFloat(totalWithdrawn.toFixed(2)),
         commissionCreditCount: commissionCredits,
+        totalCashRefunded: parseFloat(totalCashRefunded.toFixed(2)),
+        totalCommissionClawback: parseFloat(totalCommissionClawback.toFixed(2)),
+        totalExtraTipClawback: parseFloat(extraTipClawbacks.toFixed(2)),
+        cashRemainingAfterPending,
+        commissionCardOnly,
+        lastCashRemittedAt,
+        lastPayoutAt,
+        rails: {
+            cashFromAgent: {
+                collected: parseFloat(totalCashCollected.toFixed(2)),
+                refundedToCustomers: parseFloat(totalCashRefunded.toFixed(2)),
+                commissionOffset: netCommissionOffset,
+                commissionCredited: parseFloat(totalCommissionCredits.toFixed(2)),
+                commissionClawedBack: parseFloat(totalCommissionClawback.toFixed(2)),
+                remitted: parseFloat(totalCashRemitted.toFixed(2)),
+                pendingRemittance: parseFloat(pendingCashRemitted.toFixed(2)),
+                adminAdjustmentNet,
+                cashInTill,
+                stillDue: cashDueToPlatform,
+                stillDueAfterPending: cashRemainingAfterPending,
+                lastRemittedAt: lastCashRemittedAt,
+            },
+            payableToAgent: {
+                cardCommission: commissionCardOnly,
+                extraTips: netExtraTips,
+                extraTipClawbacks: parseFloat(extraTipClawbacks.toFixed(2)),
+                releasedToWallet: walletCredit,
+                stillOwed: platformOwesAgent,
+                withdrawnToBank: parseFloat(totalWithdrawn.toFixed(2)),
+                pendingWithdrawals: parseFloat(pendingWithdrawals.toFixed(2)),
+                sittingInWallet: availableBalance,
+                lastReleasedAt: lastPayoutAt,
+            },
+            refunds: {
+                commissionClawback: parseFloat(totalCommissionClawback.toFixed(2)),
+                cashReturnedToCustomer: parseFloat(totalCashRefunded.toFixed(2)),
+                extraTipClawback: parseFloat(extraTipClawbacks.toFixed(2)),
+            },
+        },
     };
 }
 
@@ -876,6 +968,8 @@ function hasSettlementActivity(summary) {
         summary.pendingCashRemittance > 0 ||
         summary.platformOwesAgent > 0 ||
         summary.totalCashCollected > 0 ||
+        summary.totalCashRemitted > 0 ||
+        summary.totalAgentPayouts > 0 ||
         summary.commissionCreditCount > 0
     );
 }
@@ -1108,24 +1202,55 @@ function describeWalletReferenceType(referenceType, type) {
     switch (referenceType) {
         case CASH_COLLECTED_REFERENCE:
             return "Cash collected from customer";
+        case CASH_REFUNDED_REFERENCE:
+            return "Cash returned to customer (refund)";
         case CASH_REMITTED_REFERENCE:
             return "Cash handed to platform";
         case COMMISSION_REFERENCE:
             return "Commission earned";
+        case COMMISSION_CLAWBACK_REFERENCE:
+            return "Commission clawed back (refund)";
         case ADMIN_SETTLEMENT_REFERENCE:
             return type === "debit" ? "Admin adjustment (debit)" : "Admin adjustment (credit)";
         case AGENT_PAYOUT_REFERENCE:
-            return "Payout released to agent";
+            return "Payout released to agent wallet";
         case WITHDRAWAL_REFERENCE:
-            return "Agent withdrawal";
+            return "Withdrawn to agent's bank (Stripe)";
         case PAYOUT_REFERENCE:
             return "Legacy payout";
         case EXTRA_TIP_REFERENCE:
             return "Extra tip after delivery";
+        case EXTRA_TIP_CLAWBACK_REFERENCE:
+            return "Extra tip clawed back (refund)";
+        case CUSTOMER_REFUND_REFERENCE:
+            return "Customer refund audit";
         default:
             return referenceType || "Wallet entry";
     }
 }
+
+const LEDGER_RAILS = {
+    cash: [
+        CASH_COLLECTED_REFERENCE,
+        CASH_REFUNDED_REFERENCE,
+        CASH_REMITTED_REFERENCE,
+        COMMISSION_REFERENCE,
+        ADMIN_SETTLEMENT_REFERENCE,
+    ],
+    payable: [
+        AGENT_PAYOUT_REFERENCE,
+        EXTRA_TIP_REFERENCE,
+        EXTRA_TIP_CLAWBACK_REFERENCE,
+        WITHDRAWAL_REFERENCE,
+        PAYOUT_REFERENCE,
+    ],
+    refunds: [
+        COMMISSION_CLAWBACK_REFERENCE,
+        CASH_REFUNDED_REFERENCE,
+        EXTRA_TIP_CLAWBACK_REFERENCE,
+        CUSTOMER_REFUND_REFERENCE,
+    ],
+};
 
 /**
  * Full, unfiltered chronological ledger for one agent — every wallet row
@@ -1137,9 +1262,16 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
     const page = Math.max(parseInt(options.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 200);
     const offset = (page - 1) * limit;
+    const where = { userId: agentUserId };
+    const railTypes = LEDGER_RAILS[String(options.rail || "").toLowerCase()];
+    if (options.referenceType) {
+        where.referenceType = options.referenceType;
+    } else if (railTypes) {
+        where.referenceType = { [Op.in]: railTypes };
+    }
 
     const { count, rows } = await wallet.findAndCountAll({
-        where: { userId: agentUserId },
+        where,
         order: [
             ["createdAt", "DESC"],
             ["id", "DESC"],
@@ -1185,6 +1317,8 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
                 orderTrackId: plain.booking?.orderTrackId || null,
                 referenceType: plain.referenceType,
                 label: describeWalletReferenceType(plain.referenceType, plain.type),
+                stripeTransferId: plain.stripeTransferId || null,
+                failureReason: plain.failureReason || null,
                 createdAt: plain.createdAt,
             };
         }),
@@ -1236,6 +1370,14 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
                     "deliveryCompletedAt",
                     "createdAt",
                 ],
+                include: [
+                    {
+                        model: tip,
+                        as: "tips",
+                        required: false,
+                        attributes: ["id", "amount", "source"],
+                    },
+                ],
             },
         ],
         attributes: [
@@ -1265,8 +1407,11 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
                   referenceType: {
                       [Op.in]: [
                           CASH_COLLECTED_REFERENCE,
+                          CASH_REFUNDED_REFERENCE,
                           COMMISSION_REFERENCE,
+                          COMMISSION_CLAWBACK_REFERENCE,
                           EXTRA_TIP_REFERENCE,
+                          EXTRA_TIP_CLAWBACK_REFERENCE,
                       ],
                   },
                   status: "completed",
@@ -1279,20 +1424,55 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
     const walletByBooking = new Map();
     for (const row of walletRows) {
         if (!walletByBooking.has(row.bookingId)) {
-            walletByBooking.set(row.bookingId, {});
+            walletByBooking.set(row.bookingId, { amounts: {}, dates: {} });
         }
-        walletByBooking.get(row.bookingId)[row.referenceType] = row;
+        const bucket = walletByBooking.get(row.bookingId);
+        const amount = parseFloat(row.amount || 0);
+        bucket.amounts[row.referenceType] =
+            (bucket.amounts[row.referenceType] || 0) + amount;
+        if (!bucket.dates[row.referenceType]) {
+            bucket.dates[row.referenceType] = row.createdAt;
+        }
     }
 
     const orders = rows.map((row) => {
         const plain = row.get({ plain: true });
         const bookingRow = plain.booking || {};
         const channel = classifyAgentEarningChannel(bookingRow);
-        const ledger = walletByBooking.get(plain.bookingId) || {};
-        const cashEntry = ledger[CASH_COLLECTED_REFERENCE];
-        const commissionEntry = ledger[COMMISSION_REFERENCE];
-        const extraTipEntry = ledger[EXTRA_TIP_REFERENCE];
+        const ledger = walletByBooking.get(plain.bookingId) || {
+            amounts: {},
+            dates: {},
+        };
+        const amounts = ledger.amounts;
+        const dates = ledger.dates;
         const orderTotal = parseFloat(plain.total || 0);
+        const bookingTip = bookingTipAmountFromTips(bookingRow.tips);
+        const extraTipFromTips = extraTipAmountFromTips(bookingRow.tips);
+        const serviceFee = parseFloat(plain.serviceCharge || 0);
+        const platformShare = parseFloat(plain.zoneAdminCommission || 0);
+        const commissionAmount = amounts[COMMISSION_REFERENCE]
+            ? parseFloat(amounts[COMMISSION_REFERENCE].toFixed(2))
+            : parseFloat(plain.agentEarning || 0);
+        const laundryCommission = parseFloat(
+            Math.max(0, commissionAmount - bookingTip).toFixed(2)
+        );
+        const cashRefundedAmount = parseFloat(
+            (amounts[CASH_REFUNDED_REFERENCE] || 0).toFixed(2)
+        );
+        const commissionClawbackAmount = parseFloat(
+            (amounts[COMMISSION_CLAWBACK_REFERENCE] || 0).toFixed(2)
+        );
+        const extraTipAmount = amounts[EXTRA_TIP_REFERENCE]
+            ? parseFloat(amounts[EXTRA_TIP_REFERENCE].toFixed(2))
+            : extraTipFromTips;
+        const extraTipClawbackAmount = parseFloat(
+            (amounts[EXTRA_TIP_CLAWBACK_REFERENCE] || 0).toFixed(2)
+        );
+        const cashCollectedAmount = amounts[CASH_COLLECTED_REFERENCE]
+            ? parseFloat(amounts[CASH_COLLECTED_REFERENCE].toFixed(2))
+            : channel === "cash"
+              ? orderTotal
+              : 0;
 
         return {
             bookingId: plain.bookingId,
@@ -1304,20 +1484,28 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
                 bookingRow.pickupCompletedAt ||
                 plain.updatedAt,
             orderTotal,
-            commissionAmount: commissionEntry
-                ? parseFloat(commissionEntry.amount || 0)
-                : parseFloat(plain.agentEarning || 0),
-            commissionCreditedAt: commissionEntry ? commissionEntry.createdAt : null,
-            extraTipAmount: extraTipEntry
-                ? parseFloat(extraTipEntry.amount || 0)
-                : 0,
-            extraTipCreditedAt: extraTipEntry ? extraTipEntry.createdAt : null,
-            cashCollectedAmount: cashEntry
-                ? parseFloat(cashEntry.amount || 0)
-                : channel === "cash"
-                  ? orderTotal
-                  : 0,
-            cashRecordedAt: cashEntry ? cashEntry.createdAt : null,
+            serviceFee,
+            platformShare,
+            bookingTip,
+            laundryCommission,
+            commissionAmount,
+            commissionNet: parseFloat(
+                Math.max(0, commissionAmount - commissionClawbackAmount).toFixed(2)
+            ),
+            commissionCreditedAt: dates[COMMISSION_REFERENCE] || null,
+            extraTipAmount,
+            extraTipNet: parseFloat(
+                Math.max(0, extraTipAmount - extraTipClawbackAmount).toFixed(2)
+            ),
+            extraTipCreditedAt: dates[EXTRA_TIP_REFERENCE] || null,
+            cashCollectedAmount,
+            cashNet: parseFloat(
+                Math.max(0, cashCollectedAmount - cashRefundedAmount).toFixed(2)
+            ),
+            cashRecordedAt: dates[CASH_COLLECTED_REFERENCE] || null,
+            cashRefundedAmount,
+            commissionClawbackAmount,
+            extraTipClawbackAmount,
         };
     });
 
@@ -1334,6 +1522,57 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
             hasPrevPage: page > 1,
         },
     };
+}
+
+async function listRecentSettlementActivity(agentUserId, limit = 12) {
+    const rows = await wallet.findAll({
+        where: {
+            userId: agentUserId,
+            referenceType: {
+                [Op.in]: [
+                    CASH_REMITTED_REFERENCE,
+                    AGENT_PAYOUT_REFERENCE,
+                    WITHDRAWAL_REFERENCE,
+                    COMMISSION_CLAWBACK_REFERENCE,
+                    CASH_REFUNDED_REFERENCE,
+                    EXTRA_TIP_CLAWBACK_REFERENCE,
+                    ADMIN_SETTLEMENT_REFERENCE,
+                    EXTRA_TIP_REFERENCE,
+                ],
+            },
+        },
+        order: [
+            ["createdAt", "DESC"],
+            ["id", "DESC"],
+        ],
+        limit,
+        include: [
+            {
+                model: booking,
+                as: "booking",
+                attributes: ["id", "orderTrackId"],
+                required: false,
+            },
+        ],
+    });
+
+    return rows.map((row) => {
+        const plain = row.get({ plain: true });
+        return {
+            id: plain.id,
+            amount: parseFloat(plain.amount || 0),
+            currency: plain.currency,
+            type: plain.type,
+            status: plain.status,
+            description: plain.description,
+            bookingId: plain.bookingId,
+            orderTrackId: plain.booking?.orderTrackId || null,
+            referenceType: plain.referenceType,
+            label: describeWalletReferenceType(plain.referenceType, plain.type),
+            stripeTransferId: plain.stripeTransferId || null,
+            createdAt: plain.createdAt,
+        };
+    });
 }
 
 module.exports = {
@@ -1359,6 +1598,7 @@ module.exports = {
     getWalletTransactions,
     listAdminSettlementLedger,
     listAgentOrderBreakdown,
+    listRecentSettlementActivity,
     hasCommissionCredit,
     getNetCommissionForBooking,
     getNetCashCollectedForBooking,
