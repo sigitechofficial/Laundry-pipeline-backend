@@ -72,6 +72,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'bookingId',
         as: 'invoicePaymentAttempts'
       })
+      booking.hasMany(models.bookingRefund, {
+        foreignKey: 'bookingId',
+        as: 'refunds'
+      })
       booking.belongsTo(models.recurringPlan, {
         foreignKey: 'recurringPlanId',
         as: 'recurringPlan',

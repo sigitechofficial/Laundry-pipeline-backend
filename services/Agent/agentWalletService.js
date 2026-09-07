@@ -15,7 +15,9 @@ const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
 const { RATE_SNAPSHOT_ATTRIBUTES } = require("../../utils/bookingRateSnapshot");
 
 const COMMISSION_REFERENCE = "booking_commission";
+const COMMISSION_CLAWBACK_REFERENCE = "commission_clawback";
 const CASH_COLLECTED_REFERENCE = "cash_collected";
+const CASH_REFUNDED_REFERENCE = "cash_refunded";
 const CASH_REMITTED_REFERENCE = "cash_remitted";
 const ADMIN_SETTLEMENT_REFERENCE = "admin_settlement";
 const PAYOUT_REFERENCE = "payout";
@@ -25,10 +27,12 @@ const PAYOUT_REFERENCE = "payout";
 // as earnings and are NOT shown as wallet credit until an admin pays out.
 const AGENT_PAYOUT_REFERENCE = "agent_payout";
 const EXTRA_TIP_REFERENCE = "extra_tip";
+const EXTRA_TIP_CLAWBACK_REFERENCE = "extra_tip_clawback";
 // Debit created ONLY when an agent withdraws their balance to their own
 // (Stripe Connect) account. Nothing else counts as agent-facing "Debited".
 // Reserved now; the Stripe transfer flow is added later.
 const WITHDRAWAL_REFERENCE = "agent_withdrawal";
+const CUSTOMER_REFUND_REFERENCE = "customer_refund";
 const DEFAULT_CURRENCY = "GBP";
 
 async function resolveShopOwnerUserId(laundryShopId) {
@@ -76,6 +80,227 @@ async function hasWalletEntry(bookingId, referenceType, type) {
 
 async function hasCommissionCredit(bookingId) {
     return hasWalletEntry(bookingId, COMMISSION_REFERENCE, "credit");
+}
+
+async function sumBookingWalletByType(bookingId, referenceType, type) {
+    const rows = await wallet.findAll({
+        where: {
+            bookingId,
+            referenceType,
+            type,
+            status: "completed",
+        },
+        attributes: ["amount"],
+        raw: true,
+    });
+    return rows.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
+}
+
+/** Net commission still credited for this booking (credits − clawbacks). */
+async function getNetCommissionForBooking(bookingId) {
+    const credited = await sumBookingWalletByType(
+        bookingId,
+        COMMISSION_REFERENCE,
+        "credit"
+    );
+    const clawed = await sumBookingWalletByType(
+        bookingId,
+        COMMISSION_CLAWBACK_REFERENCE,
+        "debit"
+    );
+    return parseFloat(Math.max(0, credited - clawed).toFixed(2));
+}
+
+async function getNetCashCollectedForBooking(bookingId) {
+    const collected = await sumBookingWalletByType(
+        bookingId,
+        CASH_COLLECTED_REFERENCE,
+        "debit"
+    );
+    const refunded = await sumBookingWalletByType(
+        bookingId,
+        CASH_REFUNDED_REFERENCE,
+        "credit"
+    );
+    return parseFloat(Math.max(0, collected - refunded).toFixed(2));
+}
+
+async function getNetExtraTipForBooking(bookingId) {
+    const credited = await sumBookingWalletByType(
+        bookingId,
+        EXTRA_TIP_REFERENCE,
+        "credit"
+    );
+    const clawed = await sumBookingWalletByType(
+        bookingId,
+        EXTRA_TIP_CLAWBACK_REFERENCE,
+        "debit"
+    );
+    return parseFloat(Math.max(0, credited - clawed).toFixed(2));
+}
+
+/**
+ * Reverse agent commission for an admin refund (settlement debit).
+ * Idempotent via unique description key when provided.
+ */
+async function clawbackCommissionForRefund({
+    bookingId,
+    agentUserId,
+    amount,
+    currency = "GBP",
+    orderLabel,
+    refundId,
+}) {
+    const claw = parseFloat(amount || 0);
+    if (!(claw > 0) || !agentUserId) {
+        return { recorded: false, amount: 0, reason: "noop" };
+    }
+    const net = await getNetCommissionForBooking(bookingId);
+    const apply = parseFloat(Math.min(claw, net).toFixed(2));
+    if (apply <= 0) {
+        return { recorded: false, amount: 0, reason: "nothing_to_clawback" };
+    }
+
+    const description = `Commission clawback for refund #${refundId || "pending"} on order #${orderLabel || bookingId}`;
+    if (refundId) {
+        const existing = await wallet.findOne({
+            where: {
+                bookingId,
+                userId: agentUserId,
+                referenceType: COMMISSION_CLAWBACK_REFERENCE,
+                type: "debit",
+                description,
+            },
+            attributes: ["id", "amount"],
+        });
+        if (existing) {
+            return {
+                recorded: false,
+                amount: parseFloat(existing.amount || 0),
+                reason: "already_recorded",
+                walletId: existing.id,
+            };
+        }
+    }
+
+    const row = await wallet.create({
+        userId: agentUserId,
+        bookingId,
+        referenceType: COMMISSION_CLAWBACK_REFERENCE,
+        amount: apply,
+        type: "debit",
+        description,
+        currency,
+        status: "completed",
+    });
+    return { recorded: true, amount: apply, walletId: row.id };
+}
+
+/** Reduce cash_collected impact so cash-due drops after cash refund to customer. */
+async function reverseCashCollectedForRefund({
+    bookingId,
+    agentUserId,
+    amount,
+    currency = "GBP",
+    orderLabel,
+    refundId,
+}) {
+    const claw = parseFloat(amount || 0);
+    if (!(claw > 0) || !agentUserId) {
+        return { recorded: false, amount: 0, reason: "noop" };
+    }
+    const net = await getNetCashCollectedForBooking(bookingId);
+    const apply = parseFloat(Math.min(claw, net).toFixed(2));
+    if (apply <= 0) {
+        return { recorded: false, amount: 0, reason: "nothing_to_reverse" };
+    }
+
+    const description = `Cash refunded to customer for refund #${refundId || "pending"} on order #${orderLabel || bookingId}`;
+    if (refundId) {
+        const existing = await wallet.findOne({
+            where: {
+                bookingId,
+                userId: agentUserId,
+                referenceType: CASH_REFUNDED_REFERENCE,
+                type: "credit",
+                description,
+            },
+            attributes: ["id", "amount"],
+        });
+        if (existing) {
+            return {
+                recorded: false,
+                amount: parseFloat(existing.amount || 0),
+                reason: "already_recorded",
+                walletId: existing.id,
+            };
+        }
+    }
+
+    const row = await wallet.create({
+        userId: agentUserId,
+        bookingId,
+        referenceType: CASH_REFUNDED_REFERENCE,
+        amount: apply,
+        type: "credit",
+        description,
+        currency,
+        status: "completed",
+    });
+    return { recorded: true, amount: apply, walletId: row.id };
+}
+
+async function clawbackExtraTipForRefund({
+    bookingId,
+    agentUserId,
+    amount,
+    currency = "GBP",
+    orderLabel,
+    refundId,
+}) {
+    const claw = parseFloat(amount || 0);
+    if (!(claw > 0) || !agentUserId) {
+        return { recorded: false, amount: 0, reason: "noop" };
+    }
+    const net = await getNetExtraTipForBooking(bookingId);
+    const apply = parseFloat(Math.min(claw, net).toFixed(2));
+    if (apply <= 0) {
+        return { recorded: false, amount: 0, reason: "nothing_to_clawback" };
+    }
+
+    const description = `Extra tip clawback for refund #${refundId || "pending"} on order #${orderLabel || bookingId}`;
+    if (refundId) {
+        const existing = await wallet.findOne({
+            where: {
+                bookingId,
+                userId: agentUserId,
+                referenceType: EXTRA_TIP_CLAWBACK_REFERENCE,
+                type: "debit",
+                description,
+            },
+            attributes: ["id", "amount"],
+        });
+        if (existing) {
+            return {
+                recorded: false,
+                amount: parseFloat(existing.amount || 0),
+                reason: "already_recorded",
+                walletId: existing.id,
+            };
+        }
+    }
+
+    const row = await wallet.create({
+        userId: agentUserId,
+        bookingId,
+        referenceType: EXTRA_TIP_CLAWBACK_REFERENCE,
+        amount: apply,
+        type: "debit",
+        description,
+        currency,
+        status: "completed",
+    });
+    return { recorded: true, amount: apply, walletId: row.id };
 }
 
 async function sumWalletAmount(userId, type, options = {}) {
@@ -528,9 +753,19 @@ async function getWalletSummary(agentUserId) {
     const extraTipCredits = await sumWalletAmount(agentUserId, "credit", {
         referenceType: EXTRA_TIP_REFERENCE,
     });
+    const extraTipClawbacks = await sumWalletAmount(agentUserId, "debit", {
+        referenceType: EXTRA_TIP_CLAWBACK_REFERENCE,
+    });
+    const netExtraTips = parseFloat(
+        Math.max(0, extraTipCredits - extraTipClawbacks).toFixed(2)
+    );
 
-    const settlementCredits = totalCreditedAll - agentPayoutCredits - extraTipCredits;
-    const settlementDebits = totalDebitedAll - totalPayouts - totalWithdrawn;
+    // cash_refunded credits stay in settlementCredits (reduce cash due).
+    // extra_tip (+ clawback) stay off cash-due and on payable instead.
+    const settlementCredits =
+        totalCreditedAll - agentPayoutCredits - extraTipCredits;
+    const settlementDebits =
+        totalDebitedAll - totalPayouts - totalWithdrawn - extraTipClawbacks;
     const balance = parseFloat((settlementCredits - settlementDebits).toFixed(2));
 
     // Agent's withdrawable wallet:
@@ -595,7 +830,7 @@ async function getWalletSummary(agentUserId) {
     // They increase payable, but must not inflate "commission earned"
     // (that figure offsets cash due).
     const totalEarningCard = parseFloat(
-        (earnings.totalEarningCard + extraTipCredits).toFixed(2)
+        (earnings.totalEarningCard + netExtraTips).toFixed(2)
     );
     const totalEarning = parseFloat(earnings.totalEarning.toFixed(2));
 
@@ -613,7 +848,7 @@ async function getWalletSummary(agentUserId) {
         totalEarning,
         totalEarningCash: earnings.totalEarningCash,
         totalEarningCard,
-        totalExtraTips: parseFloat(extraTipCredits.toFixed(2)),
+        totalExtraTips: netExtraTips,
         totalCashCollected: parseFloat(totalCashCollected.toFixed(2)),
         totalCashRemitted: parseFloat(totalCashRemitted.toFixed(2)),
         pendingCashRemittance: parseFloat(pendingCashRemitted.toFixed(2)),
@@ -1103,13 +1338,17 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
 
 module.exports = {
     COMMISSION_REFERENCE,
+    COMMISSION_CLAWBACK_REFERENCE,
     EXTRA_TIP_REFERENCE,
+    EXTRA_TIP_CLAWBACK_REFERENCE,
     CASH_COLLECTED_REFERENCE,
+    CASH_REFUNDED_REFERENCE,
     CASH_REMITTED_REFERENCE,
     ADMIN_SETTLEMENT_REFERENCE,
     PAYOUT_REFERENCE,
     AGENT_PAYOUT_REFERENCE,
     WITHDRAWAL_REFERENCE,
+    CUSTOMER_REFUND_REFERENCE,
     classifyAgentEarningChannel,
     creditAgentForPaidBooking,
     creditExtraTipForBooking,
@@ -1121,5 +1360,11 @@ module.exports = {
     listAdminSettlementLedger,
     listAgentOrderBreakdown,
     hasCommissionCredit,
+    getNetCommissionForBooking,
+    getNetCashCollectedForBooking,
+    getNetExtraTipForBooking,
+    clawbackCommissionForRefund,
+    reverseCashCollectedForRefund,
+    clawbackExtraTipForRefund,
     resolveShopOwnerUserId,
 };

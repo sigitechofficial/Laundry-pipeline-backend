@@ -17,6 +17,7 @@ const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
 const agentSettlementController = require('../controllers/Admin/agentSettlementController');
 const invoicePaymentFailureController = require('../controllers/Admin/invoicePaymentFailureController');
+const adminRefundController = require('../controllers/Admin/adminRefundController');
 const actionRequiredOrdersController = require('../controllers/Admin/actionRequiredOrdersController');
 const notifyLogsController = require('../controllers/Admin/notifyLogsController');
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
@@ -488,6 +489,21 @@ router.get('/allCancelOrders', asyncMiddleware(adminController.allCancelOrders))
 router.get('/completeOrders', asyncMiddleware(adminController.completeOrders))
 //Get Single Order for Editing
 router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrderForEdit))
+router.get(
+    '/bookings/:bookingId/refund-preview',
+    validateAccessToken,
+    asyncMiddleware(adminRefundController.getRefundPreview)
+)
+router.get(
+    '/bookings/:bookingId/refunds',
+    validateAccessToken,
+    asyncMiddleware(adminRefundController.listRefunds)
+)
+router.post(
+    '/bookings/:bookingId/refund',
+    validateAccessToken,
+    asyncMiddleware(adminRefundController.issueRefund)
+)
 //Invoice creation detail (reuse agent logic) for admin panel
 router.get(
     '/invoiceCreation/:bookingId',
