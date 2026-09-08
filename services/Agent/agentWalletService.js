@@ -1352,54 +1352,62 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         throw new NotFoundError("Agent shop address not found");
     }
 
-    const { count, rows } = await billingDetails.findAndCountAll({
-        where: { paymentStatus: "Paid" },
+    // Query from bookings so ORDER BY is on the primary table. Nested
+    // billingDetails + tips + DISTINCT blows up on MySQL ONLY_FULL_GROUP_BY
+    // and blanks the admin cash-settlement detail page.
+    const { count, rows } = await booking.findAndCountAll({
+        where: { laundryShopId: shop.id },
         include: [
             {
-                model: booking,
-                as: "booking",
+                model: billingDetails,
+                as: "billingDetail",
                 required: true,
-                where: { laundryShopId: shop.id },
+                where: { paymentStatus: "Paid" },
                 attributes: [
-                    "id",
-                    "orderTrackId",
-                    "paymentType",
-                    "balanceCollectedVia",
-                    "balancePaymentMethod",
-                    "pickupCompletedAt",
-                    "deliveryCompletedAt",
-                    "createdAt",
-                ],
-                include: [
-                    {
-                        model: tip,
-                        as: "tips",
-                        required: false,
-                        attributes: ["id", "amount", "source"],
-                    },
+                    "bookingId",
+                    "agentEarning",
+                    "zoneAdminCommission",
+                    "total",
+                    "serviceCharge",
+                    "upfrontAmount",
+                    "discount",
+                    "updatedAt",
                 ],
             },
         ],
         attributes: [
-            "bookingId",
-            "agentEarning",
-            "zoneAdminCommission",
-            "total",
-            "serviceCharge",
-            "upfrontAmount",
-            "discount",
-            "updatedAt",
+            "id",
+            "orderTrackId",
+            "paymentType",
+            "balanceCollectedVia",
+            "balancePaymentMethod",
+            "pickupCompletedAt",
+            "deliveryCompletedAt",
+            "createdAt",
         ],
         order: [
-            [{ model: booking, as: "booking" }, "deliveryCompletedAt", "DESC"],
-            ["updatedAt", "DESC"],
+            ["deliveryCompletedAt", "DESC"],
+            ["id", "DESC"],
         ],
         limit,
         offset,
         distinct: true,
+        col: "id",
     });
 
-    const bookingIds = rows.map((r) => r.bookingId).filter(Boolean);
+    const bookingIds = rows.map((r) => r.id).filter(Boolean);
+    const tipRows = bookingIds.length
+        ? await tip.findAll({
+              where: { bookingId: { [Op.in]: bookingIds } },
+              attributes: ["id", "bookingId", "amount", "source"],
+          })
+        : [];
+    const tipsByBooking = new Map();
+    for (const tipRow of tipRows) {
+        const bid = tipRow.bookingId;
+        if (!tipsByBooking.has(bid)) tipsByBooking.set(bid, []);
+        tipsByBooking.get(bid).push(tipRow);
+    }
     const walletRows = bookingIds.length
         ? await wallet.findAll({
               where: {
@@ -1436,23 +1444,24 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
     }
 
     const orders = rows.map((row) => {
-        const plain = row.get({ plain: true });
-        const bookingRow = plain.booking || {};
+        const bookingRow = row.get({ plain: true });
+        const billing = bookingRow.billingDetail || {};
+        const bookingTips = tipsByBooking.get(bookingRow.id) || [];
         const channel = classifyAgentEarningChannel(bookingRow);
-        const ledger = walletByBooking.get(plain.bookingId) || {
+        const ledger = walletByBooking.get(bookingRow.id) || {
             amounts: {},
             dates: {},
         };
         const amounts = ledger.amounts;
         const dates = ledger.dates;
-        const orderTotal = parseFloat(plain.total || 0);
-        const bookingTip = bookingTipAmountFromTips(bookingRow.tips);
-        const extraTipFromTips = extraTipAmountFromTips(bookingRow.tips);
-        const serviceFee = parseFloat(plain.serviceCharge || 0);
-        const platformShare = parseFloat(plain.zoneAdminCommission || 0);
+        const orderTotal = parseFloat(billing.total || 0);
+        const bookingTip = bookingTipAmountFromTips(bookingTips);
+        const extraTipFromTips = extraTipAmountFromTips(bookingTips);
+        const serviceFee = parseFloat(billing.serviceCharge || 0);
+        const platformShare = parseFloat(billing.zoneAdminCommission || 0);
         const commissionAmount = amounts[COMMISSION_REFERENCE]
             ? parseFloat(amounts[COMMISSION_REFERENCE].toFixed(2))
-            : parseFloat(plain.agentEarning || 0);
+            : parseFloat(billing.agentEarning || 0);
         const laundryCommission = parseFloat(
             Math.max(0, commissionAmount - bookingTip).toFixed(2)
         );
@@ -1475,14 +1484,14 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
               : 0;
 
         return {
-            bookingId: plain.bookingId,
-            orderTrackId: bookingRow.orderTrackId || String(plain.bookingId),
+            bookingId: bookingRow.id,
+            orderTrackId: bookingRow.orderTrackId || String(bookingRow.id),
             paymentType: bookingRow.paymentType || null,
             channel,
             completedAt:
                 bookingRow.deliveryCompletedAt ||
                 bookingRow.pickupCompletedAt ||
-                plain.updatedAt,
+                billing.updatedAt,
             orderTotal,
             serviceFee,
             platformShare,

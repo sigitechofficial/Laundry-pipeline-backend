@@ -326,6 +326,8 @@ async function getAgentSettlementSummary(agentUserId) {
 async function getAgentSettlementDetail(agentUserId, options = {}) {
     const shop = await resolveAgentShop(agentUserId);
 
+    const emptyPage = { page: 1, limit: 20, total: 0, totalPages: 0, hasNextPage: false, hasPrevPage: false };
+
     const [agentUser, businessInfo, summary, ledger, orders, recentActivity] = await Promise.all([
         users.findByPk(agentUserId, {
             attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
@@ -340,12 +342,21 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
             limit: options.ledgerLimit,
             rail: options.ledgerRail,
             referenceType: options.ledgerType,
+        }).catch((err) => {
+            console.warn(`[settlement-detail] ledger skipped for ${agentUserId}:`, err.message);
+            return { transactions: [], pagination: emptyPage };
         }),
         agentWalletService.listAgentOrderBreakdown(agentUserId, {
             page: options.ordersPage,
             limit: options.ordersLimit,
+        }).catch((err) => {
+            console.warn(`[settlement-detail] orders skipped for ${agentUserId}:`, err.message);
+            return { orders: [], pagination: emptyPage };
         }),
-        agentWalletService.listRecentSettlementActivity(agentUserId, 12),
+        agentWalletService.listRecentSettlementActivity(agentUserId, 12).catch((err) => {
+            console.warn(`[settlement-detail] activity skipped for ${agentUserId}:`, err.message);
+            return [];
+        }),
     ]);
 
     return {
