@@ -5420,6 +5420,28 @@ exports.editServiceStatus = async (req, res) => {
 
 
 
+async function resolveAgentCatalogZoneId(req) {
+    const agentId = req.user.id;
+    const shop = await addressDb.findOne({
+        where: { userId: agentId, addressType: "LaundaryShopAddress" },
+        attributes: ["id", "zoneId"],
+    });
+    const requestedZone = parseInt(req.query.zoneId, 10);
+    if (Number.isFinite(requestedZone) && requestedZone > 0) {
+        return { shop, zoneId: requestedZone };
+    }
+    const bookingId = parseInt(req.query.bookingId, 10);
+    if (Number.isFinite(bookingId) && bookingId > 0) {
+        const row = await booking.findByPk(bookingId, {
+            attributes: ["id", "zoneId", "laundryShopId"],
+        });
+        if (row?.zoneId && (!shop?.id || !row.laundryShopId || Number(row.laundryShopId) === Number(shop.id))) {
+            return { shop, zoneId: row.zoneId };
+        }
+    }
+    return { shop, zoneId: shop?.zoneId || null };
+}
+
 /*
   *  Specific Service Detail For the Customer
 */
@@ -5437,11 +5459,7 @@ exports.serviceDetail = async (req, res) => {
 
     const serviceIds = agentServiceFind.map(service => service.serviceId);
 
-    const shop = await addressDb.findOne({
-        where: { userId: agentId, addressType: "LaundaryShopAddress" },
-        attributes: ["id", "zoneId"],
-    });
-    const shopZoneId = shop?.zoneId || null;
+    const { zoneId: catalogZoneId } = await resolveAgentCatalogZoneId(req);
 
     const grouped = {};
     for (const sid of serviceIds) {
@@ -5452,7 +5470,7 @@ exports.serviceDetail = async (req, res) => {
         let tree = await serviceManagementService.getServiceCategoriesDataForService(sid);
         tree = await zoneCatalogService.applyToServiceCategoriesData(
             tree,
-            shopZoneId,
+            catalogZoneId,
             sid
         );
         if (!tree.length) continue;
@@ -7214,14 +7232,10 @@ exports.getActivePolicies = async (req, res) => {
  * Lists all add-on services from the admin-managed catalog (same data as admin getAllAddOnServices).
  */
 exports.getAllAddOnServices = async (req, res) => {
-    const agentId = req.user.id;
-    const shop = await addressDb.findOne({
-        where: { userId: agentId, addressType: "LaundaryShopAddress" },
-        attributes: ["id", "zoneId"],
-    });
+    const { zoneId: catalogZoneId } = await resolveAgentCatalogZoneId(req);
     const rows = await addOnServicesService.getAllAddOnServices({
         activeOnly: true,
-        zoneId: shop?.zoneId || null,
+        zoneId: catalogZoneId,
         subCategoryId: req.query.subCategoryId,
     });
     return ResponseHelper.success(res, "Add-on services retrieved successfully", rows);
