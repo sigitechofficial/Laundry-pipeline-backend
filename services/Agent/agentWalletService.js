@@ -7,6 +7,7 @@ const {
     units,
     zone,
     tip,
+    bookingRefund,
 } = require("../../models");
 const {
     bookingTipAmountFromTips,
@@ -17,6 +18,8 @@ const { NotFoundError } = require("../../middlewares/universalErrorHandler");
 const invoiceManagementService = require("./invoiceManagementService");
 const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
 const { RATE_SNAPSHOT_ATTRIBUTES } = require("../../utils/bookingRateSnapshot");
+const { netAgentEarning } = require("../../utils/agentEarningNet");
+const { REFUNDED } = require("../../constants/bookingStatusIds");
 
 const COMMISSION_REFERENCE = "booking_commission";
 const COMMISSION_CLAWBACK_REFERENCE = "commission_clawback";
@@ -432,9 +435,61 @@ async function recordCashCollectedForBooking({
     };
 }
 
+async function bookingHasCustomerRefund(bookingId) {
+    if (!bookingId) return false;
+    const n = await bookingRefund.count({
+        where: {
+            bookingId,
+            status: { [Op.in]: ["succeeded", "partial_failed"] },
+        },
+    });
+    return n > 0;
+}
+
+async function getCommissionLedgerByBookingIds(bookingIds) {
+    const ids = [
+        ...new Set(
+            (bookingIds || []).map((id) => Number(id)).filter((id) => id > 0)
+        ),
+    ];
+    const out = new Map();
+    if (!ids.length) return out;
+
+    const rows = await wallet.findAll({
+        where: {
+            bookingId: { [Op.in]: ids },
+            status: "completed",
+            referenceType: {
+                [Op.in]: [COMMISSION_REFERENCE, COMMISSION_CLAWBACK_REFERENCE],
+            },
+        },
+        attributes: ["bookingId", "referenceType", "type", "amount"],
+        raw: true,
+    });
+
+    for (const row of rows) {
+        const bookingId = Number(row.bookingId);
+        const prev = out.get(bookingId) || { credited: 0, clawed: 0 };
+        const amount = parseFloat(row.amount || 0);
+        if (row.referenceType === COMMISSION_REFERENCE && row.type === "credit") {
+            prev.credited += amount;
+        }
+        if (
+            row.referenceType === COMMISSION_CLAWBACK_REFERENCE &&
+            row.type === "debit"
+        ) {
+            prev.clawed += amount;
+        }
+        out.set(bookingId, prev);
+    }
+    return out;
+}
+
 async function healAgentEarningIfMissing(bookingRow, billing) {
     const stored = parseFloat(billing?.agentEarning || 0);
     if (stored > 0) return stored;
+    if (Number(bookingRow?.bookingStatusId) === REFUNDED) return 0;
+    if (await bookingHasCustomerRefund(bookingRow?.id)) return 0;
     if (!bookingRow?.zone) return 0;
 
     try {
@@ -474,6 +529,7 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
             "orderTrackId",
             "laundryShopId",
             "zoneId",
+            "bookingStatusId",
             "paymentType",
             "paymentConfirmed",
             "balancePaymentMethod",
@@ -516,6 +572,16 @@ async function creditAgentForPaidBooking(bookingId, options = {}) {
 
     if (!bookingRow) {
         return { credited: false, reason: "booking_not_found" };
+    }
+
+    if (Number(bookingRow.bookingStatusId) === REFUNDED) {
+        return { credited: false, reason: "refunded" };
+    }
+    if (await bookingHasCustomerRefund(bookingId)) {
+        if (await hasCommissionCredit(bookingId)) {
+            return { credited: false, reason: "already_credited" };
+        }
+        return { credited: false, reason: "refunded" };
     }
 
     const billing = bookingRow.billingDetail;
@@ -667,25 +733,25 @@ async function creditExtraTipForBooking({ bookingId, amount, tipId } = {}) {
 }
 
 /**
- * Lifetime agent commission from billing, split by collection channel.
- * Only counts orders that actually reached payment — matches the wallet
- * ledger (booking_commission is only credited for Paid bookings) and the
- * admin order breakdown, so "Commission earned" / "Payable" never outgrow
- * what the Orders/Ledger tabs can show.
+ * Lifetime agent commission, split by collection channel.
+ * Wallet credits − clawbacks are the source of truth so a full customer
+ * refund zeros payable even if billingDetails.agentEarning was never rewritten.
+ * Fully refunded bookings (status 21) never count, regardless of ledger drift.
  */
 async function sumAgentEarningsBreakdown(laundryShopId) {
     const rows = await billingDetails.findAll({
         where: {
-            agentEarning: { [Op.gt]: 0 },
             paymentStatus: "Paid",
         },
-        attributes: ["agentEarning"],
+        attributes: ["bookingId", "agentEarning"],
         include: [
             {
                 model: booking,
                 as: "booking",
                 required: true,
                 attributes: [
+                    "id",
+                    "bookingStatusId",
                     "paymentType",
                     "balancePaymentMethod",
                     "balanceCollectedVia",
@@ -695,13 +761,25 @@ async function sumAgentEarningsBreakdown(laundryShopId) {
         ],
     });
 
+    const ledger = await getCommissionLedgerByBookingIds(
+        rows.map((row) => row.bookingId || row.booking?.id)
+    );
+
     let total = 0;
     let cash = 0;
     let card = 0;
 
     for (const row of rows) {
-        const amount = parseFloat(row.agentEarning || 0);
-        if (!amount) continue;
+        if (Number(row.booking?.bookingStatusId) === REFUNDED) continue;
+
+        const bookingId = Number(row.bookingId || row.booking?.id);
+        const led = ledger.get(bookingId) || { credited: 0, clawed: 0 };
+        const amount = netAgentEarning({
+            billed: row.agentEarning,
+            credited: led.credited,
+            clawed: led.clawed,
+        });
+        if (amount <= 0.009) continue;
 
         total += amount;
         if (classifyAgentEarningChannel(row.booking) === "cash") {
@@ -1491,6 +1569,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         attributes: [
             "id",
             "orderTrackId",
+            "bookingStatusId",
             "paymentType",
             "balanceCollectedVia",
             "balancePaymentMethod",
@@ -1572,17 +1651,26 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         const extraTipFromTips = extraTipAmountFromTips(bookingTips);
         const serviceFee = parseFloat(billing.serviceCharge || 0);
         const platformShare = parseFloat(billing.zoneAdminCommission || 0);
+        const commissionClawbackAmount = parseFloat(
+            (amounts[COMMISSION_CLAWBACK_REFERENCE] || 0).toFixed(2)
+        );
+        const commissionNet = netAgentEarning({
+            billed: billing.agentEarning,
+            credited: amounts[COMMISSION_REFERENCE] || 0,
+            clawed: commissionClawbackAmount,
+        });
+        const isFullyRefunded =
+            Number(bookingRow.bookingStatusId) === REFUNDED ||
+            (commissionClawbackAmount > 0.009 && commissionNet <= 0.009);
         const commissionAmount = amounts[COMMISSION_REFERENCE]
             ? parseFloat(amounts[COMMISSION_REFERENCE].toFixed(2))
             : parseFloat(billing.agentEarning || 0);
+        const effectiveCommissionNet = isFullyRefunded ? 0 : commissionNet;
         const laundryCommission = parseFloat(
             Math.max(0, commissionAmount - bookingTip).toFixed(2)
         );
         const cashRefundedAmount = parseFloat(
             (amounts[CASH_REFUNDED_REFERENCE] || 0).toFixed(2)
-        );
-        const commissionClawbackAmount = parseFloat(
-            (amounts[COMMISSION_CLAWBACK_REFERENCE] || 0).toFixed(2)
         );
         const extraTipAmount = amounts[EXTRA_TIP_REFERENCE]
             ? parseFloat(amounts[EXTRA_TIP_REFERENCE].toFixed(2))
@@ -1611,14 +1699,16 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
             bookingTip,
             laundryCommission,
             commissionAmount,
-            commissionNet: parseFloat(
-                Math.max(0, commissionAmount - commissionClawbackAmount).toFixed(2)
-            ),
+            commissionNet: effectiveCommissionNet,
+            isFullyRefunded,
+            bookingStatusId: bookingRow.bookingStatusId,
             commissionCreditedAt: dates[COMMISSION_REFERENCE] || null,
             extraTipAmount,
-            extraTipNet: parseFloat(
-                Math.max(0, extraTipAmount - extraTipClawbackAmount).toFixed(2)
-            ),
+            extraTipNet: isFullyRefunded
+                ? 0
+                : parseFloat(
+                      Math.max(0, extraTipAmount - extraTipClawbackAmount).toFixed(2)
+                  ),
             extraTipCreditedAt: dates[EXTRA_TIP_REFERENCE] || null,
             cashCollectedAmount,
             cashNet: parseFloat(
@@ -1723,6 +1813,7 @@ module.exports = {
     listAgentOrderBreakdown,
     listRecentSettlementActivity,
     hasCommissionCredit,
+    getCommissionLedgerByBookingIds,
     getNetCommissionForBooking,
     getNetCashCollectedForBooking,
     getNetExtraTipForBooking,

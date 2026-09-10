@@ -36,6 +36,7 @@ const {
   getWalletSummary,
 } = require('../Agent/agentWalletService');
 const { REFUNDED } = require('../../constants/bookingStatusIds');
+const { netAgentEarning } = require('../../utils/agentEarningNet');
 const { Op } = require('sequelize');
 
 function money(n) {
@@ -771,15 +772,51 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
     });
   }
 
-  // Keep billing earnings in sync so settlement totals / order detail stay accurate.
+  // Remaining refundable after Stripe/cash movement — full refund zeros agent share.
+  const after = await buildRefundPreview(bookingId);
+  const isFullRefund =
+    after.refundableNow <= 0.02 || refundRow.mode === 'full';
+
+  if (isFullRefund && agentUserId) {
+    const leftoverCommission = await getNetCommissionForBooking(bookingId);
+    if (leftoverCommission > 0.009) {
+      await clawbackCommissionForRefund({
+        bookingId,
+        agentUserId,
+        amount: leftoverCommission,
+        currency: 'GBP',
+        orderLabel,
+        refundId: `${refundRow.id}-full`,
+      });
+    }
+    const leftoverTip = await getNetExtraTipForBooking(bookingId);
+    if (leftoverTip > 0.009) {
+      await clawbackExtraTipForRefund({
+        bookingId,
+        agentUserId,
+        amount: leftoverTip,
+        currency: 'GBP',
+        orderLabel,
+        refundId: `${refundRow.id}-full`,
+      });
+    }
+  }
+
+  // Persist billed commission = wallet net so totals cannot resurrect the refunded share.
   const billing = bookingRow.billingDetail;
-  if (billing && (commissionClawback > 0 || platformShareClawback > 0)) {
-    const nextAgent = money(
-      Math.max(0, money(billing.agentEarning) - commissionClawback)
-    );
-    const nextPlatform = money(
-      Math.max(0, money(billing.zoneAdminCommission) - platformShareClawback)
-    );
+  if (billing) {
+    const nextAgent = isFullRefund
+      ? 0
+      : netAgentEarning({
+          billed: money(Math.max(0, money(billing.agentEarning) - commissionClawback)),
+          credited: agentUserId ? await getNetCommissionForBooking(bookingId) : 0,
+          clawed: 0,
+        });
+    const nextPlatform = isFullRefund
+      ? 0
+      : money(
+          Math.max(0, money(billing.zoneAdminCommission) - platformShareClawback)
+        );
     await billingDetails.update(
       {
         agentEarning: nextAgent,
@@ -790,8 +827,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
   }
 
   // Full remaining refund → Refunded status.
-  const after = await buildRefundPreview(bookingId);
-  if (after.refundableNow <= 0.02 && bookingRow.bookingStatusId !== REFUNDED) {
+  if (isFullRefund && bookingRow.bookingStatusId !== REFUNDED) {
     await booking.update(
       { bookingStatusId: REFUNDED },
       { where: { id: bookingId } }

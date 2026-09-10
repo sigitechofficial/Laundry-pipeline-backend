@@ -17,7 +17,8 @@ const {
     proofOfDeliveries,
     OnHoldConfirmation,
     bookingHistory,
-    bookingPreference
+    bookingPreference,
+    bookingRefund,
 } = require('../../models');
 const dbModels = require('../../models');
 const {
@@ -52,17 +53,22 @@ const {
     hideShopFinanceOnBooking,
 } = require('../../utils/fieldDriverPrivacy');
 const { summarizeTips } = require('../../utils/bookingTips');
+const { netAgentEarning } = require('../../utils/agentEarningNet');
+const { REFUNDED } = require('../../constants/bookingStatusIds');
+const {
+    getCommissionLedgerByBookingIds,
+} = require('./agentWalletService');
 
 const ORDER_HISTORY_STATUSES = ['all', 'active', 'completed', 'cancelled', 'on_hold', 'delivery_failed', 'pickup_failed'];
-const COMPLETED_STATUS_IDS = [17];
-const CANCELLED_STATUS_IDS = [19, 21];
+const COMPLETED_STATUS_IDS = [17, REFUNDED];
+const CANCELLED_STATUS_IDS = [19];
 const ON_HOLD_STATUS_IDS = [18, 22, 24];
-const ACTIVE_EXCLUDED_STATUS_IDS = [17, 19, 21];
+const ACTIVE_EXCLUDED_STATUS_IDS = [17, 19, REFUNDED];
 const DELIVERY_FAILED_STATUS_ID = 15;
 const AWAITING_COLLECTION_STATUS_ID = 3;
 const HISTORY_PICKUP_LIVE_STATUSES = [3, 4, 5, 6, 7];
 /** Delivery-only staff see history only after facility complete. */
-const HISTORY_DELIVERY_VISIBLE_STATUSES = [12, 13, 14, 15, 16, 17];
+const HISTORY_DELIVERY_VISIBLE_STATUSES = [12, 13, 14, 15, 16, 17, REFUNDED];
 
 /**
  * Agent Order Management Service
@@ -277,6 +283,93 @@ class AgentOrderManagementService {
         ];
     }
 
+    /**
+     * Overwrite billed agentEarning with wallet net and flag full refunds so
+     * order history cannot keep showing a clawed-back commission as "Earn £".
+     */
+    async _attachNetAgentEarnings(orders) {
+        const list = Array.isArray(orders) ? orders : [];
+        const ids = list.map((o) => Number(o.id)).filter((id) => id > 0);
+        if (!ids.length) return list;
+
+        const [ledger, refundRows] = await Promise.all([
+            getCommissionLedgerByBookingIds(ids),
+            bookingRefund.findAll({
+                where: {
+                    bookingId: { [Op.in]: ids },
+                    status: { [Op.in]: ['succeeded', 'partial_failed'] },
+                },
+                attributes: ['bookingId', 'mode'],
+                raw: true,
+            }),
+        ]);
+
+        const refundByBooking = new Map();
+        for (const row of refundRows) {
+            const bookingId = Number(row.bookingId);
+            const prev = refundByBooking.get(bookingId) || {
+                full: false,
+                any: false,
+            };
+            prev.any = true;
+            if (row.mode === 'full') prev.full = true;
+            refundByBooking.set(bookingId, prev);
+        }
+
+        return list.map((order) => {
+            const bookingId = Number(order.id);
+            const flags = refundByBooking.get(bookingId) || {
+                full: false,
+                any: false,
+            };
+            const led = ledger.get(bookingId) || { credited: 0, clawed: 0 };
+            const financeHidden =
+                order.billingDetail &&
+                order.billingDetail.agentEarning == null &&
+                (order.billingDetail.total == null ||
+                    order.billingDetail.total === '');
+            const net = financeHidden
+                ? 0
+                : netAgentEarning({
+                      billed: order.billingDetail?.agentEarning,
+                      credited: led.credited,
+                      clawed: led.clawed,
+                  });
+            const ledgerFullyReversed =
+                led.credited > 0.009 && led.clawed + 0.009 >= led.credited;
+            const isFullyRefunded =
+                Number(order.bookingStatusId) === REFUNDED ||
+                flags.full ||
+                ledgerFullyReversed;
+            const earning = financeHidden
+                ? null
+                : isFullyRefunded
+                  ? 0
+                  : net;
+
+            const billingDetail =
+                order.billingDetail && !financeHidden
+                    ? { ...order.billingDetail, agentEarning: earning }
+                    : order.billingDetail;
+
+            let bookingStatus = order.bookingStatus;
+            if (isFullyRefunded) {
+                bookingStatus = bookingStatus
+                    ? { ...bookingStatus, title: 'Fully Refunded' }
+                    : { id: REFUNDED, title: 'Fully Refunded' };
+            }
+
+            return {
+                ...order,
+                billingDetail,
+                bookingStatus,
+                agentEarning: earning,
+                isFullyRefunded,
+                isPartiallyRefunded: flags.any && !isFullyRefunded,
+            };
+        });
+    }
+
     _buildOrderHistoryStatusWhere(status) {
         switch (status) {
             case 'active':
@@ -328,6 +421,9 @@ class AgentOrderManagementService {
                 orderPlain.billingDetail?.agentEarning != null
                     ? parseFloat(orderPlain.billingDetail.agentEarning)
                     : null,
+            isFullyRefunded:
+                Number(orderPlain.bookingStatusId) === REFUNDED ||
+                Boolean(orderPlain.isFullyRefunded),
         };
 
         if (enriched.customer) {
@@ -585,6 +681,8 @@ class AgentOrderManagementService {
             extraTip: summarizeTips(plain.tips || []),
         }));
 
+        const ordersWithNet = await this._attachNetAgentEarnings(ordersWithReviews);
+
         return {
             filter: status,
             staffScoped: Boolean(staffUserId),
@@ -605,7 +703,7 @@ class AgentOrderManagementService {
                 delivery_failed: deliveryFailedCount,
                 pickup_failed: pickupFailedCount,
             },
-            orders: ordersWithReviews,
+            orders: ordersWithNet,
         };
     }
 
