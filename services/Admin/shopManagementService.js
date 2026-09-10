@@ -12,6 +12,7 @@ const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listL
 // list (services/Admin/orderService.js). Canonical exclusions: Completed, On-Hold
 // (customer + agent), Cancelled — see constants/bookingStatusIds.js.
 const { PENDING_EXCLUDED_SQL } = require('../../constants/bookingStatusIds');
+const { shopCollectedNetRevenueSql } = require('../../utils/shopCollectedRevenue');
 
 class ShopManagementService {
     /**
@@ -163,7 +164,7 @@ class ShopManagementService {
                     ],
                     [
                         sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                            shopCollectedNetRevenueSql('addressDb.id')
                         ),
                         'TotalRevenue',
                     ]
@@ -267,7 +268,7 @@ class ShopManagementService {
                     ],
                     [
                         sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                            shopCollectedNetRevenueSql('addressDb.id')
                         ),
                         'totalRevenue',
                     ]
@@ -299,7 +300,7 @@ class ShopManagementService {
                 order: [
                     [
                         sequelize.literal(
-                            `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = \`addressDb\`.\`id\`)`
+                            shopCollectedNetRevenueSql('`addressDb`.`id`')
                         ),
                         'DESC'
                     ]
@@ -414,7 +415,7 @@ class ShopManagementService {
                             ],
                             [
                                 sequelize.literal(
-                                    `(SELECT ROUND(COALESCE(SUM(orderAmount), 0),2) FROM bookings WHERE bookings.laundryShopId = addressDb.id)`
+                                    shopCollectedNetRevenueSql('addressDb.id')
                                 ),
                                 'TotalRevenue',
                             ]

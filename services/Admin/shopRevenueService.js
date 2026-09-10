@@ -16,7 +16,7 @@ const {
   bookingRefund,
 } = require("../../models");
 const { NotFoundError, ValidationError } = require("../../middlewares/universalErrorHandler");
-const { COMPLETED, CANCELLED, REFUNDED } = require("../../constants/bookingStatusIds");
+const { CANCELLED, REFUNDED, COLLECTED, COLLECTED_SQL } = require("../../constants/bookingStatusIds");
 const agentWalletService = require("../Agent/agentWalletService");
 const {
   parsePeriodQuery,
@@ -28,8 +28,7 @@ const {
   pctChange,
 } = require("./shopRevenuePeriod");
 
-const COLLECTED_STATUSES = [16, COMPLETED];
-const COLLECTED_SQL = COLLECTED_STATUSES.join(",");
+const COLLECTED_STATUSES = COLLECTED;
 
 const T = {
   bookings: booking.getTableName(),
@@ -37,6 +36,19 @@ const T = {
   tips: tip.getTableName(),
   refunds: bookingRefund.getTableName(),
 };
+
+const REFUND_JOIN = `
+    LEFT JOIN (
+      SELECT bookingId, SUM(amount) AS refunded
+      FROM \`${T.refunds}\`
+      WHERE status IN ('succeeded', 'partial_failed')
+        AND deletedAt IS NULL
+      GROUP BY bookingId
+    ) rf ON rf.bookingId = b.id
+`;
+const NET_GROSS =
+  "GREATEST(0, COALESCE(bd.total, b.orderAmount, 0) - COALESCE(rf.refunded, 0))";
+const STILL_COLLECTED = `${NET_GROSS} > 0.02`;
 
 function emptyTotals() {
   return {
@@ -145,6 +157,9 @@ function mapTotals(row) {
   if (!row) return base;
   const shopNetBilled = money(row.shopNetBilled);
   const shopNetDerived = money(row.shopNetDerived);
+  // Prefer billed shop share even when it is £0 after a refund; derived
+  // fallback is only for collected orders that never stored agentEarning.
+  const billedTouched = Number(row.shopNetBilledRows || 0) > 0;
   return {
     ordersCompleted: Number(row.ordersCompleted || 0),
     grossRevenue: money(row.grossRevenue),
@@ -152,7 +167,7 @@ function mapTotals(row) {
     serviceCharge: money(row.serviceCharge),
     discount: money(row.discount),
     platformCommission: money(row.platformCommission),
-    shopNet: shopNetBilled > 0 ? shopNetBilled : shopNetDerived,
+    shopNet: billedTouched ? shopNetBilled : shopNetDerived,
     driverEarnings: money(row.driverEarnings),
     rescheduleCharge: money(row.rescheduleCharge),
     cashGross: money(row.cashGross),
@@ -176,26 +191,30 @@ async function loadPeriodTotals(addressId, range) {
   const [collected] = await query(
     `
     SELECT
-      COUNT(DISTINCT b.id) AS ordersCompleted,
-      COALESCE(SUM(bd.total), 0) AS grossRevenue,
-      COALESCE(SUM(bd.categoryCharge), 0) AS laundrySubtotal,
-      COALESCE(SUM(bd.serviceCharge), 0) AS serviceCharge,
-      COALESCE(SUM(bd.discount), 0) AS discount,
-      COALESCE(SUM(bd.zoneAdminCommission), 0) AS platformCommission,
-      COALESCE(SUM(bd.agentEarning), 0) AS shopNetBilled,
-      COALESCE(SUM(bd.total), 0)
-        - COALESCE(SUM(bd.zoneAdminCommission), 0)
-        - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
-        - COALESCE(SUM(b.rescheduleCharge), 0) AS shopNetDerived,
-      COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0) AS driverEarnings,
-      COALESCE(SUM(b.rescheduleCharge), 0) AS rescheduleCharge,
-      COALESCE(SUM(CASE WHEN b.paymentType = 'cash' THEN bd.total ELSE 0 END), 0) AS cashGross,
-      COALESCE(SUM(CASE WHEN b.paymentType = 'cash' THEN 0 ELSE bd.total END), 0) AS cardGross,
-      COALESCE(AVG(bd.total), 0) AS avgOrderValue,
-      COALESCE(SUM(tips.bookingTips), 0) AS bookingTips,
-      COALESCE(SUM(tips.extraTips), 0) AS extraTips
+      COUNT(DISTINCT CASE WHEN ${STILL_COLLECTED} THEN b.id END) AS ordersCompleted,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} ELSE 0 END), 0) AS grossRevenue,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.categoryCharge ELSE 0 END), 0) AS laundrySubtotal,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.serviceCharge ELSE 0 END), 0) AS serviceCharge,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.discount ELSE 0 END), 0) AS discount,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.zoneAdminCommission ELSE 0 END), 0) AS platformCommission,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.agentEarning ELSE 0 END), 0) AS shopNetBilled,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND bd.agentEarning IS NOT NULL THEN 1 ELSE 0 END), 0) AS shopNetBilledRows,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN
+        COALESCE(bd.total, 0)
+        - COALESCE(bd.zoneAdminCommission, 0)
+        - COALESCE(bd.pickupDriverEarning + bd.deliveryDriverEarning, 0)
+        - COALESCE(b.rescheduleCharge, 0)
+      ELSE 0 END), 0) AS shopNetDerived,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.pickupDriverEarning + bd.deliveryDriverEarning ELSE 0 END), 0) AS driverEarnings,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN b.rescheduleCharge ELSE 0 END), 0) AS rescheduleCharge,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND b.paymentType = 'cash' THEN ${NET_GROSS} ELSE 0 END), 0) AS cashGross,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND b.paymentType = 'cash' THEN 0 WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} ELSE 0 END), 0) AS cardGross,
+      COALESCE(AVG(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} END), 0) AS avgOrderValue,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.bookingTips ELSE 0 END), 0) AS bookingTips,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.extraTips ELSE 0 END), 0) AS extraTips
     FROM \`${T.bookings}\` b
     LEFT JOIN \`${T.billing}\` bd ON bd.bookingId = b.id
+    ${REFUND_JOIN}
     LEFT JOIN (
       SELECT
         bookingId,
@@ -261,15 +280,19 @@ async function loadSeries(addressId, range) {
     `
     SELECT
       DATE(b.collectionDate) AS date,
-      COUNT(DISTINCT b.id) AS ordersCompleted,
-      COALESCE(SUM(bd.total), 0) AS grossRevenue,
-      COALESCE(SUM(bd.agentEarning), 0) AS shopNetBilled,
-      COALESCE(SUM(bd.total), 0)
-        - COALESCE(SUM(bd.zoneAdminCommission), 0)
-        - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
-        - COALESCE(SUM(b.rescheduleCharge), 0) AS shopNetDerived
+      COUNT(DISTINCT CASE WHEN ${STILL_COLLECTED} THEN b.id END) AS ordersCompleted,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} ELSE 0 END), 0) AS grossRevenue,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.agentEarning ELSE 0 END), 0) AS shopNetBilled,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND bd.agentEarning IS NOT NULL THEN 1 ELSE 0 END), 0) AS shopNetBilledRows,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN
+        COALESCE(bd.total, 0)
+        - COALESCE(bd.zoneAdminCommission, 0)
+        - COALESCE(bd.pickupDriverEarning + bd.deliveryDriverEarning, 0)
+        - COALESCE(b.rescheduleCharge, 0)
+      ELSE 0 END), 0) AS shopNetDerived
     FROM \`${T.bookings}\` b
     LEFT JOIN \`${T.billing}\` bd ON bd.bookingId = b.id
+    ${REFUND_JOIN}
     WHERE b.laundryShopId = :addressId
       AND b.deletedAt IS NULL
       AND b.bookingStatusId IN (${COLLECTED_SQL})
@@ -283,11 +306,12 @@ async function loadSeries(addressId, range) {
   return rows.map((row) => {
     const billed = money(row.shopNetBilled);
     const derived = money(row.shopNetDerived);
+    const billedTouched = Number(row.shopNetBilledRows || 0) > 0;
     return {
       date: row.date ? String(row.date).slice(0, 10) : null,
       ordersCompleted: Number(row.ordersCompleted || 0),
       grossRevenue: money(row.grossRevenue),
-      shopNet: billed > 0 ? billed : derived,
+      shopNet: billedTouched ? billed : derived,
     };
   });
 }
@@ -352,6 +376,26 @@ async function loadOrders(addressId, range, page, limit) {
     distinct: true,
   });
 
+  const bookingIds = rows.map((row) => row.id).filter(Boolean);
+  const refundRows = bookingIds.length
+    ? await bookingRefund.findAll({
+        where: {
+          bookingId: { [Op.in]: bookingIds },
+          status: { [Op.in]: ["succeeded", "partial_failed"] },
+        },
+        attributes: ["bookingId", "amount"],
+        raw: true,
+      })
+    : [];
+  const refundedByBooking = new Map();
+  for (const row of refundRows) {
+    const bookingId = Number(row.bookingId);
+    refundedByBooking.set(
+      bookingId,
+      money((refundedByBooking.get(bookingId) || 0) + money(row.amount))
+    );
+  }
+
   const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
   return {
     rows: rows.map((row) => {
@@ -359,17 +403,29 @@ async function loadOrders(addressId, range, page, limit) {
       const bill = plain.billingDetail || {};
       const drivers =
         money(bill.pickupDriverEarning) + money(bill.deliveryDriverEarning);
-      const gross = money(bill.total != null ? bill.total : plain.orderAmount);
-      const shopNet =
-        money(bill.agentEarning) ||
-        money(gross - money(bill.zoneAdminCommission) - drivers - money(plain.rescheduleCharge));
+      const billedGross = money(bill.total != null ? bill.total : plain.orderAmount);
+      const refunded = refundedByBooking.get(Number(plain.id)) || 0;
+      const gross = money(Math.max(0, billedGross - refunded));
+      const fullyRefunded = gross <= 0.02;
+      const shopNet = fullyRefunded
+        ? 0
+        : money(bill.agentEarning) ||
+          money(
+            gross -
+              money(bill.zoneAdminCommission) -
+              drivers -
+              money(plain.rescheduleCharge)
+          );
       return {
         id: plain.id,
         orderTrackId: plain.orderTrackId || null,
         collectionDate: plain.collectionDate || null,
         createdAt: plain.createdAt || null,
         statusId: plain.bookingStatusId,
-        status: plain.bookingStatus?.title || null,
+        status: fullyRefunded
+          ? "Fully Refunded"
+          : plain.bookingStatus?.title || null,
+        isFullyRefunded: fullyRefunded,
         customer: [plain.customer?.firstName, plain.customer?.lastName]
           .filter(Boolean)
           .join(" ")
@@ -381,9 +437,9 @@ async function loadOrders(addressId, range, page, limit) {
         laundry: money(bill.categoryCharge),
         serviceCharge: money(bill.serviceCharge),
         discount: money(bill.discount),
-        platformCommission: money(bill.zoneAdminCommission),
+        platformCommission: fullyRefunded ? 0 : money(bill.zoneAdminCommission),
         shopNet,
-        driverEarnings: drivers,
+        driverEarnings: fullyRefunded ? 0 : drivers,
       };
     }),
     pagination: {
@@ -632,9 +688,9 @@ async function getShopRevenue(shopId, rawQuery = {}) {
     ordersPagination: orders.pagination,
     definitions: {
       grossRevenue:
-        "Collected / completed bookings only (status Out for Delivery + Completed). Sum of invoice totals.",
+        "Collected / completed bookings only, minus customer refunds. Pending and fully refunded orders are not revenue.",
       shopNet:
-        "Shop share after platform commission and driver pay. Uses billed agent earning when present.",
+        "Shop share after platform commission, driver pay, and refund clawbacks. Uses billed agent earning when present.",
       totalEarnings:
         "Lifetime shop commission credited on paid orders (card + cash channels), from the owner wallet summary.",
       lifetime:

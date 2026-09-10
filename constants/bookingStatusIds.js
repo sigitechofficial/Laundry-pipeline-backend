@@ -16,6 +16,8 @@ const ON_HOLD_AGENT = 24;
 const ORDER_CREATED = 1;
 const DELIVERY_FAILED = 15;
 const AWAITING_COLLECTION = 3;
+/** Invoice / facility complete — collected but not yet marked Completed. */
+const FACILITY_COMPLETE = 16;
 
 /**
  * Statuses where a booking no longer occupies the assigned shop's capacity.
@@ -25,7 +27,13 @@ const AWAITING_COLLECTION = 3;
 const SLOT_RELEASING = [COMPLETED, CANCELLED, REFUNDED];
 
 /** Statuses excluded from the Pending bucket (sidebar + pendingOrders list). */
-const PENDING_EXCLUDED = [COMPLETED, ON_HOLD_CUSTOMER, CANCELLED, ON_HOLD_AGENT];
+const PENDING_EXCLUDED = [
+    COMPLETED,
+    ON_HOLD_CUSTOMER,
+    CANCELLED,
+    REFUNDED,
+    ON_HOLD_AGENT,
+];
 
 /** On-hold tab / onHoldOrders metric. */
 const ON_HOLD = [ON_HOLD_CUSTOMER, ON_HOLD_AGENT];
@@ -44,6 +52,10 @@ const PENDING_EXCLUDED_SQL = PENDING_EXCLUDED.join(', ');
 const ACTIVE_EXCLUDED = [ORDER_CREATED, ...PENDING_EXCLUDED];
 const ACTIVE_EXCLUDED_SQL = ACTIVE_EXCLUDED.join(', ');
 
+/** Shop revenue / All Shops "Revenue": money actually collected, not open or refunded. */
+const COLLECTED = [FACILITY_COMPLETE, COMPLETED];
+const COLLECTED_SQL = COLLECTED.join(', ');
+
 module.exports = {
     COMPLETED,
     ON_HOLD_CUSTOMER,
@@ -60,4 +72,7 @@ module.exports = {
     PENDING_EXCLUDED_SQL,
     ACTIVE_EXCLUDED,
     ACTIVE_EXCLUDED_SQL,
+    FACILITY_COMPLETE,
+    COLLECTED,
+    COLLECTED_SQL,
 };
