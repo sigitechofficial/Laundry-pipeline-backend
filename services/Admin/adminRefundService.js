@@ -36,6 +36,7 @@ const {
   getWalletSummary,
 } = require('../Agent/agentWalletService');
 const { REFUNDED } = require('../../constants/bookingStatusIds');
+const { Op } = require('sequelize');
 
 function money(n) {
   const v = parseFloat(n || 0);
@@ -877,9 +878,14 @@ function publicRefundItem(row) {
   };
 }
 
-async function getPublicRefundSummary(bookingId) {
+const REFUND_COUNTED_STATUSES = ['succeeded', 'partial_failed'];
+
+async function getPublicRefundSummary(bookingId, options = {}) {
   const rows = await bookingRefund.findAll({
-    where: { bookingId },
+    where: {
+      bookingId,
+      status: { [Op.in]: REFUND_COUNTED_STATUSES },
+    },
     attributes: [
       'id',
       'amount',
@@ -893,13 +899,54 @@ async function getPublicRefundSummary(bookingId) {
   });
   const history = rows.map(publicRefundItem);
   const totalRefunded = money(history.reduce((s, r) => s + r.amount, 0));
+  const bookingStatusId = Number(options.bookingStatusId || 0);
+  const isFullyRefunded =
+    bookingStatusId === REFUNDED ||
+    options.isFullyRefunded === true ||
+    (totalRefunded > 0 && Number(options.refundableNow) <= 0.02);
   return {
     totalRefunded,
     count: history.length,
-    isFullyRefunded: false,
+    hasRefund: totalRefunded > 0.009 || history.length > 0,
+    isFullyRefunded,
     latest: history[0] || null,
     history,
   };
+}
+
+/**
+ * Batch refund totals for order lists (admin + customer).
+ * @returns {Map<number, { totalRefunded: number, count: number, latestReason: string|null, latestChannel: string|null }>}
+ */
+async function getRefundAggregatesByBookingIds(bookingIds) {
+  const ids = [...new Set((bookingIds || []).map((id) => Number(id)).filter((id) => id > 0))];
+  const out = new Map();
+  if (!ids.length) return out;
+
+  const rows = await bookingRefund.findAll({
+    where: {
+      bookingId: { [Op.in]: ids },
+      status: { [Op.in]: REFUND_COUNTED_STATUSES },
+    },
+    attributes: ['id', 'bookingId', 'amount', 'reason', 'channel', 'createdAt'],
+    order: [['id', 'DESC']],
+  });
+
+  for (const row of rows) {
+    const bookingId = Number(row.bookingId);
+    const prev = out.get(bookingId) || {
+      totalRefunded: 0,
+      count: 0,
+      latestReason: null,
+      latestChannel: null,
+    };
+    prev.totalRefunded = money(prev.totalRefunded + money(row.amount));
+    prev.count += 1;
+    if (!prev.latestReason && row.reason) prev.latestReason = String(row.reason);
+    if (!prev.latestChannel && row.channel) prev.latestChannel = String(row.channel);
+    out.set(bookingId, prev);
+  }
+  return out;
 }
 
 function notifyRefundParties({
@@ -974,4 +1021,5 @@ module.exports = {
   issueRefund,
   listRefundsForBooking,
   getPublicRefundSummary,
+  getRefundAggregatesByBookingIds,
 };

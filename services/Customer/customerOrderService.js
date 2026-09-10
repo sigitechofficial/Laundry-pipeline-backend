@@ -2307,9 +2307,39 @@ class CustomerOrderService {
             throw new NotFoundError("No Bookings Found");
         }
 
+        let aggregates = new Map();
+        try {
+            const {
+                getRefundAggregatesByBookingIds,
+            } = require('../Admin/adminRefundService');
+            aggregates = await getRefundAggregatesByBookingIds(
+                findAllBooking.map((b) => b.id)
+            );
+        } catch (err) {
+            console.warn('[allBookings] refund aggregates skipped:', err?.message || err);
+        }
+
+        const data = findAllBooking.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            const agg = aggregates.get(Number(plain.id));
+            const totalRefunded = agg ? Number(agg.totalRefunded || 0) : 0;
+            const count = agg ? Number(agg.count || 0) : 0;
+            return {
+                ...plain,
+                refunds: {
+                    totalRefunded,
+                    count,
+                    hasRefund: totalRefunded > 0.009 || count > 0,
+                    isFullyRefunded: Number(plain.bookingStatusId) === 21,
+                    latestReason: agg?.latestReason || null,
+                    latestChannel: agg?.latestChannel || null,
+                },
+            };
+        });
+
         return {
             message: "Customer All Bookings",
-            data: findAllBooking
+            data,
         };
     }
 
@@ -2806,7 +2836,10 @@ class CustomerOrderService {
             history: [],
         };
         try {
-            refunds = await getPublicRefundSummary(bookingPlain.id);
+            refunds = await getPublicRefundSummary(bookingPlain.id, {
+                bookingStatusId: bookingPlain.bookingStatusId,
+                refundableNow: paymentSummary?.amountDueNow,
+            });
             refunds.isFullyRefunded =
                 Number(bookingPlain.bookingStatusId) === 21 ||
                 (refunds.totalRefunded > 0 &&

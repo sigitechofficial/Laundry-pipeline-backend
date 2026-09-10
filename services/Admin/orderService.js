@@ -496,6 +496,33 @@ class OrderService {
         const enrichedBookings =
             await adminBookingAssignService.enrichBookingsForAdminList(bookings);
 
+        try {
+            const {
+                getRefundAggregatesByBookingIds,
+            } = require('./adminRefundService');
+            const ids = enrichedBookings.map((b) => Number(b.id)).filter((id) => id > 0);
+            const aggregates = await getRefundAggregatesByBookingIds(ids);
+            for (const row of enrichedBookings) {
+                const agg = aggregates.get(Number(row.id));
+                const totalRefunded = agg ? Number(agg.totalRefunded || 0) : 0;
+                const count = agg ? Number(agg.count || 0) : 0;
+                const isFullyRefunded = Number(row.bookingStatusId) === 21;
+                row.refundSummary = {
+                    totalRefunded,
+                    count,
+                    hasRefund: totalRefunded > 0.009 || count > 0,
+                    isFullyRefunded,
+                    latestReason: agg?.latestReason || null,
+                    latestChannel: agg?.latestChannel || null,
+                };
+            }
+        } catch (err) {
+            console.warn(
+                '[getOptimizedBookings] refund aggregates skipped:',
+                err?.message || err
+            );
+        }
+
         return {
             bookings: enrichedBookings,
             totalCount,
@@ -1065,6 +1092,56 @@ class OrderService {
                 Boolean(enriched.deliveryCompleteGeofenceOverride),
         };
         enriched.extraTip = summarizeTips(enriched.tips || []);
+
+        try {
+            const {
+                getPublicRefundSummary,
+                buildRefundPreview,
+            } = require('./adminRefundService');
+            let refundableNow = null;
+            try {
+                const preview = await buildRefundPreview(orderId);
+                refundableNow = preview?.refundableNow;
+            } catch (_) {
+                /* preview optional for display */
+            }
+            enriched.refunds = await getPublicRefundSummary(orderId, {
+                bookingStatusId: enriched.bookingStatusId,
+                refundableNow,
+            });
+            enriched.refundSummary = {
+                totalRefunded: enriched.refunds.totalRefunded,
+                count: enriched.refunds.count,
+                hasRefund: enriched.refunds.hasRefund,
+                isFullyRefunded: enriched.refunds.isFullyRefunded,
+                refundableNow:
+                    refundableNow != null ? Number(refundableNow) : null,
+                latestReason: enriched.refunds.latest?.reason || null,
+                latestChannel: enriched.refunds.latest?.channel || null,
+            };
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] refunds summary unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.refunds = {
+                totalRefunded: 0,
+                count: 0,
+                hasRefund: false,
+                isFullyRefunded: Number(enriched.bookingStatusId) === 21,
+                latest: null,
+                history: [],
+            };
+            enriched.refundSummary = {
+                totalRefunded: 0,
+                count: 0,
+                hasRefund: false,
+                isFullyRefunded: Number(enriched.bookingStatusId) === 21,
+                refundableNow: null,
+                latestReason: null,
+                latestChannel: null,
+            };
+        }
 
         return enriched;
     }

@@ -13,6 +13,7 @@ const {
   tip,
   zone,
   units,
+  bookingRefund,
 } = require("../../models");
 const { NotFoundError, ValidationError } = require("../../middlewares/universalErrorHandler");
 const { COMPLETED, CANCELLED, REFUNDED } = require("../../constants/bookingStatusIds");
@@ -34,6 +35,7 @@ const T = {
   bookings: booking.getTableName(),
   billing: billingDetails.getTableName(),
   tips: tip.getTableName(),
+  refunds: bookingRefund.getTableName(),
 };
 
 function emptyTotals() {
@@ -215,8 +217,7 @@ async function loadPeriodTotals(addressId, range) {
     SELECT
       COALESCE(SUM(CASE WHEN b.bookingStatusId = ${CANCELLED} THEN 1 ELSE 0 END), 0) AS cancelledOrders,
       COALESCE(SUM(CASE WHEN b.bookingStatusId = ${CANCELLED} THEN COALESCE(bd.total, b.orderAmount, 0) ELSE 0 END), 0) AS cancelledValue,
-      COALESCE(SUM(CASE WHEN b.bookingStatusId = ${REFUNDED} THEN 1 ELSE 0 END), 0) AS refundedOrders,
-      COALESCE(SUM(CASE WHEN b.bookingStatusId = ${REFUNDED} THEN COALESCE(bd.total, b.orderAmount, 0) ELSE 0 END), 0) AS refundedValue,
+      COALESCE(SUM(CASE WHEN b.bookingStatusId = ${REFUNDED} THEN 1 ELSE 0 END), 0) AS fullyRefundedOrders,
       COALESCE(SUM(CASE WHEN b.bookingStatusId NOT IN (${COLLECTED_SQL}, ${CANCELLED}, ${REFUNDED}) THEN 1 ELSE 0 END), 0) AS openOrders
     FROM \`${T.bookings}\` b
     LEFT JOIN \`${T.billing}\` bd ON bd.bookingId = b.id
@@ -227,7 +228,30 @@ async function loadPeriodTotals(addressId, range) {
     replacements
   );
 
-  return mapTotals({ ...(collected || {}), ...(lifecycle || {}) });
+  // Partial + full customer refunds from booking_refunds (not only status=Refunded).
+  const refundDate = datePredicate(range, "br.createdAt", replacements, "rStart", "rEnd");
+  const [refundAgg] = await query(
+    `
+    SELECT
+      COUNT(DISTINCT br.bookingId) AS refundedOrders,
+      COALESCE(SUM(br.amount), 0) AS refundedValue
+    FROM \`${T.refunds}\` br
+    INNER JOIN \`${T.bookings}\` b ON b.id = br.bookingId
+    WHERE b.laundryShopId = :addressId
+      AND b.deletedAt IS NULL
+      AND br.deletedAt IS NULL
+      AND br.status IN ('succeeded', 'partial_failed')
+      AND ${refundDate}
+    `,
+    replacements
+  );
+
+  return mapTotals({
+    ...(collected || {}),
+    ...(lifecycle || {}),
+    refundedOrders: Number(refundAgg?.refundedOrders || 0),
+    refundedValue: money(refundAgg?.refundedValue),
+  });
 }
 
 async function loadSeries(addressId, range) {
