@@ -13,12 +13,21 @@ const {
 } = agentWalletService;
 
 const DEFAULT_CURRENCY = "GBP";
+const SHOP_ADDRESS_TYPE = "LaundaryShopAddress";
+
+function parsePositiveId(value, label) {
+    const id = parseInt(value, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+        throw new ValidationError(`${label} must be a positive integer`);
+    }
+    return id;
+}
 
 async function resolveAgentShop(agentUserId) {
     const shop = await addressDb.findOne({
         where: {
             userId: agentUserId,
-            addressType: "LaundaryShopAddress",
+            addressType: SHOP_ADDRESS_TYPE,
         },
         attributes: ["id", "userId", "streetAddress", "district"],
     });
@@ -26,6 +35,38 @@ async function resolveAgentShop(agentUserId) {
         throw new NotFoundError("Agent shop address not found");
     }
     return shop;
+}
+
+/** Public admin identity is the shop. Wallet still settles on the owner user. */
+async function resolveShopForSettlement(shopId) {
+    const id = parsePositiveId(shopId, "shopId");
+    const shop = await addressDb.findOne({
+        where: {
+            id,
+            addressType: SHOP_ADDRESS_TYPE,
+        },
+        attributes: ["id", "userId", "streetAddress", "district"],
+    });
+    if (!shop) {
+        throw new NotFoundError("Shop not found");
+    }
+    if (!shop.userId) {
+        throw new NotFoundError("Shop has no owner account");
+    }
+    return shop;
+}
+
+async function shopIdsByOwnerUserIds(userIds) {
+    const ids = [...new Set((userIds || []).filter(Boolean).map((id) => Number(id)))];
+    if (!ids.length) return new Map();
+    const shops = await addressDb.findAll({
+        where: {
+            userId: { [Op.in]: ids },
+            addressType: SHOP_ADDRESS_TYPE,
+        },
+        attributes: ["id", "userId"],
+    });
+    return new Map(shops.map((shop) => [Number(shop.userId), shop.id]));
 }
 
 /**
@@ -105,12 +146,14 @@ async function listPendingRemittances(options = {}) {
     });
 
     const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+    const shopByOwner = await shopIdsByOwnerUserIds(rows.map((row) => row.userId));
 
     return {
         remittances: rows.map((row) => {
             const plain = row.get({ plain: true });
             return {
                 id: plain.id,
+                shopId: shopByOwner.get(Number(plain.userId)) || null,
                 agentUserId: plain.userId,
                 agentName: plain.user
                     ? `${plain.user.firstName || ""} ${plain.user.lastName || ""}`.trim()
@@ -159,8 +202,10 @@ async function updateRemittanceStatus(remittanceId, status, adminNote) {
 
     const summary = await agentWalletService.getWalletSummary(entry.userId);
 
+    const shopByOwner = await shopIdsByOwnerUserIds([entry.userId]);
     return {
         remittanceId: entry.id,
+        shopId: shopByOwner.get(Number(entry.userId)) || null,
         agentUserId: entry.userId,
         amount: parseFloat(entry.amount || 0),
         status: entry.status,
@@ -316,6 +361,31 @@ async function getAgentSettlementSummary(agentUserId) {
     return agentWalletService.getWalletSummary(agentUserId);
 }
 
+async function getShopSettlementSummary(shopId) {
+    const shop = await resolveShopForSettlement(shopId);
+    return getAgentSettlementSummary(shop.userId);
+}
+
+async function getShopSettlementDetail(shopId, options = {}) {
+    const shop = await resolveShopForSettlement(shopId);
+    return getAgentSettlementDetail(shop.userId, options);
+}
+
+async function adminRecordShopCashSettlement(shopId, payload) {
+    const shop = await resolveShopForSettlement(shopId);
+    return adminRecordCashSettlement(shop.userId, payload);
+}
+
+async function adminRecordShopAdjustment(shopId, payload) {
+    const shop = await resolveShopForSettlement(shopId);
+    return adminRecordAdjustment(shop.userId, payload);
+}
+
+async function recordShopPayout(shopId, payload) {
+    const shop = await resolveShopForSettlement(shopId);
+    return recordAgentPayout(shop.userId, payload);
+}
+
 /**
  * Full enterprise-grade settlement detail for one agent: identity, aggregate
  * summary, the complete wallet ledger (every credit/debit that fed the
@@ -344,7 +414,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
             referenceType: options.ledgerType,
         }).catch((err) => {
             console.warn(`[settlement-detail] ledger skipped for ${agentUserId}:`, err.message);
-            return { transactions: [], pagination: emptyPage };
+            return { transactions: [], pagination: emptyPage, statement: null };
         }),
         agentWalletService.listAgentOrderBreakdown(agentUserId, {
             page: options.ordersPage,
@@ -360,6 +430,10 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
     ]);
 
     return {
+        identity: {
+            shopId: shop.id,
+            ownerUserId: agentUser?.id || agentUserId,
+        },
         agent: {
             id: agentUser?.id || agentUserId,
             name: agentUser
@@ -382,6 +456,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         summary,
         ledger: ledger.transactions,
         ledgerPagination: ledger.pagination,
+        statement: ledger.statement || null,
         orders: orders.orders,
         ordersPagination: orders.pagination,
         recentActivity,
@@ -394,6 +469,10 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
                 "Still payable = card commission + extra tips − extra-tip clawbacks − payouts already released to the agent wallet.",
             withdrawn:
                 "Payouts released sit in the agent wallet until they withdraw to Stripe Connect. That is when money actually leaves the platform.",
+            statement:
+                "Bank-statement view: Money in / Money out per row, with settlement balance before & after. Negative settlement balance = cash due to platform. Wallet balance tracks payouts minus withdrawals.",
+            cashPaymentFlow:
+                "Cash COD: invoice → proceed unpaid → deliver → recordCashPayment → cash_collected + commission → agent remits / admin records cash received.",
         },
     };
 }
@@ -494,6 +573,12 @@ module.exports = {
     recordAgentPayout,
     getAgentSettlementSummary,
     getAgentSettlementDetail,
+    getShopSettlementSummary,
+    getShopSettlementDetail,
+    adminRecordShopCashSettlement,
+    adminRecordShopAdjustment,
+    recordShopPayout,
     listAgentsWithCashDue,
     syncAgentWalletsFromBookings,
+    resolveShopForSettlement,
 };

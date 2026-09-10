@@ -6743,14 +6743,16 @@ exports.getAgentWalletTransactions = async (req, res) => {
 
 exports.withdrawAgentWallet = async (req, res) => {
     const agentId = req.user.id;
-    const { amount } = req.body || {};
-    const data = await agentWithdrawalService.withdrawAgentEarnings(
-        agentId,
-        amount
-    );
+    const { amount, note } = req.body || {};
+    const data = await agentWithdrawalService.requestWithdrawal(agentId, amount, {
+        note,
+    });
+    const pending = data.status === "pending";
     return ResponseHelper.success(
         res,
-        "Withdrawal transferred to Stripe Connect successfully",
+        pending
+            ? "Withdrawal requested. Waiting for admin approval."
+            : "Withdrawal transferred to Stripe Connect successfully",
         data
     );
 };

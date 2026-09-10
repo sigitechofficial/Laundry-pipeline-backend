@@ -55,7 +55,19 @@ module.exports = (sequelize, DataTypes) => {
     failureReason: {
       type: DataTypes.STRING(500),
       allowNull: true,
-    }
+    },
+    reviewedByAdminId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    reviewedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    adminNote: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
   }, {
     sequelize,
     modelName: 'wallet',

@@ -32,12 +32,11 @@ const PAYOUT_REFERENCE = "payout";
 const AGENT_PAYOUT_REFERENCE = "agent_payout";
 const EXTRA_TIP_REFERENCE = "extra_tip";
 const EXTRA_TIP_CLAWBACK_REFERENCE = "extra_tip_clawback";
-// Debit created ONLY when an agent withdraws their balance to their own
-// (Stripe Connect) account. Nothing else counts as agent-facing "Debited".
-// Reserved now; the Stripe transfer flow is added later.
+// Debit when an agent requests / completes a withdrawal to Stripe Connect.
 const WITHDRAWAL_REFERENCE = "agent_withdrawal";
 const CUSTOMER_REFUND_REFERENCE = "customer_refund";
 const DEFAULT_CURRENCY = "GBP";
+const MIN_WITHDRAWAL_AMOUNT = 1;
 
 async function resolveShopOwnerUserId(laundryShopId) {
     if (!laundryShopId) return null;
@@ -911,8 +910,10 @@ async function getWalletSummary(agentUserId) {
         totalWithdrawn: parseFloat(totalWithdrawn.toFixed(2)),
         pendingWithdrawals: parseFloat(pendingWithdrawals.toFixed(2)),
         connectAccountConnected,
-        canWithdraw: connectAccountConnected && availableBalance >= 1,
-        minimumWithdrawal: 1,
+        canWithdraw: availableBalance >= MIN_WITHDRAWAL_AMOUNT,
+        canRequestWithdrawal: availableBalance >= MIN_WITHDRAWAL_AMOUNT,
+        payoutAccountReady: connectAccountConnected,
+        minimumWithdrawal: MIN_WITHDRAWAL_AMOUNT,
         // Agent-facing "Credit" = money released to the agent via admin payout
         // (0 until an admin pays out). Order commissions are NOT counted here.
         totalCredited: walletCredit,
@@ -1166,6 +1167,8 @@ async function getWalletTransactions(agentUserId, options = {}) {
         totalDebited: summary.totalDebited,
         connectAccountConnected: summary.connectAccountConnected,
         canWithdraw: summary.canWithdraw,
+        canRequestWithdrawal: summary.canRequestWithdrawal,
+        payoutAccountReady: summary.payoutAccountReady,
         minimumWithdrawal: summary.minimumWithdrawal,
         transactions: rows.map((row) => {
             const plain = row.get({ plain: true });
@@ -1252,11 +1255,65 @@ const LEDGER_RAILS = {
     ],
 };
 
+/** Types that drive getWalletSummary().balance (cash-due settlement rail). */
+function affectsSettlementBalance(referenceType) {
+    return (
+        referenceType !== AGENT_PAYOUT_REFERENCE &&
+        referenceType !== EXTRA_TIP_REFERENCE &&
+        referenceType !== EXTRA_TIP_CLAWBACK_REFERENCE &&
+        referenceType !== WITHDRAWAL_REFERENCE &&
+        referenceType !== PAYOUT_REFERENCE
+    );
+}
+
+/** Types that drive available wallet (payouts in, withdrawals out). */
+function affectsWalletBalance(referenceType) {
+    return (
+        referenceType === AGENT_PAYOUT_REFERENCE ||
+        referenceType === WITHDRAWAL_REFERENCE
+    );
+}
+
+function signedSettlementDelta(row) {
+    if (row.status !== "completed" || !affectsSettlementBalance(row.referenceType)) {
+        return 0;
+    }
+    const amount = parseFloat(row.amount || 0);
+    if (!Number.isFinite(amount) || amount === 0) return 0;
+    return row.type === "credit" ? amount : -amount;
+}
+
+function signedWalletDelta(row) {
+    if (row.status !== "completed" || !affectsWalletBalance(row.referenceType)) {
+        return 0;
+    }
+    const amount = parseFloat(row.amount || 0);
+    if (!Number.isFinite(amount) || amount === 0) return 0;
+    // Payout credit raises available; withdrawal debit lowers it.
+    if (row.referenceType === AGENT_PAYOUT_REFERENCE && row.type === "credit") {
+        return amount;
+    }
+    if (row.referenceType === WITHDRAWAL_REFERENCE && row.type === "debit") {
+        return -amount;
+    }
+    return 0;
+}
+
+function moneyInOut(row) {
+    const amount = parseFloat(row.amount || 0);
+    if (!Number.isFinite(amount) || amount <= 0) {
+        return { moneyIn: 0, moneyOut: 0 };
+    }
+    if (row.type === "credit") {
+        return { moneyIn: amount, moneyOut: 0 };
+    }
+    return { moneyIn: 0, moneyOut: amount };
+}
+
 /**
- * Full, unfiltered chronological ledger for one agent — every wallet row
- * (cash collected, cash remitted, commission, admin adjustment, payout,
- * withdrawal). Used by the admin cash-settlement detail screen so nothing
- * is hidden behind the aggregate summary numbers.
+ * Full chronological ledger for one agent — every wallet row with bank-statement
+ * running balances (settlement rail + withdrawable wallet). Pagination is newest
+ * first; balances are computed oldest→newest so each row has before/after.
  */
 async function listAdminSettlementLedger(agentUserId, options = {}) {
     const page = Math.max(parseInt(options.page, 10) || 1, 1);
@@ -1270,14 +1327,12 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
         where.referenceType = { [Op.in]: railTypes };
     }
 
-    const { count, rows } = await wallet.findAndCountAll({
+    const rowsAsc = await wallet.findAll({
         where,
         order: [
-            ["createdAt", "DESC"],
-            ["id", "DESC"],
+            ["createdAt", "ASC"],
+            ["id", "ASC"],
         ],
-        limit,
-        offset,
         attributes: [
             "id",
             "amount",
@@ -1301,27 +1356,71 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
         ],
     });
 
+    let settlementRunning = 0;
+    let walletRunning = 0;
+    let paymentsReceived = 0;
+    let withdrawalsTotal = 0;
+    let cashCollectedTotal = 0;
+
+    const enrichedAsc = rowsAsc.map((row) => {
+        const plain = row.get({ plain: true });
+        const settlementBefore = parseFloat(settlementRunning.toFixed(2));
+        const walletBefore = parseFloat(walletRunning.toFixed(2));
+        settlementRunning = parseFloat(
+            (settlementRunning + signedSettlementDelta(plain)).toFixed(2)
+        );
+        walletRunning = parseFloat((walletRunning + signedWalletDelta(plain)).toFixed(2));
+        const { moneyIn, moneyOut } = moneyInOut(plain);
+
+        if (plain.status === "completed") {
+            if (plain.referenceType === CASH_REMITTED_REFERENCE && plain.type === "credit") {
+                paymentsReceived = parseFloat((paymentsReceived + moneyIn).toFixed(2));
+            }
+            if (plain.referenceType === WITHDRAWAL_REFERENCE && plain.type === "debit") {
+                withdrawalsTotal = parseFloat((withdrawalsTotal + moneyOut).toFixed(2));
+            }
+            if (plain.referenceType === CASH_COLLECTED_REFERENCE && plain.type === "debit") {
+                cashCollectedTotal = parseFloat((cashCollectedTotal + moneyOut).toFixed(2));
+            }
+        }
+
+        return {
+            id: plain.id,
+            amount: parseFloat(plain.amount || 0),
+            currency: plain.currency,
+            type: plain.type,
+            status: plain.status,
+            description: plain.description,
+            bookingId: plain.bookingId,
+            orderTrackId: plain.booking?.orderTrackId || null,
+            referenceType: plain.referenceType,
+            label: describeWalletReferenceType(plain.referenceType, plain.type),
+            stripeTransferId: plain.stripeTransferId || null,
+            failureReason: plain.failureReason || null,
+            createdAt: plain.createdAt,
+            moneyIn,
+            moneyOut,
+            settlementBalanceBefore: settlementBefore,
+            settlementBalanceAfter: parseFloat(settlementRunning.toFixed(2)),
+            walletBalanceBefore: walletBefore,
+            walletBalanceAfter: parseFloat(walletRunning.toFixed(2)),
+            // Primary statement balance = settlement rail (cash due when negative).
+            balanceBefore: settlementBefore,
+            balanceAfter: parseFloat(settlementRunning.toFixed(2)),
+        };
+    });
+
+    const count = enrichedAsc.length;
     const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+    // Newest first for the admin table; balances already attached.
+    const transactions = enrichedAsc.slice().reverse().slice(offset, offset + limit);
+    const oldestOnPage = transactions.length
+        ? transactions[transactions.length - 1]
+        : null;
+    const newestOnPage = transactions.length ? transactions[0] : null;
 
     return {
-        transactions: rows.map((row) => {
-            const plain = row.get({ plain: true });
-            return {
-                id: plain.id,
-                amount: parseFloat(plain.amount || 0),
-                currency: plain.currency,
-                type: plain.type,
-                status: plain.status,
-                description: plain.description,
-                bookingId: plain.bookingId,
-                orderTrackId: plain.booking?.orderTrackId || null,
-                referenceType: plain.referenceType,
-                label: describeWalletReferenceType(plain.referenceType, plain.type),
-                stripeTransferId: plain.stripeTransferId || null,
-                failureReason: plain.failureReason || null,
-                createdAt: plain.createdAt,
-            };
-        }),
+        transactions,
         pagination: {
             page,
             limit,
@@ -1329,6 +1428,20 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
             totalPages,
             hasNextPage: page < totalPages,
             hasPrevPage: page > 1,
+        },
+        statement: {
+            currency: enrichedAsc[0]?.currency || DEFAULT_CURRENCY,
+            openingBalance: oldestOnPage ? oldestOnPage.balanceBefore : 0,
+            closingBalance: newestOnPage
+                ? newestOnPage.balanceAfter
+                : parseFloat(settlementRunning.toFixed(2)),
+            lifetimeSettlementBalance: parseFloat(settlementRunning.toFixed(2)),
+            lifetimeWalletBalance: parseFloat(walletRunning.toFixed(2)),
+            paymentsReceived,
+            withdrawals: withdrawalsTotal,
+            cashCollectedFromCustomers: cashCollectedTotal,
+            note:
+                "Settlement balance: negative = cash due to platform, positive = agent ahead on the cash rail. Wallet balance tracks admin payouts minus Stripe withdrawals.",
         },
     };
 }
@@ -1539,6 +1652,7 @@ async function listRecentSettlementActivity(agentUserId, limit = 12) {
             userId: agentUserId,
             referenceType: {
                 [Op.in]: [
+                    CASH_COLLECTED_REFERENCE,
                     CASH_REMITTED_REFERENCE,
                     AGENT_PAYOUT_REFERENCE,
                     WITHDRAWAL_REFERENCE,

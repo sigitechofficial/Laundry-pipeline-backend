@@ -139,6 +139,7 @@ const ROUTE_FEATURE_PREFIXES = [
 
     ['/getShopInformation', K.SHOP_MANAGEMENT],
     ['/getShopsData', K.SHOP_MANAGEMENT],
+    ['/shops', K.SHOP_MANAGEMENT],
     ['/singleShopData', K.SHOP_MANAGEMENT],
     ['/deleteShop', K.SHOP_MANAGEMENT],
     ['/getShopEmployees', K.SHOP_MANAGEMENT],

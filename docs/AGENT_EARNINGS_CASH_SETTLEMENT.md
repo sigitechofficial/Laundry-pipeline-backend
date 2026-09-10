@@ -582,7 +582,21 @@ Admin **Cash Settlement** is two rails, not one number:
 
 Recording cash (`POST /admin/agents/:id/cash-settlement`) writes `cash_remitted`. Live due can become £0; remitted history and Recent activity stay. Payout (`POST /admin/agents/:id/payout`) writes `agent_payout` and reduces payable. Stripe leaves the platform only on `agent_withdrawal`.
 
-Detail API: `GET /admin/agents/:id/settlement-detail` — `summary.rails`, `recentActivity`, `orders` (tips + clawbacks), `ledger` (`ledgerRail=cash|payable|refunds`).
+Admin detail (canonical shop id): `GET /admin/shops/:shopId/settlement-detail`. Legacy owner-user id: `GET /admin/agents/:agentId/settlement-detail`. Both return `identity.shopId`, `identity.ownerUserId`, `summary.rails`, `recentActivity` (includes cash collected), `orders`, `statement` (payments received, withdrawals, opening/closing), and `ledger` rows with `moneyIn` / `moneyOut` / `balanceBefore` / `balanceAfter` / `walletBalanceAfter` (`ledgerRail=cash|payable|refunds`).
+
+### Withdrawal requests (enterprise)
+
+1. Agent: `POST /agent/wallet/withdraw` `{ amount, note? }` → creates `agent_withdrawal` **pending** (cannot exceed available balance).  
+2. Admin queue: `GET /admin/agents/withdrawals/pending`  
+3. Approve: `PATCH /admin/agents/withdrawals/:id/approve` → Stripe Transfer to Connect, status **completed**  
+4. Reject: `PATCH /admin/agents/withdrawals/:id/reject` `{ note }` → status **failed**, balance un-reserved  
+
+Payout account (Stripe Connect by default):  
+- `GET /admin/shops/:shopId/payout-account`  
+- `POST /admin/shops/:shopId/payout-account/ensure`  
+- `POST /admin/shops/:shopId/payout-account/onboarding-link` (add/update bank in Stripe — not stored in Laundry DB)  
+
+Set `AGENT_WITHDRAW_INSTANT=1` only if you need the legacy auto-transfer behavior.
 
 ---
 

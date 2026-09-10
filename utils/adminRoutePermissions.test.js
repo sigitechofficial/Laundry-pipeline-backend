@@ -40,6 +40,14 @@ function run() {
         ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
     );
     assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/singleShopData/111/revenue' }),
+        ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/shops/111/settlement-detail' }),
+        ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
+    );
+    assert.strictEqual(
         resolveAdminFeatureKey({ path: '/getAllCustomers' }),
         ADMIN_FEATURE_KEYS.CUSTOMER_MANAGEMENT
     );

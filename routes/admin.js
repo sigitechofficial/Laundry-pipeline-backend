@@ -28,6 +28,7 @@ const shopReviewController = require('../controllers/Admin/shopReviewController'
 const mapsGeocodeController = require('../controllers/Admin/mapsGeocodeController');
 const geminiController = require('../controllers/Admin/geminiController');
 const zoneCatalogController = require('../controllers/Admin/zoneCatalogController');
+const shopRevenueController = require('../controllers/Admin/shopRevenueController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -657,6 +658,18 @@ router.patch(
     asyncMiddleware(agentSettlementController.rejectCashRemittance)
 )
 router.get(
+    '/agents/withdrawals/pending',
+    asyncMiddleware(agentSettlementController.listPendingWithdrawals)
+)
+router.patch(
+    '/agents/withdrawals/:withdrawalId/approve',
+    asyncMiddleware(agentSettlementController.approveWithdrawal)
+)
+router.patch(
+    '/agents/withdrawals/:withdrawalId/reject',
+    asyncMiddleware(agentSettlementController.rejectWithdrawal)
+)
+router.get(
     '/agents/:agentId/settlement',
     asyncMiddleware(agentSettlementController.getAgentSettlement)
 )
@@ -688,6 +701,42 @@ router.get('/getShopInformation', asyncMiddleware(adminController.getShopInforma
 router.get('/getShopsData', asyncMiddleware(adminController.shopsData))
 //Single Shop Data
 router.get('/singleShopData/:Id', asyncMiddleware(adminController.singleShopData))
+router.get(
+    '/singleShopData/:shopId/revenue',
+    asyncMiddleware(shopRevenueController.getShopRevenue)
+)
+router.get(
+    '/shops/:shopId/settlement',
+    asyncMiddleware(agentSettlementController.getShopSettlement)
+)
+router.get(
+    '/shops/:shopId/settlement-detail',
+    asyncMiddleware(agentSettlementController.getShopSettlementDetail)
+)
+router.post(
+    '/shops/:shopId/cash-settlement',
+    asyncMiddleware(agentSettlementController.recordShopCashSettlement)
+)
+router.post(
+    '/shops/:shopId/settlement-adjustment',
+    asyncMiddleware(agentSettlementController.recordShopSettlementAdjustment)
+)
+router.post(
+    '/shops/:shopId/payout',
+    asyncMiddleware(agentSettlementController.recordShopPayout)
+)
+router.get(
+    '/shops/:shopId/payout-account',
+    asyncMiddleware(agentSettlementController.getShopPayoutAccount)
+)
+router.post(
+    '/shops/:shopId/payout-account/ensure',
+    asyncMiddleware(agentSettlementController.ensureShopPayoutAccount)
+)
+router.post(
+    '/shops/:shopId/payout-account/onboarding-link',
+    asyncMiddleware(agentSettlementController.createShopPayoutOnboardingLink)
+)
 //Delete Shop (Soft Delete)
 router.delete('/deleteShop/:shopId', asyncMiddleware(adminController.deleteShop))
 //Get Shop Employees 

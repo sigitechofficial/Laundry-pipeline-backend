@@ -142,7 +142,10 @@ function buildMulticastMessage({ title, body, data = {}, tokens, tagPrefix = 'de
     android: {
       priority: 'high',
       notification: {
-        channelId: 'laundry_default',
+        // Omit channelId so each app uses its Manifest
+        // default_notification_channel_id (customer: high_importance_channel,
+        // agent: laundry_notifications_v2). Hardcoding laundry_default created
+        // a mismatched channel and could show the wrong icon/style.
         priority: 'high',
         defaultSound: true,
         defaultVibrateTimings: true,
