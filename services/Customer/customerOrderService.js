@@ -2319,7 +2319,7 @@ class CustomerOrderService {
             console.warn('[allBookings] refund aggregates skipped:', err?.message || err);
         }
 
-        const data = findAllBooking.map((row) => {
+        const bookingsWithRefunds = findAllBooking.map((row) => {
             const plain = row.get ? row.get({ plain: true }) : row;
             const agg = aggregates.get(Number(plain.id));
             const totalRefunded = agg ? Number(agg.totalRefunded || 0) : 0;
@@ -2339,7 +2339,7 @@ class CustomerOrderService {
 
         return {
             message: "Customer All Bookings",
-            data,
+            data: bookingsWithRefunds,
         };
     }
 
