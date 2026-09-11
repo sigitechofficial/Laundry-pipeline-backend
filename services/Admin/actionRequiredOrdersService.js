@@ -13,6 +13,7 @@ const {
 const {
     formatPaymentFailureReason,
 } = require('../../utils/paymentFailureLabels');
+const { ensureOrderTrackIds } = require('../../utils/orderTrackId');
 const {
     PICKUP_RESCHEDULE_STATUSES,
     DELIVERY_FAILED,
@@ -365,6 +366,11 @@ async function listActionRequiredOrders({
     add(pickupReschedule, 'pickup_reschedule');
     add(overdueDelivery, 'overdue_delivery');
     add(deliveryFailed, 'delivery_failed');
+
+    await ensureOrderTrackIds(
+        booking,
+        Array.from(byId.values()).map((entry) => entry.row)
+    );
 
     const items = Array.from(byId.values())
         .map(({ row, reasons }) => {

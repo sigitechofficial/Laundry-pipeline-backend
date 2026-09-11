@@ -57,6 +57,7 @@ const {
 } = require('../../utils/agentCommission');
 const { bookingTipAmountFromTips, summarizeTips, splitTips } = require('../../utils/bookingTips');
 const { lockPrepaidTipAmount } = require('../../utils/invoicePaymentSummary');
+const { ensureOrderTrackId, ensureOrderTrackIds } = require('../../utils/orderTrackId');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -490,6 +491,8 @@ class OrderService {
             }),
         ]);
 
+        await ensureOrderTrackIds(booking, bookings);
+
         const totalPages = Math.ceil(totalCount / limit);
         const hasNextPage = page < totalPages;
         const hasPrevPage = page > 1;
@@ -904,6 +907,8 @@ class OrderService {
         if (!orderDetails) {
             throw new Error("Order not found");
         }
+
+        await ensureOrderTrackId(booking, orderDetails);
 
         const plain = orderDetails.get
             ? orderDetails.get({ plain: true })

@@ -59,7 +59,6 @@ const {
 const {
     replaceServiceLinesForSelectedService,
 } = require('../../utils/invoiceLineTotals');
-const otpGenerator = require('otp-generator');
 const { sendEvent } = require('../../socket_io');
 const {
     ValidationError,
@@ -100,6 +99,7 @@ const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSet
 const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
 const extraTipService = require('./extraTipService');
 const { bookingTipAmountFromTips } = require('../../utils/bookingTips');
+const { generateOrderTrackId, ensureOrderTrackIds } = require('../../utils/orderTrackId');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 const {
@@ -1429,13 +1429,6 @@ class CustomerOrderService {
             userDropOffAddressId = dropOffAddressId;
         }
 
-        // Generate order tracking ID
-        const orderTrackingId = otpGenerator.generate(6, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false,
-        });
-
         // Normalize time strings to HH:mm:ss format before saving as-is
         const normalizedCollectionTimeFrom = this._getTimePart(collectionTimeFrom, 'collectionTimeFrom');
         const normalizedCollectionTimeTo   = this._getTimePart(collectionTimeTo,   'collectionTimeTo');
@@ -1490,6 +1483,9 @@ class CustomerOrderService {
             operationalTimeZone,
             customerLocalTimeZone,
         });
+
+        const ordertrackingNumber = generateOrderTrackId(bookingData.id);
+        await bookingData.update({ orderTrackId: ordertrackingNumber });
 
         // Prime recurring plan link early for non-"Just Once" bookings so
         // delivery completion can generate the next cycle idempotently.
@@ -1764,7 +1760,6 @@ class CustomerOrderService {
             );
         }
 
-        const ordertrackingNumber = `${bookingData.id}-${orderTrackingId}`;
         const upfrontAmount = zoneUpfrontAmount;
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
@@ -2307,6 +2302,8 @@ class CustomerOrderService {
         if (!findAllBooking || findAllBooking.length === 0) {
             throw new NotFoundError("No Bookings Found");
         }
+
+        await ensureOrderTrackIds(booking, findAllBooking);
 
         let aggregates = new Map();
         try {
