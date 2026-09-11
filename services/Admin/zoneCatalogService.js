@@ -22,7 +22,9 @@ const {
   money,
   mergeOverridePatch,
   effectiveDisplayPrice,
+  enabledOf,
 } = require("../../utils/zoneCatalogRules");
+const { findZones } = require("../../utils/findZones");
 
 async function overlaysEnabled() {
   try {
@@ -98,9 +100,25 @@ async function loadMaps(zoneId) {
   };
 }
 
-function enabledOf(row, fallback = true) {
-  if (!row) return fallback;
-  return row.isEnabled !== false;
+async function resolveCatalogZoneId({ lat, lng, zoneId } = {}) {
+  let catalogZoneId = Number(zoneId) > 0 ? Number(zoneId) : null;
+  if (!catalogZoneId && lat != null && lng != null) {
+    const parsedLat = parseFloat(lat);
+    const parsedLng = parseFloat(lng);
+    if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
+      const matched = await findZones(parsedLat, parsedLng);
+      catalogZoneId = matched?.[0]?.id || null;
+    }
+  }
+  return catalogZoneId;
+}
+
+async function filterEnabledServices(list, zoneId) {
+  if (!zoneId) return list || [];
+  const maps = await loadMaps(zoneId);
+  return (list || []).filter((svc) =>
+    enabledOf(maps.service.get(Number(svc.id ?? svc.serviceId)))
+  );
 }
 
 async function resolvePrice(zoneId, selector = {}) {
@@ -165,8 +183,8 @@ function applyItemPrice(plain, maps, overlaysOn) {
 }
 
 async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
+  if (!zoneId) return tree;
   const overlaysOn = await overlaysEnabled();
-  if (!overlaysOn || !zoneId) return tree;
   const maps = await loadMaps(zoneId);
   if (serviceId && !enabledOf(maps.service.get(Number(serviceId)))) {
     return [];
@@ -179,7 +197,7 @@ async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
     const items = (row.category?.subCategories || [])
       .map((sub) => (sub.toJSON ? sub.toJSON() : sub))
       .filter((plain) => enabledOf(maps.item.get(Number(plain.id))))
-      .map((plain) => applyItemPrice(plain, maps, true));
+      .map((plain) => applyItemPrice(plain, maps, overlaysOn));
     if (!items.length) continue;
     out.push({
       ...row,
@@ -256,8 +274,7 @@ async function loadMasterAttachMap() {
 }
 
 async function isAddOnCategoryAttached(zoneId, subCategoryId, addOnCategoryId, masterAttached) {
-  const overlaysOn = await overlaysEnabled();
-  if (!overlaysOn || !zoneId) return Boolean(masterAttached);
+  if (!zoneId) return Boolean(masterAttached);
   const maps = await loadMaps(zoneId);
   const itemMap = maps.attach.get(Number(subCategoryId));
   const ov = itemMap?.get(Number(addOnCategoryId));
@@ -274,7 +291,7 @@ async function applyToAddOnRows(rows, zoneId, { subCategoryId } = {}) {
     const plain = row.toJSON ? row.toJSON() : row;
     return { ...plain, price: money(plain.price), priceInherited: true };
   });
-  if (!overlaysOn || !zoneId) {
+  if (!zoneId) {
     return mapped;
   }
   const maps = await loadMaps(zoneId);
@@ -299,6 +316,7 @@ async function applyToAddOnRows(rows, zoneId, { subCategoryId } = {}) {
       return true;
     })
     .map((plain) => {
+      if (!overlaysOn) return plain;
       const ov = maps.addOn.get(Number(plain.id));
       if (ov && ov.price != null && ov.price !== "") {
         return { ...plain, price: money(ov.price), priceInherited: false };
@@ -309,17 +327,16 @@ async function applyToAddOnRows(rows, zoneId, { subCategoryId } = {}) {
 
 async function applyToRepairOptions(options, zoneId) {
   const overlaysOn = await overlaysEnabled();
-  if (!overlaysOn || !zoneId) {
-    return (options || []).map((row) => {
-      const plain = row.toJSON ? row.toJSON() : row;
-      return { ...plain, price: money(plain.price), priceInherited: true };
-    });
-  }
+  const mapped = (options || []).map((row) => {
+    const plain = row.toJSON ? row.toJSON() : row;
+    return { ...plain, price: money(plain.price), priceInherited: true };
+  });
+  if (!zoneId) return mapped;
   const maps = await loadMaps(zoneId);
-  return (options || [])
-    .map((row) => (row.toJSON ? row.toJSON() : row))
+  return mapped
     .filter((plain) => enabledOf(maps.repairOption.get(Number(plain.id))))
     .map((plain) => {
+      if (!overlaysOn) return plain;
       const ov = maps.repairOption.get(Number(plain.id));
       if (ov && ov.price != null && ov.price !== "") {
         return { ...plain, price: money(ov.price), priceInherited: false };
@@ -329,8 +346,7 @@ async function applyToRepairOptions(options, zoneId) {
 }
 
 async function applyToRepairGarments(garments, zoneId) {
-  const overlaysOn = await overlaysEnabled();
-  if (!overlaysOn || !zoneId) {
+  if (!zoneId) {
     const mapped = [];
     for (const g of garments || []) {
       const plain = g.toJSON ? g.toJSON() : g;
@@ -558,7 +574,7 @@ function catalogLinePrice(masterPrice, overrideRow, overlaysOn) {
 }
 
 async function assertLineEnabled(zoneId, { serviceId, categoryId, subCategoryId } = {}) {
-  if (!(await overlaysEnabled()) || !zoneId) return;
+  if (!zoneId) return;
   const maps = await loadMaps(zoneId);
   if (serviceId && !enabledOf(maps.service.get(Number(serviceId)))) {
     throw new ValidationError("Service is not available in this zone");
@@ -824,6 +840,8 @@ async function healthProbe() {
 
 module.exports = {
   overlaysEnabled,
+  resolveCatalogZoneId,
+  filterEnabledServices,
   resolvePrice,
   applyToServiceCategoriesData,
   applyToAddOnRows,

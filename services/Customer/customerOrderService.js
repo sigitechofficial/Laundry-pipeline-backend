@@ -2940,7 +2940,7 @@ class CustomerOrderService {
      * Get All Services
      * @returns {Object} - Result object with services data
      */
-    async allServices() {
+    async allServices(data = {}) {
         const rows = await service.findAll({
             where: { status: true },
             order: [['sortOrder', 'ASC']],
@@ -2950,7 +2950,7 @@ class CustomerOrderService {
             throw new NotFoundError("No Services Found");
         }
 
-        const serviceData = rows.map((row) => {
+        let serviceData = rows.map((row) => {
             const plain = row.toJSON ? row.toJSON() : row;
             return {
                 ...plain,
@@ -2959,6 +2959,14 @@ class CustomerOrderService {
                 washBleedDisclaimerEnabled: Boolean(plain.washBleedDisclaimerEnabled),
             };
         });
+
+        const catalogZoneId = await zoneCatalogService.resolveCatalogZoneId(data);
+        if (catalogZoneId) {
+            serviceData = await zoneCatalogService.filterEnabledServices(
+                serviceData,
+                catalogZoneId
+            );
+        }
 
         return {
             message: "All Services",
@@ -2995,15 +3003,11 @@ class CustomerOrderService {
         }
 
         const result = [];
-        let catalogZoneId = Number(requestedZoneId) > 0 ? Number(requestedZoneId) : null;
-        if (!catalogZoneId && lat != null && lng != null) {
-            const parsedLat = parseFloat(lat);
-            const parsedLng = parseFloat(lng);
-            if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
-                const matchedZones = await findZones(parsedLat, parsedLng);
-                catalogZoneId = matchedZones?.[0]?.id || null;
-            }
-        }
+        const catalogZoneId = await zoneCatalogService.resolveCatalogZoneId({
+            lat,
+            lng,
+            zoneId: requestedZoneId,
+        });
 
         for (const svc of activeServices) {
             let serviceCategoriesData =

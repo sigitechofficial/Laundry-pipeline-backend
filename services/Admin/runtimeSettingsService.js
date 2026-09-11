@@ -97,7 +97,7 @@ const DEFINITIONS = {
     type: "boolean",
     label: "Zone catalog overlays",
     description:
-      "When on, browse and charge use per-zone price / availability overlays. Off = inherit master everywhere (today).",
+      "When on, browse and charge use per-zone price overlays. Hidden services are always omitted for that zone, even when this is off.",
     group: "catalog",
     envKey: "ZONE_CATALOG_OVERRIDES",
     defaultValue: false,

@@ -6,6 +6,7 @@ const {
   attachKey,
   money,
   parseEnabled,
+  enabledOf,
   mergeOverridePatch,
   effectiveDisplayPrice,
 } = require("../utils/zoneCatalogRules");
@@ -26,6 +27,9 @@ assert.strictEqual(parseEnabled(false), false);
 assert.strictEqual(parseEnabled("false"), false);
 assert.strictEqual(parseEnabled(0), false);
 assert.strictEqual(parseEnabled(true), true);
+assert.strictEqual(enabledOf(undefined), true);
+assert.strictEqual(enabledOf({ isEnabled: false }), false);
+assert.strictEqual(enabledOf({ isEnabled: true }), true);
 
 const createPriceOnly = mergeOverridePatch({ price: "9.50" }, { hasPrice: true, creating: true });
 assert.strictEqual(createPriceOnly.isEnabled, true);

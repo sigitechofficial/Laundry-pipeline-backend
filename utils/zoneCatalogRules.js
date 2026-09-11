@@ -24,6 +24,12 @@ function parseEnabled(value) {
   return true;
 }
 
+/** Missing overlay row inherits master (visible). */
+function enabledOf(row, fallback = true) {
+  if (!row) return fallback;
+  return row.isEnabled !== false;
+}
+
 /**
  * Partial upsert: saving a price must not re-enable a hidden row.
  * Creating a row still defaults isEnabled=true when omitted.
@@ -66,6 +72,7 @@ module.exports = {
   effectiveAttach,
   money,
   parseEnabled,
+  enabledOf,
   mergeOverridePatch,
   effectiveDisplayPrice,
 };

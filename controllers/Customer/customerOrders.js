@@ -55,6 +55,7 @@ const {
     activePoliciesService,
     bannerService
 } = require('../../services/Admin');
+const zoneCatalogService = require('../../services/Admin/zoneCatalogService');
 const { sendEmailViaAPI } = require('../../helper/zeptomailApi');
 
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
@@ -249,10 +250,8 @@ async function trackOrder(req, res) {
  * Services For the Customer
  */
 async function allServices(req, res) {
-    // Call service to handle business logic
-    const result = await customerOrderService.allServices();
+    const result = await customerOrderService.allServices(req.query || {});
 
-    // Return response using ResponseHelper success method
     return ResponseHelper.success(res, result.message, result.data);
 }
 
@@ -425,6 +424,15 @@ async function getOnHoldBookingsForCustomer(req, res) {
 async function getAllServiceWithPreferenceDetails(req, res) {
     const { serviceId } = req.params;
     const getData = await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId);
+    const catalogZoneId = await zoneCatalogService.resolveCatalogZoneId(req.query || {});
+    if (catalogZoneId) {
+        getData.serviceCategoriesData =
+            await zoneCatalogService.applyToServiceCategoriesData(
+                getData.serviceCategoriesData,
+                catalogZoneId,
+                serviceId
+            );
+    }
     return ResponseHelper.success(res, "All Preferences and Services Data Fetched", getData);
 }
 
