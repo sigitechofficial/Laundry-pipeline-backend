@@ -1,7 +1,8 @@
 /**
  * Customer/agent-facing payment breakdown for laundry orders.
  *
- * Card: minimum + service fee + tip collected at pickup; credited on final invoice.
+ * Card: minimum + service fee + prepaid tip collected at pickup; credited on final invoice.
+ * Invoice-time tip increases are not prepaid — they add to amount due.
  * Cash: nothing at pickup; minimum (as laundry floor), service fee, and tip due at delivery.
  */
 
@@ -17,25 +18,64 @@ function normalizePaymentType(value) {
 }
 
 /**
+ * Tip collected in the pickup auth hold. Cash collects nothing at pickup.
+ * `prepaidDriverTip` null/undefined = legacy (assume current tip was prepaid).
+ */
+function resolvePrepaidDriverTip(paymentType, driverTip, prepaidDriverTip) {
+    if (normalizePaymentType(paymentType) === "cash") return 0;
+    if (
+        prepaidDriverTip === undefined ||
+        prepaidDriverTip === null ||
+        prepaidDriverTip === ""
+    ) {
+        return roundMoney(driverTip);
+    }
+    return roundMoney(prepaidDriverTip);
+}
+
+/**
+ * Snapshot pickup tip before admin/invoice overwrites the tips row.
+ */
+function lockPrepaidTipAmount(paymentType, existingPrepaid, previousTip) {
+    if (
+        existingPrepaid !== undefined &&
+        existingPrepaid !== null &&
+        existingPrepaid !== ""
+    ) {
+        return roundMoney(existingPrepaid);
+    }
+    if (normalizePaymentType(paymentType) === "cash") return 0;
+    return roundMoney(previousTip);
+}
+
+/**
  * Card bookings — minimum credited toward laundry on final invoice.
+ * Unpaid invoice-time tip (current tip minus prepaidDriverTip) is added to amount due.
  */
 function buildPaymentSummary({
     laundrySubtotal,
     serviceFee,
     minimumOrderPayment,
     driverTip,
+    prepaidDriverTip,
     discount = 0,
     currency = "GBP",
     currencySymbol = "£",
+    paymentType = "card",
 }) {
     const laundry = roundMoney(laundrySubtotal);
     const service = roundMoney(serviceFee);
     const minimum = roundMoney(minimumOrderPayment);
     const tip = roundMoney(driverTip);
+    const prepaidTip = resolvePrepaidDriverTip(
+        paymentType,
+        tip,
+        prepaidDriverTip
+    );
     const disc = roundMoney(discount);
 
     const totalOrderAmount = roundMoney(laundry + service + tip);
-    const totalPaid = roundMoney(minimum + service + tip);
+    const totalPaid = roundMoney(minimum + service + prepaidTip);
     const amountDueNow = roundMoney(Math.max(0, totalOrderAmount - totalPaid - disc));
 
     return {
@@ -55,7 +95,7 @@ function buildPaymentSummary({
         paidAtBooking: {
             minimumOrderPayment: minimum,
             serviceFee: service,
-            driverTip: tip,
+            driverTip: prepaidTip,
             totalPaid,
         },
         amountDueNow,
@@ -117,7 +157,7 @@ function buildPaymentSummaryForBooking(paymentType, params) {
     if (normalizePaymentType(paymentType) === "cash") {
         return buildCashPaymentSummary(params);
     }
-    return buildPaymentSummary(params);
+    return buildPaymentSummary({ ...params, paymentType });
 }
 
 /**
@@ -344,5 +384,7 @@ module.exports = {
     resolveBalancePaymentMethod,
     enrichPaymentSummary,
     buildCollectPaymentFlags,
+    resolvePrepaidDriverTip,
+    lockPrepaidTipAmount,
     roundMoney,
 };

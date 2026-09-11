@@ -725,6 +725,8 @@ async function generateNextBookingFromCompleted({
         serviceCharge,
         categoryCharge: 0,
         paymentStatus: 'Pending',
+        prepaidTipAmount:
+          String(source.paymentType || '').toLowerCase() === 'cash' ? 0 : tipAmount,
       },
       { transaction: tx }
     );

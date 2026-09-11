@@ -41,7 +41,7 @@ const {
     sumActiveBookingServicesSubtotal,
     computePhysicalTotalItems,
 } = require("../../utils/invoiceLineTotals");
-const { buildPaymentSummary, buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
+const { buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
@@ -285,6 +285,7 @@ class AgentInvoiceManagementService {
                     "serviceCharge",
                     "categoryCharge",
                     "paymentStatus",
+                    "prepaidTipAmount",
                 ],
             },
             {
@@ -600,6 +601,7 @@ class AgentInvoiceManagementService {
                 serviceFee: parsedServiceCharge,
                 minimumOrderPayment: parsedZoneMinimum,
                 driverTip: tipAmount,
+                prepaidDriverTip: existingBilling?.prepaidTipAmount,
                 discount: existingDiscount,
             }),
             {
@@ -679,6 +681,7 @@ class AgentInvoiceManagementService {
                         "discount",
                         "total",
                         "paymentStatus",
+                        "prepaidTipAmount",
                     ],
                 },
             ],
@@ -919,11 +922,12 @@ class AgentInvoiceManagementService {
         const billing = bookingData.billingDetail || {};
         const tipAmount = bookingTipAmountFromTips(bookingData.tips);
 
-        const paymentSummary = buildPaymentSummary({
+        const paymentSummary = buildPaymentSummaryForBooking(bookingData.paymentType, {
             laundrySubtotal: servicesSubtotal,
             serviceFee: parseFloat(billing.serviceCharge || 0),
             minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
             driverTip: tipAmount,
+            prepaidDriverTip: billing.prepaidTipAmount,
             discount: parseFloat(billing.discount || 0),
         });
 

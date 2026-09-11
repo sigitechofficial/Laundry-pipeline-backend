@@ -55,7 +55,8 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require('../../utils/agentCommission');
-const { bookingTipAmountFromTips, summarizeTips } = require('../../utils/bookingTips');
+const { bookingTipAmountFromTips, summarizeTips, splitTips } = require('../../utils/bookingTips');
+const { lockPrepaidTipAmount } = require('../../utils/invoicePaymentSummary');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -1531,9 +1532,23 @@ class OrderService {
 
         // Update tip if provided (tips table only — bookings has no tipId column)
         if (tipAmount !== undefined) {
-            const existingTip = Array.isArray(existingOrder.tips) && existingOrder.tips.length > 0
-                ? existingOrder.tips[0]
-                : null;
+            const existingBillingForTip = await billingDetails.findOne({
+                where: { bookingId: orderId },
+            });
+            const prepaidTipAmount = lockPrepaidTipAmount(
+                existingOrder.paymentType,
+                existingBillingForTip?.prepaidTipAmount,
+                bookingTipAmountFromTips(existingOrder.tips)
+            );
+            if (existingBillingForTip) {
+                await billingDetails.update(
+                    { prepaidTipAmount },
+                    { where: { bookingId: orderId } }
+                );
+            }
+
+            const { bookingTips } = splitTips(existingOrder.tips);
+            const existingTip = bookingTips[0] || null;
 
             if (existingTip) {
                 await tip.update(
@@ -1544,12 +1559,13 @@ class OrderService {
                 await tip.create({
                     bookingId: orderId,
                     amount: tipAmount,
+                    source: 'booking',
                 });
             }
         }
 
         // After line/tip changes, recompute invoice like agent updateInvoice
-        if (syncedInvoiceLines) {
+        if (syncedInvoiceLines || tipAmount !== undefined) {
             const refreshedBooking = await booking.findByPk(orderId, {
                 include: [
                     {
@@ -1599,6 +1615,9 @@ class OrderService {
                 zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
                 agentEarning: totals.finalAgentEarningAmount,
             };
+            if (existingBilling?.prepaidTipAmount != null) {
+                billingPayload.prepaidTipAmount = existingBilling.prepaidTipAmount;
+            }
             if (existingBilling) {
                 await billingDetails.update(billingPayload, { where: { bookingId: orderId } });
             } else {

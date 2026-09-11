@@ -64,7 +64,11 @@ module.exports = (sequelize, DataTypes) => {
     paymentStatus: {
       type: DataTypes.ENUM('Paid','Pending','Failed'),
       defaultValue: 'Pending'
-    }
+    },
+    prepaidTipAmount: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+    },
   }, {
     sequelize,
     modelName: 'billingDetails',

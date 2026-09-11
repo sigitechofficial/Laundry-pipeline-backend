@@ -1782,6 +1782,7 @@ class CustomerOrderService {
             discount,
             total: discountedTotal,
             paymentStatus: "Pending",
+            prepaidTipAmount: paymentType === "cash" ? 0 : parsedTip,
         });
 
         // Record coupon redemption after billing is created
@@ -2558,7 +2559,7 @@ class CustomerOrderService {
                 {
                     model: billingDetails,
                     as: 'billingDetail',
-                    attributes: ["id", "upfrontAmount", "discount", "total", "zoneAdminCommission", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus"],
+                    attributes: ["id", "upfrontAmount", "discount", "total", "zoneAdminCommission", "serviceCharge", "categoryCharge", "pickupDriverEarning", "deliveryDriverEarning", "paymentStatus", "prepaidTipAmount"],
                     required: false,
                 },
                 {
@@ -2738,6 +2739,7 @@ class CustomerOrderService {
                 serviceFee,
                 minimumOrderPayment,
                 driverTip: tipAmount,
+                prepaidDriverTip: billing.prepaidTipAmount,
                 discount: parseFloat(billing.discount || 0),
                 currency,
                 currencySymbol,
