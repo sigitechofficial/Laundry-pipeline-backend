@@ -1,6 +1,9 @@
 const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
-const { Op } = require('sequelize');
+const { Op, UniqueConstraintError, ValidationError: SequelizeValidationError } = require('sequelize');
+const bcrypt = require('bcryptjs');
+const stripe = require('../../controllers/stripe');
+const signupWelcomeMail = require('../../helper/signupWelcomeMail');
 const {
     ValidationError,
     NotFoundError,
@@ -151,6 +154,121 @@ class CustomerService {
                 activeUser: activeUser,
                 RepeatedCustomers: repeatCustomersCount
             };
+    }
+
+    /**
+     * Admin-created customer: verified immediately so they can sign in to the app.
+     * Super Admin and staff with customerManagement create can call this.
+     */
+    async addCustomer(customerData) {
+        const firstName = String(customerData?.firstName || '').trim();
+        const lastName = String(customerData?.lastName || '').trim();
+        const email = String(customerData?.email || '').trim().toLowerCase();
+        const phoneNum = String(customerData?.phoneNum || '').trim();
+        const password = String(customerData?.password || '');
+        const countryCode = customerData?.countryCode
+            ? String(customerData.countryCode).trim()
+            : null;
+
+        if (!firstName || !lastName || !email || !phoneNum || !password) {
+            throw new ValidationError(
+                'firstName, lastName, email, phoneNum and password are required'
+            );
+        }
+        if (password.length < 6) {
+            throw new ValidationError('Password must be at least 6 characters');
+        }
+
+        const existingEmail = await users.findOne({
+            where: { email, deletedAt: { [Op.is]: null } },
+            attributes: ['id', 'userTypeId', 'verifiedAt'],
+        });
+        if (existingEmail) {
+            throw new ConflictError(
+                'An account with this email already exists. Please use a different email.'
+            );
+        }
+
+        const existingPhone = await users.findOne({
+            where: {
+                phoneNum,
+                deletedAt: { [Op.is]: null },
+                userTypeId: 2,
+            },
+            attributes: ['id'],
+        });
+        if (existingPhone) {
+            throw new ConflictError(
+                'A customer with this phone number already exists. Please use a different number.'
+            );
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        let user;
+        try {
+            user = await users.create({
+                firstName,
+                lastName,
+                email,
+                phoneNum,
+                countryCode,
+                password: hashedPassword,
+                userTypeId: 2,
+                status: true,
+                verifiedAt: new Date(),
+            });
+        } catch (dbError) {
+            if (dbError instanceof UniqueConstraintError) {
+                throw new ConflictError(
+                    'An account with this email already exists. Please use a different email.'
+                );
+            }
+            if (dbError instanceof SequelizeValidationError) {
+                const messages = dbError.errors.map((e) => e.message).join(', ');
+                throw new ValidationError(`Invalid data: ${messages}`);
+            }
+            throw dbError;
+        }
+
+        let stripeCustomerId = null;
+        try {
+            stripeCustomerId = await stripe.createStripeCustomer(
+                `${firstName} ${lastName}`.trim(),
+                email
+            );
+            await users.update(
+                { stripeCustomerId },
+                { where: { id: user.id } }
+            );
+        } catch (stripeError) {
+            console.error(
+                '⚠️ Admin addCustomer Stripe failed (account still created):',
+                stripeError.message || stripeError
+            );
+        }
+
+        try {
+            await signupWelcomeMail({
+                email,
+                userName: firstName || 'Customer',
+            });
+        } catch (mailError) {
+            console.error(
+                '⚠️ Admin addCustomer welcome email failed (non-blocking):',
+                mailError.message || mailError
+            );
+        }
+
+        return {
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            phoneNum: user.phoneNum,
+            status: user.status,
+            verifiedAt: user.verifiedAt,
+            stripeCustomerId,
+        };
     }
 
     /**

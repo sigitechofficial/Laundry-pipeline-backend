@@ -464,6 +464,8 @@ router.get('/customerCount', asyncMiddleware(adminController.customerCount))
 router.get('/specificCustomerDetails/:customerId', asyncMiddleware(adminController.specificCustomerDetails))
 //Update Customer
 router.patch('/updateCustomer/:customerId', asyncMiddleware(adminController.updateCustomer))
+// Add / register a customer (admin or staff with create)
+router.post('/addCustomer', asyncMiddleware(adminController.addCustomer))
 //Delete Customer
 router.delete('/deleteCustomer/:customerId', asyncMiddleware(adminController.deleteCustomer))
 //!-----------------------------Driver Management------------------------------//

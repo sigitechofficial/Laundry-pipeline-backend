@@ -183,6 +183,10 @@ async function updateCustomer(req, res) {
     return ResponseHelper.success(res, "Customer updated successfully", result);
 }
 
+async function addCustomer(req, res) {
+    const result = await customerService.addCustomer(req.body || {});
+    return ResponseHelper.success(res, "Customer registered successfully", result);
+}
 
 /*
   * Delete Customer
@@ -3033,6 +3037,7 @@ module.exports = {
     customerCount,
     specificCustomerDetails,
     updateCustomer,
+    addCustomer,
     deleteCustomer,
     //!-----------Driver Management----------//
     countTotalDrivers,

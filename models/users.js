@@ -195,6 +195,10 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.STRING,
       allowNull:true
     },
+    userTypeId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     ianaTimeZone: {
       type: DataTypes.STRING(64),
       allowNull: true,

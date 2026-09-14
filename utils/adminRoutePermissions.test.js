@@ -48,7 +48,11 @@ function run() {
         ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
     );
     assert.strictEqual(
-        resolveAdminFeatureKey({ path: '/getAllCustomers' }),
+        resolveAdminFeatureKey({ path: '/addCustomer' }),
+        ADMIN_FEATURE_KEYS.CUSTOMER_MANAGEMENT
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/addCustomer' }),
         ADMIN_FEATURE_KEYS.CUSTOMER_MANAGEMENT
     );
     assert.strictEqual(
