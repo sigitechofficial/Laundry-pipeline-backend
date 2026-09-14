@@ -147,6 +147,7 @@ async function run() {
             isPlatformAdmin: false,
             classifiedAsId: 2,
             roleId: 7,
+            roleScope: 'zone',
             zoneId: 3,
         },
     };
@@ -165,6 +166,7 @@ async function run() {
             isPlatformAdmin: false,
             classifiedAsId: 2,
             roleId: 7,
+            roleScope: 'zone',
             zoneId: 3,
         },
     };
@@ -194,6 +196,66 @@ async function run() {
     });
     assert.strictEqual(platformFilter.continued, true);
     assert.strictEqual(platformFilter.res.statusCode, null);
+
+    const platformStaffNoZone = await invokeMiddleware(enforceAdminZoneScope, {
+        method: 'GET',
+        path: '/adminDashboard',
+        query: {},
+        body: {},
+        user: { id: 55, classifiedAsId: 2, roleId: 99, roleScope: 'platform' },
+        adminAuthz: {
+            isPlatformAdmin: false,
+            classifiedAsId: 2,
+            roleId: 99,
+            roleScope: 'platform',
+            zoneId: null,
+        },
+    });
+    assert.strictEqual(platformStaffNoZone.continued, true, 'platform staff without a zone must pass zone middleware');
+    assert.strictEqual(platformStaffNoZone.res.statusCode, null);
+
+    const zoneStaffNoZone = await invokeMiddleware(enforceAdminZoneScope, {
+        method: 'GET',
+        path: '/adminDashboard',
+        query: {},
+        body: {},
+        user: { id: 44, classifiedAsId: 2, roleId: 7, roleScope: 'zone' },
+        adminAuthz: {
+            isPlatformAdmin: false,
+            classifiedAsId: 2,
+            roleId: 7,
+            roleScope: 'zone',
+            zoneId: null,
+        },
+    });
+    assert.strictEqual(zoneStaffNoZone.continued, false, 'zone staff without a zone must be denied');
+    assert.strictEqual(zoneStaffNoZone.res.statusCode, 403);
+    assert.match(String(zoneStaffNoZone.res.body.error), /no zone assigned/i);
+
+    checkPermission.clearCaches();
+    const platformStaffDash = checkPermission.create({
+        loadUser: async () => ({
+            id: 55,
+            classifiedAsId: 2,
+            roleId: 99,
+            roleScope: 'platform',
+        }),
+        loadZoneIdForAdmin: async () => {
+            throw new Error('platform staff must not need a zone lookup');
+        },
+        loadFeatureIdByKey: async (key) => (key === 'dashboard' ? 1 : null),
+        loadPermission: async () => ({ create: false, read: true, update: false, delete: false }),
+    });
+    const dashOk = await invokeMiddleware(platformStaffDash, {
+        method: 'GET',
+        path: '/adminDashboard',
+        headers: {},
+        query: {},
+        body: {},
+        user: { id: 55, classifiedAsId: 2, roleId: 99, roleScope: 'platform' },
+    });
+    assert.strictEqual(dashOk.continued, true, 'platform staff with dashboard read must reach GET /adminDashboard');
+    assert.strictEqual(dashOk.res.statusCode, null);
 
     console.log('adminAuthorization tests passed');
 }

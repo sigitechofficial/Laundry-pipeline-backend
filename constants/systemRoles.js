@@ -23,6 +23,12 @@ const CLASSIFIED_AS = Object.freeze({
     ADMIN_EMPLOYEE: 2,
 });
 
+/** Admin-portal role geography. Zone Manager is zone-forced; others are platform-wide. */
+const ROLE_SCOPE = Object.freeze({
+    PLATFORM: 'platform',
+    ZONE: 'zone',
+});
+
 const SYSTEM_ROLES = Object.freeze({
     LAUNDRY_SHOP_DRIVER: 6,
     ZONE_ADMIN: 7,
@@ -92,8 +98,20 @@ function isAdminPortalRoleName(name) {
     return ADMIN_PORTAL_ROLE_NAMES.includes(normalizeRoleName(name));
 }
 
+function normalizeRoleScope(value, roleId) {
+    if (isAdminPortalRoleId(roleId)) return ROLE_SCOPE.ZONE;
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === ROLE_SCOPE.ZONE || raw === ROLE_SCOPE.PLATFORM) return raw;
+    return ROLE_SCOPE.PLATFORM;
+}
+
+function isZoneScopedRole({ roleId, scope } = {}) {
+    return normalizeRoleScope(scope, roleId) === ROLE_SCOPE.ZONE;
+}
+
 module.exports = {
     CLASSIFIED_AS,
+    ROLE_SCOPE,
     SYSTEM_ROLES,
     AGENT_SHOP_STAFF_ROLE_IDS,
     ADMIN_PORTAL_ROLE_IDS,
@@ -109,4 +127,6 @@ module.exports = {
     isSystemRoleId,
     isAgentShopRoleName,
     isAdminPortalRoleName,
+    normalizeRoleScope,
+    isZoneScopedRole,
 };

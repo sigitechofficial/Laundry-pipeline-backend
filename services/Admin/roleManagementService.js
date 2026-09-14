@@ -6,15 +6,18 @@ const {
     ConflictError,
 } = require('../../middlewares/universalErrorHandler');
 const {
-    ALL_SYSTEM_ROLE_IDS,
     AGENT_SHOP_STAFF_ROLE_IDS,
     ADMIN_PORTAL_ROLE_IDS,
     SYSTEM_ROLE_NAMES,
+    ADMIN_APP_FEATURE_OF,
+    ROLE_SCOPE,
     isSystemRoleId,
     isAgentShopRoleName,
     isAdminPortalRoleName,
     normalizeRoleName,
+    normalizeRoleScope,
 } = require('../../constants/systemRoles');
+const checkPermission = require('../../middlewares/checkPermission');
 
 function buildPermissionRows(permissionRole, roleId) {
     if (!Array.isArray(permissionRole)) return [];
@@ -38,6 +41,42 @@ function buildPermissionRows(permissionRole, roleId) {
     }
 
     return rows;
+}
+
+function serializeRolePermissions(permissionRows) {
+    if (!Array.isArray(permissionRows)) return [];
+    return permissionRows.map((p) => {
+        const feature = p.feature || {};
+        return {
+            featureId: p.featureId,
+            key: feature.key || null,
+            title: feature.title || null,
+            featureOf: feature.featureOf || null,
+            create: Boolean(p.create),
+            read: Boolean(p.read),
+            update: Boolean(p.update),
+            delete: Boolean(p.delete),
+        };
+    });
+}
+
+async function adminPortalFeatureIds(featureIds) {
+    if (!featureIds.length) return [];
+    const rows = await features.findAll({
+        where: {
+            id: { [Op.in]: featureIds },
+            featureOf: { [Op.in]: [...ADMIN_APP_FEATURE_OF] },
+        },
+        attributes: ['id'],
+    });
+    return rows.map((row) => row.id);
+}
+
+async function filterAdminPortalPermissionRole(permissionRole) {
+    if (!Array.isArray(permissionRole)) return [];
+    const incomingIds = permissionRole.map((item) => item?.id).filter(Boolean);
+    const allowed = new Set(await adminPortalFeatureIds(incomingIds));
+    return permissionRole.filter((item) => allowed.has(item?.id));
 }
 
 function assertCanMutateRole(roleId, { allowPermissionReplace = false } = {}) {
@@ -101,29 +140,34 @@ class RoleManagementService {
         }
 
         if (Array.isArray(roleData.permissionRole) && roleData.permissionRole.length > 0) {
+            roleData.permissionRole = await filterAdminPortalPermissionRole(roleData.permissionRole);
+
             const incomingFeatureIds = roleData.permissionRole
                 .map(item => item?.id)
                 .filter(Boolean);
 
-            const existingFeatures = await features.findAll({
-                where: { id: { [Op.in]: incomingFeatureIds } },
-                attributes: ['id'],
-            });
+            if (incomingFeatureIds.length) {
+                const existingFeatures = await features.findAll({
+                    where: { id: { [Op.in]: incomingFeatureIds } },
+                    attributes: ['id'],
+                });
 
-            const existingIds = existingFeatures.map(f => f.id);
-            const missingIds  = incomingFeatureIds.filter(id => !existingIds.includes(id));
+                const existingIds = existingFeatures.map(f => f.id);
+                const missingIds  = incomingFeatureIds.filter(id => !existingIds.includes(id));
 
-            if (missingIds.length > 0) {
-                throw new ValidationError(
-                    `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
-                    `Please create the features first using /addfeatures before assigning permissions.`
-                );
+                if (missingIds.length > 0) {
+                    throw new ValidationError(
+                        `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
+                        `Please create the features first using /addfeatures before assigning permissions.`
+                    );
+                }
             }
         }
 
         const createData = {
             name,
-            status: roleData.status !== undefined ? roleData.status : true
+            status: roleData.status !== undefined ? roleData.status : true,
+            scope: normalizeRoleScope(roleData.scope, null),
         };
 
         const roleCreate = await roles.create(createData);
@@ -132,7 +176,8 @@ class RoleManagementService {
         if (permissionRows.length) {
             await permissions.bulkCreate(permissionRows);
         }
-        
+
+        checkPermission.clearCaches();
         return roleCreate;
     }
 
@@ -144,12 +189,24 @@ class RoleManagementService {
         const audience = opts.audience || 'all';
         const getRoles = await roles.findAll({
             order: [['id', 'ASC']],
+            include: [{
+                model: permissions,
+                required: false,
+                attributes: ['featureId', 'create', 'read', 'update', 'delete'],
+                include: [{
+                    model: features,
+                    attributes: ['id', 'key', 'title', 'featureOf', 'status'],
+                    required: false,
+                }],
+            }],
         });
 
         const tagged = getRoles.map((r) => {
             const plain = r.get ? r.get({ plain: true }) : { ...r };
             plain.audience = roleAudience(plain);
             plain.isSystem = isSystemRoleId(plain.id);
+            plain.scope = normalizeRoleScope(plain.scope, plain.id);
+            plain.permissions = serializeRolePermissions(plain.permissions);
             return plain;
         });
 
@@ -198,6 +255,11 @@ class RoleManagementService {
         if (isSystemRoleId(roleId)) {
             delete updateFields.name;
         }
+        if (ADMIN_PORTAL_ROLE_IDS.includes(Number(roleId))) {
+            updateFields.scope = ROLE_SCOPE.ZONE;
+        } else if (updateFields.scope !== undefined) {
+            updateFields.scope = normalizeRoleScope(updateFields.scope, roleId);
+        }
 
         if (Object.keys(updateFields).length > 0) {
             const updatedRole = await roles.update(
@@ -217,32 +279,44 @@ class RoleManagementService {
                 );
             }
 
-            const incomingFeatureIds = updateData.permissionRole
-                .map(item => item?.id)
-                .filter(Boolean);
+            const filtered = await filterAdminPortalPermissionRole(updateData.permissionRole);
+            updateData.permissionRole = filtered;
+            const incomingFeatureIds = filtered.map((item) => item?.id).filter(Boolean);
 
-            const existingFeatures = await features.findAll({
-                where: { id: { [Op.in]: incomingFeatureIds } },
-                attributes: ['id'],
-            });
+            if (incomingFeatureIds.length) {
+                const existingFeatures = await features.findAll({
+                    where: { id: { [Op.in]: incomingFeatureIds } },
+                    attributes: ['id'],
+                });
 
-            const existingIds = existingFeatures.map(f => f.id);
-            const missingIds  = incomingFeatureIds.filter(id => !existingIds.includes(id));
+                const existingIds = existingFeatures.map((f) => f.id);
+                const missingIds = incomingFeatureIds.filter((id) => !existingIds.includes(id));
 
-            if (missingIds.length > 0) {
-                throw new ValidationError(
-                    `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
-                    `Please create the features first using /addfeatures before assigning permissions.`
-                );
+                if (missingIds.length > 0) {
+                    throw new ValidationError(
+                        `The following feature IDs do not exist: ${missingIds.join(', ')}. ` +
+                        `Please create the features first using /addfeatures before assigning permissions.`
+                    );
+                }
             }
 
-            await permissions.destroy({ where: { roleId } });
+            const adminFeatures = await features.findAll({
+                where: { featureOf: { [Op.in]: [...ADMIN_APP_FEATURE_OF] } },
+                attributes: ['id'],
+            });
+            const adminFeatureIds = adminFeatures.map((row) => row.id);
+            if (adminFeatureIds.length) {
+                await permissions.destroy({
+                    where: { roleId, featureId: { [Op.in]: adminFeatureIds } },
+                });
+            }
             const permissionRows = buildPermissionRows(updateData.permissionRole, roleId);
             if (permissionRows.length) {
                 await permissions.bulkCreate(permissionRows);
             }
         }
 
+        checkPermission.clearCaches();
         const updatedRoleData = await roles.findOne({ where: { id: roleId } });
         return updatedRoleData;
     }
@@ -263,6 +337,7 @@ class RoleManagementService {
             throw new NotFoundError('Role not found');
         }
         
+        checkPermission.clearCaches();
         return { message: 'Role deleted successfully' };
     }
 

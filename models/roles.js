@@ -27,7 +27,16 @@ module.exports = (sequelize, DataTypes) => {
     status: {
       type:DataTypes.BOOLEAN,
     allowNull:false
-  }
+    },
+    /**
+     * platform — Admin Manager / custom admin roles (all zones, feature CRUD).
+     * zone     — Zone Manager (system role 7); JWT zone is forced.
+     */
+    scope: {
+      type: DataTypes.STRING(16),
+      allowNull: false,
+      defaultValue: 'platform',
+    },
   }, {
     sequelize,
     modelName: 'roles',

@@ -3,10 +3,14 @@
 /**
  * Server-owned zone scope for the admin portal.
  *
- * Platform admin (classifiedAsId == null): client zoneId is an optional filter.
- * Zone staff (classifiedAsId set): JWT / authz zoneId is mandatory; a client
- * zoneId that does not match is rejected. Omitting zoneId is filled from JWT.
+ * Super admin (classifiedAsId == null): client zoneId is an optional filter.
+ * Platform staff (Admin Manager / custom admin roles, roleScope=platform):
+ *   same optional zone filter; still gated by feature CRUD.
+ * Zone staff (Zone Manager, roleScope=zone): JWT zoneId is mandatory; a client
+ *   zoneId that does not match is rejected. Omitting zoneId is filled from JWT.
  */
+
+const { isZoneScopedRole } = require('../constants/systemRoles');
 
 function isPlatformAdmin(classifiedAsId) {
     return classifiedAsId === null || classifiedAsId === undefined;
@@ -35,15 +39,36 @@ function resolveAuthzFromRequest(req) {
         isPlatformAdmin: isPlatformAdmin(user.classifiedAsId),
         classifiedAsId: user.classifiedAsId ?? null,
         roleId: user.roleId ?? null,
+        roleScope: user.roleScope || null,
         zoneId: parseZoneId(user.zoneId),
     };
+}
+
+function isZoneForcedStaff(authz = {}) {
+    if (isPlatformAdmin(authz.classifiedAsId) || authz.isPlatformAdmin) {
+        return false;
+    }
+    return isZoneScopedRole({
+        roleId: authz.roleId,
+        scope: authz.roleScope,
+    });
 }
 
 /**
  * @returns {{ ok: true, zoneId: number|null, forced: boolean } | { ok: false, status: number, error: string }}
  */
-function resolveScopedZone({ classifiedAsId, jwtZoneId, clientZoneId }) {
+function resolveScopedZone({
+    classifiedAsId,
+    jwtZoneId,
+    clientZoneId,
+    roleId,
+    roleScope,
+} = {}) {
     if (isPlatformAdmin(classifiedAsId)) {
+        return { ok: true, zoneId: parseZoneId(clientZoneId), forced: false };
+    }
+
+    if (!isZoneScopedRole({ roleId, scope: roleScope })) {
         return { ok: true, zoneId: parseZoneId(clientZoneId), forced: false };
     }
 
@@ -83,11 +108,16 @@ function applyAdminZoneScope(req, authz = resolveAuthzFromRequest(req)) {
     const classifiedAsId = authz.isPlatformAdmin ? null : authz.classifiedAsId;
     const queryZone = clientSentZoneId(req.query);
     const bodyZone = clientSentZoneId(req.body);
+    const scopeArgs = {
+        classifiedAsId,
+        jwtZoneId: authz.zoneId,
+        roleId: authz.roleId,
+        roleScope: authz.roleScope,
+    };
 
     if (queryZone !== undefined) {
         const result = resolveScopedZone({
-            classifiedAsId,
-            jwtZoneId: authz.zoneId,
+            ...scopeArgs,
             clientZoneId: queryZone,
         });
         if (!result.ok) return result;
@@ -95,16 +125,14 @@ function applyAdminZoneScope(req, authz = resolveAuthzFromRequest(req)) {
 
     if (bodyZone !== undefined) {
         const result = resolveScopedZone({
-            classifiedAsId,
-            jwtZoneId: authz.zoneId,
+            ...scopeArgs,
             clientZoneId: bodyZone,
         });
         if (!result.ok) return result;
     }
 
     const result = resolveScopedZone({
-        classifiedAsId,
-        jwtZoneId: authz.zoneId,
+        ...scopeArgs,
         clientZoneId: queryZone,
     });
     if (!result.ok) return result;
@@ -123,6 +151,7 @@ module.exports = {
     parseZoneId,
     clientSentZoneId,
     resolveAuthzFromRequest,
+    isZoneForcedStaff,
     resolveScopedZone,
     zoneIdFromRequest,
     applyAdminZoneScope,

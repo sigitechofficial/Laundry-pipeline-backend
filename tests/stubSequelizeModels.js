@@ -20,6 +20,7 @@ function install() {
         sequelize: { query: async () => [], fn() {}, col() {}, literal() {} },
         Sequelize: {},
         users: { findByPk: async () => null, findOne: async () => null },
+        roles: { findByPk: async () => null, findAll: async () => [] },
         permissions: { findOne: async () => null },
         features: { findAll: async () => [] },
         zone: { findOne: async () => null },

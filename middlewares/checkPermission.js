@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { users, permissions, features, zone } = require('../models');
+const { users, permissions, features, zone, roles } = require('../models');
 const {
     resolveAdminFeatureKey,
     isSessionAllowlisted,
@@ -7,7 +7,7 @@ const {
     toFeatureKey,
 } = require('../utils/adminRoutePermissions');
 const { isPlatformAdmin, parseZoneId } = require('../utils/adminZoneScope');
-const { CLASSIFIED_AS } = require('../constants/systemRoles');
+const { CLASSIFIED_AS, normalizeRoleScope, ROLE_SCOPE } = require('../constants/systemRoles');
 
 const METHOD_TO_COLUMN = {
     get: 'read',
@@ -66,10 +66,18 @@ const defaultDeps = {
             attributes: ['id', 'classifiedAsId', 'roleId'],
         });
         if (!row) return null;
+        let roleScope = null;
+        if (row.roleId) {
+            const roleRow = await roles.findByPk(row.roleId, {
+                attributes: ['id', 'scope'],
+            });
+            roleScope = roleRow?.scope || null;
+        }
         return {
             id: row.id,
             classifiedAsId: row.classifiedAsId,
             roleId: row.roleId,
+            roleScope,
         };
     },
     async loadZoneIdForAdmin(userId) {
@@ -128,9 +136,13 @@ const defaultDeps = {
  *   Skip admin feature CRUD. Agent routes enforce requireCapability / assignee
  *   checks and controller scoping (assigned jobs vs shop board).
  *
- * Zone admin / employee (classifiedAsId === 2):
+ * Zone staff (classifiedAsId === 2, roleScope=zone):
  *   Feature is resolved from the route map (utils/adminRoutePermissions).
  *   Client featureid header / body / query is ignored.
+ *   Zone filter is forced from JWT.
+ *
+ * Platform staff (classifiedAsId === 2, roleScope=platform):
+ *   Same feature CRUD as zone staff, but zoneId is an optional filter.
  *   Deny when the route has no mapping, the feature row is missing,
  *   the role has no permissions row, or the HTTP-method column is false.
  *   Session allowlist (signOut, notification-preferences) is the only exception.
@@ -152,13 +164,22 @@ function createCheckPermission(overrides = {}) {
                     id: row.id,
                     classifiedAsId: row.classifiedAsId,
                     roleId: row.roleId,
+                    roleScope: row.roleScope || null,
                 };
                 cacheSet(userRoleCache, String(userId), userData);
             }
 
             const jwtZoneId = parseZoneId(req.user?.zoneId);
             let zoneId = jwtZoneId;
-            if (!isPlatformAdmin(userData.classifiedAsId) && !zoneId) {
+            const roleScope = normalizeRoleScope(
+                req.user?.roleScope || userData.roleScope,
+                userData.roleId
+            );
+            if (
+                !isPlatformAdmin(userData.classifiedAsId) &&
+                !zoneId &&
+                roleScope === ROLE_SCOPE.ZONE
+            ) {
                 zoneId = await deps.loadZoneIdForAdmin(userData.id);
             }
 
@@ -166,6 +187,7 @@ function createCheckPermission(overrides = {}) {
                 isPlatformAdmin: isPlatformAdmin(userData.classifiedAsId),
                 classifiedAsId: userData.classifiedAsId ?? null,
                 roleId: userData.roleId ?? null,
+                roleScope,
                 zoneId,
             };
 

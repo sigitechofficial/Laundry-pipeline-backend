@@ -27,6 +27,8 @@ function run() {
         classifiedAsId: 2,
         jwtZoneId: 3,
         clientZoneId: undefined,
+        roleId: 7,
+        roleScope: 'zone',
     });
     assert.deepStrictEqual(omitted, { ok: true, zoneId: 3, forced: true });
 
@@ -34,6 +36,8 @@ function run() {
         classifiedAsId: 2,
         jwtZoneId: 3,
         clientZoneId: '99',
+        roleId: 7,
+        roleScope: 'zone',
     });
     assert.strictEqual(mismatch.ok, false);
     assert.strictEqual(mismatch.status, 403);
@@ -43,16 +47,38 @@ function run() {
         classifiedAsId: 2,
         jwtZoneId: null,
         clientZoneId: undefined,
+        roleId: 7,
+        roleScope: 'zone',
     });
     assert.strictEqual(noZone.ok, false);
     assert.match(noZone.error, /no zone assigned/i);
 
+    const platformStaff = resolveScopedZone({
+        classifiedAsId: 2,
+        jwtZoneId: null,
+        clientZoneId: undefined,
+        roleId: 99,
+        roleScope: 'platform',
+    });
+    assert.deepStrictEqual(platformStaff, { ok: true, zoneId: null, forced: false });
+
+    const platformStaffFilter = resolveScopedZone({
+        classifiedAsId: 2,
+        jwtZoneId: null,
+        clientZoneId: '12',
+        roleId: 99,
+        roleScope: 'platform',
+    });
+    assert.deepStrictEqual(platformStaffFilter, { ok: true, zoneId: 12, forced: false });
+
     const req = {
         query: {},
-        user: { classifiedAsId: 2, zoneId: 7 },
+        user: { classifiedAsId: 2, zoneId: 7, roleId: 7, roleScope: 'zone' },
         adminAuthz: {
             isPlatformAdmin: false,
             classifiedAsId: 2,
+            roleId: 7,
+            roleScope: 'zone',
             zoneId: 7,
         },
     };
@@ -64,7 +90,13 @@ function run() {
 
     const foreign = {
         query: { zoneId: '99' },
-        adminAuthz: { isPlatformAdmin: false, classifiedAsId: 2, zoneId: 7 },
+        adminAuthz: {
+            isPlatformAdmin: false,
+            classifiedAsId: 2,
+            roleId: 7,
+            roleScope: 'zone',
+            zoneId: 7,
+        },
     };
     const rejected = applyAdminZoneScope(foreign);
     assert.strictEqual(rejected.ok, false);
@@ -77,6 +109,21 @@ function run() {
     assert.strictEqual(leftAlone.ok, true);
     assert.strictEqual(superAdmin.query.zoneId, '12');
     assert.strictEqual(superAdmin.scopedZoneId, undefined);
+
+    const platformStaffReq = {
+        query: { zoneId: '12' },
+        adminAuthz: {
+            isPlatformAdmin: false,
+            classifiedAsId: 2,
+            roleId: 99,
+            roleScope: 'platform',
+            zoneId: null,
+        },
+    };
+    const platformApplied = applyAdminZoneScope(platformStaffReq);
+    assert.strictEqual(platformApplied.ok, true);
+    assert.strictEqual(platformStaffReq.query.zoneId, '12');
+    assert.strictEqual(platformStaffReq.scopedZoneId, undefined);
 
     console.log('adminZoneScope tests passed');
 }

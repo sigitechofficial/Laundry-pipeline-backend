@@ -6,8 +6,8 @@ const {
     CLASSIFIED_AS,
     SYSTEM_ROLES,
     isAgentShopStaffRoleId,
-    isAdminPortalRoleId,
     SYSTEM_ROLE_NAMES,
+    isZoneScopedRole,
 } = require('../../constants/systemRoles');
 
 async function assertAdminPortalRole(roleId) {
@@ -21,7 +21,7 @@ async function assertAdminPortalRole(roleId) {
         );
     }
     const roleRecord = await roles.findByPk(numericRoleId, {
-        attributes: ['id', 'name', 'status'],
+        attributes: ['id', 'name', 'status', 'scope'],
     });
     if (!roleRecord || !roleRecord.status) {
         throw new ValidationError('Invalid or inactive role');
@@ -83,7 +83,15 @@ class EmployeeManagementService {
             throw new ValidationError('firstName, lastName, email, password and roleId are all required');
         }
 
-        await assertAdminPortalRole(roleId);
+        const roleRecord = await assertAdminPortalRole(roleId);
+        const zoneScoped = isZoneScopedRole({
+            roleId: roleRecord.id,
+            scope: roleRecord.scope,
+        });
+
+        if (zoneScoped && !zoneId) {
+            throw new ValidationError('Zone is required for Zone Manager roles');
+        }
 
         // Check email is not already taken anywhere in the system
         const existingUser = await users.findOne({ where: { email } });
@@ -91,9 +99,11 @@ class EmployeeManagementService {
             throw new ConflictError('An account with this email already exists. Please use a different email.');
         }
 
-        // If a zone is being assigned, validate it exists and is not already claimed
-        if (zoneId) {
-            const zoneRecord = await zone.findOne({ where: { id: zoneId } });
+        // Zone is only assigned to zone-scoped staff. Platform Admin Manager never
+        // writes zone.zoneAdminId.
+        const assignZoneId = zoneScoped ? zoneId : null;
+        if (assignZoneId) {
+            const zoneRecord = await zone.findOne({ where: { id: assignZoneId } });
             if (!zoneRecord) {
                 throw new NotFoundError('Zone not found. Please select a valid zone.');
             }
@@ -131,11 +141,11 @@ class EmployeeManagementService {
             throw dbError;
         }
 
-        // Assign employee as zone admin if a zoneId was provided
-        if (zoneId) {
+        // Assign employee as zone admin only for zone-scoped roles
+        if (assignZoneId) {
             await zone.update(
                 { zoneAdminId: user.id },
-                { where: { id: zoneId } }
+                { where: { id: assignZoneId } }
             );
         }
 
@@ -147,7 +157,7 @@ class EmployeeManagementService {
             phoneNum: user.phoneNum,
             roleId: user.roleId,
             classifiedAsId: user.classifiedAsId,
-            zoneId: zoneId || null
+            zoneId: assignZoneId || null
         };
     }
 
@@ -176,6 +186,31 @@ class EmployeeManagementService {
 
             if (updateFields.roleId !== undefined && updateFields.roleId !== null) {
                 await assertAdminPortalRole(updateFields.roleId);
+            }
+
+            const nextRoleId = updateFields.roleId ?? existing.roleId;
+            const nextRole = await roles.findByPk(nextRoleId, {
+                attributes: ['id', 'name', 'status', 'scope'],
+            });
+            const zoneScoped = isZoneScopedRole({
+                roleId: nextRole?.id,
+                scope: nextRole?.scope,
+            });
+            const requestedZoneId = updateFields.zoneId;
+            delete updateFields.zoneId;
+
+            if (zoneScoped && requestedZoneId) {
+                const zoneRecord = await zone.findOne({ where: { id: requestedZoneId } });
+                if (!zoneRecord) {
+                    throw new NotFoundError('Zone not found. Please select a valid zone.');
+                }
+                if (zoneRecord.zoneAdminId && Number(zoneRecord.zoneAdminId) !== Number(employeeId)) {
+                    throw new ConflictError('This zone already has an admin assigned. Please choose a different zone.');
+                }
+                await zone.update(
+                    { zoneAdminId: employeeId },
+                    { where: { id: requestedZoneId } }
+                );
             }
 
             // Check if email already exists for another employee

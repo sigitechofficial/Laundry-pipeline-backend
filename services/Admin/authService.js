@@ -1,4 +1,5 @@
-const { users, features, zone, permissions, deviceToken } = require('../../models');
+const { users, features, zone, permissions, deviceToken, roles } = require('../../models');
+const { normalizeRoleScope } = require('../../constants/systemRoles');
 const bcrypt = require('bcryptjs');
 const redisCli = require('../../redis/redis');
 const { signAdminAccessToken } = require('../../utils/adminJwt');
@@ -161,7 +162,15 @@ class AuthService {
             throw new UnauthorizedError('Invalid credentials. Please enter the correct password.');
         }
 
-        // Find the zone assigned to this employee (optional — only zone admins have one)
+        const roleRow = adminData.roleId
+            ? await roles.findByPk(adminData.roleId, {
+                attributes: ['id', 'name', 'scope'],
+            })
+            : null;
+        const roleScope = normalizeRoleScope(roleRow?.scope, adminData.roleId);
+        const roleName = roleRow?.name || null;
+
+        // Find the zone assigned to this employee (optional — only zone-scoped roles have one)
         const zoneData = await zone.findOne({
             where: { zoneAdminId: adminData.id },
             attributes: ['id', 'name']
@@ -185,7 +194,9 @@ class AuthService {
             dvToken,
             zoneId: zoneData ? zoneData.id : null,
             classifiedAsId: adminData.classifiedAsId,
-            roleId: adminData.roleId
+            roleId: adminData.roleId,
+            roleScope,
+            roleName,
         };
 
         const accessToken = signAdminAccessToken(payload);
@@ -202,6 +213,8 @@ class AuthService {
             zoneId: zoneData ? zoneData.id : null,
             zoneName: zoneData ? zoneData.name : null,
             roleId: adminData.roleId,
+            roleName,
+            roleScope,
             classifiedAsId: adminData.classifiedAsId,
             permissions: permissionData
         };
