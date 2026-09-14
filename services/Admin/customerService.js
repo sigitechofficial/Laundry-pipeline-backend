@@ -13,6 +13,7 @@ const {
 const { literal, fn, col } = require("sequelize");
 const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
+const { customerPhoneError } = require('../../utils/customerPhone');
 
 class CustomerService {
     /**
@@ -174,6 +175,10 @@ class CustomerService {
             throw new ValidationError(
                 'firstName, lastName, email, phoneNum and password are required'
             );
+        }
+        const phoneError = customerPhoneError(phoneNum);
+        if (phoneError) {
+            throw new ValidationError(phoneError);
         }
         if (password.length < 6) {
             throw new ValidationError('Password must be at least 6 characters');
@@ -373,11 +378,10 @@ class CustomerService {
      * @returns {Object} Updated customer data
      */
     async updateCustomer(customerId, updateData) {
-            // Check if customer exists
             const customerExists = await users.findOne({
                 where: {
                     id: customerId,
-                    userTypeId: 2 // Ensure it's a customer
+                    userTypeId: 2
                 }
             });
 
@@ -385,13 +389,32 @@ class CustomerService {
                 throw new NotFoundError('Customer not found');
             }
 
-            // Check if email is being changed and if it already exists
-            if (updateData.email && updateData.email !== customerExists.email) {
+            const allowed = ['firstName', 'lastName', 'email', 'phoneNum', 'status', 'password'];
+            const updateFields = {};
+            for (const key of allowed) {
+                if (updateData[key] !== undefined) updateFields[key] = updateData[key];
+            }
+
+            if (updateFields.firstName !== undefined) {
+                updateFields.firstName = String(updateFields.firstName || '').trim();
+                if (!updateFields.firstName) throw new ValidationError('First name is required');
+            }
+            if (updateFields.lastName !== undefined) {
+                updateFields.lastName = String(updateFields.lastName || '').trim();
+                if (!updateFields.lastName) throw new ValidationError('Last name is required');
+            }
+
+            if (updateFields.email !== undefined) {
+                updateFields.email = String(updateFields.email || '').trim().toLowerCase();
+                if (!updateFields.email) throw new ValidationError('Email is required');
+            }
+
+            if (updateFields.email && updateFields.email !== customerExists.email) {
                 const emailExists = await users.findOne({
                     where: {
-                        email: updateData.email,
+                        email: updateFields.email,
                         id: { [Op.ne]: customerId },
-                        userTypeId: 2
+                        deletedAt: { [Op.is]: null }
                     }
                 });
 
@@ -400,8 +423,44 @@ class CustomerService {
                 }
             }
 
-            // Remove customerId from updateData if present
-            const { customerId: _, ...updateFields } = updateData;
+            if (updateFields.phoneNum !== undefined) {
+                updateFields.phoneNum = String(updateFields.phoneNum || '').trim();
+                const phoneError = customerPhoneError(updateFields.phoneNum);
+                if (phoneError) {
+                    throw new ValidationError(phoneError);
+                }
+                if (updateFields.phoneNum !== customerExists.phoneNum) {
+                    const phoneExists = await users.findOne({
+                        where: {
+                            phoneNum: updateFields.phoneNum,
+                            id: { [Op.ne]: customerId },
+                            deletedAt: { [Op.is]: null },
+                            userTypeId: 2
+                        },
+                        attributes: ['id']
+                    });
+                    if (phoneExists) {
+                        throw new ConflictError(
+                            'A customer with this phone number already exists. Please use a different number.'
+                        );
+                    }
+                }
+            }
+
+            if (updateFields.password !== undefined) {
+                const nextPassword = String(updateFields.password || '');
+                if (!nextPassword.trim()) {
+                    delete updateFields.password;
+                } else if (nextPassword.length < 6) {
+                    throw new ValidationError('Password must be at least 6 characters');
+                } else {
+                    updateFields.password = await bcrypt.hash(nextPassword, 10);
+                }
+            }
+
+            if (Object.keys(updateFields).length === 0) {
+                throw new ValidationError('No changes were made');
+            }
 
             const updatedCustomer = await users.update(updateFields, {
                 where: {
@@ -414,7 +473,6 @@ class CustomerService {
                 throw new ValidationError('No changes were made');
             }
 
-            // Get updated customer data
             const updatedCustomerData = await users.findOne({
                 where: {
                     id: customerId,

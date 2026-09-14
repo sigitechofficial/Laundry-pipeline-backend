@@ -4,30 +4,42 @@ const path = require('path');
 const bannerService = require('../../services/Admin/bannerService');
 const ResponseHelper = require('../../utils/responseHelper');
 const { StatusCodes } = require('http-status-codes');
+const { ValidationError } = require('../../middlewares/universalErrorHandler');
+const {
+  pickBannerUpload,
+  publicPathFromMulterFile,
+} = require('../../utils/bannerPayload');
 
-async function createBanner(req, res) {
-  // Expect multipart/form-data with fields + optional file "image"
-  let bannerImage = req.body.bannerImage || null;
+const ALLOWED_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 
-  if (req.file) {
-    const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
-    const ext = path.extname(req.file.originalname).toLowerCase();
-    if (!allowed.includes(ext)) {
-      return ResponseHelper.validationError(res, 'Only jpg, png, and webp images are allowed');
-    }
-    if (req.file.size > 5 * 1024 * 1024) {
-      return ResponseHelper.validationError(res, 'Image must be 5MB or smaller');
-    }
+function resolveUploadedImage(req) {
+  const file = pickBannerUpload(req);
+  if (!file) return undefined;
 
-    // Store relative path for serving via /Public static route
-    bannerImage = req.file.path.replace(/\\/g, '/').replace(/^\.?\//, '');
+  const ext = path.extname(file.originalname || file.filename || '').toLowerCase();
+  if (!ALLOWED_EXTS.includes(ext)) {
+    throw new ValidationError('Only jpg, png, webp, and gif images are allowed');
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new ValidationError('Image must be 5MB or smaller');
   }
 
-  const payload = {
-    ...req.body,
-    bannerImage,
-  };
+  return publicPathFromMulterFile(file);
+}
 
+function payloadFromRequest(req, { includeExistingImage = true } = {}) {
+  const uploaded = resolveUploadedImage(req);
+  const payload = { ...req.body };
+  if (uploaded) {
+    payload.bannerImage = uploaded;
+  } else if (!includeExistingImage) {
+    delete payload.bannerImage;
+  }
+  return payload;
+}
+
+async function createBanner(req, res) {
+  const payload = payloadFromRequest(req);
   const result = await bannerService.createBanner(payload);
   return ResponseHelper.success(res, result.message, result.data, StatusCodes.CREATED);
 }
@@ -44,7 +56,8 @@ async function getAllBanners(req, res) {
 }
 
 async function updateBanner(req, res) {
-  const result = await bannerService.updateBanner(req.params.id, req.body);
+  const payload = payloadFromRequest(req, { includeExistingImage: false });
+  const result = await bannerService.updateBanner(req.params.id, payload);
   return ResponseHelper.success(res, result.message, result.data);
 }
 

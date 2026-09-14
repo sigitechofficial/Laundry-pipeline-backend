@@ -6,6 +6,14 @@ const {
   ValidationError,
   NotFoundError
 } = require('../../middlewares/universalErrorHandler');
+const { tableExists } = require('../../utils/migrationHelpers');
+const {
+  parseFormBoolean,
+  emptyToNull,
+  normalizeZoneIds,
+  zoneIdsApplyTo,
+  isMissingTableError,
+} = require('../../utils/bannerPayload');
 
 const OFFER_TYPES = ['percentage', 'flat', 'free_delivery'];
 const TARGET_TYPES = ['global', 'service', 'category', 'sub_category'];
@@ -23,7 +31,7 @@ class BannerService {
       maxDiscountCap: plain.maxDiscountCap != null ? parseFloat(plain.maxDiscountCap) : null,
       targetType: plain.targetType,
       targetId: plain.targetId,
-      zoneIds: Array.isArray(plain.zoneIds) ? plain.zoneIds : plain.zoneIds ? plain.zoneIds : null,
+      zoneIds: normalizeZoneIds(plain.zoneIds),
       startDate: plain.startDate,
       endDate: plain.endDate,
       displayOrder: plain.displayOrder,
@@ -35,28 +43,26 @@ class BannerService {
     };
   }
 
+  async ensureBannersTable() {
+    const sequelize = banner.sequelize;
+    const qi = sequelize.getQueryInterface();
+    if (await tableExists(qi, 'banners')) return;
+    const migration = require('../../migrations/20260513100000-create-banners');
+    await migration.up(qi, sequelize.constructor);
+  }
+
+  async withBannersTable(work) {
+    try {
+      return await work();
+    } catch (err) {
+      if (!isMissingTableError(err)) throw err;
+      await this.ensureBannersTable();
+      return work();
+    }
+  }
+
   normalizeZoneIds(zoneIds) {
-    if (zoneIds === undefined || zoneIds === null || zoneIds === '') return null;
-
-    // form-data sends comma-separated string e.g. "1,3" or single "1"
-    if (typeof zoneIds === 'string') {
-      const parts = zoneIds.split(',').map((s) => s.trim()).filter(Boolean);
-      if (parts.length === 0) return null;
-      return parts.map((id) => parseInt(id, 10));
-    }
-
-    // multer with repeated keys sends array of strings e.g. ["1", "3"]
-    if (Array.isArray(zoneIds)) {
-      if (zoneIds.length === 0) return null;
-      return zoneIds.map((id) => parseInt(id, 10));
-    }
-
-    // single number
-    const parsed = parseInt(zoneIds, 10);
-    if (Number.isNaN(parsed)) {
-      throw new ValidationError('zoneIds must be valid integers');
-    }
-    return [parsed];
+    return normalizeZoneIds(zoneIds);
   }
 
   async validateZoneIds(zoneIds) {
@@ -65,12 +71,17 @@ class BannerService {
     if (invalid.length) {
       throw new ValidationError('zoneIds must contain valid integers');
     }
+    const uniqueIds = [...new Set(zoneIds)];
     const found = await zone.findAll({
-      where: { id: { [Op.in]: zoneIds }, status: true },
+      where: { id: { [Op.in]: uniqueIds }, status: true },
       attributes: ['id']
     });
-    if (found.length !== zoneIds.length) {
-      throw new ValidationError('One or more zoneIds are invalid or inactive');
+    if (found.length !== uniqueIds.length) {
+      const foundIds = new Set(found.map((row) => Number(row.id)));
+      const missing = uniqueIds.filter((id) => !foundIds.has(Number(id)));
+      throw new ValidationError(
+        `One or more zoneIds are invalid or inactive: ${missing.join(', ')}`
+      );
     }
   }
 
@@ -191,7 +202,6 @@ class BannerService {
       discountValue,
       maxDiscountCap,
       targetType,
-      targetId,
       zoneIds,
       startDate,
       endDate,
@@ -199,6 +209,7 @@ class BannerService {
       showOnHome,
       isActive
     } = data;
+    const targetId = emptyToNull(data.targetId);
 
     if (!title || !String(title).trim()) {
       throw new ValidationError('title is required');
@@ -223,22 +234,24 @@ class BannerService {
     await this.validateZoneIds(normalizedZoneIds);
     this.validateDates(startDate || null, endDate || null);
 
-    const created = await banner.create({
-      title: String(title).trim().slice(0, 200),
-      description: description || null,
-      bannerImage: bannerImage || null,
-      offerType,
-      discountValue: dv,
-      maxDiscountCap: cap,
-      targetType,
-      targetId: resolvedTargetId,
-      zoneIds: normalizedZoneIds,
-      startDate: startDate || null,
-      endDate: endDate || null,
-      displayOrder: displayOrder != null ? parseInt(displayOrder, 10) : 1,
-      showOnHome: showOnHome !== undefined ? Boolean(showOnHome) : true,
-      isActive: isActive !== undefined ? Boolean(isActive) : true
-    });
+    const created = await this.withBannersTable(() =>
+      banner.create({
+        title: String(title).trim().slice(0, 200),
+        description: emptyToNull(description),
+        bannerImage: emptyToNull(bannerImage),
+        offerType,
+        discountValue: dv,
+        maxDiscountCap: cap,
+        targetType,
+        targetId: resolvedTargetId,
+        zoneIds: normalizedZoneIds,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        displayOrder: displayOrder != null ? parseInt(displayOrder, 10) : 1,
+        showOnHome: parseFormBoolean(showOnHome, true),
+        isActive: parseFormBoolean(isActive, true)
+      })
+    );
 
     return {
       message: 'Banner created successfully',
@@ -253,7 +266,8 @@ class BannerService {
     const where = {};
 
     if (query.isActive !== undefined) {
-      where.isActive = query.isActive === 'true' || query.isActive === true;
+      const parsed = parseFormBoolean(query.isActive);
+      if (parsed !== undefined) where.isActive = parsed;
     }
     if (query.targetType) {
       if (!TARGET_TYPES.includes(query.targetType)) {
@@ -262,24 +276,22 @@ class BannerService {
       where.targetType = query.targetType;
     }
 
-    const { count, rows } = await banner.findAndCountAll({
-      where,
-      order: [
-        ['displayOrder', 'ASC'],
-        ['createdAt', 'DESC']
-      ],
-      limit,
-      offset
-    });
+    const { count, rows } = await this.withBannersTable(() =>
+      banner.findAndCountAll({
+        where,
+        order: [
+          ['displayOrder', 'ASC'],
+          ['createdAt', 'DESC']
+        ],
+        limit,
+        offset
+      })
+    );
 
     let filtered = rows;
     const zoneIdFilter = query.zoneId ? parseInt(query.zoneId, 10) : null;
     if (zoneIdFilter && !Number.isNaN(zoneIdFilter)) {
-      filtered = rows.filter((row) => {
-        const ids = row.zoneIds;
-        if (!ids || !Array.isArray(ids) || ids.length === 0) return true;
-        return ids.includes(zoneIdFilter);
-      });
+      filtered = rows.filter((row) => zoneIdsApplyTo(row.zoneIds, zoneIdFilter));
     }
 
     const banners = await Promise.all(
@@ -305,7 +317,7 @@ class BannerService {
   }
 
   async updateBanner(id, data) {
-    const row = await banner.findByPk(id);
+    const row = await this.withBannersTable(() => banner.findByPk(id));
     if (!row) {
       throw new NotFoundError(`Banner with id ${id} not found`);
     }
@@ -331,11 +343,14 @@ class BannerService {
       if (!String(data.title).trim()) throw new ValidationError('title cannot be empty');
       row.title = String(data.title).trim().slice(0, 200);
     }
-    if (data.description !== undefined) row.description = data.description;
-    if (data.bannerImage !== undefined) row.bannerImage = data.bannerImage;
+    if (data.description !== undefined) row.description = emptyToNull(data.description);
+    if (data.bannerImage !== undefined && data.bannerImage !== '') {
+      row.bannerImage = emptyToNull(data.bannerImage);
+    }
 
     const targetType = data.targetType !== undefined ? data.targetType : row.targetType;
-    const targetId = data.targetId !== undefined ? data.targetId : row.targetId;
+    const targetId =
+      data.targetId !== undefined ? emptyToNull(data.targetId) : row.targetId;
 
     if (data.targetType !== undefined || data.targetId !== undefined) {
       if (!TARGET_TYPES.includes(targetType)) {
@@ -358,8 +373,12 @@ class BannerService {
     this.validateDates(startDate, endDate);
 
     if (data.displayOrder !== undefined) row.displayOrder = parseInt(data.displayOrder, 10);
-    if (data.showOnHome !== undefined) row.showOnHome = Boolean(data.showOnHome);
-    if (data.isActive !== undefined) row.isActive = Boolean(data.isActive);
+    if (data.showOnHome !== undefined) {
+      row.showOnHome = parseFormBoolean(data.showOnHome, row.showOnHome);
+    }
+    if (data.isActive !== undefined) {
+      row.isActive = parseFormBoolean(data.isActive, row.isActive);
+    }
 
     await row.save();
 
@@ -373,7 +392,7 @@ class BannerService {
   }
 
   async deleteBanner(id) {
-    const row = await banner.findByPk(id);
+    const row = await this.withBannersTable(() => banner.findByPk(id));
     if (!row) {
       throw new NotFoundError(`Banner with id ${id} not found`);
     }
@@ -401,24 +420,28 @@ class BannerService {
 
     // Optional: only home slider banners
     if (query.showOnHome !== undefined) {
-      where.showOnHome = query.showOnHome === 'true' || query.showOnHome === true;
+      const parsed = parseFormBoolean(query.showOnHome);
+      if (parsed !== undefined) where.showOnHome = parsed;
     }
 
-    const rows = await banner.findAll({
-      where,
-      order: [['displayOrder', 'ASC']]
-    });
+    let rows;
+    try {
+      rows = await this.withBannersTable(() =>
+        banner.findAll({
+          where,
+          order: [['displayOrder', 'ASC']]
+        })
+      );
+    } catch (err) {
+      // Home must still render if the catalog table is missing on a drifted DB.
+      console.error('getActiveBannersForCustomer:', err.message);
+      return { message: 'Banners fetched successfully', data: { banners: [] } };
+    }
 
-    // Filter by zoneId if provided
     const zoneIdFilter = query.zoneId ? parseInt(query.zoneId, 10) : null;
     let filtered = rows;
     if (zoneIdFilter && !Number.isNaN(zoneIdFilter)) {
-      filtered = rows.filter((row) => {
-        const ids = row.zoneIds;
-        // null or empty = applies to all zones
-        if (!ids || !Array.isArray(ids) || ids.length === 0) return true;
-        return ids.includes(zoneIdFilter);
-      });
+      filtered = rows.filter((row) => zoneIdsApplyTo(row.zoneIds, zoneIdFilter));
     }
 
     const banners = await Promise.all(
@@ -432,6 +455,35 @@ class BannerService {
       message: 'Banners fetched successfully',
       data: { banners }
     };
+  }
+
+  async healthProbe() {
+    try {
+      const qi = banner.sequelize.getQueryInterface();
+      const exists = await tableExists(qi, 'banners');
+      if (!exists) {
+        return {
+          ok: false,
+          table: 'banners',
+          error: 'banners table missing'
+        };
+      }
+      const count = await banner.count();
+      return {
+        ok: true,
+        table: 'banners',
+        count,
+        customer: 'GET /customer/getBanners?zoneId=&showOnHome=true',
+        adminCreate: 'POST /admin/createBanner (multipart image or bannerImage)',
+        home: 'GET /customer/getHomeConfig includes data.banners'
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        table: 'banners',
+        error: err.message || String(err)
+      };
+    }
   }
 }
 

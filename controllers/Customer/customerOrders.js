@@ -917,6 +917,17 @@ async function getHomeConfig(req, res) {
     const lat = req.query.lat ?? req.body?.lat;
     const lng = req.query.lng ?? req.body?.lng;
     const result = await customerOrderService.getHomeConfig({ lat, lng });
+    try {
+        const zoneId = result.data?.zone?.id;
+        const bannersResult = await bannerService.getActiveBannersForCustomer({
+            zoneId,
+            showOnHome: true,
+        });
+        result.data.banners = bannersResult.data?.banners || [];
+    } catch (err) {
+        console.error('getHomeConfig banners:', err.message);
+        result.data.banners = [];
+    }
     return ResponseHelper.success(res, result.message, result.data);
 }
 

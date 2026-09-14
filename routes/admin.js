@@ -12,6 +12,7 @@ const checkPermission = require('../middlewares/checkPermission')
 const enforceAdminZoneScope = require('../middlewares/enforceAdminZoneScope')
 const { markPlatformAdminRequest } = require('../middlewares/platformAdminContext')
 const { createDestinationDirectory } = require('../utils/destination')
+const { ValidationError } = require('../middlewares/universalErrorHandler')
 const agentController = require("../controllers/Agent/agents");
 const couponController = require('../controllers/Admin/couponController');
 const bannerController = require('../controllers/Admin/bannerController');
@@ -154,10 +155,34 @@ const uploadBannerPic = multer.diskStorage({
     },
 });
 
+const BANNER_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 const uploadBannerImage = multer({
     storage: uploadBannerPic,
     limits: { fileSize: UPLOAD_FILE_SIZE_BYTES },
+    fileFilter: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase();
+        if (BANNER_IMAGE_EXTS.includes(ext)) return cb(null, true);
+        cb(new Error('Only jpg, png, webp, and gif images are allowed'));
+    },
 });
+
+function acceptBannerImage(req, res, next) {
+    uploadBannerImage.fields([
+        { name: 'image', maxCount: 1 },
+        { name: 'bannerImage', maxCount: 1 },
+    ])(req, res, (err) => {
+        if (!err) return next();
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return next(new ValidationError('Image must be 5MB or smaller'));
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+            return next(new ValidationError(
+                `Unexpected file field "${err.field}". Use "image" or "bannerImage".`
+            ));
+        }
+        return next(new ValidationError(err.message || 'Invalid banner image upload'));
+    });
+}
 
 
 
@@ -959,15 +984,18 @@ router.get('/maps/geocode', asyncMiddleware(mapsGeocodeController.geocode));
 router.post('/gemini/generate', asyncMiddleware(geminiController.generate));
 
 //!-----------------------------------Banner & Offers------------------------------------>>>>
-// Create banner with image + payload in one request (multipart/form-data)
+// Create / update accept multipart with field name `image` or `bannerImage`.
 router.post(
     '/createBanner',
-    uploadBannerImage.single('image'),
+    acceptBannerImage,
     asyncMiddleware(bannerController.createBanner)
 );
-// List / manage banners (JSON body or query only)
 router.get('/getAllBanners', asyncMiddleware(bannerController.getAllBanners));
-router.patch('/updateBanner/:id', asyncMiddleware(bannerController.updateBanner));
+router.patch(
+    '/updateBanner/:id',
+    acceptBannerImage,
+    asyncMiddleware(bannerController.updateBanner)
+);
 router.delete('/deleteBanner/:id', asyncMiddleware(bannerController.deleteBanner));
 
 module.exports = router

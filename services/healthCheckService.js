@@ -982,6 +982,40 @@ async function checkComplianceCatalogSchema() {
   }
 }
 
+async function checkBannersSchema() {
+  const started = nowMs();
+  try {
+    const bannerService = require('./Admin/bannerService');
+    const probe = await bannerService.healthProbe();
+    return result(probe.ok ? 'ok' : 'fail', probe.ok
+      ? `banners table ready (${probe.count} row(s))`
+      : probe.error || 'banners table missing', {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'banners',
+      ...probe,
+      verifyEndpoints: {
+        health: 'GET /health/banners',
+        customer: 'GET /customer/getBanners',
+        home: 'GET /customer/getHomeConfig',
+        adminCreate: 'POST /admin/createBanner',
+        deploy: 'GET /health/deploy',
+      },
+      hint: probe.ok
+        ? null
+        : 'Deploy migrate (20260513100000-create-banners.js). ensure-live-migrations heals if the table is missing.',
+    });
+  } catch (err) {
+    const fields = safeErrorFields(err);
+    return result('fail', err.message || 'Banners schema check failed', {
+      latencyMs: nowMs() - started,
+      checkType: 'schema',
+      feature: 'banners',
+      ...fields,
+    });
+  }
+}
+
 module.exports = {
   checkMysql,
   checkRedis,
@@ -991,6 +1025,7 @@ module.exports = {
   checkShopReviewSchema,
   checkRepairCatalogSchema,
   checkComplianceCatalogSchema,
+  checkBannersSchema,
   runDependencyChecks,
   logCheck,
   logLine

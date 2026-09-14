@@ -16,6 +16,7 @@ const sensitiveSurfaceGuard = require('../middlewares/sensitiveSurfaceGuard');
  * GET /health/repair-catalog — repair catalog tables + seed counts (prod: ops token)
  * GET /health/compliance-catalog — fail instructions + compliance events (prod: ops token)
  * GET /health/catalog-resolver — overlay tables + inherit sample (public deploy smoke)
+ * GET /health/banners — banners table + customer/admin endpoints (public deploy smoke)
  * GET /health/:dependency  — single check (mysql|redis|firebase|stripe|zeptomail) (prod: ops token)
  */
 router.get('/', asyncMiddleware(healthController.liveness));
@@ -26,6 +27,7 @@ router.get('/schema', sensitiveSurfaceGuard, asyncMiddleware(healthController.sc
 router.get('/repair-catalog', sensitiveSurfaceGuard, asyncMiddleware(healthController.repairCatalogSchemaInfo));
 router.get('/compliance-catalog', sensitiveSurfaceGuard, asyncMiddleware(healthController.complianceCatalogSchemaInfo));
 router.get('/catalog-resolver', asyncMiddleware(healthController.catalogResolverInfo));
+router.get('/banners', asyncMiddleware(healthController.bannersSchemaInfo));
 router.get('/:dependency', sensitiveSurfaceGuard, asyncMiddleware(healthController.singleDependency));
 
 module.exports = router;

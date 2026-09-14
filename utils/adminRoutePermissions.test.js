@@ -67,6 +67,14 @@ function run() {
         resolveAdminFeatureKey({ originalUrl: '/admin/zones/12/catalog/overrides/reset' }),
         ADMIN_FEATURE_KEYS.ZONE_RECORD
     );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/createBanner' }),
+        ADMIN_FEATURE_KEYS.PROMOTION
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/getAllBanners' }),
+        ADMIN_FEATURE_KEYS.PROMOTION
+    );
     assert.strictEqual(resolveAdminFeatureKey({ path: '/signOut' }), null);
     assert.strictEqual(resolveAdminFeatureKey({ path: '/not-a-real-admin-route' }), null);
 

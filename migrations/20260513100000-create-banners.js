@@ -1,8 +1,12 @@
 'use strict';
 
+const { tableExists } = require('../utils/migrationHelpers');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    if (await tableExists(queryInterface, 'banners')) return;
+
     await queryInterface.createTable('banners', {
       id: {
         allowNull: false,
@@ -82,6 +86,7 @@ module.exports = {
   },
 
   async down(queryInterface) {
+    if (!(await tableExists(queryInterface, 'banners'))) return;
     await queryInterface.dropTable('banners');
   }
 };

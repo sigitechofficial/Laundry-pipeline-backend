@@ -177,9 +177,7 @@ async function specificCustomerDetails(req, res) {
 */
 async function updateCustomer(req, res) {
     const { customerId } = req.params;
-    const { firstName, lastName, email, phoneNum, status } = req.body;
-    const data = { ...req.body };
-    const result = await customerService.updateCustomer(customerId, data);
+    const result = await customerService.updateCustomer(customerId, req.body || {});
     return ResponseHelper.success(res, "Customer updated successfully", result);
 }
 

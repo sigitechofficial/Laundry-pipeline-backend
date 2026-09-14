@@ -163,6 +163,16 @@ const universalErrorHandler = (err, req, res, next) => {
         error = new UnauthorizedError(context === 'Admin' ? 'Admin token expired' : 'Token expired');
     }
 
+    if (err.name === 'MulterError' || err.code === 'LIMIT_FILE_SIZE' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        const multerMessage =
+            err.code === 'LIMIT_FILE_SIZE'
+                ? 'File must be 5MB or smaller'
+                : err.code === 'LIMIT_UNEXPECTED_FILE'
+                    ? `Unexpected file field "${err.field}". Use the documented field name.`
+                    : err.message || 'Invalid file upload';
+        error = new ValidationError(multerMessage);
+    }
+
     // Handle admin-specific errors
     if (err.name && err.name.startsWith('Admin')) {
         switch (err.name) {

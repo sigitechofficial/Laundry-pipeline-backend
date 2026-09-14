@@ -10,6 +10,7 @@ const {
   checkShopReviewSchema,
   checkRepairCatalogSchema,
   checkComplianceCatalogSchema,
+  checkBannersSchema,
   logCheck,
   logLine
 } = require('../services/healthCheckService');
@@ -211,6 +212,25 @@ async function catalogResolverInfo(req, res) {
   });
 }
 
+async function bannersSchemaInfo(req, res) {
+  const meta = requestMeta(req);
+  logLine('info', 'schema.banners.start', meta);
+  const check = await checkBannersSchema();
+  logCheck('schema.banners', check);
+
+  const httpStatus = check.status === 'ok' ? 200 : 503;
+  return res.status(httpStatus).json({
+    status: check.status === 'ok' ? '1' : '0',
+    message: check.message,
+    data: {
+      ...check,
+      deploy: getDeploymentInfo(),
+      serverTime: new Date().toISOString(),
+      request: meta
+    }
+  });
+}
+
 /**
  * GET /health/:dependency
  * dependency = mysql | redis | firebase | stripe | zeptomail
@@ -255,5 +275,6 @@ module.exports = {
   repairCatalogSchemaInfo,
   complianceCatalogSchemaInfo,
   catalogResolverInfo,
+  bannersSchemaInfo,
   singleDependency
 };
