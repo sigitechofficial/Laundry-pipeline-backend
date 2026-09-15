@@ -828,6 +828,47 @@ class AgentAuthService {
             data.bussinessWorkingDays
         );
 
+        // Guard: an agent cannot close the shop for TODAY while they still have
+        // accepted orders in progress that admin has not reassigned. Editing
+        // other days, or closing a day that was already closed, stays allowed.
+        const {
+            getWallClockContextForCountry,
+            findTodayWorkingHoursRow,
+        } = require('../../utils/shopWorkingHours');
+        const { countActiveAssignedOrders } = require('../../utils/agentActiveOrders');
+        const { dayOfWeek } = await getWallClockContextForCountry(
+            countryCtx.countryId,
+            data.timeZone,
+            data.clientTimeZone
+        );
+        const incomingToday = (data.bussinessWorkingDays || []).find(
+            (d) =>
+                String(d.dayOfWeek).toLowerCase() ===
+                String(dayOfWeek).toLowerCase()
+        );
+        const closingToday =
+            incomingToday &&
+            (incomingToday.status === false ||
+                incomingToday.status === 0 ||
+                incomingToday.status === '0' ||
+                incomingToday.status === 'false');
+        if (closingToday) {
+            const currentToday = await findTodayWorkingHoursRow(
+                data.userId,
+                dayOfWeek
+            );
+            if (Boolean(currentToday?.status)) {
+                const activeCount = await countActiveAssignedOrders(data.userId);
+                if (activeCount > 0) {
+                    throw new ConflictError(
+                        `You still have ${activeCount} active order${
+                            activeCount === 1 ? '' : 's'
+                        } to complete. Finish them or ask admin to reassign before closing the shop today.`
+                    );
+                }
+            }
+        }
+
         for (const ele of data.bussinessWorkingDays) {
             await bussinessWorkingHours.update(
                 {

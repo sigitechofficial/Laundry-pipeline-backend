@@ -175,6 +175,47 @@ class ReviewReasonCodeService {
     return row;
   }
 
+  /**
+   * Persist a new display order. Accepts an ordered array of reason-code ids
+   * (as arranged by admin drag-and-drop) and rewrites sortOrder = position.
+   * Applied in a single transaction so the list can never end up half-ordered.
+   */
+  async reorder(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new ValidationError('An ordered array of ids is required');
+    }
+
+    const numericIds = ids
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+
+    if (numericIds.length === 0) {
+      throw new ValidationError('No valid reason-code ids provided');
+    }
+
+    const uniqueIds = [...new Set(numericIds)];
+
+    const existing = await reviewReasonCode.findAll({
+      where: { id: { [Op.in]: uniqueIds } },
+      attributes: ['id'],
+    });
+    if (existing.length !== uniqueIds.length) {
+      throw new NotFoundError('One or more reason codes were not found');
+    }
+
+    const sequelize = reviewReasonCode.sequelize;
+    await sequelize.transaction(async (transaction) => {
+      for (let index = 0; index < uniqueIds.length; index += 1) {
+        await reviewReasonCode.update(
+          { sortOrder: index + 1 },
+          { where: { id: uniqueIds[index] }, transaction }
+        );
+      }
+    });
+
+    return this.getAll();
+  }
+
   async delete(id) {
     const reasonId = Number(id);
     if (!reasonId || Number.isNaN(reasonId)) {

@@ -412,6 +412,7 @@ router.delete('/deleteAccountDeletionReason/:id', asyncMiddleware(adminControlle
 router.get('/getReviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
 router.post('/createReviewReasonCode', asyncMiddleware(shopReviewController.createReviewReasonCode))
 router.patch('/updateReviewReasonCode/:id', asyncMiddleware(shopReviewController.updateReviewReasonCode))
+router.patch('/reorderReviewReasonCodes', asyncMiddleware(shopReviewController.reorderReviewReasonCodes))
 router.delete('/deleteReviewReasonCode/:id', asyncMiddleware(shopReviewController.deleteReviewReasonCode))
 
 //!-------------------------Shop Reviews (moderation inbox)-------------------------------------------------//

@@ -204,6 +204,14 @@ router.get(
     asyncMiddleware(agentController.getBookingHome)
 );
 
+// Active accepted orders the agent must finish (or admin reassign) before
+// closing the shop / logging out.
+router.get(
+    "/activeOrdersCount",
+    validateAccessToken,
+    asyncMiddleware(agentController.getActiveAssignedOrders)
+);
+
 //!------------------------------------------------------Agent Booking Api's-----------------------------------------------//
 //Get Order for Agent
 router.get(

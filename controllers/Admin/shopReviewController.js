@@ -40,6 +40,16 @@ async function deleteReviewReasonCode(req, res) {
   return ResponseHelper.success(res, result.message, result);
 }
 
+async function reorderReviewReasonCodes(req, res) {
+  const ids = req.body?.ids || req.body?.order;
+  const reasons = await reviewReasonCodeService.reorder(ids);
+  return ResponseHelper.success(
+    res,
+    'Review reason codes reordered successfully',
+    reasons
+  );
+}
+
 async function listShopReviews(req, res) {
   const data = await shopReviewAdminService.listReviews(req.query);
   return ResponseHelper.success(res, 'Shop reviews retrieved successfully', data);
@@ -79,6 +89,7 @@ module.exports = {
   createReviewReasonCode,
   updateReviewReasonCode,
   deleteReviewReasonCode,
+  reorderReviewReasonCodes,
   listShopReviews,
   getShopReviewById,
   hideShopReview,

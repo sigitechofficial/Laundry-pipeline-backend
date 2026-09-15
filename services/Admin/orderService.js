@@ -956,11 +956,22 @@ class OrderService {
         }
 
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
+        let agentDeclines = [];
+        try {
+            const agentBookingDeclineService = require('../Agent/agentBookingDeclineService');
+            agentDeclines = await agentBookingDeclineService.listDeclinesForBooking(orderId);
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] agent declines unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,
             countryCtx.ianaTimeZone,
-            0
+            agentDeclines.length
         );
+        enriched.agentDeclines = agentDeclines;
 
         try {
             enriched.paymentSummary =
