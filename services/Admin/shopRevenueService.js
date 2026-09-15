@@ -80,9 +80,13 @@ function emptyTotals() {
     rescheduleCharge: 0,
     cashGross: 0,
     cardGross: 0,
+    cashOrders: 0,
+    cardOrders: 0,
     avgOrderValue: 0,
     bookingTips: 0,
     extraTips: 0,
+    cashTips: 0,
+    cardTips: 0,
     cancelledOrders: 0,
     cancelledValue: 0,
     refundedOrders: 0,
@@ -185,9 +189,13 @@ function mapTotals(row) {
     rescheduleCharge: money(row.rescheduleCharge),
     cashGross: money(row.cashGross),
     cardGross: money(row.cardGross),
+    cashOrders: Number(row.cashOrders || 0),
+    cardOrders: Number(row.cardOrders || 0),
     avgOrderValue: money(row.avgOrderValue),
     bookingTips: money(row.bookingTips),
     extraTips: money(row.extraTips),
+    cashTips: money(row.cashTips),
+    cardTips: money(row.cardTips),
     cancelledOrders: Number(row.cancelledOrders || 0),
     cancelledValue: money(row.cancelledValue),
     refundedOrders: Number(row.refundedOrders || 0),
@@ -215,9 +223,13 @@ async function loadPeriodTotals(addressId, range) {
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN b.rescheduleCharge ELSE 0 END), 0) AS rescheduleCharge,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND ${CASH_CHANNEL_SQL} THEN ${NET_GROSS} ELSE 0 END), 0) AS cashGross,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND NOT (${CASH_CHANNEL_SQL}) THEN ${NET_GROSS} ELSE 0 END), 0) AS cardGross,
+      COUNT(DISTINCT CASE WHEN ${STILL_COLLECTED} AND ${CASH_CHANNEL_SQL} THEN b.id END) AS cashOrders,
+      COUNT(DISTINCT CASE WHEN ${STILL_COLLECTED} AND NOT (${CASH_CHANNEL_SQL}) THEN b.id END) AS cardOrders,
       COALESCE(AVG(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} END), 0) AS avgOrderValue,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.bookingTips ELSE 0 END), 0) AS bookingTips,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.extraTips ELSE 0 END), 0) AS extraTips
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.extraTips ELSE 0 END), 0) AS extraTips,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND ${CASH_CHANNEL_SQL} THEN (COALESCE(tips.bookingTips, 0) + COALESCE(tips.extraTips, 0)) ELSE 0 END), 0) AS cashTips,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND NOT (${CASH_CHANNEL_SQL}) THEN (COALESCE(tips.bookingTips, 0) + COALESCE(tips.extraTips, 0)) ELSE 0 END), 0) AS cardTips
     FROM \`${T.bookings}\` b
     LEFT JOIN \`${T.billing}\` bd ON bd.bookingId = b.id
     ${REFUND_JOIN}
