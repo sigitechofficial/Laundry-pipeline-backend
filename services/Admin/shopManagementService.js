@@ -1,4 +1,4 @@
-const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails } = require('../../models');
+const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, units, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails, bookingRefund } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { 
@@ -13,6 +13,8 @@ const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listL
 // (customer + agent), Cancelled — see constants/bookingStatusIds.js.
 const { PENDING_EXCLUDED_SQL } = require('../../constants/bookingStatusIds');
 const { shopCollectedNetRevenueSql } = require('../../utils/shopCollectedRevenue');
+const { presentShopOrderFinance } = require('../../utils/shopOrderFinance');
+const { summarizeOrderPunctuality } = require('../../utils/bookingPunctuality');
 
 class ShopManagementService {
     /**
@@ -180,7 +182,15 @@ class ShopManagementService {
                     },
                     {
                         model: zone,
-                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                        attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+                        include: [
+                            {
+                                model: units,
+                                as: 'currencyUnitZ',
+                                attributes: ['id', 'name', 'symbol'],
+                                required: false,
+                            },
+                        ],
                     }
                 ]
             };
@@ -431,7 +441,15 @@ class ShopManagementService {
                             },
                             {
                                 model: zone,
-                                attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                                attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+                                include: [
+                                    {
+                                        model: units,
+                                        as: 'currencyUnitZ',
+                                        attributes: ['id', 'name', 'symbol'],
+                                        required: false,
+                                    },
+                                ],
                             }
                         ]
                     }
@@ -512,12 +530,12 @@ class ShopManagementService {
                                 }
                             ]
                         },
-                        {
-                            model: billingDetails,
-                            as: 'billingDetail',
-                            attributes: ['id', 'upfrontAmount', 'discount', 'total', 'zoneAdminCommission', 'serviceCharge', 'categoryCharge', 'pickupDriverEarning', 'deliveryDriverEarning', 'paymentStatus'],
-                            required: false
-                        }
+                            {
+                                model: billingDetails,
+                                as: 'billingDetail',
+                                attributes: ['id', 'upfrontAmount', 'discount', 'total', 'zoneAdminCommission', 'serviceCharge', 'categoryCharge', 'agentEarning', 'pickupDriverEarning', 'deliveryDriverEarning', 'paymentStatus'],
+                                required: false
+                            }
                     ],
                     order: [['id', 'DESC']],
                     attributes: {
@@ -529,7 +547,41 @@ class ShopManagementService {
             // Convert shopData to plain object and add orders
             const result = shopData ? shopData.toJSON() : null;
             if (result) {
-                result.orders = orders;
+                const orderRows = orders || [];
+                const bookingIds = orderRows
+                    .map((row) => (typeof row.get === 'function' ? row.id : row.id))
+                    .filter(Boolean);
+                const refundRows = bookingIds.length
+                    ? await bookingRefund.findAll({
+                        where: {
+                            bookingId: { [Op.in]: bookingIds },
+                            status: { [Op.in]: ['succeeded', 'partial_failed'] },
+                        },
+                        attributes: ['bookingId', 'amount'],
+                        raw: true,
+                    })
+                    : [];
+                const refundedByBooking = new Map();
+                for (const row of refundRows) {
+                    const bookingId = Number(row.bookingId);
+                    refundedByBooking.set(
+                        bookingId,
+                        (refundedByBooking.get(bookingId) || 0) + Number(row.amount || 0)
+                    );
+                }
+                const mappedOrders = orderRows.map((row) => {
+                    const plain = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+                    const finance = presentShopOrderFinance(
+                        plain,
+                        refundedByBooking.get(Number(plain.id)) || 0
+                    );
+                    return {
+                        ...plain,
+                        ...finance,
+                    };
+                });
+                result.orders = mappedOrders;
+                result.punctuality = summarizeOrderPunctuality(mappedOrders);
             }
 
             return result;
@@ -633,7 +685,15 @@ class ShopManagementService {
                         },
                         {
                             model: zone,
-                            attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge']
+                            attributes: ['id', 'name', 'status', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+                            include: [
+                                {
+                                    model: units,
+                                    as: 'currencyUnitZ',
+                                    attributes: ['id', 'name', 'symbol'],
+                                    required: false,
+                                },
+                            ],
                         }
                     ]
                 }

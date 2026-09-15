@@ -18,6 +18,7 @@ const { NotFoundError } = require("../../middlewares/universalErrorHandler");
 const invoiceManagementService = require("./invoiceManagementService");
 const { normalizePaymentType } = require("../../utils/invoicePaymentSummary");
 const { RATE_SNAPSHOT_ATTRIBUTES } = require("../../utils/bookingRateSnapshot");
+const { classifyAgentEarningChannel, isMixedPayChannel } = require("../../utils/earningChannel");
 const { netAgentEarning } = require("../../utils/agentEarningNet");
 const { REFUNDED } = require("../../constants/bookingStatusIds");
 
@@ -341,33 +342,6 @@ async function sumWalletAmount(userId, type, options = {}) {
         raw: true,
     });
     return rows.reduce((sum, row) => sum + parseFloat(row.amount || 0), 0);
-}
-
-/**
- * Cash bucket: full cash bookings + card upfront with balance collected in cash.
- * Card bucket: remaining card bookings.
- */
-function classifyAgentEarningChannel(bookingRow) {
-    if (!bookingRow) return "card";
-
-    const paymentType = normalizePaymentType(bookingRow.paymentType);
-    if (paymentType === "cash") {
-        return "cash";
-    }
-
-    const collectedVia = bookingRow.balanceCollectedVia;
-    if (collectedVia === "cash") {
-        return "cash";
-    }
-    if (collectedVia === "card") {
-        return "card";
-    }
-
-    if (bookingRow.balancePaymentMethod === "cash") {
-        return "cash";
-    }
-
-    return "card";
 }
 
 async function resolveCashCollectedAmount(bookingId, bookingRow, options = {}) {
@@ -820,6 +794,10 @@ async function getWalletSummary(agentUserId) {
     const agentPayoutCredits = await sumWalletAmount(agentUserId, "credit", {
         referenceType: AGENT_PAYOUT_REFERENCE,
     });
+    const pendingAgentPayouts = await sumWalletAmount(agentUserId, "credit", {
+        referenceType: AGENT_PAYOUT_REFERENCE,
+        status: "pending",
+    });
     // Money the agent has actually withdrawn to their own account. This is the
     // ONLY thing that counts as agent-facing "Debited".
     const totalWithdrawn = await sumWalletAmount(agentUserId, "debit", {
@@ -932,7 +910,7 @@ async function getWalletSummary(agentUserId) {
     const totalEarning = parseFloat(earnings.totalEarning.toFixed(2));
 
     const platformOwesAgent = parseFloat(
-        Math.max(totalEarningCard - agentPayoutCredits, 0).toFixed(2)
+        Math.max(totalEarningCard - agentPayoutCredits - pendingAgentPayouts, 0).toFixed(2)
     );
 
     const totalCashRefunded = await sumWalletAmount(agentUserId, "credit", {
@@ -1294,9 +1272,9 @@ function describeWalletReferenceType(referenceType, type) {
         case ADMIN_SETTLEMENT_REFERENCE:
             return type === "debit" ? "Admin adjustment (debit)" : "Admin adjustment (credit)";
         case AGENT_PAYOUT_REFERENCE:
-            return "Payout released to agent wallet";
+            return "Payout sent to Stripe Connect";
         case WITHDRAWAL_REFERENCE:
-            return "Withdrawn to agent's bank (Stripe)";
+            return "Sent to agent's Stripe Connect account";
         case PAYOUT_REFERENCE:
             return "Legacy payout";
         case EXTRA_TIP_REFERENCE:
@@ -1560,6 +1538,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
                     "zoneAdminCommission",
                     "total",
                     "serviceCharge",
+                    "categoryCharge",
                     "upfrontAmount",
                     "discount",
                     "updatedAt",
@@ -1640,6 +1619,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         const billing = bookingRow.billingDetail || {};
         const bookingTips = tipsByBooking.get(bookingRow.id) || [];
         const channel = classifyAgentEarningChannel(bookingRow);
+        const mixed = isMixedPayChannel(bookingRow);
         const ledger = walletByBooking.get(bookingRow.id) || {
             amounts: {},
             dates: {},
@@ -1651,6 +1631,7 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
         const extraTipFromTips = extraTipAmountFromTips(bookingTips);
         const serviceFee = parseFloat(billing.serviceCharge || 0);
         const platformShare = parseFloat(billing.zoneAdminCommission || 0);
+        const laundry = parseFloat(billing.categoryCharge || 0);
         const commissionClawbackAmount = parseFloat(
             (amounts[COMMISSION_CLAWBACK_REFERENCE] || 0).toFixed(2)
         );
@@ -1689,13 +1670,16 @@ async function listAgentOrderBreakdown(agentUserId, options = {}) {
             orderTrackId: bookingRow.orderTrackId || String(bookingRow.id),
             paymentType: bookingRow.paymentType || null,
             channel,
+            mixed,
             completedAt:
                 bookingRow.deliveryCompletedAt ||
                 bookingRow.pickupCompletedAt ||
                 billing.updatedAt,
             orderTotal,
+            laundry,
             serviceFee,
             platformShare,
+            platformTake: parseFloat((serviceFee + platformShare).toFixed(2)),
             bookingTip,
             laundryCommission,
             commissionAmount,

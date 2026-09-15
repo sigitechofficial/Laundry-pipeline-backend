@@ -87,7 +87,7 @@ exports.recordAgentPayout = async (req, res) => {
         note,
         adminUserId: req.user?.id,
     });
-    return ResponseHelper.success(res, "Agent payout recorded", data);
+    return ResponseHelper.success(res, "Payout sent to the agent's Stripe Connect account", data);
 };
 
 exports.syncAgentWalletsFromBookings = async (req, res) => {
@@ -145,7 +145,7 @@ exports.recordShopPayout = async (req, res) => {
         note,
         adminUserId: req.user?.id,
     });
-    return ResponseHelper.success(res, "Agent payout recorded", data);
+    return ResponseHelper.success(res, "Payout sent to the agent's Stripe Connect account", data);
 };
 
 const agentWithdrawalService = require("../../services/Agent/agentWithdrawalService");

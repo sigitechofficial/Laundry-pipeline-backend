@@ -2,25 +2,27 @@
 /**
  * Admin block/unblock + anonymize-on-delete for any user type.
  *
- * Block/unblock: sets users.status (false = blocked, true = active).
- * All login flows (customer, agent, driver, admin) already gate on status, so
- * flipping it is sufficient to bar/restore access immediately.
- *
- * Anonymize: scrambles PII before soft-deleting so GDPR/data-minimisation is
- * respected while booking history (foreign-key references) stays intact.
+ * Block: users.status = false, Redis sessions revoked, recurring plans paused.
+ * Logged-in apps are refused on the next API call (JWT middleware checks status).
+ * Refuses if the user still has incomplete orders.
  */
 const crypto = require('crypto');
-const { users, booking } = require('../../models');
+const { users, booking, addressDb, recurringPlan } = require('../../models');
 const { Op } = require('sequelize');
+const redisCli = require('../../redis/redis');
 const {
     NotFoundError,
     UnprocessableEntityError,
-    ValidationError,
 } = require('../../middlewares/universalErrorHandler');
 const { CLASSIFIED_AS, SYSTEM_ROLES } = require('../../constants/systemRoles');
+const {
+    SHOP_ADDRESS_TYPE,
+    openCustomerBookingWhere,
+    openAssignedBookingWhere,
+    openAgentOwnerBookingWhere,
+} = require('../../utils/openBookingGuard');
 
-// User type identifiers accepted in the API
-const USER_TYPES = Object.freeze({
+const BLOCK_USER_TYPES = Object.freeze({
     customer: 'customer',
     driver: 'driver',
     agent: 'agent',
@@ -32,49 +34,116 @@ const USER_TYPES = Object.freeze({
 function whereForType(userId, userType) {
     const id = Number(userId);
     switch (userType) {
-        case USER_TYPES.customer:
+        case BLOCK_USER_TYPES.customer:
             return { id, userTypeId: 2 };
-        case USER_TYPES.driver:
+        case BLOCK_USER_TYPES.driver:
             return { id, roleId: SYSTEM_ROLES.LAUNDRY_SHOP_DRIVER, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE };
-        case USER_TYPES.agent:
+        case BLOCK_USER_TYPES.agent:
             return { id, userTypeId: 3 };
-        case USER_TYPES.agent_employee:
+        case BLOCK_USER_TYPES.agent_employee:
             return { id, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE };
-        case USER_TYPES.admin_employee:
+        case BLOCK_USER_TYPES.admin_employee:
             return { id, classifiedAsId: CLASSIFIED_AS.ADMIN_EMPLOYEE };
         default:
-            // fallback — match by id only
             return { id };
     }
 }
 
-/** Short random hex for anonymised values. */
 function rand(len = 8) {
     return crypto.randomBytes(Math.ceil(len / 2)).toString('hex').slice(0, len);
 }
 
+async function countOpenBookingsForBlock(user, userType) {
+    if (userType === BLOCK_USER_TYPES.customer) {
+        return booking.count({
+            where: openCustomerBookingWhere(user.id, Op),
+        });
+    }
+
+    if (userType === BLOCK_USER_TYPES.agent) {
+        const shop = await addressDb.findOne({
+            where: { userId: user.id, addressType: SHOP_ADDRESS_TYPE },
+            attributes: ['id'],
+        });
+        return booking.count({
+            where: openAgentOwnerBookingWhere(user.id, shop?.id, Op),
+        });
+    }
+
+    if (
+        userType === BLOCK_USER_TYPES.driver ||
+        userType === BLOCK_USER_TYPES.agent_employee
+    ) {
+        return booking.count({
+            where: openAssignedBookingWhere(user.id, Op),
+        });
+    }
+
+    return 0;
+}
+
+async function revokeAppSessions(userId) {
+    try {
+        await redisCli.del(`id-${userId}`);
+    } catch (err) {
+        console.warn(`[block] Redis session revoke failed for user ${userId}:`, err.message);
+    }
+}
+
+async function pauseCustomerRecurringPlans(customerId) {
+    const [pausedCount] = await recurringPlan.update(
+        {
+            status: 'paused',
+            notes: 'Paused because the customer was blocked by admin.',
+        },
+        {
+            where: {
+                customerId: Number(customerId),
+                status: 'active',
+            },
+        }
+    );
+    return pausedCount;
+}
+
 class UserBlockService {
     /**
-     * Block a user — sets status = false so all apps reject their next login.
-     * Safe to call if already blocked.
+     * Block a user. Refuses while they have incomplete orders.
+     * Recurring frequency plans are paused so no further orders are auto-created.
      */
     async blockUser(userId, userType, reason = null) {
         const where = whereForType(userId, userType);
         const user = await users.findOne({ where });
         if (!user) throw new NotFoundError('User not found');
 
+        let recurringPaused = 0;
+        if (userType === BLOCK_USER_TYPES.customer) {
+            recurringPaused = await pauseCustomerRecurringPlans(user.id);
+        }
+
+        const activeCount = await countOpenBookingsForBlock(user, userType);
+        if (activeCount > 0) {
+            throw new UnprocessableEntityError(
+                `This account has ${activeCount} incomplete order(s). Complete or cancel them before blocking.` +
+                    (recurringPaused
+                        ? ` Recurring frequency was paused so no further orders will be auto-created.`
+                        : '')
+            );
+        }
+
         await users.update({ status: false }, { where: { id: user.id } });
+        await revokeAppSessions(user.id);
+
         return {
             userId: user.id,
             blocked: true,
             reason,
-            message: 'User blocked successfully. They will not be able to log in.',
+            recurringPaused,
+            message:
+                'User blocked. They cannot continue in the app until unblocked. Contact support is shown on their next request.',
         };
     }
 
-    /**
-     * Unblock a user — restores status = true.
-     */
     async unblockUser(userId, userType) {
         const where = whereForType(userId, userType);
         const user = await users.findOne({ where });
@@ -84,36 +153,16 @@ class UserBlockService {
         return {
             userId: user.id,
             blocked: false,
-            message: 'User unblocked successfully.',
+            message: 'User unblocked successfully. Recurring plans stay paused until they place a new order or support re-enables them.',
         };
     }
 
-    /**
-     * Anonymize + soft-delete a user.
-     * - PII (name, email, phone) is scrambled.
-     * - Booking history foreign keys remain intact.
-     * - status set to false so login is impossible even if paranoid un-deletes.
-     * - Sequelize paranoid deletedAt is set via destroy().
-     *
-     * Refuses if the user has active (non-terminal) bookings.
-     */
     async anonymizeAndDelete(userId, userType) {
         const where = whereForType(userId, userType);
         const user = await users.findOne({ where });
         if (!user) throw new NotFoundError('User not found');
 
-        // Guard: do not anonymise if there are open bookings
-        const TERMINAL_STATUSES = [17, 19, 23];
-        const activeCount = await booking.count({
-            where: {
-                [Op.or]: [
-                    { customerId: user.id },
-                    { driverId: user.id },
-                    { deliveryDriverId: user.id },
-                ],
-                bookingStatusId: { [Op.notIn]: TERMINAL_STATUSES },
-            },
-        });
+        const activeCount = await countOpenBookingsForBlock(user, userType);
         if (activeCount > 0) {
             throw new UnprocessableEntityError(
                 `User has ${activeCount} active booking(s). Complete or cancel them before deleting.`
@@ -135,15 +184,12 @@ class UserBlockService {
             { where: { id: user.id } }
         );
 
-        // Paranoid soft-delete (sets deletedAt)
         await users.destroy({ where: { id: user.id } });
+        await revokeAppSessions(user.id);
 
         return { userId: user.id, anonymized: true, message: 'User data anonymized and account deleted.' };
     }
 
-    /**
-     * Get block status for a user.
-     */
     async getBlockStatus(userId) {
         const user = await users.findOne({
             where: { id: Number(userId) },
@@ -155,3 +201,4 @@ class UserBlockService {
 }
 
 module.exports = new UserBlockService();
+module.exports.USER_TYPES = BLOCK_USER_TYPES;

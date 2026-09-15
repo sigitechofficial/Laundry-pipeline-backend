@@ -41,6 +41,9 @@ class UnauthorizedError extends UniversalHttpError {
     constructor(message = 'Unauthorized access', details = null) {
         super(message, StatusCodes.UNAUTHORIZED, details);
         this.name = 'UnauthorizedError';
+        if (details && typeof details === 'object' && details.code) {
+            this.errorCode = details.code;
+        }
     }
 }
 
@@ -48,6 +51,9 @@ class ForbiddenError extends UniversalHttpError {
     constructor(message = 'Access forbidden', details = null) {
         super(message, StatusCodes.FORBIDDEN, details);
         this.name = 'ForbiddenError';
+        if (details && typeof details === 'object' && details.code) {
+            this.errorCode = details.code;
+        }
     }
 }
 
@@ -109,6 +115,9 @@ const universalErrorHandler = (err, req, res, next) => {
             timestamp: new Date().toISOString(),
             path: req.originalUrl
         };
+        if (err.errorCode) {
+            response.code = err.errorCode;
+        }
 
         if (process.env.NODE_ENV === 'development') {
             response.stack = err.stack;

@@ -64,6 +64,7 @@ const {
     ValidationError,
     NotFoundError,
     UnauthorizedError,
+    ForbiddenError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
@@ -113,6 +114,11 @@ const zoneCatalogService = require('../Admin/zoneCatalogService');
 // Import coupon service
 const couponService = require('./couponService');
 const cancelBookingService = require('./cancelBookingService');
+const {
+    ACCOUNT_BLOCKED_CODE,
+    ACCOUNT_BLOCKED_MESSAGE,
+    isUserBlocked,
+} = require('../../utils/accountBlocked');
 const noShowEnforcementService = require('../Agent/noShowEnforcementService');
 const { resolveNoShowPolicyForBooking } = require('../../utils/safeNoShowPolicyQuery');
 const { buildOrderTrackTimeline } = require('../../utils/orderTrackTimeline');
@@ -1337,6 +1343,11 @@ class CustomerOrderService {
         } = data;
 
         const paymentType = normalizePaymentType(rawPaymentType);
+
+        const customerRow = await users.findByPk(userId, { attributes: ['id', 'status'] });
+        if (!customerRow || isUserBlocked(customerRow.status)) {
+            throw new ForbiddenError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
+        }
 
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
         console.log("paymentType==============>>>", paymentType);

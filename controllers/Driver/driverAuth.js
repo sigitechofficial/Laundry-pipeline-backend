@@ -17,6 +17,7 @@ var JSbarcode = require('jsbarcode')
 const redisCli = require('../../redis/redis')
 const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
+const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const path = require('path')
@@ -538,8 +539,8 @@ async function driverLogin(req, res) {
     //  checking the status
     if (!userData.status)
         throw new CustomException(
-            "Blocked by admin",
-            "Please contact admin to continue"
+            ACCOUNT_BLOCKED_MESSAGE,
+            "Please contact the support team"
         );
     // Checking user status
     const requ = await axios.get(
@@ -825,7 +826,7 @@ async function session(req, res) {
         return res.json(
             returnFunction(
                 4,
-                "You are blocked by Admin",
+                ACCOUNT_BLOCKED_MESSAGE,
                 {},
                 "Please contact support for more information"
             )

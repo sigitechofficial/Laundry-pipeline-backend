@@ -2,6 +2,7 @@ require("dotenv").config();
 const { verify } = require("jsonwebtoken");
 const redisCli = require("../redis/redis");
 const guestAuthService = require("../services/Customer/guestAuthService");
+const { sendIfAccountBlocked } = require("./rejectBlockedAccount");
 
 function extractToken(req) {
     let accessToken = req.cookies && req.cookies.accessToken;
@@ -46,6 +47,10 @@ module.exports = async function validateAccessTokenOrGuest(req, res, next) {
             await guestAuthService.assertGuestRedisSessionActive(decoded.jti);
             req.user = { guest: true, jti: decoded.jti };
             return next();
+        }
+
+        if (await sendIfAccountBlocked(decoded.id, res)) {
+            return;
         }
 
         const redisToken = await redisCli.hGetAll(`id-${decoded.id}`);

@@ -7,13 +7,17 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
 const otpGenerator = require('otp-generator');
-const { 
+const {
     UnauthorizedError, 
     NotFoundError, 
     ConflictError, 
     ValidationError,
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
+const {
+    ACCOUNT_BLOCKED_CODE,
+    ACCOUNT_BLOCKED_MESSAGE,
+} = require('../../utils/accountBlocked');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
 const {
@@ -981,7 +985,7 @@ class AgentAuthService {
         // Check verification before anything else
         let otpId = 0;
         if (!userFind.status) {
-            throw new UnauthorizedError("Blocked by admin. Please contact admin to continue");
+            throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
             const otpData = await otpVerification.findOne(
                 { where: { userId: userFind.id } },
@@ -1095,7 +1099,7 @@ class AgentAuthService {
             }
 
             if (!socialUser.status) {
-                throw new UnauthorizedError('Blocked by admin. Please contact admin to continue');
+                throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
             }
 
             await _refreshDeviceToken(socialUser.id, data.dvToken);
@@ -1600,14 +1604,14 @@ class AgentAuthService {
 
         if (!userData.status) {
             throw new UnauthorizedError(
-                "You are blocked by Admin",
-                { message: "Please contact support for more information" }
+                ACCOUNT_BLOCKED_MESSAGE,
+                { code: ACCOUNT_BLOCKED_CODE }
             );
         }
 
         let otpId = 0;
         if (!userData.status) {
-            throw new UnauthorizedError("Blocked by admin. Please contact admin to continue");
+            throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
             const otpData = await otpVerification.findOne(
                 { where: { userId: userData.id } },
@@ -1820,15 +1824,18 @@ class AgentAuthService {
         const employeeData = await users.findOne({
             where: {
                 email,
-                status: true,
                 classifiedAsId: 1,
                 deletedAt: { [Op.is]: null }
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'password', 'classifiedAsId', 'roleId', 'employeeOff', 'image', 'phoneNum', 'countryCode']
+            attributes: ['id', 'firstName', 'lastName', 'email', 'password', 'classifiedAsId', 'roleId', 'employeeOff', 'image', 'phoneNum', 'countryCode', 'status']
         });
 
         if (!employeeData) {
             throw new NotFoundError('Employee not found. Please enter valid credentials.');
+        }
+
+        if (!employeeData.status) {
+            throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         }
 
         const passwordMatch = await bcrypt.compare(password, employeeData.password);

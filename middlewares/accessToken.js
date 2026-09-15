@@ -2,6 +2,7 @@ require('dotenv').config()
 const { verify } = require('jsonwebtoken')
 const redisCli = require('../redis/redis')
 const { attachShopAgentContext } = require('../utils/shopAgentContext')
+const { sendIfAccountBlocked } = require('./rejectBlockedAccount')
 
 module.exports = async function validateAccessToken(req, res, next) {
     try {
@@ -19,6 +20,10 @@ module.exports = async function validateAccessToken(req, res, next) {
 
         const validateToken = verify(accessToken, process.env.JWT_ACCESS_SECRET)
         console.log("🚀 ~ validateAccessToken ~ validateToken:", validateToken)
+
+        if (await sendIfAccountBlocked(validateToken.id, res)) {
+            return;
+        }
 
         const redisToken = await redisCli.hGetAll(`id-${validateToken.id}`);
         console.log("🚀 ~ validateAccessToken ~ redisToken:", redisToken)

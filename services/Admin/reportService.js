@@ -397,11 +397,11 @@ async function getTopShopsReport(rawFilters = {}) {
             COUNT(DISTINCT b.id) AS ordersCompleted,
             COALESCE(SUM(bd.total), 0) AS grossRevenue,
             COALESCE(SUM(bd.zoneAdminCommission), 0) AS commissionAmount,
-            COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0) AS driversCommission,
+            COALESCE(SUM(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0)), 0) AS driversCommission,
             COALESCE(SUM(b.rescheduleCharge), 0) AS deduction,
             COALESCE(SUM(bd.total), 0)
                 - COALESCE(SUM(bd.zoneAdminCommission), 0)
-                - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
+                - COALESCE(SUM(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0)), 0)
                 - COALESCE(SUM(b.rescheduleCharge), 0) AS netPayout
         FROM \`${T.bookings}\` b
         JOIN \`${T.addressDb}\` a ON a.id = b.laundryShopId

@@ -877,7 +877,10 @@ async function transferToConnectAccount(
                 amount: amountInCents,
                 currency: "gbp",
                 destination: accountId,
-                description: "Agent wallet withdrawal",
+                description:
+                    metadata.transferKind === "admin_payout"
+                        ? "Admin payout to agent Stripe Connect account"
+                        : "Agent wallet withdrawal",
                 metadata: sanitizeStripeMetadata(metadata),
             },
             {

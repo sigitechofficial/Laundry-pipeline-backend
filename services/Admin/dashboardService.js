@@ -226,7 +226,7 @@ class DashboardService {
                 COALESCE(SUM(bd.zoneAdminCommission), 0) AS adminRevenue,
                 COALESCE(SUM(bd.total), 0)
                     - COALESCE(SUM(bd.zoneAdminCommission), 0)
-                    - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
+                    - COALESCE(SUM(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0)), 0)
                     - COALESCE(SUM(b.rescheduleCharge), 0) AS shopRevenue
             FROM \`${T.bookings}\` b
             LEFT JOIN \`${T.billingDetails}\` bd ON bd.bookingId = b.id
@@ -303,7 +303,7 @@ class DashboardService {
                 COALESCE(SUM(bd.zoneAdminCommission), 0) AS adminRevenue,
                 COALESCE(SUM(bd.total), 0)
                     - COALESCE(SUM(bd.zoneAdminCommission), 0)
-                    - COALESCE(SUM(bd.pickupDriverEarning + bd.deliveryDriverEarning), 0)
+                    - COALESCE(SUM(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0)), 0)
                     - COALESCE(SUM(b.rescheduleCharge), 0) AS shopRevenue
             FROM \`${T.bookings}\` b
             JOIN \`${T.addressDb}\` a ON a.id = b.laundryShopId

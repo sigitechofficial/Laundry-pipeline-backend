@@ -12,6 +12,7 @@ const COMPLETED = 17;
 const ON_HOLD_CUSTOMER = 18;
 const CANCELLED = 19;
 const REFUNDED = 21;
+const ISSUE_RESOLVED = 23;
 const ON_HOLD_AGENT = 24;
 const ORDER_CREATED = 1;
 const DELIVERY_FAILED = 15;
@@ -25,6 +26,14 @@ const FACILITY_COMPLETE = 16;
  * sitting on that shop's schedule, so it must count against slot availability.
  */
 const SLOT_RELEASING = [COMPLETED, CANCELLED, REFUNDED];
+
+/** Finished work — admin may block the account (open orders must complete first). */
+const TERMINAL_FOR_ACCOUNT_BLOCK = [
+    COMPLETED,
+    CANCELLED,
+    REFUNDED,
+    ISSUE_RESOLVED,
+];
 
 /** Statuses excluded from the Pending bucket (sidebar + pendingOrders list). */
 const PENDING_EXCLUDED = [
@@ -61,7 +70,9 @@ module.exports = {
     ON_HOLD_CUSTOMER,
     CANCELLED,
     REFUNDED,
+    ISSUE_RESOLVED,
     ON_HOLD_AGENT,
+    TERMINAL_FOR_ACCOUNT_BLOCK,
     SLOT_RELEASING,
     ORDER_CREATED,
     DELIVERY_FAILED,

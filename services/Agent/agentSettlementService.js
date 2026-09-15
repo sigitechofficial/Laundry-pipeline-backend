@@ -1,15 +1,18 @@
-const { wallet, addressDb, users, bussinessInformation } = require("../../models");
+const { wallet, addressDb, users, bussinessInformation, sequelize } = require("../../models");
 const { Op } = require("sequelize");
 const {
     ValidationError,
     NotFoundError,
 } = require("../../middlewares/universalErrorHandler");
 const agentWalletService = require("./agentWalletService");
+const { loadShopSettlementReport } = require("./shopSettlementReport");
+const { emptySettlementReport } = require("../../utils/shopSettlementReportMap");
+const agentWithdrawalService = require("./agentWithdrawalService");
+const { buildAdminConnectPayoutLedger } = require("../../utils/adminPayoutLedger");
 
 const {
     CASH_REMITTED_REFERENCE,
     ADMIN_SETTLEMENT_REFERENCE,
-    AGENT_PAYOUT_REFERENCE,
 } = agentWalletService;
 
 const DEFAULT_CURRENCY = "GBP";
@@ -308,12 +311,9 @@ async function adminRecordAdjustment(agentUserId, { amount, direction, note }) {
 }
 
 /**
- * Admin releases (pays out) the agent's card earnings into the agent's
- * withdrawable wallet. This creates a CREDIT (money in) — it increases the
- * agent's wallet Credit / available balance. It does NOT create a debit.
- *
- * The payable amount is capped at the agent's card earnings not yet paid out,
- * so the same earnings can never be paid twice.
+ * Admin pays the agent's card earnings into their Stripe Connect account.
+ * Ledger: completed credit (reduces still-owed) + completed withdrawal debit
+ * (so the same money cannot be withdrawn again).
  */
 async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
     const parsedAmount = parseFloat(amount);
@@ -334,24 +334,73 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
         );
     }
 
-    const entry = await wallet.create({
+    const currency = summary.currency || DEFAULT_CURRENCY;
+    const pendingPair = buildAdminConnectPayoutLedger({
         userId: agentUserId,
-        bookingId: null,
-        referenceType: AGENT_PAYOUT_REFERENCE,
-        amount: parseFloat(parsedAmount.toFixed(2)),
-        currency: summary.currency || DEFAULT_CURRENCY,
-        type: "credit",
-        status: "completed",
-        description: note
-            ? `${note}${adminUserId ? ` (admin #${adminUserId})` : ""}`
-            : `Agent earnings payout${adminUserId ? ` (admin #${adminUserId})` : ""}`,
+        amount: parsedAmount,
+        currency,
+        note,
+        adminUserId,
+        stripeTransferId: null,
+    });
+
+    const credit = await wallet.create({
+        ...pendingPair.credit,
+        status: "pending",
+    });
+
+    let transfer;
+    try {
+        ({ transfer } = await agentWithdrawalService.transferToAgentConnectAccount(
+            agentUserId,
+            parsedAmount,
+            `agent-admin-payout-${credit.id}`,
+            {
+                adminUserId: adminUserId || null,
+                walletId: credit.id,
+                transferKind: "admin_payout",
+                withdrawalType: "admin_payout",
+            }
+        ));
+    } catch (error) {
+        const reason = String(error?.message || error).slice(0, 500);
+        await credit.update({
+            status: "failed",
+            failureReason: reason,
+        });
+        throw error;
+    }
+
+    const completedPair = buildAdminConnectPayoutLedger({
+        userId: agentUserId,
+        amount: parsedAmount,
+        currency,
+        note,
+        adminUserId,
+        stripeTransferId: transfer.id,
+    });
+
+    const debit = await sequelize.transaction(async (transaction) => {
+        await credit.update(
+            {
+                status: "completed",
+                stripeTransferId: transfer.id,
+                description: completedPair.credit.description,
+                failureReason: null,
+            },
+            { transaction }
+        );
+        return wallet.create(completedPair.debit, { transaction });
     });
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
 
     return {
-        payoutId: entry.id,
-        amount: parseFloat(entry.amount),
+        payoutId: credit.id,
+        withdrawalId: debit.id,
+        stripeTransferId: transfer.id,
+        amount: parseFloat(credit.amount),
+        destination: "stripe_connect",
         settlement: updatedSummary,
     };
 }
@@ -398,7 +447,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
 
     const emptyPage = { page: 1, limit: 20, total: 0, totalPages: 0, hasNextPage: false, hasPrevPage: false };
 
-    const [agentUser, businessInfo, summary, ledger, orders, recentActivity] = await Promise.all([
+    const [agentUser, businessInfo, summary, ledger, orders, recentActivity, earningsReport] = await Promise.all([
         users.findByPk(agentUserId, {
             attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
         }),
@@ -426,6 +475,10 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         agentWalletService.listRecentSettlementActivity(agentUserId, 12).catch((err) => {
             console.warn(`[settlement-detail] activity skipped for ${agentUserId}:`, err.message);
             return [];
+        }),
+        loadShopSettlementReport(shop.id).catch((err) => {
+            console.warn(`[settlement-detail] earnings report skipped for shop ${shop.id}:`, err.message);
+            return { ...emptySettlementReport(), loadError: err.message };
         }),
     ]);
 
@@ -459,6 +512,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         statement: ledger.statement || null,
         orders: orders.orders,
         ordersPagination: orders.pagination,
+        earningsReport,
         recentActivity,
         formulas: {
             cashDue:
@@ -466,13 +520,17 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
             cashInTill:
                 "Physical cash still with the agent before commission netting = collected − refunded − remitted.",
             payable:
-                "Still payable = card commission + extra tips − extra-tip clawbacks − payouts already released to the agent wallet.",
+                "Still payable = card commission + extra tips − extra-tip clawbacks − payouts already sent to Stripe Connect (including in-flight admin payouts).",
             withdrawn:
-                "Payouts released sit in the agent wallet until they withdraw to Stripe Connect. That is when money actually leaves the platform.",
+                "Admin payout sends money to the agent's Stripe Connect account immediately. Agent withdraw requests also go to Connect after admin approval. Completed Connect transfers cannot be paid twice.",
             statement:
                 "Bank-statement view: Money in / Money out per row, with settlement balance before & after. Negative settlement balance = cash due to platform. Wallet balance tracks payouts minus withdrawals.",
             cashPaymentFlow:
                 "Cash COD: invoice → proceed unpaid → deliver → recordCashPayment → cash_collected + commission → agent remits / admin records cash received.",
+            adminTake:
+                "Admin / platform take on paid orders = service fee + zone commission. Service fee is never shop income. Amounts are net of customer refunds.",
+            payMix:
+                "Card vs cash is the collection channel, not the original booking toggle. Mixed = booked on card, remaining balance collected in cash. Unique customers can appear in both columns if they used both methods.",
         },
     };
 }

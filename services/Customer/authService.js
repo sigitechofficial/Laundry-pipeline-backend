@@ -57,13 +57,17 @@ const otpGenerator = require('otp-generator');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
 const signupWelcomeMail = require('../../helper/signupWelcomeMail');
-const { 
+const {
     ValidationError, 
     NotFoundError, 
     ConflictError, 
     UnauthorizedError,
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
+const {
+    ACCOUNT_BLOCKED_CODE,
+    ACCOUNT_BLOCKED_MESSAGE,
+} = require('../../utils/accountBlocked');
 
 /**
  * Replaces all existing device tokens for a user with a single new one.
@@ -772,7 +776,7 @@ class CustomerAuthService {
             }
 
             if (!socialUserFind.status) {
-                throw new UnauthorizedError('Blocked By admin Please contact admin to continue');
+                throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
             }
 
             const profileMissingFields = collectMissingFields(socialUserFind);
@@ -834,7 +838,7 @@ class CustomerAuthService {
         }
 
         if (!userFind.status) {
-            throw new UnauthorizedError("Blocked by admin Please contact admin to continue");
+            throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
             const otpData = await otpVerification.findOne(
                 { where: { userId: userFind.id } },
@@ -1210,8 +1214,8 @@ class CustomerAuthService {
 
         if (!userData?.status) {
             throw new UnauthorizedError(
-                "You are blocked by Admin",
-                "Please contact support for more information"
+                ACCOUNT_BLOCKED_MESSAGE,
+                { code: ACCOUNT_BLOCKED_CODE }
             );
         }
 

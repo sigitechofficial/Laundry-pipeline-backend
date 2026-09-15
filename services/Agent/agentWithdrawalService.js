@@ -26,6 +26,7 @@ const {
 } = require("../../middlewares/universalErrorHandler");
 const stripeService = require("../../controllers/stripe");
 const agentWalletService = require("./agentWalletService");
+const { AGENT_WITHDRAWAL_REQUEST_PREFIX } = require("../../utils/adminPayoutLedger");
 
 const {
     AGENT_PAYOUT_REFERENCE,
@@ -166,6 +167,31 @@ async function assertConnectReadyForTransfer(connectAccountId) {
         );
     }
     return accountStatus;
+}
+
+/**
+ * Transfer platform funds to the shop owner's Stripe Connect account.
+ * Used by admin payout (pay now) and by approve-withdrawal.
+ */
+async function transferToAgentConnectAccount(agentUserId, amount, idempotencyKey, metadata = {}) {
+    const shop = await resolveShopByUserId(agentUserId);
+    let businessInfo = await loadBusinessInfo(shop.id);
+    if (!businessInfo?.connectAccountId) {
+        await ensureShopConnectAccount(shop.id);
+        businessInfo = await loadBusinessInfo(shop.id);
+    }
+    await assertConnectReadyForTransfer(businessInfo?.connectAccountId);
+    const transfer = await stripeService.transferToConnectAccount(
+        amount,
+        businessInfo.connectAccountId,
+        idempotencyKey,
+        {
+            agentUserId,
+            shopId: shop.id,
+            ...metadata,
+        }
+    );
+    return { transfer, shop, businessInfo };
 }
 
 /**
@@ -377,6 +403,7 @@ async function listPendingWithdrawals(options = {}) {
         referenceType: WITHDRAWAL_REFERENCE,
         type: "debit",
         status: "pending",
+        description: { [Op.like]: `${AGENT_WITHDRAWAL_REQUEST_PREFIX}%` },
     };
     if (options.agentUserId) {
         where.userId = parseInt(options.agentUserId, 10);
@@ -507,6 +534,7 @@ async function approveWithdrawal(withdrawalId, options = {}) {
                 agentUserId: entry.userId,
                 walletId: entry.id,
                 withdrawalType: "agent_wallet",
+                transferKind: "agent_withdrawal",
                 approvedByAdminId: options.adminUserId || null,
             }
         );
@@ -603,4 +631,6 @@ module.exports = {
     getShopPayoutAccount,
     ensureShopConnectAccount,
     createShopPayoutOnboardingLink,
+    transferToAgentConnectAccount,
+    assertConnectReadyForTransfer,
 };

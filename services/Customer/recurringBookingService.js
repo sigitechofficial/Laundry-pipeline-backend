@@ -34,6 +34,7 @@ const {
   looksLikeCustomerIntentRow,
   pickCustomerIntentCloneSource,
 } = require('../../utils/recurringCloneIntent');
+const { isUserBlocked } = require('../../utils/accountBlocked');
 
 const RECURRING_INTERVAL_DAYS = {
   'just once': 0,
@@ -587,6 +588,15 @@ async function generateNextBookingFromCompleted({
       return { generated: false, reason: 'just_once' };
     }
 
+    const customerUser = await users.findByPk(source.customerId, {
+      attributes: ['id', 'status', 'defaultPaymentMethodId', 'stripeCustomerId'],
+      transaction: tx,
+    });
+    if (!customerUser || isUserBlocked(customerUser.status)) {
+      await tx.rollback();
+      return { generated: false, reason: 'customer_blocked' };
+    }
+
     const existingChild = source.recurringNextBookingId
       ? await booking.findByPk(source.recurringNextBookingId, { transaction: tx })
       : await booking.findOne({
@@ -614,10 +624,6 @@ async function generateNextBookingFromCompleted({
       return { generated: false, reason: 'invalid_source_dates' };
     }
 
-    const customerUser = await users.findByPk(source.customerId, {
-      attributes: ['id', 'defaultPaymentMethodId', 'stripeCustomerId'],
-      transaction: tx,
-    });
     const paymentType = source.paymentType || 'card';
     const paymentMethodId =
       paymentType === 'card'
@@ -625,6 +631,10 @@ async function generateNextBookingFromCompleted({
         : null;
 
     const plan = await ensurePlanForBooking(source.id, tx);
+    if (plan && plan.status !== 'active') {
+      await tx.rollback();
+      return { generated: false, reason: 'plan_not_active' };
+    }
     const created = await booking.create(
       {
         collectionDate: nextCollectionDate,

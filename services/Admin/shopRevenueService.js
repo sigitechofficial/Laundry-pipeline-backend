@@ -27,6 +27,9 @@ const {
   money,
   pctChange,
 } = require("./shopRevenuePeriod");
+const { presentShopOrderFinance } = require("../../utils/shopOrderFinance");
+const { emptyPunctuality } = require("../../utils/bookingPunctuality");
+const { CASH_CHANNEL_SQL } = require("../../utils/earningChannel");
 
 const COLLECTED_STATUSES = COLLECTED;
 
@@ -49,6 +52,19 @@ const REFUND_JOIN = `
 const NET_GROSS =
   "GREATEST(0, COALESCE(bd.total, b.orderAmount, 0) - COALESCE(rf.refunded, 0))";
 const STILL_COLLECTED = `${NET_GROSS} > 0.02`;
+const DRIVER_PAY =
+  "(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0))";
+const SHOP_NET_EXPR = `(CASE
+      WHEN ${STILL_COLLECTED} AND bd.agentEarning IS NOT NULL AND COALESCE(rf.refunded, 0) <= 0.02
+        THEN bd.agentEarning
+      WHEN ${STILL_COLLECTED} THEN
+        ${NET_GROSS}
+          - COALESCE(bd.zoneAdminCommission, 0)
+          - COALESCE(bd.serviceCharge, 0)
+          - ${DRIVER_PAY}
+          - COALESCE(b.rescheduleCharge, 0)
+      ELSE 0
+    END)`;
 
 function emptyTotals() {
   return {
@@ -58,6 +74,7 @@ function emptyTotals() {
     serviceCharge: 0,
     discount: 0,
     platformCommission: 0,
+    platformTake: 0,
     shopNet: 0,
     driverEarnings: 0,
     rescheduleCharge: 0,
@@ -155,11 +172,6 @@ function datePredicate(range, column, replacements, startKey, endKey) {
 function mapTotals(row) {
   const base = emptyTotals();
   if (!row) return base;
-  const shopNetBilled = money(row.shopNetBilled);
-  const shopNetDerived = money(row.shopNetDerived);
-  // Prefer billed shop share even when it is £0 after a refund; derived
-  // fallback is only for collected orders that never stored agentEarning.
-  const billedTouched = Number(row.shopNetBilledRows || 0) > 0;
   return {
     ordersCompleted: Number(row.ordersCompleted || 0),
     grossRevenue: money(row.grossRevenue),
@@ -167,7 +179,8 @@ function mapTotals(row) {
     serviceCharge: money(row.serviceCharge),
     discount: money(row.discount),
     platformCommission: money(row.platformCommission),
-    shopNet: billedTouched ? shopNetBilled : shopNetDerived,
+    platformTake: money(money(row.platformCommission) + money(row.serviceCharge)),
+    shopNet: money(row.shopNet),
     driverEarnings: money(row.driverEarnings),
     rescheduleCharge: money(row.rescheduleCharge),
     cashGross: money(row.cashGross),
@@ -197,18 +210,11 @@ async function loadPeriodTotals(addressId, range) {
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.serviceCharge ELSE 0 END), 0) AS serviceCharge,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.discount ELSE 0 END), 0) AS discount,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.zoneAdminCommission ELSE 0 END), 0) AS platformCommission,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.agentEarning ELSE 0 END), 0) AS shopNetBilled,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND bd.agentEarning IS NOT NULL THEN 1 ELSE 0 END), 0) AS shopNetBilledRows,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN
-        COALESCE(bd.total, 0)
-        - COALESCE(bd.zoneAdminCommission, 0)
-        - COALESCE(bd.pickupDriverEarning + bd.deliveryDriverEarning, 0)
-        - COALESCE(b.rescheduleCharge, 0)
-      ELSE 0 END), 0) AS shopNetDerived,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.pickupDriverEarning + bd.deliveryDriverEarning ELSE 0 END), 0) AS driverEarnings,
+      COALESCE(SUM(${SHOP_NET_EXPR}), 0) AS shopNet,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN ${DRIVER_PAY} ELSE 0 END), 0) AS driverEarnings,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN b.rescheduleCharge ELSE 0 END), 0) AS rescheduleCharge,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND b.paymentType = 'cash' THEN ${NET_GROSS} ELSE 0 END), 0) AS cashGross,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND b.paymentType = 'cash' THEN 0 WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} ELSE 0 END), 0) AS cardGross,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND ${CASH_CHANNEL_SQL} THEN ${NET_GROSS} ELSE 0 END), 0) AS cashGross,
+      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND NOT (${CASH_CHANNEL_SQL}) THEN ${NET_GROSS} ELSE 0 END), 0) AS cardGross,
       COALESCE(AVG(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} END), 0) AS avgOrderValue,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.bookingTips ELSE 0 END), 0) AS bookingTips,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN tips.extraTips ELSE 0 END), 0) AS extraTips
@@ -282,14 +288,7 @@ async function loadSeries(addressId, range) {
       DATE(b.collectionDate) AS date,
       COUNT(DISTINCT CASE WHEN ${STILL_COLLECTED} THEN b.id END) AS ordersCompleted,
       COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN ${NET_GROSS} ELSE 0 END), 0) AS grossRevenue,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN bd.agentEarning ELSE 0 END), 0) AS shopNetBilled,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} AND bd.agentEarning IS NOT NULL THEN 1 ELSE 0 END), 0) AS shopNetBilledRows,
-      COALESCE(SUM(CASE WHEN ${STILL_COLLECTED} THEN
-        COALESCE(bd.total, 0)
-        - COALESCE(bd.zoneAdminCommission, 0)
-        - COALESCE(bd.pickupDriverEarning + bd.deliveryDriverEarning, 0)
-        - COALESCE(b.rescheduleCharge, 0)
-      ELSE 0 END), 0) AS shopNetDerived
+      COALESCE(SUM(${SHOP_NET_EXPR}), 0) AS shopNet
     FROM \`${T.bookings}\` b
     LEFT JOIN \`${T.billing}\` bd ON bd.bookingId = b.id
     ${REFUND_JOIN}
@@ -303,17 +302,12 @@ async function loadSeries(addressId, range) {
     replacements
   );
 
-  return rows.map((row) => {
-    const billed = money(row.shopNetBilled);
-    const derived = money(row.shopNetDerived);
-    const billedTouched = Number(row.shopNetBilledRows || 0) > 0;
-    return {
+  return rows.map((row) => ({
       date: row.date ? String(row.date).slice(0, 10) : null,
       ordersCompleted: Number(row.ordersCompleted || 0),
       grossRevenue: money(row.grossRevenue),
-      shopNet: billedTouched ? billed : derived,
-    };
-  });
+      shopNet: money(row.shopNet),
+    }));
 }
 
 async function loadOrders(addressId, range, page, limit) {
@@ -360,6 +354,13 @@ async function loadOrders(addressId, range, page, limit) {
       "id",
       "orderTrackId",
       "collectionDate",
+      "collectionTimeFrom",
+      "collectionTimeTo",
+      "deliveryDate",
+      "deliveryTimeFrom",
+      "deliveryTimeTo",
+      "pickupCompletedAt",
+      "deliveryCompletedAt",
       "createdAt",
       "orderAmount",
       "paymentType",
@@ -400,46 +401,33 @@ async function loadOrders(addressId, range, page, limit) {
   return {
     rows: rows.map((row) => {
       const plain = row.get({ plain: true });
-      const bill = plain.billingDetail || {};
-      const drivers =
-        money(bill.pickupDriverEarning) + money(bill.deliveryDriverEarning);
-      const billedGross = money(bill.total != null ? bill.total : plain.orderAmount);
       const refunded = refundedByBooking.get(Number(plain.id)) || 0;
-      const gross = money(Math.max(0, billedGross - refunded));
-      const fullyRefunded = gross <= 0.02;
-      const shopNet = fullyRefunded
-        ? 0
-        : money(bill.agentEarning) ||
-          money(
-            gross -
-              money(bill.zoneAdminCommission) -
-              drivers -
-              money(plain.rescheduleCharge)
-          );
+      const finance = presentShopOrderFinance(plain, refunded);
       return {
         id: plain.id,
         orderTrackId: plain.orderTrackId || null,
         collectionDate: plain.collectionDate || null,
+        collectionTimeFrom: plain.collectionTimeFrom || null,
+        collectionTimeTo: plain.collectionTimeTo || null,
+        deliveryDate: plain.deliveryDate || null,
+        deliveryTimeFrom: plain.deliveryTimeFrom || null,
+        deliveryTimeTo: plain.deliveryTimeTo || null,
+        pickupCompletedAt: plain.pickupCompletedAt || null,
+        deliveryCompletedAt: plain.deliveryCompletedAt || null,
         createdAt: plain.createdAt || null,
         statusId: plain.bookingStatusId,
-        status: fullyRefunded
+        status: finance.isFullyRefunded
           ? "Fully Refunded"
           : plain.bookingStatus?.title || null,
-        isFullyRefunded: fullyRefunded,
+        isFullyRefunded: finance.isFullyRefunded,
         customer: [plain.customer?.firstName, plain.customer?.lastName]
           .filter(Boolean)
           .join(" ")
           .trim() || "—",
         paymentType: plain.paymentType || "card",
         balanceCollectedVia: plain.balanceCollectedVia || null,
-        paymentStatus: bill.paymentStatus || null,
-        gross,
-        laundry: money(bill.categoryCharge),
-        serviceCharge: money(bill.serviceCharge),
-        discount: money(bill.discount),
-        platformCommission: fullyRefunded ? 0 : money(bill.zoneAdminCommission),
-        shopNet,
-        driverEarnings: fullyRefunded ? 0 : drivers,
+        paymentStatus: plain.billingDetail?.paymentStatus || null,
+        ...finance,
       };
     }),
     pagination: {
@@ -451,6 +439,56 @@ async function loadOrders(addressId, range, page, limit) {
       hasPrevPage: page > 1,
     },
   };
+}
+
+function mapPunctuality(row) {
+  const base = emptyPunctuality();
+  if (!row) return base;
+  return {
+    pickupsCompleted: Number(row.pickupsCompleted || 0),
+    earlyPickups: Number(row.earlyPickups || 0),
+    onTimePickups: Number(row.onTimePickups || 0),
+    latePickups: Number(row.latePickups || 0),
+    deliveriesCompleted: Number(row.deliveriesCompleted || 0),
+    earlyDeliveries: Number(row.earlyDeliveries || 0),
+    onTimeDeliveries: Number(row.onTimeDeliveries || 0),
+    lateDeliveries: Number(row.lateDeliveries || 0),
+  };
+}
+
+async function loadPunctuality(addressId, range) {
+  const replacements = { addressId };
+  const collectedDate = datePredicate(range, "b.collectionDate", replacements, "pStart", "pEnd");
+  const pickupStart = "CAST(CONCAT(DATE(b.collectionDate), ' ', COALESCE(NULLIF(b.collectionTimeFrom, ''), '00:00:00')) AS DATETIME)";
+  const pickupEnd = "CAST(CONCAT(DATE(b.collectionDate), ' ', COALESCE(NULLIF(b.collectionTimeTo, ''), '23:59:59')) AS DATETIME)";
+  const deliveryStart = "CAST(CONCAT(DATE(b.deliveryDate), ' ', COALESCE(NULLIF(b.deliveryTimeFrom, ''), '00:00:00')) AS DATETIME)";
+  const deliveryEnd = "CAST(CONCAT(DATE(b.deliveryDate), ' ', COALESCE(NULLIF(b.deliveryTimeTo, ''), '23:59:59')) AS DATETIME)";
+
+  const [row] = await query(
+    `
+    SELECT
+      SUM(CASE WHEN b.pickupCompletedAt IS NOT NULL THEN 1 ELSE 0 END) AS pickupsCompleted,
+      SUM(CASE WHEN b.pickupCompletedAt IS NOT NULL AND b.pickupCompletedAt < ${pickupStart} THEN 1 ELSE 0 END) AS earlyPickups,
+      SUM(CASE WHEN b.pickupCompletedAt IS NOT NULL AND b.pickupCompletedAt > ${pickupEnd} THEN 1 ELSE 0 END) AS latePickups,
+      SUM(CASE WHEN b.pickupCompletedAt IS NOT NULL
+        AND b.pickupCompletedAt >= ${pickupStart}
+        AND b.pickupCompletedAt <= ${pickupEnd} THEN 1 ELSE 0 END) AS onTimePickups,
+      SUM(CASE WHEN b.deliveryCompletedAt IS NOT NULL THEN 1 ELSE 0 END) AS deliveriesCompleted,
+      SUM(CASE WHEN b.deliveryCompletedAt IS NOT NULL AND b.deliveryCompletedAt < ${deliveryStart} THEN 1 ELSE 0 END) AS earlyDeliveries,
+      SUM(CASE WHEN b.deliveryCompletedAt IS NOT NULL AND b.deliveryCompletedAt > ${deliveryEnd} THEN 1 ELSE 0 END) AS lateDeliveries,
+      SUM(CASE WHEN b.deliveryCompletedAt IS NOT NULL
+        AND b.deliveryCompletedAt >= ${deliveryStart}
+        AND b.deliveryCompletedAt <= ${deliveryEnd} THEN 1 ELSE 0 END) AS onTimeDeliveries
+    FROM \`${T.bookings}\` b
+    WHERE b.laundryShopId = :addressId
+      AND b.deletedAt IS NULL
+      AND b.bookingStatusId IN (${COLLECTED_SQL})
+      AND ${collectedDate}
+    `,
+    replacements
+  );
+
+  return mapPunctuality(row);
 }
 
 async function latestWalletAt(agentUserId, referenceType) {
@@ -536,13 +574,16 @@ async function getShopRevenue(shopId, rawQuery = {}) {
   const range = buildPeriodRange(filters.period, filters.startDate, filters.endDate);
   const previous = previousPeriodRange(range);
 
-  const [current, previousTotals, series, orders, lifetime] = await Promise.all([
-    loadPeriodTotals(shop.addressId, range),
-    previous ? loadPeriodTotals(shop.addressId, previous) : Promise.resolve(emptyTotals()),
-    loadSeries(shop.addressId, range),
-    loadOrders(shop.addressId, range, filters.page, filters.limit),
-    loadPeriodTotals(shop.addressId, null),
-  ]);
+  const [current, previousTotals, series, orders, lifetime, punctuality, lifetimePunctuality] =
+    await Promise.all([
+      loadPeriodTotals(shop.addressId, range),
+      previous ? loadPeriodTotals(shop.addressId, previous) : Promise.resolve(emptyTotals()),
+      loadSeries(shop.addressId, range),
+      loadOrders(shop.addressId, range, filters.page, filters.limit),
+      loadPeriodTotals(shop.addressId, null),
+      loadPunctuality(shop.addressId, range),
+      loadPunctuality(shop.addressId, null),
+    ]);
 
   let balances = null;
   let walletStatus = {
@@ -684,13 +725,17 @@ async function getShopRevenue(shopId, rawQuery = {}) {
     walletStatus,
     lastEvents,
     logs,
+    punctuality,
+    lifetimePunctuality,
     orders: orders.rows,
     ordersPagination: orders.pagination,
     definitions: {
       grossRevenue:
         "Collected / completed bookings only, minus customer refunds. Pending and fully refunded orders are not revenue.",
       shopNet:
-        "Shop share after platform commission, driver pay, and refund clawbacks. Uses billed agent earning when present.",
+        "Shop share after platform commission, service fee, driver pay, and refund clawbacks. Uses billed agent earning when present. Service fee belongs to the platform.",
+      platformTake:
+        "Admin / platform revenue = service fee + zone commission. Service fee is not shop income.",
       totalEarnings:
         "Lifetime shop commission credited on paid orders (card + cash channels), from the owner wallet summary.",
       lifetime:

@@ -22,6 +22,7 @@ var JSbarcode = require('jsbarcode')
 const redisCli = require('../../redis/redis')
 const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
+const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const path = require('path')
@@ -516,7 +517,7 @@ exports.loginUser = async (req, res) => {
     // Check verification before anything else
     let otpId = 0;
     if (!userFind.status) {
-        throw new customError("Blocked by admin. Please contact admin to continue");
+        throw new customError(ACCOUNT_BLOCKED_MESSAGE);
     } else {
         const otpData = await otpVerification.findOne(
             { where: { userId: userFind.id } },
@@ -608,7 +609,7 @@ exports.loginUser = async (req, res) => {
         });
 
         if (!socialUser.status) {
-            throw new customError('Blocked by admin. Please contact admin to continue');
+            throw new customError(ACCOUNT_BLOCKED_MESSAGE);
         }
 
         await _refreshDeviceToken(socialUser.id, dvToken);
@@ -929,14 +930,13 @@ exports.session = async (req, res) => {
 
     if (!userData.status) {
         throw new customError(
-            "You are blocked by Admin",
-            "Please contact support for more information"
+            ACCOUNT_BLOCKED_MESSAGE
         );
     }
 
     let otpId = 0;
     if (!userData.status) {
-        throw new customError("Blocked by admin. Please contact admin to continue");
+        throw new customError(ACCOUNT_BLOCKED_MESSAGE);
     } else {
         const otpData = await otpVerification.findOne(
             { where: { userId: userData.id } },
