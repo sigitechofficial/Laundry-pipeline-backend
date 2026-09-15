@@ -204,6 +204,7 @@ const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
 const { redactCustomerPhone } = require("../../utils/maskPhone");
+const { buildAddOnsForTag } = require("../../utils/printLabelAddOns");
 const {
     redactCustomerForFieldStaff,
     hideShopFinanceOnBooking,
@@ -5865,19 +5866,6 @@ exports.printLabelData = async (req, res) => {
 
     const selectedServices = bookingData.customerSelectedServices || [];
 
-    const buildAddOnsForTag = (lineAddOns) => {
-        const list = (lineAddOns || []).map((a) => ({
-            addOnServiceId: a.addOnServiceId,
-            name: a.addOnService?.name || null,
-            qty: Number(a.items) || 1,
-            instructions: a.instructions || null,
-        }));
-        const display = list.length
-            ? list.map((a) => `${a.name || 'Add-on'} x${a.qty}`).join(', ')
-            : 'No add-ons';
-        return { list, display };
-    };
-
     // Tags per line = line quantity × catalog unitCount (min 1 each).
     // Each tag carries the add-ons of the line/split it belongs to.
     const rawTags = [];
@@ -5916,7 +5904,11 @@ exports.printLabelData = async (req, res) => {
                     ? Math.floor(parsedLineQty)
                     : 1;
             const piecesInLine = lineQuantity * unitsPerItem;
-            const { list: addOns, display: addOnsDisplay } = buildAddOnsForTag(line.addOns);
+            const lineAddOns =
+                line.addOns && line.addOns.length
+                    ? line.addOns
+                    : selectedService.addOns || [];
+            const { list: addOns, display: addOnsDisplay } = buildAddOnsForTag(lineAddOns);
 
             for (let i = 0; i < piecesInLine; i += 1) {
                 copyIndexWithinSubCategory += 1;

@@ -90,6 +90,16 @@ async function run() {
   );
   assert(Array.isArray(customerData.bookingDetails));
   assert.strictEqual(Number(customerData.userDetails.user.id), Number(customer.id));
+  assert.notStrictEqual(
+    customerData.userDetails.user.status,
+    undefined,
+    'customer detail user.status must be present so admin Block/Unblock survives refresh'
+  );
+  assert.strictEqual(typeof customerData.userDetails.blocked, 'boolean');
+  assert.strictEqual(
+    customerData.userDetails.user.blocked,
+    customerData.userDetails.blocked
+  );
   await assertRejectsWithStatus(
     customerService.getSpecificCustomerDetails(2147483647),
     404

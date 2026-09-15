@@ -21,6 +21,7 @@ const {
     openAssignedBookingWhere,
     openAgentOwnerBookingWhere,
 } = require('../../utils/openBookingGuard');
+const { isUserBlocked } = require('../../utils/accountBlocked');
 
 const BLOCK_USER_TYPES = Object.freeze({
     customer: 'customer',
@@ -196,7 +197,7 @@ class UserBlockService {
             attributes: ['id', 'status', 'firstName', 'lastName', 'email'],
         });
         if (!user) throw new NotFoundError('User not found');
-        return { userId: user.id, blocked: !user.status };
+        return { userId: user.id, blocked: isUserBlocked(user.status), status: user.status };
     }
 }
 

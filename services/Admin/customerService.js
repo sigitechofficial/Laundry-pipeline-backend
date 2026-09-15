@@ -14,6 +14,8 @@ const { literal, fn, col } = require("sequelize");
 const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
 const { customerPhoneError } = require('../../utils/customerPhone');
+const { isUserBlocked } = require('../../utils/accountBlocked');
+const { presentCustomerUserDetails } = require('../../utils/customerUserDetails');
 
 class CustomerService {
     /**
@@ -81,6 +83,7 @@ class CustomerService {
             const customerData = customer.toJSON(); // Convert to plain object
             return {
                 ...customerData,
+                blocked: isUserBlocked(customerData.status),
                 lastBookingDate: customerData.lastBookingDate
                     ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
                     : null,
@@ -353,7 +356,7 @@ class CustomerService {
                     include: [
                         {
                             model: users,
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
                         },
                     ],
                     order: [['createdAt', 'DESC']],
@@ -361,13 +364,9 @@ class CustomerService {
                 }),
             ]);
 
-            const userDetails = userInfo ? userInfo.toJSON() : {};
-            userDetails.userId = userDetails.userId || customer.id;
-            userDetails.user = userDetails.user || customer.toJSON();
-
             return {
                 bookingDetails: bookingsFind,
-                userDetails,
+                userDetails: presentCustomerUserDetails(customer, userInfo),
             };
     }
 
