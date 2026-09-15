@@ -170,6 +170,7 @@ class AdminBookingAssignService {
             zoneId: orderZoneId,
             zoneName,
             currentLaundryShopId: bookingRow.laundryShopId,
+            bookingStatusId: bookingRow.bookingStatusId,
             adminAssignedShopId: bookingRow.adminAssignedShopId,
             agentAcceptExpired: expired,
             collectionDate: bookingRow.collectionDate,

@@ -14,6 +14,7 @@ const {
     formatPaymentFailureReason,
 } = require('../../utils/paymentFailureLabels');
 const { ensureOrderTrackIds } = require('../../utils/orderTrackId');
+const { attachLastStatusChanges } = require('../../utils/attachLastStatusChanges');
 const {
     PICKUP_RESCHEDULE_STATUSES,
     DELIVERY_FAILED,
@@ -406,6 +407,9 @@ async function listActionRequiredOrders({
         : items;
 
     const resultItems = forCount ? scoped : scoped.slice(0, capped);
+    if (!forCount) {
+        await attachLastStatusChanges(booking.sequelize, resultItems);
+    }
 
     const countsByReason = {
         payment_failed: paymentFailed.length,

@@ -26,6 +26,7 @@ const {
     bookingAssignmentEvent,
     bookingAttempt,
     attemptFailReason,
+    bookingHistory,
 } = require('../../models');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
@@ -58,6 +59,7 @@ const {
 const { bookingTipAmountFromTips, summarizeTips, splitTips } = require('../../utils/bookingTips');
 const { lockPrepaidTipAmount } = require('../../utils/invoicePaymentSummary');
 const { ensureOrderTrackId, ensureOrderTrackIds } = require('../../utils/orderTrackId');
+const { attachLastStatusChanges } = require('../../utils/attachLastStatusChanges');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -526,6 +528,8 @@ class OrderService {
                 err?.message || err
             );
         }
+
+        await attachLastStatusChanges(dbModels.sequelize, enrichedBookings);
 
         return {
             bookings: enrichedBookings,

@@ -56,7 +56,12 @@ async function validateAccessToken(req, res, next) {
         const storedToken = verify(redisToken[validateToken.dvToken], process.env.JWT_ACCESS_SECRET);
 
         req.user = storedToken;
-        next();
+        try {
+            const { runWithBookingActor } = require('../utils/bookingActorContext');
+            return runWithBookingActor(req.user, () => next());
+        } catch (_err) {
+            return next();
+        }
 
     } catch (error) {
         return res.status(403).json({

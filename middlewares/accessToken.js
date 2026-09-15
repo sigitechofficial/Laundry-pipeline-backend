@@ -38,7 +38,12 @@ module.exports = async function validateAccessToken(req, res, next) {
 
         req.user = redis_Validate;
         attachShopAgentContext(req);
-        next()
+        try {
+            const { runWithBookingActor } = require('../utils/bookingActorContext');
+            return runWithBookingActor(req.user, () => next());
+        } catch (_err) {
+            return next();
+        }
 
     } catch (error) {
         return res.status(403).json({
