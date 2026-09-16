@@ -2,6 +2,7 @@
 
 const { money } = require('../services/Admin/shopRevenuePeriod');
 const { classifySlotTiming } = require('./bookingPunctuality');
+const { bookingTipAmountFromTips } = require('./bookingTips');
 
 /**
  * Shop/admin money split for one booking.
@@ -33,6 +34,22 @@ function presentShopOrderFinance(plain, refundedAmount = 0) {
   );
   const hasRefund = refunded > 0.02;
 
+  // Agent-built invoices historically never stored categoryCharge; derive the
+  // laundry line from the invoice value (laundry + fee + booking tip) instead
+  // of reporting £0.00.
+  const storedLaundry = money(bill.categoryCharge);
+  const invoiceValue = money(plain.orderAmount != null ? plain.orderAmount : bill.total);
+  const bookingTip =
+    plain.bookingTipAmount != null
+      ? money(plain.bookingTipAmount)
+      : Array.isArray(plain.tips)
+        ? money(bookingTipAmountFromTips(plain.tips))
+        : 0;
+  const laundry =
+    storedLaundry > 0
+      ? storedLaundry
+      : money(Math.max(0, invoiceValue - serviceCharge - bookingTip));
+
   // Billed agentEarning is the source of truth until a customer refund lands.
   // After that, remaining gross drives the split so shop net cannot stay at
   // the pre-refund invoice share.
@@ -44,7 +61,7 @@ function presentShopOrderFinance(plain, refundedAmount = 0) {
 
   return {
     gross,
-    laundry: money(bill.categoryCharge),
+    laundry,
     serviceCharge,
     discount: money(bill.discount),
     platformCommission,

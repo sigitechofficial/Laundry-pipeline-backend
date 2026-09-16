@@ -1,7 +1,7 @@
 "use strict";
 
 const sequelize = require("../../models").sequelize;
-const { booking, billingDetails, bookingRefund } = require("../../models");
+const { booking, billingDetails, bookingRefund, tip } = require("../../models");
 const {
   CASH_CHANNEL_SQL,
   MIXED_CHANNEL_SQL,
@@ -15,6 +15,7 @@ const T = {
   bookings: booking.getTableName(),
   billing: billingDetails.getTableName(),
   refunds: bookingRefund.getTableName(),
+  tips: tip.getTableName(),
 };
 
 const REFUND_JOIN = `
@@ -26,9 +27,31 @@ const REFUND_JOIN = `
       GROUP BY bookingId
     ) rf ON rf.bookingId = b.id
 `;
+// Booking-time tips only (post_complete = extra tip, settled on its own rail).
+const TIP_JOIN = `
+    LEFT JOIN (
+      SELECT bookingId, SUM(amount) AS bookingTip
+      FROM \`${T.tips}\`
+      WHERE COALESCE(source, 'booking') <> 'post_complete'
+      GROUP BY bookingId
+    ) tp ON tp.bookingId = b.id
+`;
 const NET_GROSS =
   "GREATEST(0, COALESCE(bd.total, b.orderAmount, 0) - COALESCE(rf.refunded, 0))";
 const STILL = `${NET_GROSS} > 0.02`;
+const BOOKING_TIP = "COALESCE(tp.bookingTip, 0)";
+// Full invoice value (laundry + service fee + booking tip) before discount /
+// upfront credit — `bd.total` is only the balance due at invoice time.
+const ORDER_TOTAL = "COALESCE(b.orderAmount, bd.total, 0)";
+// Laundry / services subtotal. Agent-built invoices historically never wrote
+// `categoryCharge`, so derive it from the invoice value when the column is empty.
+const LAUNDRY = `COALESCE(
+  NULLIF(bd.categoryCharge, 0),
+  GREATEST(0, ${ORDER_TOTAL} - COALESCE(bd.serviceCharge, 0) - ${BOOKING_TIP})
+)`;
+// Card bookings pay minimum + fee + tip at pickup; that credit is what makes
+// `bd.total` smaller than the invoice value.
+const PAID_AT_BOOKING = `GREATEST(0, ${ORDER_TOTAL} - COALESCE(bd.discount, 0) - COALESCE(bd.total, 0))`;
 const DRIVER_PAY =
   "(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0))";
 const SHOP_NET = `(CASE
@@ -69,7 +92,7 @@ async function loadShopSettlementReport(laundryShopId) {
       COUNT(DISTINCT CASE WHEN ${MIXED_CHANNEL_SQL} THEN b.customerId END) AS mixedCustomers,
 
       COALESCE(SUM(CASE WHEN ${STILL} THEN ${NET_GROSS} ELSE 0 END), 0) AS gross,
-      COALESCE(SUM(CASE WHEN ${STILL} THEN bd.categoryCharge ELSE 0 END), 0) AS laundry,
+      COALESCE(SUM(CASE WHEN ${STILL} THEN ${LAUNDRY} ELSE 0 END), 0) AS laundry,
       COALESCE(SUM(CASE WHEN ${STILL} THEN bd.serviceCharge ELSE 0 END), 0) AS serviceFee,
       COALESCE(SUM(CASE WHEN ${STILL} THEN bd.zoneAdminCommission ELSE 0 END), 0) AS platformCommission,
       COALESCE(SUM(CASE WHEN ${STILL} THEN ${PLATFORM_TAKE} ELSE 0 END), 0) AS platformTake,
@@ -77,13 +100,19 @@ async function loadShopSettlementReport(laundryShopId) {
       COALESCE(SUM(CASE WHEN ${STILL} THEN ${DRIVER_PAY} ELSE 0 END), 0) AS driverEarnings,
       COALESCE(SUM(CASE WHEN ${STILL} THEN bd.discount ELSE 0 END), 0) AS discount,
 
+      COALESCE(SUM(CASE WHEN ${STILL} THEN ${ORDER_TOTAL} ELSE 0 END), 0) AS orderTotal,
+      COALESCE(SUM(CASE WHEN ${STILL} THEN ${BOOKING_TIP} ELSE 0 END), 0) AS bookingTips,
+      COALESCE(SUM(CASE WHEN ${STILL} THEN COALESCE(rf.refunded, 0) ELSE 0 END), 0) AS refunded,
+      COALESCE(SUM(CASE WHEN ${STILL} THEN ${PAID_AT_BOOKING} ELSE 0 END), 0) AS paidAtBooking,
+      COALESCE(SUM(CASE WHEN ${STILL} THEN COALESCE(b.rescheduleCharge, 0) ELSE 0 END), 0) AS rescheduleCharges,
+
       COALESCE(SUM(CASE WHEN ${STILL} AND ${CASH_CHANNEL_SQL} THEN ${NET_GROSS} ELSE 0 END), 0) AS cashGross,
       COALESCE(SUM(CASE WHEN ${STILL} AND NOT (${CASH_CHANNEL_SQL}) THEN ${NET_GROSS} ELSE 0 END), 0) AS cardGross,
       COALESCE(SUM(CASE WHEN ${STILL} AND ${MIXED_CHANNEL_SQL} THEN ${NET_GROSS} ELSE 0 END), 0) AS mixedGross,
 
-      COALESCE(SUM(CASE WHEN ${STILL} AND ${CASH_CHANNEL_SQL} THEN bd.categoryCharge ELSE 0 END), 0) AS cashLaundry,
-      COALESCE(SUM(CASE WHEN ${STILL} AND NOT (${CASH_CHANNEL_SQL}) THEN bd.categoryCharge ELSE 0 END), 0) AS cardLaundry,
-      COALESCE(SUM(CASE WHEN ${STILL} AND ${MIXED_CHANNEL_SQL} THEN bd.categoryCharge ELSE 0 END), 0) AS mixedLaundry,
+      COALESCE(SUM(CASE WHEN ${STILL} AND ${CASH_CHANNEL_SQL} THEN ${LAUNDRY} ELSE 0 END), 0) AS cashLaundry,
+      COALESCE(SUM(CASE WHEN ${STILL} AND NOT (${CASH_CHANNEL_SQL}) THEN ${LAUNDRY} ELSE 0 END), 0) AS cardLaundry,
+      COALESCE(SUM(CASE WHEN ${STILL} AND ${MIXED_CHANNEL_SQL} THEN ${LAUNDRY} ELSE 0 END), 0) AS mixedLaundry,
 
       COALESCE(SUM(CASE WHEN ${STILL} AND ${CASH_CHANNEL_SQL} THEN bd.serviceCharge ELSE 0 END), 0) AS cashServiceFee,
       COALESCE(SUM(CASE WHEN ${STILL} AND NOT (${CASH_CHANNEL_SQL}) THEN bd.serviceCharge ELSE 0 END), 0) AS cardServiceFee,
@@ -103,6 +132,7 @@ async function loadShopSettlementReport(laundryShopId) {
     FROM \`${T.bookings}\` b
     INNER JOIN \`${T.billing}\` bd ON bd.bookingId = b.id AND bd.paymentStatus = 'Paid'
     ${REFUND_JOIN}
+    ${TIP_JOIN}
     WHERE b.laundryShopId = :addressId
       AND b.deletedAt IS NULL
     `,

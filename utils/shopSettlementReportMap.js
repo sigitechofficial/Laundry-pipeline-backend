@@ -29,6 +29,12 @@ function emptySettlementReport() {
     driverEarnings: 0,
     discount: 0,
     gross: 0,
+    orderTotal: 0,
+    bookingTips: 0,
+    refunded: 0,
+    paidAtBooking: 0,
+    rescheduleCharges: 0,
+    customersPaidNet: 0,
     card: emptyChannelMoney(),
     cash: emptyChannelMoney(),
     mixed: emptyChannelMoney(),
@@ -54,6 +60,9 @@ function mapSettlementReport(row) {
   const card = channelFrom(row, "card");
   const mixed = channelFrom(row, "mixed");
   const customers = Number(row.customers || 0);
+  const orderTotal = money(row.orderTotal);
+  const discount = money(row.discount);
+  const refunded = money(row.refunded);
   return {
     ordersPaid: Number(row.ordersPaid || 0),
     customers,
@@ -68,8 +77,15 @@ function mapSettlementReport(row) {
     platformTake: money(row.platformTake),
     shopNet: money(row.shopNet),
     driverEarnings: money(row.driverEarnings),
-    discount: money(row.discount),
+    discount,
     gross: money(row.gross),
+    // Reconciliation: invoice value → what customers actually paid.
+    orderTotal,
+    bookingTips: money(row.bookingTips),
+    refunded,
+    paidAtBooking: money(row.paidAtBooking),
+    rescheduleCharges: money(row.rescheduleCharges),
+    customersPaidNet: money(Math.max(0, orderTotal - discount - refunded)),
     card,
     cash,
     mixed,

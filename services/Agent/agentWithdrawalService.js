@@ -79,34 +79,84 @@ async function resolveShopByUserId(agentUserId, transaction = null, lock = false
     return shop;
 }
 
+/**
+ * Admin's public shop id is `bussinessInformation.id` (what Shop Management and
+ * Cash Settlement link to). Resolve in the same order as
+ * agentSettlementService.resolveShopForSettlement so every /shops/:shopId/*
+ * endpoint accepts the same id: business id → owner user id → shop address id,
+ * then the legacy raw address id.
+ */
 async function resolveShopByShopId(shopId) {
     const id = parseInt(shopId, 10);
     if (!Number.isFinite(id) || id <= 0) {
         throw new ValidationError("shopId must be a positive integer");
     }
-    const shop = await addressDb.findOne({
-        where: { id, addressType: SHOP_ADDRESS_TYPE },
-        attributes: ["id", "userId"],
-    });
+
+    const bizAttrs = ["id", "agentId", "shopAddressId"];
+    let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { agentId: id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { shopAddressId: id }, attributes: bizAttrs });
+
+    const shopAttrs = ["id", "userId"];
+    let shop = null;
+    if (biz?.shopAddressId) {
+        shop = await addressDb.findOne({
+            where: { id: biz.shopAddressId, addressType: SHOP_ADDRESS_TYPE },
+            attributes: shopAttrs,
+        });
+    }
+    if (!shop && biz?.agentId) {
+        shop = await addressDb.findOne({
+            where: { userId: biz.agentId, addressType: SHOP_ADDRESS_TYPE },
+            attributes: shopAttrs,
+        });
+    }
+    if (!shop) {
+        shop = await addressDb.findOne({
+            where: { id, addressType: SHOP_ADDRESS_TYPE },
+            attributes: shopAttrs,
+        });
+    }
     if (!shop) {
         throw new NotFoundError("Shop not found");
     }
-    if (!shop.userId) {
+    const userId = shop.userId || biz?.agentId || null;
+    if (!userId) {
         throw new NotFoundError("Shop has no owner account");
     }
-    return shop;
+    return { id: shop.id, userId };
 }
 
+const BUSINESS_INFO_ATTRS = [
+    "id",
+    "shopName",
+    "agentId",
+    "shopAddressId",
+    "connectAccountId",
+    "isConnectAccountConnected",
+];
+
+/**
+ * Business profile for a shop address. Falls back to the owner's profile when
+ * `shopAddressId` was never backfilled on the business row.
+ */
 async function loadBusinessInfo(shopAddressId, transaction = null) {
-    return bussinessInformation.findOne({
+    const byAddress = await bussinessInformation.findOne({
         where: { shopAddressId },
-        attributes: [
-            "id",
-            "shopName",
-            "agentId",
-            "connectAccountId",
-            "isConnectAccountConnected",
-        ],
+        attributes: BUSINESS_INFO_ATTRS,
+        transaction,
+    });
+    if (byAddress) return byAddress;
+
+    const shop = await addressDb.findOne({
+        where: { id: shopAddressId, addressType: SHOP_ADDRESS_TYPE },
+        attributes: ["id", "userId"],
+        transaction,
+    });
+    if (!shop?.userId) return null;
+    return bussinessInformation.findOne({
+        where: { agentId: shop.userId },
+        attributes: BUSINESS_INFO_ATTRS,
         transaction,
     });
 }
