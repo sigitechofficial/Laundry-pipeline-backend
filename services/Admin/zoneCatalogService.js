@@ -878,12 +878,19 @@ async function getEffectiveCatalog(zoneId) {
     tree.push({
       serviceId: svc.id,
       name: svc.name,
+      description: svc.description ?? null,
+      image: svc.image ?? null,
       inherited: !sov,
       isEnabled: serviceEnabled,
-      preferences: serviceEnabled ? decoratedPreferences : [],
+      // Admin workspace needs the preference rows even when the service is
+      // hidden in this zone (so overlays can be prepared before re-enabling).
+      // Customer read paths apply the service cascade separately via
+      // applyToServicePreferencesData / filterEnabledServices.
+      preferences: decoratedPreferences,
       categories: (cats || []).map((row) => ({
         categoryId: row.categoryId,
         name: row.category?.name,
+        description: row.category?.description ?? null,
         inherited: !maps.category.get(Number(row.categoryId)),
         isEnabled: enabledOf(maps.category.get(Number(row.categoryId))),
         items: (row.category?.subCategories || []).map((item) => {
@@ -912,6 +919,9 @@ async function getEffectiveCatalog(zoneId) {
           return {
             subCategoryId: plain.id,
             name: plain.name,
+            description: plain.description ?? null,
+            masterPrice: plain.price,
+            masterStatus: plain.status !== false,
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
@@ -948,6 +958,7 @@ async function getEffectiveCatalog(zoneId) {
           return {
             addOnServiceId: a.id,
             name: a.name,
+            masterPrice: a.price,
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
@@ -976,6 +987,7 @@ async function getEffectiveCatalog(zoneId) {
           return {
             repairOptionId: option.id,
             name: option.name,
+            masterPrice: option.price,
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
