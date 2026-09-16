@@ -518,6 +518,9 @@ class ShopManagementService {
                         },
                         {
                             model: customerSelectedService,
+                            // Active lines only; edited invoices deactivate replaced lines.
+                            required: false,
+                            where: { status: true },
                             attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
                             include: [
                                 {

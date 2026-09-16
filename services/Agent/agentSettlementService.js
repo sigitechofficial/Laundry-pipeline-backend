@@ -40,36 +40,84 @@ async function resolveAgentShop(agentUserId) {
     return shop;
 }
 
-/** Public admin identity is the shop. Wallet still settles on the owner user. */
+const SHOP_ADDRESS_ATTRS = ["id", "userId", "streetAddress", "district"];
+
+/**
+ * Public admin identity is the shop (`bussinessInformation.id`, the same id
+ * Shop Management uses in `/shop-management/details/:id`). Wallet still
+ * settles on the owner user. Resolution order mirrors
+ * shopManagementService.getSingleShopData / shopRevenueService.resolveShop:
+ * business id → owner (agentId) → shop address id, then the legacy address
+ * id so older settlement links keep working.
+ */
 async function resolveShopForSettlement(shopId) {
     const id = parsePositiveId(shopId, "shopId");
-    const shop = await addressDb.findOne({
-        where: {
-            id,
-            addressType: SHOP_ADDRESS_TYPE,
-        },
-        attributes: ["id", "userId", "streetAddress", "district"],
-    });
+
+    const bizAttrs = ["id", "agentId", "shopAddressId"];
+    let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { agentId: id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { shopAddressId: id }, attributes: bizAttrs });
+
+    let shop = null;
+    if (biz) {
+        if (biz.shopAddressId) {
+            shop = await addressDb.findOne({
+                where: { id: biz.shopAddressId, addressType: SHOP_ADDRESS_TYPE },
+                attributes: SHOP_ADDRESS_ATTRS,
+            });
+        }
+        if (!shop && biz.agentId) {
+            shop = await addressDb.findOne({
+                where: { userId: biz.agentId, addressType: SHOP_ADDRESS_TYPE },
+                attributes: SHOP_ADDRESS_ATTRS,
+            });
+        }
+    }
+    if (!shop) {
+        shop = await addressDb.findOne({
+            where: { id, addressType: SHOP_ADDRESS_TYPE },
+            attributes: SHOP_ADDRESS_ATTRS,
+        });
+    }
     if (!shop) {
         throw new NotFoundError("Shop not found");
     }
-    if (!shop.userId) {
+
+    const ownerUserId = shop.userId || biz?.agentId || null;
+    if (!ownerUserId) {
         throw new NotFoundError("Shop has no owner account");
     }
-    return shop;
+    return {
+        id: shop.id,
+        userId: ownerUserId,
+        streetAddress: shop.streetAddress,
+        district: shop.district,
+        businessId: biz?.id || null,
+    };
 }
 
+/** Map owner userId → public shop id (business id; address id only if no business row). */
 async function shopIdsByOwnerUserIds(userIds) {
     const ids = [...new Set((userIds || []).filter(Boolean).map((id) => Number(id)))];
     if (!ids.length) return new Map();
-    const shops = await addressDb.findAll({
-        where: {
-            userId: { [Op.in]: ids },
-            addressType: SHOP_ADDRESS_TYPE,
-        },
-        attributes: ["id", "userId"],
-    });
-    return new Map(shops.map((shop) => [Number(shop.userId), shop.id]));
+    const [shops, businesses] = await Promise.all([
+        addressDb.findAll({
+            where: {
+                userId: { [Op.in]: ids },
+                addressType: SHOP_ADDRESS_TYPE,
+            },
+            attributes: ["id", "userId"],
+        }),
+        bussinessInformation.findAll({
+            where: { agentId: { [Op.in]: ids } },
+            attributes: ["id", "agentId"],
+        }),
+    ]);
+    const map = new Map(shops.map((shop) => [Number(shop.userId), shop.id]));
+    for (const biz of businesses) {
+        map.set(Number(biz.agentId), biz.id);
+    }
+    return map;
 }
 
 /**
@@ -453,7 +501,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         }),
         bussinessInformation.findOne({
             where: { shopAddressId: shop.id },
-            attributes: ["shopName", "connectAccountId", "isConnectAccountConnected"],
+            attributes: ["id", "shopName", "connectAccountId", "isConnectAccountConnected"],
         }),
         agentWalletService.getWalletSummary(agentUserId),
         agentWalletService.listAdminSettlementLedger(agentUserId, {
@@ -484,7 +532,8 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
 
     return {
         identity: {
-            shopId: shop.id,
+            shopId: businessInfo?.id || shop.id,
+            shopAddressId: shop.id,
             ownerUserId: agentUser?.id || agentUserId,
         },
         agent: {
@@ -563,7 +612,7 @@ async function listAgentsWithCashDue(options = {}) {
             },
             {
                 model: bussinessInformation,
-                attributes: ["shopName"],
+                attributes: ["id", "shopName"],
                 required: false,
             },
         ],
@@ -576,12 +625,12 @@ async function listAgentsWithCashDue(options = {}) {
             const summary = await agentWalletService.getWalletSummary(shop.userId);
             if (agentWalletService.hasSettlementActivity(summary)) {
                 const businessRows = shop.bussinessInformations || shop.bussinessInformation;
-                const shopName = Array.isArray(businessRows)
-                    ? businessRows[0]?.shopName
-                    : businessRows?.shopName;
+                const businessRow = Array.isArray(businessRows) ? businessRows[0] : businessRows;
+                const shopName = businessRow?.shopName;
                 summaries.push({
                     agentUserId: shop.userId,
-                    shopId: shop.id,
+                    shopId: businessRow?.id || shop.id,
+                    shopAddressId: shop.id,
                     shopName: shopName || null,
                     shopAddress: shop.streetAddress,
                     agentName: shop.user

@@ -303,6 +303,9 @@ class CustomerService {
                     include: [
                         {
                             model: customerSelectedService,
+                            // Active lines only; edited invoices deactivate replaced lines.
+                            required: false,
+                            where: { status: true },
                             include: [
                                 {
                                     model:service,

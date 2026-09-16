@@ -185,6 +185,11 @@ class OrderService {
         const includes = [
             {
                 model: customerSelectedService,
+                // Only active lines — an edited invoice deactivates replaced lines
+                // (status:false); including them inflates the Items badge and
+                // shows stale services in the list.
+                required: false,
+                where: { status: true },
                 attributes: ['id', 'serviceId', 'items'],
                 include: [
                     {
