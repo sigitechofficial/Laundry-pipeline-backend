@@ -78,6 +78,7 @@ class DriverService {
                     'classifiedAsId',
                     'roleId',
                     'phoneNum',
+                    'countryCode',
                     'status',
                     'createdAt'
                 ],
@@ -506,7 +507,7 @@ class DriverService {
         // Get created driver with role information
         const createdDriver = await users.findOne({
             where: { id: user.id },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt', 'employeeOff'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt', 'employeeOff'],
             include: [
                 {
                     model: roles,

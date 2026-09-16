@@ -241,7 +241,7 @@ class OrderService {
             includes.push({
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                 required: false,
             });
         }
@@ -864,7 +864,7 @@ class OrderService {
                 {
                     model: users,
                     as: 'customer',
-                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                 },
                 {
                     model: users,
@@ -1803,7 +1803,7 @@ class OrderService {
                 {
                     model: users,
                     as: 'customer',
-                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                 },
                 {
                     model: users,

@@ -106,7 +106,7 @@ async function loadDestination(bookingRow, leg) {
 async function loadAgentDisplay(agentId) {
   if (!agentId) return { name: null, phoneMasked: null };
   const agent = await users.findByPk(agentId, {
-    attributes: ['id', 'firstName', 'lastName', 'phoneNum'],
+    attributes: ['id', 'firstName', 'lastName', 'phoneNum', 'countryCode'],
   });
   if (!agent) return { name: null, phoneMasked: null };
   const name = [agent.firstName, agent.lastName].filter(Boolean).join(' ').trim() || null;

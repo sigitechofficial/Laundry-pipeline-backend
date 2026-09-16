@@ -40,6 +40,7 @@ class CustomerService {
                 'lastName',
                 'email',
                 'phoneNum',
+                'countryCode',
                 'status',
                 [
                     sequelize.literal(`(
@@ -291,7 +292,7 @@ class CustomerService {
             }
             const customer = await users.findOne({
                 where: { id: normalizedCustomerId, userTypeId: 2 },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt'],
             });
             if (!customer) {
                 throw new NotFoundError('Customer not found');
@@ -335,12 +336,12 @@ class CustomerService {
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
                         }
                     ],
                     order: [['id', 'DESC']],
@@ -359,7 +360,7 @@ class CustomerService {
                     include: [
                         {
                             model: users,
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt'],
                         },
                     ],
                     order: [['createdAt', 'DESC']],
@@ -391,7 +392,7 @@ class CustomerService {
                 throw new NotFoundError('Customer not found');
             }
 
-            const allowed = ['firstName', 'lastName', 'email', 'phoneNum', 'status', 'password'];
+            const allowed = ['firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'password'];
             const updateFields = {};
             for (const key of allowed) {
                 if (updateData[key] !== undefined) updateFields[key] = updateData[key];
@@ -480,7 +481,7 @@ class CustomerService {
                     id: customerId,
                     userTypeId: 2
                 },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt']
             });
 
             return updatedCustomerData;

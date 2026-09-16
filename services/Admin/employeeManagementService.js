@@ -60,7 +60,7 @@ class EmployeeManagementService {
                 classifiedAsId: 2,
                 status: true
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'countryCode', 'status']
         });
 
         return {
@@ -284,7 +284,7 @@ class EmployeeManagementService {
                 id: employeeId,
                 classifiedAsId: 2
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'countryCode', 'status'],
             include: [
                 {
                     model: roles,
@@ -353,7 +353,7 @@ class EmployeeManagementService {
                 id: employeeId,
                 classifiedAsId: 2
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'countryCode', 'status']
         });
 
         return { employee: updatedEmployee };

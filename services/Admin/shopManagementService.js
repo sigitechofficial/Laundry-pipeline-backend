@@ -299,7 +299,7 @@ class ShopManagementService {
                         model: users,
                         as: 'businessInfo',
                         required: userRequired,
-                        attributes: ['id', 'email', 'phoneNum'],
+                        attributes: ['id', 'email', 'phoneNum', 'countryCode'],
                     },
                     topAddressInclude,
                 ],
@@ -490,18 +490,18 @@ class ShopManagementService {
                         {
                             model: users,
                             as: 'customer',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                         },
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                             required: false
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                             required: false
                         },
                         {

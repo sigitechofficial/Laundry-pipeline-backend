@@ -175,7 +175,7 @@ async function listActionRequiredOrders({
         {
             model: users,
             as: 'customer',
-            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
             required: false,
         },
         {

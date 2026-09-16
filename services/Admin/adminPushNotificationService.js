@@ -87,7 +87,7 @@ async function resolveRecipients({ audience, userIds }) {
 
   const rows = await users.findAll({
     where,
-    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'userTypeId'],
+    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'userTypeId'],
     order: [['id', 'ASC']],
   });
 
@@ -135,7 +135,7 @@ async function searchRecipients({ audience, q, limit = 20 }) {
     where: {
       [Op.and]: [where, { [Op.or]: orSearch }],
     },
-    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'userTypeId'],
+    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'userTypeId'],
     limit: Math.min(Math.max(Number(limit) || 20, 1), 50),
     order: [['id', 'DESC']],
   });
