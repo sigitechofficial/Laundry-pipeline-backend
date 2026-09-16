@@ -204,6 +204,7 @@ class ShopManagementService {
                     'lastName',
                     'email',
                     'phoneNum',
+                    'countryCode',
                     'userTypeId',
                     [
                         sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
@@ -373,6 +374,7 @@ class ShopManagementService {
                             'lastName',
                             'email',
                             'phoneNum',
+                            'countryCode',
                             'status',
                             [
                                 sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
