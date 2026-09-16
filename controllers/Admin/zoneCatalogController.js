@@ -28,10 +28,19 @@ exports.upsertOverride = async (req, res) => {
 
 exports.resetOverride = async (req, res) => {
   const zoneId = parseInt(req.params.zoneId, 10);
-  const { type, entityId, subCategoryId, addOnCategoryId } = req.body || {};
+  const {
+    type,
+    entityId,
+    subCategoryId,
+    addOnCategoryId,
+    serviceId,
+    preferenceTypeId,
+  } = req.body || {};
   const data = await zoneCatalogService.resetOverride(zoneId, type, entityId, {
     subCategoryId,
     addOnCategoryId,
+    serviceId,
+    preferenceTypeId,
   });
   return ResponseHelper.success(res, "Override reset to master", data);
 };

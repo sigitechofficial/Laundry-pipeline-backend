@@ -36,6 +36,7 @@ const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { sendNotification } = require('../../utils/notification');
 const activePoliciesService = require('../Admin/activePoliciesService');
+const zoneCatalogService = require('../Admin/zoneCatalogService');
 
 // Booking status IDs relevant to failed-attempt recovery on reschedule.
 const AWAITING_COLLECTION_STATUS_ID = 3;
@@ -511,7 +512,6 @@ class RescheduleBookingService {
             await customerSelectedService.destroy({ where: { bookingId } });
 
             // Build and bulk-insert new service rows (zone catalog resolver)
-            const zoneCatalogService = require("../Admin/zoneCatalogService");
             const serviceRows = [];
             let categoryCharge = 0;
             for (const s of services) {
@@ -592,6 +592,11 @@ class RescheduleBookingService {
                         `Preference type ${preferenceTypeId} is not available for the selected service(s)`
                     );
                 }
+                await zoneCatalogService.assertPreferenceEnabled(bookingData.zoneId, {
+                    preferenceTypeId,
+                    serviceIds: targetServiceIds,
+                    serviceId: serviceId || null,
+                });
 
                 // Validate preference value belongs to preference type
                 const prefValue = await preferenceValues.findOne({

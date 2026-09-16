@@ -432,6 +432,13 @@ async function getAllServiceWithPreferenceDetails(req, res) {
                 catalogZoneId,
                 serviceId
             );
+        getData.preferencesData =
+            await zoneCatalogService.applyToServicePreferencesData(
+                getData.preferencesData,
+                catalogZoneId,
+                serviceId,
+                { includeDisabled: false }
+            );
     }
     return ResponseHelper.success(res, "All Preferences and Services Data Fetched", getData);
 }

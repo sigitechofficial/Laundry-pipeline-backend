@@ -1556,6 +1556,10 @@ class CustomerOrderService {
                             `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(zoneId, {
+                        serviceId,
+                        preferenceTypeId,
+                    });
                 } else {
                     const servicePreferenceExists = await serviceWithPreferences.findOne({
                         where: {
@@ -1570,6 +1574,10 @@ class CustomerOrderService {
                             `Preference type ${preferenceTypeId} is not available for any of the selected services`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(zoneId, {
+                        preferenceTypeId,
+                        serviceIds,
+                    });
                 }
 
                 const preferenceValue = await preferenceValues.findOne({

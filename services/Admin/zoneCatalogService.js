@@ -4,6 +4,9 @@ const {
   subCategories,
   addOnServices,
   repairOption,
+  serviceWithPreferences,
+  preferenceTypes,
+  preferenceValues,
   zoneSubCategoryOverride,
   zoneAddOnServiceOverride,
   zoneRepairOptionOverride,
@@ -12,6 +15,7 @@ const {
   zoneAddOnCategoryOverride,
   zoneRepairGarmentOverride,
   zoneSubCategoryAddOnOverride,
+  zoneServicePreferenceOverride,
   zone,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
@@ -51,6 +55,7 @@ async function loadMaps(zoneId) {
       addOn: new Map(),
       repairGarment: new Map(),
       repairOption: new Map(),
+      preference: new Map(),
       attach: new Map(),
     };
   }
@@ -63,6 +68,7 @@ async function loadMaps(zoneId) {
     addOns,
     garments,
     options,
+    preferences,
     attaches,
   ] = await Promise.all([
     zoneServiceOverride.findAll({ where: { zoneId: id } }),
@@ -72,6 +78,7 @@ async function loadMaps(zoneId) {
     zoneAddOnServiceOverride.findAll({ where: { zoneId: id } }),
     zoneRepairGarmentOverride.findAll({ where: { zoneId: id } }),
     zoneRepairOptionOverride.findAll({ where: { zoneId: id } }),
+    zoneServicePreferenceOverride.findAll({ where: { zoneId: id } }),
     zoneSubCategoryAddOnOverride.findAll({ where: { zoneId: id } }),
   ]);
 
@@ -88,6 +95,12 @@ async function loadMaps(zoneId) {
     attach.get(itemId).set(Number(row.addOnCategoryId), row);
   }
 
+  const preference = new Map();
+  for (const row of preferences) {
+    const key = `${Number(row.serviceId)}:${Number(row.preferenceTypeId)}`;
+    preference.set(key, row);
+  }
+
   return {
     service: asMap(services, "serviceId"),
     category: asMap(categories, "categoryId"),
@@ -96,6 +109,7 @@ async function loadMaps(zoneId) {
     addOn: asMap(addOns, "addOnServiceId"),
     repairGarment: asMap(garments, "repairGarmentId"),
     repairOption: asMap(options, "repairOptionId"),
+    preference,
     attach,
   };
 }
@@ -208,6 +222,130 @@ async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
     });
   }
   return out;
+}
+
+function preferenceOverrideKey(serviceId, preferenceTypeId) {
+  return `${Number(serviceId)}:${Number(preferenceTypeId)}`;
+}
+
+function sortPreferencesWithOverrides(rows, maps, serviceId) {
+  return [...(rows || [])].sort((a, b) => {
+    const left = maps.preference.get(preferenceOverrideKey(serviceId, a.id));
+    const right = maps.preference.get(preferenceOverrideKey(serviceId, b.id));
+    const leftOrder =
+      left && left.sortOrder != null ? Number(left.sortOrder) : Number.MAX_SAFE_INTEGER;
+    const rightOrder =
+      right && right.sortOrder != null ? Number(right.sortOrder) : Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return Number(a.id) - Number(b.id);
+  });
+}
+
+function decorateServicePreferences(preferencesData, maps, serviceId, { includeDisabled = true } = {}) {
+  const visit = (row) => {
+    const plain = row?.toJSON ? row.toJSON() : row;
+    const ov = maps.preference.get(preferenceOverrideKey(serviceId, plain.id));
+    const enabled = enabledOf(ov);
+    const children = sortPreferencesWithOverrides(plain.childTypes || [], maps, serviceId)
+      .map(visit)
+      .filter(Boolean);
+    if (!includeDisabled && !enabled) return null;
+    return {
+      ...plain,
+      inherited: !ov,
+      isEnabled: enabled,
+      sortOrder: ov && ov.sortOrder != null ? Number(ov.sortOrder) : null,
+      childTypes: children,
+    };
+  };
+
+  return sortPreferencesWithOverrides(preferencesData || [], maps, serviceId)
+    .map(visit)
+    .filter(Boolean);
+}
+
+async function getServicePreferencesData(serviceId) {
+  const links = await serviceWithPreferences.findAll({
+    where: { serviceId: Number(serviceId), status: true },
+    attributes: ["id", "serviceId", "preferenceTypeId"],
+    include: [
+      {
+        model: preferenceTypes,
+        attributes: ["id", "name", "status", "parentPreferenceTypeId", "createdAt", "updatedAt"],
+        where: { status: true },
+        required: true,
+        include: [
+          {
+            model: preferenceValues,
+            attributes: ["id", "value", "preferenceTypeId", "status", "createdAt", "updatedAt"],
+            where: { status: true },
+            required: false,
+          },
+        ],
+      },
+    ],
+  });
+
+  const directTypes = [];
+  const typeMap = new Map();
+  for (const link of links || []) {
+    const type = link.preferenceType;
+    if (!type) continue;
+    const plain = type.toJSON ? type.toJSON() : type;
+    typeMap.set(Number(plain.id), plain);
+    directTypes.push(plain);
+  }
+
+  const missingParentIds = new Set();
+  for (const pref of directTypes) {
+    const parentId = Number(pref.parentPreferenceTypeId);
+    if (parentId > 0 && !typeMap.has(parentId)) {
+      missingParentIds.add(parentId);
+    }
+  }
+
+  if (missingParentIds.size) {
+    const parents = await preferenceTypes.findAll({
+      where: { id: [...missingParentIds], status: true },
+      attributes: ["id", "name", "status", "parentPreferenceTypeId", "createdAt", "updatedAt"],
+      include: [
+        {
+          model: preferenceValues,
+          attributes: ["id", "value", "preferenceTypeId", "status", "createdAt", "updatedAt"],
+          where: { status: true },
+          required: false,
+        },
+      ],
+    });
+    for (const parent of parents || []) {
+      const plain = parent.toJSON ? parent.toJSON() : parent;
+      typeMap.set(Number(plain.id), plain);
+    }
+  }
+
+  const allTypes = [...typeMap.values()];
+  const parentTypes = allTypes.filter((p) => !p.parentPreferenceTypeId);
+  return parentTypes.map((parent) => ({
+    ...parent,
+    childTypes: allTypes.filter(
+      (child) => Number(child.parentPreferenceTypeId) === Number(parent.id)
+    ),
+  }));
+}
+
+async function applyToServicePreferencesData(preferencesData, zoneId, serviceId, opts = {}) {
+  if (!zoneId) return preferencesData || [];
+  const maps = await loadMaps(zoneId);
+  if (
+    !opts.includeDisabled &&
+    serviceId &&
+    !enabledOf(maps.service.get(Number(serviceId)))
+  ) {
+    return [];
+  }
+  return decorateServicePreferences(preferencesData || [], maps, Number(serviceId), {
+    includeDisabled: Boolean(opts.includeDisabled),
+  });
 }
 
 async function findOrRestore(model, where, defaults) {
@@ -393,6 +531,54 @@ const UPSERT_TYPES = {
 };
 
 async function upsertOverride(zoneId, type, payload = {}, { adminUserId } = {}) {
+  if (type === "preference") {
+    const serviceId = Number(payload.serviceId);
+    const preferenceTypeId = Number(payload.preferenceTypeId ?? payload.entityId);
+    if (!Number.isFinite(serviceId) || serviceId <= 0) {
+      throw new ValidationError("serviceId is required");
+    }
+    if (!Number.isFinite(preferenceTypeId) || preferenceTypeId <= 0) {
+      throw new ValidationError("preferenceTypeId is required");
+    }
+    if (payload.expectedVersion != null) {
+      const existing = await zoneServicePreferenceOverride.findOne({
+        where: { zoneId, serviceId, preferenceTypeId },
+      });
+      if (existing && Number(existing.version) !== Number(payload.expectedVersion)) {
+        throw new ValidationError(
+          `Stale override (expected version ${payload.expectedVersion}, have ${existing.version})`
+        );
+      }
+    }
+    const existing = await zoneServicePreferenceOverride.findOne({
+      where: { zoneId, serviceId, preferenceTypeId },
+      paranoid: false,
+    });
+    const creating = !existing || Boolean(existing.deletedAt);
+    const patch = mergeOverridePatch(payload, {
+      hasPrice: false,
+      creating,
+    });
+    const [row, created] = await findOrRestore(
+      zoneServicePreferenceOverride,
+      { zoneId, serviceId, preferenceTypeId },
+      { ...patch, version: 1 }
+    );
+    if (!created) {
+      await row.update({
+        ...patch,
+        version: Number(row.version || 1) + 1,
+      });
+      await row.reload();
+    }
+    return {
+      ...row.get({ plain: true }),
+      type,
+      created,
+      adminUserId: adminUserId || null,
+    };
+  }
+
   const spec = UPSERT_TYPES[type];
   if (!spec) throw new ValidationError(`Unknown override type: ${type}`);
   const entityId = Number(payload[spec.key] ?? payload.entityId);
@@ -488,6 +674,21 @@ async function resetOverride(zoneId, type, entityId, extra = {}) {
     if (row) await row.destroy();
     return { reset: true };
   }
+  if (type === "preference") {
+    const serviceId = Number(extra.serviceId);
+    const preferenceTypeId = Number(extra.preferenceTypeId ?? entityId);
+    if (!Number.isFinite(serviceId) || serviceId <= 0) {
+      throw new ValidationError("serviceId is required");
+    }
+    if (!Number.isFinite(preferenceTypeId) || preferenceTypeId <= 0) {
+      throw new ValidationError("preferenceTypeId is required");
+    }
+    const row = await zoneServicePreferenceOverride.findOne({
+      where: { zoneId, serviceId, preferenceTypeId },
+    });
+    if (row) await row.destroy();
+    return { reset: true };
+  }
   const spec = UPSERT_TYPES[type];
   if (!spec) throw new ValidationError(`Unknown override type: ${type}`);
   const row = await spec.model.findOne({
@@ -560,6 +761,37 @@ async function copyOverrides(fromZoneId, toZoneId, { replace = false } = {}) {
     copied += 1;
   }
 
+  if (replace) {
+    await zoneServicePreferenceOverride.destroy({ where: { zoneId: to } });
+  }
+  const prefRows = await zoneServicePreferenceOverride.findAll({
+    where: { zoneId: from },
+  });
+  for (const row of prefRows) {
+    const keys = {
+      zoneId: to,
+      serviceId: row.serviceId,
+      preferenceTypeId: row.preferenceTypeId,
+    };
+    const [target, created] = await findOrRestore(
+      zoneServicePreferenceOverride,
+      keys,
+      {
+        isEnabled: row.isEnabled,
+        sortOrder: row.sortOrder,
+        version: 1,
+      }
+    );
+    if (!created) {
+      await target.update({
+        isEnabled: row.isEnabled,
+        sortOrder: row.sortOrder,
+        version: Number(target.version || 1) + 1,
+      });
+    }
+    copied += 1;
+  }
+
   return { copied };
 }
 
@@ -587,6 +819,36 @@ async function assertLineEnabled(zoneId, { serviceId, categoryId, subCategoryId 
   }
 }
 
+async function assertPreferenceEnabled(
+  zoneId,
+  { serviceId, preferenceTypeId, serviceIds = [] } = {}
+) {
+  if (!zoneId) return;
+  const prefId = Number(preferenceTypeId);
+  if (!prefId) {
+    throw new ValidationError("preferenceTypeId is required");
+  }
+  const candidateIds = serviceId
+    ? [Number(serviceId)]
+    : (Array.isArray(serviceIds) ? serviceIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+  if (!candidateIds.length) {
+    throw new ValidationError("serviceId or serviceIds are required for preference validation");
+  }
+
+  const maps = await loadMaps(zoneId);
+  const hasEnabled = candidateIds.some((id) => {
+    if (!enabledOf(maps.service.get(id))) return false;
+    const prefOv = maps.preference.get(preferenceOverrideKey(id, prefId));
+    return enabledOf(prefOv);
+  });
+
+  if (!hasEnabled) {
+    throw new ValidationError("Preference is not available in this zone");
+  }
+}
+
 async function getEffectiveCatalog(zoneId) {
   const serviceManagementService = require("./serviceManagementService");
   const addOnServicesService = require("./addOnServicesService");
@@ -605,11 +867,20 @@ async function getEffectiveCatalog(zoneId) {
   for (const svc of services) {
     const cats = await serviceManagementService.getServiceCategoriesDataForService(svc.id);
     const sov = maps.service.get(Number(svc.id));
+    const serviceEnabled = enabledOf(sov);
+    const rawPreferences = await getServicePreferencesData(svc.id);
+    const decoratedPreferences = decorateServicePreferences(
+      rawPreferences,
+      maps,
+      Number(svc.id),
+      { includeDisabled: true }
+    );
     tree.push({
       serviceId: svc.id,
       name: svc.name,
       inherited: !sov,
-      isEnabled: enabledOf(sov),
+      isEnabled: serviceEnabled,
+      preferences: serviceEnabled ? decoratedPreferences : [],
       categories: (cats || []).map((row) => ({
         categoryId: row.categoryId,
         name: row.category?.name,
@@ -803,6 +1074,7 @@ async function healthProbe() {
     zoneAddOnServiceOverrides: await zoneAddOnServiceOverride.count(),
     zoneRepairGarmentOverrides: await zoneRepairGarmentOverride.count(),
     zoneRepairOptionOverrides: await zoneRepairOptionOverride.count(),
+    zoneServicePreferenceOverrides: await zoneServicePreferenceOverride.count(),
     zoneSubCategoryAddOnOverrides: await zoneSubCategoryAddOnOverride.count(),
   };
   const firstZone = await zone.findOne({
@@ -844,6 +1116,7 @@ module.exports = {
   filterEnabledServices,
   resolvePrice,
   applyToServiceCategoriesData,
+  applyToServicePreferencesData,
   applyToAddOnRows,
   applyToRepairOptions,
   applyToRepairGarments,
@@ -858,4 +1131,5 @@ module.exports = {
   repriceCart,
   effectiveAttach,
   assertLineEnabled,
+  assertPreferenceEnabled,
 };

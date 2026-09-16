@@ -51,6 +51,7 @@ const {
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const zoneCatalogService = require('./zoneCatalogService');
 const { attachCommercialTerms } = require('../../utils/bookingRateSnapshot');
 const {
     resolveAgentCommissionBase,
@@ -1188,7 +1189,6 @@ class OrderService {
         }
 
         const serviceManagementService = require('./serviceManagementService');
-        const zoneCatalogService = require('./zoneCatalogService');
         const allServices = await service.findAll({
             where: { status: true },
             attributes: ['id', 'name', 'status', 'image', 'description', 'timeRequired'],
@@ -1683,6 +1683,9 @@ class OrderService {
             const serviceIds = services
                 ? services.map((s) => s.serviceId)
                 : existingOrder.customerSelectedServices.map((s) => s.serviceId);
+            const scopedServiceIds = serviceIds
+                .map((id) => Number(id))
+                .filter((id) => Number.isFinite(id) && id > 0);
 
             const bookingPreferencesToCreate = [];
 
@@ -1709,10 +1712,14 @@ class OrderService {
                             `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(existingOrder.zoneId, {
+                        serviceId,
+                        preferenceTypeId,
+                    });
                 } else {
                     const servicePreferenceExists = await serviceWithPreferences.findOne({
                         where: {
-                            serviceId: { [Op.in]: serviceIds },
+                            serviceId: { [Op.in]: scopedServiceIds },
                             preferenceTypeId: preferenceTypeId,
                             status: true
                         }
@@ -1723,6 +1730,10 @@ class OrderService {
                             `Preference type ${preferenceTypeId} is not available for any selected services`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(existingOrder.zoneId, {
+                        preferenceTypeId,
+                        serviceIds: scopedServiceIds,
+                    });
                 }
 
                 const preferenceValue = await preferenceValues.findOne({

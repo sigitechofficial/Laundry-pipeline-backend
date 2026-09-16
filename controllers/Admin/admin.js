@@ -108,6 +108,7 @@ const supportContactService = require('../../services/Admin/supportContactServic
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
 const repairCatalogService = require('../../services/Admin/repairCatalogService');
+const zoneCatalogService = require('../../services/Admin/zoneCatalogService');
 const userBlockService = require('../../services/Admin/userBlockService');
 const shopAssignmentPolicyService = require('../../services/Admin/shopAssignmentPolicyService');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
@@ -2404,6 +2405,22 @@ async function getPreferenceTypes(req, res) {
 async function servicesAndPreferencesData(req,res) {
     const {serviceId}=req.params
     const getData=await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId)
+    const catalogZoneId = await zoneCatalogService.resolveCatalogZoneId(req.query || {});
+    if (catalogZoneId) {
+        getData.serviceCategoriesData =
+            await zoneCatalogService.applyToServiceCategoriesData(
+                getData.serviceCategoriesData,
+                catalogZoneId,
+                serviceId
+            );
+        getData.preferencesData =
+            await zoneCatalogService.applyToServicePreferencesData(
+                getData.preferencesData,
+                catalogZoneId,
+                serviceId,
+                { includeDisabled: false }
+            );
+    }
     return ResponseHelper.success(res,"All Preferences and Services Data Fetched",getData)
     
 }
