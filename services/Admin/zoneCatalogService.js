@@ -795,6 +795,17 @@ async function copyOverrides(fromZoneId, toZoneId, { replace = false } = {}) {
   return { copied };
 }
 
+/**
+ * Stored zone override price (or null). Independent of the overlays flag so
+ * the admin editor can show what is saved even while pricing is staged.
+ */
+function storedZonePrice(overrideRow) {
+  if (!overrideRow || overrideRow.price == null || overrideRow.price === "") {
+    return null;
+  }
+  return money(overrideRow.price);
+}
+
 function catalogLinePrice(masterPrice, overrideRow, overlaysOn) {
   return effectiveDisplayPrice(
     masterPrice,
@@ -922,6 +933,7 @@ async function getEffectiveCatalog(zoneId) {
             description: plain.description ?? null,
             masterPrice: plain.price,
             masterStatus: plain.status !== false,
+            zonePrice: storedZonePrice(ov),
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
@@ -959,6 +971,7 @@ async function getEffectiveCatalog(zoneId) {
             addOnServiceId: a.id,
             name: a.name,
             masterPrice: a.price,
+            zonePrice: storedZonePrice(aov),
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
@@ -988,6 +1001,7 @@ async function getEffectiveCatalog(zoneId) {
             repairOptionId: option.id,
             name: option.name,
             masterPrice: option.price,
+            zonePrice: storedZonePrice(oov),
             price: priced.price,
             priceInherited: priced.inherited,
             staged: priced.staged,
