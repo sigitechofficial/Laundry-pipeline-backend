@@ -217,11 +217,15 @@ class AgentAuthService {
 
         // Check if user exists by email
         if (userfindByEmail && userfindByEmail.email === data.email) {
-            // If user exists with different userTypeId, throw error
-            // if (userfindByEmail.userTypeId === 4) {
-            //     throw new ConflictError('User With This Email Already Exists');
-            // }
-            
+            // This email already belongs to a customer account (userTypeId 2).
+            // Do NOT let agent registration take over / overwrite a customer row.
+            // Shop accounts must use a separate email.
+            if (Number(userfindByEmail.userTypeId) === 2) {
+                throw new ConflictError(
+                    'This email is already registered as a customer account. Please use a different email for your shop account.'
+                );
+            }
+
             // User exists with userTypeId 4 (Agent)
             // If user is verified, don't allow re-registration
             if (userfindByEmail.verifiedAt) {
@@ -989,6 +993,19 @@ class AgentAuthService {
             throw new NotFoundError("User not Exists with this credentials");
         }
 
+        // The agent app is for shop owners (userTypeId 4) only. Customer accounts
+        // (userTypeId 2) share the same users table + email space, so block them
+        // here — otherwise a customer's email/password would log in to the agent app.
+        if (Number(userFind.userTypeId) === 2) {
+            throw new UnauthorizedError(
+                "This email is registered as a customer account. Please use the customer app to sign in.",
+                {
+                    message:
+                        "This email is registered as a customer account. Please use the customer app to sign in.",
+                }
+            );
+        }
+
         const tzUpdate = this._ianaTimeZoneUpdate(data);
         if (Object.keys(tzUpdate).length) {
             await users.update(tzUpdate, { where: { id: userFind.id } });
@@ -1116,7 +1133,7 @@ class AgentAuthService {
             const socialUser = await users.findOne({
                 where: {
                     email: data.email,
-                    userTypeId: 2,
+                    userTypeId: 4,
                     deletedAt: { [Op.is]: null }
                 },
                 include: [
