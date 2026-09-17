@@ -46,6 +46,7 @@ const {
     buildOrderListSequelizeOrder,
 } = require('../../utils/orderListSort');
 const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
+const { EXPORT_MAX_ROWS } = require('../../utils/listQuery');
 const {
     serviceLineHasAddOnPayload,
     sumActiveBookingServicesSubtotal,
@@ -457,9 +458,16 @@ class OrderService {
      * @returns {Object} Bookings with pagination info
      */
     async getOptimizedBookings(whereClause, page = 1, limit = 50, filters = {}) {
-        page = clampPage(page);
-        // Keep caller defaults (All Orders 20, this helper 50). Cap abuse only.
-        limit = clampListLimit(limit, limit || 20, DEFAULT_MAX_LIST_LIMIT);
+        const exportMode = typeof filters === 'object' && filters !== null && filters.exportMode === true;
+        if (exportMode) {
+            // CSV export: one window over the whole filtered set (capped).
+            page = 1;
+            limit = EXPORT_MAX_ROWS;
+        } else {
+            page = clampPage(page);
+            // Keep caller defaults (All Orders 20, this helper 50). Cap abuse only.
+            limit = clampListLimit(limit, limit || 20, DEFAULT_MAX_LIST_LIMIT);
+        }
         const search = typeof filters === 'string' ? filters : filters.search;
         const sortBy = typeof filters === 'string' ? undefined : filters.sortBy;
         const sortDir = typeof filters === 'string' ? undefined : filters.sortDir;
@@ -546,7 +554,9 @@ class OrderService {
                 totalRecords: totalCount,
                 recordsPerPage: limit,
                 hasNextPage: hasNextPage,
-                hasPrevPage: hasPrevPage
+                hasPrevPage: hasPrevPage,
+                exportMode,
+                truncated: exportMode && totalCount > limit,
             }
         };
     }

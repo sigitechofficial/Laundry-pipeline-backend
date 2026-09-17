@@ -27,6 +27,11 @@ const {
     PAYMENT_FAILURE_SORT_FIELDS,
     DEFAULT_PAYMENT_FAILURE_SORT,
 } = require("../../utils/orderListSort");
+const { resolveListWindow, buildPagination } = require("../../utils/listQuery");
+const {
+    buildPaymentFailureListWhere,
+    PAYMENT_FAILURE_DEFAULT_LIMIT,
+} = require("../../utils/adminListFilters");
 
 const runtimeSettingsService = require("../Admin/runtimeSettingsService");
 
@@ -921,16 +926,45 @@ async function assertCanOutForDelivery(bookingId, options = {}) {
     throw err;
 }
 
+/**
+ * Admin payment-failure queue (card auto-charge waiting on an admin decision).
+ *
+ * Shared list contract (utils/listQuery):
+ *   search              orderTrackId / booking id / customer name, email, phone
+ *   zoneId              booking zone (forced from JWT for zone staff)
+ *   startDate/endDate   inclusive range on lastPaymentFailureAt
+ *   sortBy/sortDir      PAYMENT_FAILURE_SORT_FIELDS allowlist
+ *   page/limit          default 25; export=1 → whole filtered set (capped)
+ */
 async function listPaymentFailures(options = {}) {
-    const limit = Math.min(Number(options.limit) || 200, 500);
-    const where = {
+    const window = resolveListWindow(options, {
+        defaultLimit: PAYMENT_FAILURE_DEFAULT_LIMIT,
+    });
+    const baseWhere = {
         paymentType: "card",
         paymentDeliveryGate: "waiting_admin",
         bookingStatusId: { [Op.lt]: COMPLETED },
     };
+    const { where, searchTerm, hasSearch, zoneId } = buildPaymentFailureListWhere(
+        baseWhere,
+        options,
+        { zoneId: options.zoneId }
+    );
+
+    const customerInclude = {
+        model: users,
+        as: "customer",
+        attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
+    };
 
     const [totalCount, rows] = await Promise.all([
-        booking.count({ where }),
+        booking.count({
+            where,
+            // Search predicates reference $customer.*$ → the join must exist for COUNT too.
+            include: hasSearch ? [{ ...customerInclude, attributes: [] }] : undefined,
+            distinct: true,
+            col: "id",
+        }),
         booking.findAll({
             where,
             // Keep this operational endpoint independent from unrelated booking
@@ -956,11 +990,7 @@ async function listPaymentFailures(options = {}) {
                 "updatedAt",
             ],
             include: [
-                {
-                    model: users,
-                    as: "customer",
-                    attributes: ["id", "firstName", "lastName", "email", "phoneNum"],
-                },
+                customerInclude,
                 {
                     model: billingDetails,
                     as: "billingDetail",
@@ -994,7 +1024,8 @@ async function listPaymentFailures(options = {}) {
                 defaultSortBy: DEFAULT_PAYMENT_FAILURE_SORT.sortBy,
                 defaultSortDir: DEFAULT_PAYMENT_FAILURE_SORT.sortDir,
             }),
-            limit,
+            limit: window.limit,
+            offset: window.offset,
         }),
     ]);
 
@@ -1030,7 +1061,18 @@ async function listPaymentFailures(options = {}) {
         };
     });
 
-    return { failures, totalCount, count: totalCount };
+    return {
+        failures,
+        totalCount,
+        count: totalCount,
+        pagination: buildPagination(totalCount, window),
+        filters: {
+            search: searchTerm,
+            zoneId: zoneId ?? null,
+            startDate: options.startDate || null,
+            endDate: options.endDate || null,
+        },
+    };
 }
 
 async function resolvePaymentFailure(bookingId, action, adminUserId, notes = null) {

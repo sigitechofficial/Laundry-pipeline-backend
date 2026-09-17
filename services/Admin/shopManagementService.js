@@ -8,6 +8,12 @@ const {
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
 const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
+const {
+    EXPORT_MAX_ROWS,
+    parseSearchTerm,
+    escapeLike,
+    buildPagination,
+} = require('../../utils/listQuery');
 // Keep the shop "pending" count in sync with the admin order sidebar / pendingOrders
 // list (services/Admin/orderService.js). Canonical exclusions: Completed, On-Hold
 // (customer + agent), Cancelled — see constants/bookingStatusIds.js.
@@ -102,10 +108,10 @@ class ShopManagementService {
             };
         }
 
-        const term = String(filters.search || '').trim();
+        const term = parseSearchTerm(filters.search);
         if (term) {
             searchActive = true;
-            const like = `%${term}%`;
+            const like = `%${escapeLike(term)}%`;
             const or = [
                 { shopName: { [Op.like]: like } },
                 { '$businessInfo.email$': { [Op.like]: like } },
@@ -127,16 +133,19 @@ class ShopManagementService {
 
     /**
      * Get all shops data with detailed information
-     * @param {Object} [filters] - zoneId, search, startDate, endDate, status, page, limit
+     * @param {Object} [filters] - zoneId, search, startDate, endDate, status, page, limit,
+     *   exportMode (export=1 → page/limit ignored, whole filtered set up to EXPORT_MAX_ROWS)
      * @returns {Object} Paginated shops + top performers
      */
     async getShopsData(filters = {}) {
+            const exportMode = filters.exportMode === true;
             // Paginate only when client asks (shops list UI). Other callers expect full list.
             const wantsPagination =
+                exportMode ||
                 Object.prototype.hasOwnProperty.call(filters, 'page') ||
                 Object.prototype.hasOwnProperty.call(filters, 'limit');
-            const page = Math.max(1, parseInt(filters.page, 10) || 1);
-            const limit = clampListLimit(filters.limit, 25, 100);
+            const page = exportMode ? 1 : Math.max(1, parseInt(filters.page, 10) || 1);
+            const limit = exportMode ? EXPORT_MAX_ROWS : clampListLimit(filters.limit, 25, 100);
             const offset = (page - 1) * limit;
 
             const {
@@ -336,18 +345,30 @@ class ShopManagementService {
                 };
             });
 
+            const effectivePage = wantsPagination ? page : 1;
+            const effectiveLimit = wantsPagination
+                ? limit
+                : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX);
+            const standardPagination = buildPagination(total, {
+                page: effectivePage,
+                limit: Math.max(1, effectiveLimit),
+                exportMode,
+            });
+
             return {
                 AllShopsData: getShopData,
                 topPerformingShops: formattedTopShops,
                 total,
-                page: wantsPagination ? page : 1,
-                limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
+                page: effectivePage,
+                limit: effectiveLimit,
                 pagination: {
+                    // legacy keys (shop list UI)
                     total,
-                    totalRecords: total,
-                    page: wantsPagination ? page : 1,
-                    limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
-                    totalPages: wantsPagination ? (Math.ceil(total / limit) || 1) : 1,
+                    page: effectivePage,
+                    limit: effectiveLimit,
+                    // standard list contract (utils/listQuery)
+                    ...standardPagination,
+                    totalPages: wantsPagination ? standardPagination.totalPages : 1,
                 },
             };
     }

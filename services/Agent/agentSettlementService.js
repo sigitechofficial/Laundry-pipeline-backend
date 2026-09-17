@@ -9,6 +9,7 @@ const { loadShopSettlementReport } = require("./shopSettlementReport");
 const { emptySettlementReport } = require("../../utils/shopSettlementReportMap");
 const agentWithdrawalService = require("./agentWithdrawalService");
 const { buildAdminConnectPayoutLedger } = require("../../utils/adminPayoutLedger");
+const { applyCashDueListQuery } = require("../../utils/adminListFilters");
 
 const {
     CASH_REMITTED_REFERENCE,
@@ -584,11 +585,15 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
     };
 }
 
+/**
+ * Shops/agents with settlement activity, for the admin cash-due tab.
+ *
+ * Shared list contract (utils/listQuery, applied in memory after the wallet
+ * summaries are built): search (shop name, owner name, email, phone, address),
+ * sortBy (cashDueToPlatform default | shopName | agentName) / sortDir,
+ * page / limit (default 20), export=1 → whole filtered set (capped).
+ */
 async function listAgentsWithCashDue(options = {}) {
-    const page = Math.max(parseInt(options.page, 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
-    const offset = (page - 1) * limit;
-
     try {
         await agentWalletService.backfillMissingCashLedger({ limit: 200 });
     } catch (err) {
@@ -607,7 +612,7 @@ async function listAgentsWithCashDue(options = {}) {
         include: [
             {
                 model: users,
-                attributes: ["id", "firstName", "lastName", "email"],
+                attributes: ["id", "firstName", "lastName", "email", "phoneNum", "countryCode"],
                 required: false,
             },
             {
@@ -637,6 +642,8 @@ async function listAgentsWithCashDue(options = {}) {
                         ? `${shop.user.firstName || ""} ${shop.user.lastName || ""}`.trim()
                         : null,
                     agentEmail: shop.user?.email || null,
+                    agentPhone: shop.user?.phoneNum || null,
+                    agentCountryCode: shop.user?.countryCode || null,
                     ...summary,
                 });
             }
@@ -649,20 +656,19 @@ async function listAgentsWithCashDue(options = {}) {
     }
 
     summaries.sort((a, b) => b.cashDueToPlatform - a.cashDueToPlatform);
-    const total = summaries.length;
-    const paged = summaries.slice(offset, offset + limit);
-    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+    const listed = applyCashDueListQuery(summaries, options);
 
     return {
-        agents: paged,
+        agents: listed.rows,
         pagination: {
-            page,
-            limit,
-            total,
-            totalPages,
-            hasNextPage: page < totalPages,
-            hasPrevPage: page > 1,
+            // legacy keys
+            page: listed.pagination.currentPage,
+            limit: listed.pagination.recordsPerPage,
+            total: listed.pagination.totalRecords,
+            // standard list contract (utils/listQuery)
+            ...listed.pagination,
         },
+        search: listed.search,
     };
 }
 

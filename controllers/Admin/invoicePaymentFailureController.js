@@ -3,17 +3,26 @@
 const ResponseHelper = require("../../utils/responseHelper");
 const invoiceAutoChargeService = require("../../services/Agent/invoiceAutoChargeService");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
+const { zoneIdFromRequest } = require("../../utils/adminZoneScope");
 
+/**
+ * GET /admin/payment-failures
+ * Query (shared list contract): search, zoneId, startDate, endDate,
+ * sortBy, sortDir, page, limit (default 25), export=1.
+ * Response keeps `failures`, `count`, `totalCount` and adds `pagination`.
+ */
 exports.listPaymentFailures = async (req, res) => {
     const result = await invoiceAutoChargeService.listPaymentFailures({
-        limit: req.query.limit,
-        sortBy: req.query.sortBy,
-        sortDir: req.query.sortDir,
+        ...req.query,
+        // Zone staff: JWT zone wins over any client zoneId (enforceAdminZoneScope).
+        zoneId: zoneIdFromRequest(req),
     });
     return ResponseHelper.success(res, "Payment failures", {
         failures: result.failures,
         count: result.totalCount,
         totalCount: result.totalCount,
+        pagination: result.pagination,
+        filters: result.filters,
     });
 };
 

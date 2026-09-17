@@ -22,9 +22,22 @@ exports.getAgentSettlementDetail = async (req, res) => {
     return ResponseHelper.success(res, "Agent settlement detail", data);
 };
 
+/**
+ * GET /admin/agents/cash-due
+ * Query (shared list contract): search, sortBy, sortDir, page, limit, export=1.
+ * Response keeps `agents` and adds the standard `pagination` keys.
+ */
 exports.listAgentsWithCashDue = async (req, res) => {
-    const { page, limit } = req.query;
-    const data = await agentSettlementService.listAgentsWithCashDue({ page, limit });
+    const { page, limit, search, sortBy, sortDir } = req.query;
+    const data = await agentSettlementService.listAgentsWithCashDue({
+        page,
+        limit,
+        search,
+        sortBy,
+        sortDir,
+        export: req.query.export,
+        format: req.query.format,
+    });
     return ResponseHelper.success(res, "Agents with cash due", data);
 };
 
