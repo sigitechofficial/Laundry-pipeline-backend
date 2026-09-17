@@ -1043,6 +1043,12 @@ async function listPaymentFailures(options = {}) {
             }),
             limit: window.limit,
             offset: window.offset,
+            // Search predicates reference $customer.*$. With limit + includes
+            // Sequelize wraps the booking select in a subquery and the customer
+            // join lands outside it → "Unknown column 'customer.firstName'".
+            // Keep the join in the same SELECT when searching (belongsTo joins
+            // cannot fan out rows, so limit/offset stay correct).
+            subQuery: hasSearch ? false : undefined,
         }),
     ]);
 

@@ -109,12 +109,21 @@ async function getGeofenceOverrideAggregates(query = {}) {
       }
     }
     if (row.shopId) {
+      // Shop name lives on bussinessInformation (users has no shopName column).
       const s = await users.findByPk(row.shopId, {
-        attributes: ['id', 'firstName', 'lastName', 'shopName', 'email'],
+        attributes: ['id', 'firstName', 'lastName', 'email'],
+        include: [
+          {
+            model: bussinessInformation,
+            as: 'businessInfo',
+            attributes: ['id', 'shopName'],
+            required: false,
+          },
+        ],
       });
       if (s) {
         shopName =
-          s.shopName ||
+          s.businessInfo?.shopName ||
           [s.firstName, s.lastName].filter(Boolean).join(' ').trim() ||
           s.email ||
           `Shop #${s.id}`;
@@ -212,6 +221,9 @@ async function listComplianceEvents(query = {}) {
     limit: window.limit,
     offset: window.offset,
     distinct: true,
+    // Search references $booking.*$ / $actor.*$ / $shop.*$; keep the joins in
+    // the same SELECT so limit+includes never push them outside a subquery.
+    subQuery: searchWhere ? false : undefined,
   });
 
   const pagination = buildPagination(count, window);

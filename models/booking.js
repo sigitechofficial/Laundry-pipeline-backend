@@ -140,6 +140,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: true,
     },
+    // Customer packed every service into one bag (agent invoice flag). Selected by
+    // the admin order list; see migration 20260917120000-add-all-in-one-bag-to-bookings.
+    allInOneBag: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+    },
     orderAmount: {
       type:DataTypes.FLOAT,
       allowNull:true,
