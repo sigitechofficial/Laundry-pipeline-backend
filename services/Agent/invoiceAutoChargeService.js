@@ -6,6 +6,8 @@ const {
     billingDetails,
     users,
     addressDb,
+    bussinessInformation,
+    zone,
     invoicePaymentAttempt,
 } = require("../../models");
 const {
@@ -986,6 +988,8 @@ async function listPaymentFailures(options = {}) {
                 "collectionDate",
                 "paymentDeliveryGate",
                 "paymentAdminNotes",
+                "laundryShopId",
+                "zoneId",
                 "createdAt",
                 "updatedAt",
             ],
@@ -996,6 +1000,19 @@ async function listPaymentFailures(options = {}) {
                     as: "billingDetail",
                     required: false,
                     attributes: ["total", "paymentStatus"],
+                },
+                {
+                    model: addressDb,
+                    as: "laundryShop",
+                    required: false,
+                    attributes: ["id", "userId"],
+                    include: [
+                        {
+                            model: bussinessInformation,
+                            required: false,
+                            attributes: ["id", "shopName"],
+                        },
+                    ],
                 },
                 {
                     model: invoicePaymentAttempt,
@@ -1040,8 +1057,18 @@ async function listPaymentFailures(options = {}) {
         16: "Delivered",
     };
 
+    // Zone names for the list/CSV (booking has no zone association).
+    const zoneIds = [...new Set(rows.map((r) => r.zoneId).filter((id) => id != null))];
+    const zoneNameById = new Map();
+    if (zoneIds.length) {
+        const zones = await zone.findAll({ where: { id: zoneIds }, attributes: ["id", "name"] });
+        zones.forEach((z) => zoneNameById.set(Number(z.id), z.name));
+    }
+
     const failures = rows.map((row) => {
         const plain = row.get({ plain: true });
+        const bizRows = plain.laundryShop?.bussinessInformations || plain.laundryShop?.bussinessInformation;
+        const biz = Array.isArray(bizRows) ? bizRows[0] : bizRows;
         const flags = buildPaymentGateFlags(
             plain,
             plain.billingDetail?.paymentStatus === "Paid"
@@ -1058,6 +1085,8 @@ async function listPaymentFailures(options = {}) {
             bookingStatusLabel:
                 statusLabels[plain.bookingStatusId] ||
                 `Status ${plain.bookingStatusId}`,
+            shopName: biz?.shopName || null,
+            zoneName: plain.zoneId != null ? zoneNameById.get(Number(plain.zoneId)) || null : null,
         };
     });
 

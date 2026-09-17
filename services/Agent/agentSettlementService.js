@@ -658,8 +658,24 @@ async function listAgentsWithCashDue(options = {}) {
     summaries.sort((a, b) => b.cashDueToPlatform - a.cashDueToPlatform);
     const listed = applyCashDueListQuery(summaries, options);
 
+    // Totals over the WHOLE filtered set (search applied), independent of the
+    // page window, so the admin summary cards never reflect just one page.
+    const matched = applyCashDueListQuery(summaries, { ...options, export: '1', page: undefined, limit: undefined }).rows;
+    const sum = (key) =>
+        Math.round(matched.reduce((acc, row) => acc + (Number(row[key]) || 0), 0) * 100) / 100;
+    const summary = {
+        shops: matched.length,
+        totalCashDue: sum('cashDueToPlatform'),
+        totalPending: sum('pendingCashRemittance'),
+        totalPayable: sum('platformOwesAgent'),
+        totalRemitted: sum('totalCashRemitted'),
+        totalReleased: sum('totalAgentPayouts'),
+        totalCollected: sum('totalCashCollected'),
+    };
+
     return {
         agents: listed.rows,
+        summary,
         pagination: {
             // legacy keys
             page: listed.pagination.currentPage,
