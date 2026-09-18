@@ -4,8 +4,25 @@
 
 function parseTimeRequiredDays(value) {
     if (value == null || value === '') return 0;
-    const n = parseInt(String(value).replace(/\D/g, ''), 10);
-    return Number.isFinite(n) && n > 0 ? n : 0;
+
+    // `timeRequired` holds human-readable strings like "48-72 hours",
+    // "24-48 hours", "2 days", or a bare day count. Take the largest number
+    // in the string (upper bound of any range) and convert by unit.
+    // NOTE: never strip separators and concatenate digits — "48-72 hours"
+    // must become 3 days (ceil 72h), not 4872 days.
+    const str = String(value).trim().toLowerCase();
+    const nums = (str.match(/\d+(?:\.\d+)?/g) || [])
+        .map(Number)
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (!nums.length) return 0;
+    const maxNum = Math.max(...nums);
+
+    // Hours → round up to whole days. Anything else (incl. a bare number
+    // or "days") is treated as days for backward compatibility.
+    if (/hour|hr\b|hrs\b/.test(str)) {
+        return Math.max(1, Math.ceil(maxNum / 24));
+    }
+    return Math.ceil(maxNum);
 }
 
 function addDaysToIsoDate(isoDate, days) {
