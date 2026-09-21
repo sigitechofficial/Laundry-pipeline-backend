@@ -125,9 +125,50 @@ class AgentRegistrationService {
             bussinessWorkingDays
         } = data;
 
-        // Validate business information
+        // ---- Validate business information (defense-in-depth) ----
+        // These mirror the ENUM columns on bussinessInformation / machineCount.
+        // The admin panel now enforces the same rules client-side, but a bad
+        // value here otherwise silently corrupts the shop (empty ENUM) or 500s.
+        const ALLOWED_PROFILE_OPTIONS = [
+            'ALL IN HOUSE- Washing, Ironing and Dry cleaning all done by us',
+            'OUTSOURCE DRY CLEANING- Washing and Drying handled in house',
+            'OUTSOURCE ALL- We are just a shop front that outsources all of the processing',
+            'Other',
+        ];
+        const ALLOWED_MACHINE_TOTALS = ['0', '1-2', '3-5', '5+'];
+
+        if (!shopName || !String(shopName).trim()) {
+            throw new ValidationError('Shop name is required');
+        }
+
+        if (
+            matchProfileOptions != null &&
+            matchProfileOptions !== '' &&
+            !ALLOWED_PROFILE_OPTIONS.includes(matchProfileOptions)
+        ) {
+            throw new ValidationError('Invalid shop profile option');
+        }
+
         if (matchProfileOptions !== 'Other' && otherText) {
             throw new ValidationError('You can Add this Field Only when Select Other Option');
+        }
+
+        if (matchProfileOptions === 'Other' && !(otherText && String(otherText).trim())) {
+            throw new ValidationError('Please describe the profile when selecting "Other"');
+        }
+
+        if (machineryCount != null && !Array.isArray(machineryCount)) {
+            throw new ValidationError('machineryCount must be an array');
+        }
+        if (Array.isArray(machineryCount)) {
+            const badMachine = machineryCount.find(
+                (m) => m && m.total != null && !ALLOWED_MACHINE_TOTALS.includes(String(m.total))
+            );
+            if (badMachine) {
+                throw new ValidationError(
+                    `Invalid machine count "${badMachine.total}" — allowed: ${ALLOWED_MACHINE_TOTALS.join(', ')}`
+                );
+            }
         }
 
         // Check if user exists
