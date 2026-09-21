@@ -839,7 +839,14 @@ class OrderService {
                         {
                             model: bussinessInformation,
                             required: false,
-                            attributes: ['id', 'shopName', 'agentId', 'shopAddressId'],
+                            attributes: [
+                                'id',
+                                'shopName',
+                                'agentId',
+                                'shopAddressId',
+                                'matchProfileOptions',
+                                'isConnectAccountConnected',
+                            ],
                             include: [
                                 {
                                     // Shop owner/agent contact info — powers the
@@ -847,7 +854,16 @@ class OrderService {
                                     model: users,
                                     as: 'businessInfo',
                                     required: false,
-                                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
+                                    attributes: [
+                                        'id',
+                                        'firstName',
+                                        'lastName',
+                                        'email',
+                                        'phoneNum',
+                                        'countryCode',
+                                        'status',
+                                        'agentApprovalStatus',
+                                    ],
                                 },
                             ],
                         }
