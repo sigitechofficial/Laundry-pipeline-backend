@@ -21,6 +21,14 @@ function adminPayoutDescriptions(note, adminUserId) {
 /**
  * Pair a completed payout credit with a completed Connect debit so the same
  * earnings cannot be withdrawn again after admin already sent them to Stripe.
+ *
+ * Only the CREDIT row carries stripeTransferId. wallets.stripeTransferId has a
+ * UNIQUE index (wallets_stripe_transfer_id_unique), so writing the same
+ * transfer id on both rows of the pair violates it — the completion
+ * transaction in recordAgentPayout then rolls back AFTER the Stripe transfer
+ * already succeeded, leaving the credit stuck "pending" with real money sent
+ * and no ledger record of it. The credit is the canonical transfer record; the
+ * debit is the paired internal "sent out" entry.
  */
 function buildAdminConnectPayoutLedger({
     userId,
@@ -52,7 +60,8 @@ function buildAdminConnectPayoutLedger({
             currency,
             type: 'debit',
             status: 'completed',
-            stripeTransferId: stripeTransferId || null,
+            // Never the transfer id — see the unique-index note above.
+            stripeTransferId: null,
             description: descriptions.debit,
         },
     };

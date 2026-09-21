@@ -456,18 +456,65 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
         stripeTransferId: transfer.id,
     });
 
-    const debit = await sequelize.transaction(async (transaction) => {
-        await credit.update(
-            {
-                status: "completed",
-                stripeTransferId: transfer.id,
-                description: completedPair.credit.description,
-                failureReason: null,
-            },
-            { transaction }
+    let debit;
+    try {
+        debit = await sequelize.transaction(async (transaction) => {
+            await credit.update(
+                {
+                    status: "completed",
+                    stripeTransferId: transfer.id,
+                    description: completedPair.credit.description,
+                    failureReason: null,
+                },
+                { transaction }
+            );
+            return wallet.create(completedPair.debit, { transaction });
+        });
+    } catch (error) {
+        // Stripe transfer `transfer.id` has ALREADY succeeded — real money moved.
+        // The only thing that failed is recording it. Leaving the credit
+        // "pending" here is the worst outcome: it counts as in-flight against
+        // "Still Payable", hides the money from every balance, and invites a
+        // retry that sends the same earnings again. Land the two facts needed
+        // to reconcile (completed + transfer id) with a minimal raw write.
+        console.error(
+            `[recordAgentPayout] CRITICAL: Stripe transfer ${transfer.id} succeeded but wallet credit ${credit.id} ` +
+                `could not be completed (agentUserId=${agentUserId}, amount=${parsedAmount}). ` +
+                `Attempting raw-SQL fallback. ${error?.message || error}`
         );
-        return wallet.create(completedPair.debit, { transaction });
-    });
+        try {
+            await sequelize.query(
+                "UPDATE wallets SET status = :status, stripeTransferId = :stripeTransferId WHERE id = :id",
+                {
+                    replacements: {
+                        status: "completed",
+                        stripeTransferId: transfer.id,
+                        id: credit.id,
+                    },
+                }
+            );
+        } catch (fallbackError) {
+            console.error(
+                `[recordAgentPayout] CRITICAL: raw-SQL fallback also failed for wallet credit ${credit.id} ` +
+                    `(Stripe transfer ${transfer.id} already succeeded — money moved, ledger does not reflect it). ` +
+                    `Manual reconciliation required. ${fallbackError?.message || fallbackError}`
+            );
+            throw error;
+        }
+        // The paired debit keeps the released amount out of the agent's
+        // withdrawable balance. Without it the wallet would offer these same
+        // earnings for withdrawal again, so treat its absence as an error too.
+        try {
+            debit = await wallet.create(completedPair.debit);
+        } catch (debitError) {
+            console.error(
+                `[recordAgentPayout] CRITICAL: credit ${credit.id} recorded as completed for Stripe transfer ${transfer.id}, ` +
+                    `but the paired withdrawal debit could not be created — the agent wallet will show this amount as ` +
+                    `withdrawable until reconciled. ${debitError?.message || debitError}`
+            );
+            throw error;
+        }
+    }
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
 
