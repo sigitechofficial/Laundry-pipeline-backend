@@ -857,11 +857,19 @@ async function checkConnectAccountStatus(accountId) {
  * Stripe subsequently pays the connected balance to the agent's bank according
  * to that Connect account's payout schedule.
  */
+/**
+ * @param {object} [stripeOptions]
+ * @param {string} [stripeOptions.description] shown in the dashboard Transfers
+ *   list — pass a human-readable "who / which shop / by whom" string.
+ * @param {string} [stripeOptions.transferGroup] Stripe transfer_group, lets the
+ *   dashboard filter every transfer for one shop (e.g. "shop-116").
+ */
 async function transferToConnectAccount(
     amount,
     accountId,
     idempotencyKey,
-    metadata = {}
+    metadata = {},
+    stripeOptions = {}
 ) {
     const amountInCents = convertToCents(amount);
     if (!Number.isInteger(amountInCents) || amountInCents <= 0) {
@@ -871,22 +879,27 @@ async function transferToConnectAccount(
         throw new customError("Stripe Connect account is required", 400);
     }
 
+    const params = {
+        amount: amountInCents,
+        currency: "gbp",
+        destination: accountId,
+        description:
+            metadata.transferKind === "admin_payout"
+                ? "Admin payout to agent Stripe Connect account"
+                : "Agent wallet withdrawal",
+        metadata: sanitizeStripeMetadata(metadata),
+    };
+    if (stripeOptions?.description) {
+        params.description = String(stripeOptions.description).slice(0, 500);
+    }
+    if (stripeOptions?.transferGroup) {
+        params.transfer_group = String(stripeOptions.transferGroup).slice(0, 255);
+    }
+
     try {
-        return await stripe.transfers.create(
-            {
-                amount: amountInCents,
-                currency: "gbp",
-                destination: accountId,
-                description:
-                    metadata.transferKind === "admin_payout"
-                        ? "Admin payout to agent Stripe Connect account"
-                        : "Agent wallet withdrawal",
-                metadata: sanitizeStripeMetadata(metadata),
-            },
-            {
-                idempotencyKey: String(idempotencyKey).slice(0, 255),
-            }
-        );
+        return await stripe.transfers.create(params, {
+            idempotencyKey: String(idempotencyKey).slice(0, 255),
+        });
     } catch (error) {
         throw new customError(`Stripe transfer failed: ${error.message}`, 400);
     }
