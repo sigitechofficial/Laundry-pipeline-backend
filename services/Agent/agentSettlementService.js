@@ -412,10 +412,38 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
         ));
     } catch (error) {
         const reason = String(error?.message || error).slice(0, 500);
-        await credit.update({
-            status: "failed",
-            failureReason: reason,
-        });
+        // The Stripe transfer did not go through — this pending credit must
+        // reach "failed" no matter what, or it silently keeps depressing
+        // platformOwesAgent (pendingAgentPayouts) forever, making "Still
+        // Payable" look like the agent was already paid when they weren't.
+        try {
+            await credit.update({
+                status: "failed",
+                failureReason: reason,
+            });
+        } catch (updateError) {
+            // If the ORM write itself fails (e.g. schema drift on a column
+            // this app expects), fall back to the smallest possible raw
+            // write so the row still reaches a terminal status. Log loudly —
+            // this is a wallet-ledger inconsistency, not a normal 4xx.
+            console.error(
+                `[recordAgentPayout] CRITICAL: could not mark wallet credit ${credit.id} as failed ` +
+                    `after a Stripe transfer error (agentUserId=${agentUserId}, amount=${parsedAmount}). ` +
+                    `Row is stuck "pending" and will distort platformOwesAgent until fixed. ` +
+                    `Transfer error: ${reason} | Update error: ${updateError?.message || updateError}`
+            );
+            try {
+                await sequelize.query(
+                    "UPDATE wallets SET status = :status WHERE id = :id",
+                    { replacements: { status: "failed", id: credit.id } }
+                );
+            } catch (fallbackError) {
+                console.error(
+                    `[recordAgentPayout] CRITICAL: raw-SQL fallback also failed for wallet credit ${credit.id}. ` +
+                        `Manual reconciliation required. ${fallbackError?.message || fallbackError}`
+                );
+            }
+        }
         throw error;
     }
 

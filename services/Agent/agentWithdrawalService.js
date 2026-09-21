@@ -607,11 +607,36 @@ async function approveWithdrawal(withdrawalId, options = {}) {
             // Do not mark failed unless reject — keeps balance reserved intentionally.
             throw error;
         }
+        // Real money already moved on Stripe — the ONLY thing that failed is
+        // recording it. Leaving the row "pending" here is dangerous: the
+        // wallet ledger has no trace of a completed transfer, which risks a
+        // double-payout on retry and hides the money from every balance the
+        // admin/agent see. Fall back to a minimal raw write so status and
+        // stripeTransferId — the two facts needed to reconcile — always land,
+        // even if the ORM write failed on an unrelated column.
         console.error(
-            `[withdrawal approve] Stripe transfer ${transfer.id} succeeded but wallet ${entry.id} could not be completed:`,
-            error
+            `[withdrawal approve] CRITICAL: Stripe transfer ${transfer.id} succeeded but wallet ${entry.id} ` +
+                `could not be marked completed. Attempting raw-SQL fallback. ${error?.message || error}`
         );
-        throw error;
+        try {
+            await sequelize.query(
+                "UPDATE wallets SET status = :status, stripeTransferId = :stripeTransferId WHERE id = :id",
+                {
+                    replacements: {
+                        status: "completed",
+                        stripeTransferId: transfer.id,
+                        id: entry.id,
+                    },
+                }
+            );
+        } catch (fallbackError) {
+            console.error(
+                `[withdrawal approve] CRITICAL: raw-SQL fallback also failed for wallet ${entry.id} ` +
+                    `(Stripe transfer ${transfer.id} already succeeded — money moved, ledger does not reflect it). ` +
+                    `Manual reconciliation required. ${fallbackError?.message || fallbackError}`
+            );
+            throw error;
+        }
     }
 
     const summary = await agentWalletService.getWalletSummary(entry.userId);
