@@ -219,6 +219,84 @@ async function assertConnectReadyForTransfer(connectAccountId) {
     return accountStatus;
 }
 
+function fullName(user) {
+    return [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
+}
+
+/**
+ * Human-readable context for a Stripe transfer, so the Stripe dashboard shows
+ * WHO was paid, for WHICH shop, and BY WHOM without cross-referencing the DB:
+ * - description   → the Transfers list row
+ * - metadata      → the transfer detail page (shop, owner, wallet row, admin, note)
+ * - transferGroup → "shop-<id>", lets the dashboard filter one shop's transfers
+ *
+ * Never throws: money movement must not be blocked by a lookup failure, so on
+ * any error it falls back to ids only.
+ */
+async function buildTransferPresentation({ shop, businessInfo, walletId, adminUserId, note, kind }) {
+    const kindLabel = kind === "agent_withdrawal" ? "Agent withdrawal" : "Admin payout";
+    const shopId = businessInfo?.id || null;
+    const fallback = {
+        description: `${kindLabel} · shop #${shopId || shop.id} · owner user #${shop.userId}${walletId ? ` · wallet #${walletId}` : ""}`,
+        transferGroup: `shop-${shopId || shop.id}`,
+        metadata: { kind, shopId, shopAddressId: shop.id, ownerUserId: shop.userId, walletId, adminUserId },
+    };
+    try {
+        const [owner, admin] = await Promise.all([
+            users.findByPk(shop.userId, {
+                attributes: ["id", "firstName", "lastName", "email", "phoneNum", "countryCode"],
+            }),
+            adminUserId
+                ? users.findByPk(adminUserId, { attributes: ["id", "firstName", "lastName", "email"] })
+                : null,
+        ]);
+        const shopName = businessInfo?.shopName || `Shop #${shopId || shop.id}`;
+        const ownerName = fullName(owner) || owner?.email || `user #${shop.userId}`;
+        const adminLabel = admin
+            ? `${fullName(admin) || admin.email || "admin"} (#${admin.id})`
+            : adminUserId
+                ? `admin #${adminUserId}`
+                : null;
+        const cleanNote = note ? String(note).trim() : "";
+
+        const description = [
+            kindLabel,
+            `${shopName} (shop #${shopId || shop.id})`,
+            owner?.email ? `${ownerName} <${owner.email}>` : ownerName,
+            walletId ? `wallet #${walletId}` : null,
+            adminLabel ? `${kind === "agent_withdrawal" ? "approved by" : "by"} ${adminLabel}` : null,
+            cleanNote ? `note: ${cleanNote.slice(0, 120)}` : null,
+        ]
+            .filter(Boolean)
+            .join(" · ");
+
+        return {
+            description,
+            transferGroup: fallback.transferGroup,
+            metadata: {
+                kind,
+                shopName,
+                shopId,
+                shopAddressId: shop.id,
+                ownerUserId: shop.userId,
+                ownerName,
+                ownerEmail: owner?.email || null,
+                ownerPhone: owner?.phoneNum ? `${owner.countryCode || ""}${owner.phoneNum}` : null,
+                walletId: walletId || null,
+                adminUserId: adminUserId || null,
+                adminName: admin ? fullName(admin) || null : null,
+                adminEmail: admin?.email || null,
+                note: cleanNote || null,
+                source: kind === "agent_withdrawal" ? "agent_app_withdrawal" : "admin_panel_payout",
+                env: process.env.NODE_ENV || "development",
+            },
+        };
+    } catch (error) {
+        console.warn("[stripe transfer] presentation lookup failed, using ids only:", error?.message || error);
+        return fallback;
+    }
+}
+
 /**
  * Transfer platform funds to the shop owner's Stripe Connect account.
  * Used by admin payout (pay now) and by approve-withdrawal.
@@ -231,14 +309,27 @@ async function transferToAgentConnectAccount(agentUserId, amount, idempotencyKey
         businessInfo = await loadBusinessInfo(shop.id);
     }
     await assertConnectReadyForTransfer(businessInfo?.connectAccountId);
+    const presentation = await buildTransferPresentation({
+        shop,
+        businessInfo,
+        walletId: metadata.walletId || null,
+        adminUserId: metadata.adminUserId || null,
+        note: metadata.note || null,
+        kind: metadata.transferKind || "admin_payout",
+    });
     const transfer = await stripeService.transferToConnectAccount(
         amount,
         businessInfo.connectAccountId,
         idempotencyKey,
         {
+            ...presentation.metadata,
             agentUserId,
             shopId: shop.id,
             ...metadata,
+        },
+        {
+            description: presentation.description,
+            transferGroup: presentation.transferGroup,
         }
     );
     return { transfer, shop, businessInfo };
@@ -574,6 +665,14 @@ async function approveWithdrawal(withdrawalId, options = {}) {
     await assertConnectReadyForTransfer(businessInfo.connectAccountId);
 
     const amount = parseFloat(entry.amount || 0);
+    const presentation = await buildTransferPresentation({
+        shop,
+        businessInfo,
+        walletId: entry.id,
+        adminUserId: options.adminUserId || null,
+        note: options.note || null,
+        kind: "agent_withdrawal",
+    });
     let transfer = null;
     try {
         transfer = await stripeService.transferToConnectAccount(
@@ -581,11 +680,16 @@ async function approveWithdrawal(withdrawalId, options = {}) {
             businessInfo.connectAccountId,
             `agent-withdrawal-wallet-${entry.id}`,
             {
+                ...presentation.metadata,
                 agentUserId: entry.userId,
                 walletId: entry.id,
                 withdrawalType: "agent_wallet",
                 transferKind: "agent_withdrawal",
                 approvedByAdminId: options.adminUserId || null,
+            },
+            {
+                description: presentation.description,
+                transferGroup: presentation.transferGroup,
             }
         );
 
@@ -708,4 +812,5 @@ module.exports = {
     createShopPayoutOnboardingLink,
     transferToAgentConnectAccount,
     assertConnectReadyForTransfer,
+    buildTransferPresentation,
 };

@@ -407,6 +407,7 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
             {
                 adminUserId: adminUserId || null,
                 walletId: credit.id,
+                note: note || null,
                 transferKind: "admin_payout",
                 withdrawalType: "admin_payout",
             }
