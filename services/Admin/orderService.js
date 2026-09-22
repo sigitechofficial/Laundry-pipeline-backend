@@ -24,6 +24,7 @@ const {
     countries,
     users,
     bookingAssignmentEvent,
+    bookingPaymentMethodEvent,
     bookingAttempt,
     attemptFailReason,
     bookingHistory,
@@ -1050,6 +1051,31 @@ class OrderService {
                 err?.message || err
             );
             enriched.assignmentEvents = [];
+        }
+
+        try {
+            const pmEvents = await bookingPaymentMethodEvent.findAll({
+                where: { bookingId: orderId },
+                order: [['createdAt', 'DESC'], ['id', 'DESC']],
+                limit: 50,
+                include: [
+                    {
+                        model: users,
+                        as: 'actedByUser',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                ],
+            });
+            enriched.paymentMethodEvents = pmEvents.map((ev) =>
+                ev.get ? ev.get({ plain: true }) : ev
+            );
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] paymentMethodEvents unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.paymentMethodEvents = [];
         }
 
         try {
