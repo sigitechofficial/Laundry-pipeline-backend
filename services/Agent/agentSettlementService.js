@@ -10,6 +10,8 @@ const { emptySettlementReport } = require("../../utils/shopSettlementReportMap")
 const agentWithdrawalService = require("./agentWithdrawalService");
 const { buildAdminConnectPayoutLedger } = require("../../utils/adminPayoutLedger");
 const { applyCashDueListQuery } = require("../../utils/adminListFilters");
+const { sendNotification } = require("../../utils/notification");
+const { sendEvent } = require("../../socket_io");
 
 const {
     CASH_REMITTED_REFERENCE,
@@ -253,6 +255,34 @@ async function updateRemittanceStatus(remittanceId, status, adminNote) {
     });
 
     const summary = await agentWalletService.getWalletSummary(entry.userId);
+
+    // Notify the agent that admin confirmed/rejected their cash remittance, so
+    // they know it landed (or was declined) without re-polling. Never fail the
+    // status update because a notification failed.
+    try {
+        const amountLabel = `${summary.currency || 'GBP'} ${parseFloat(entry.amount || 0).toFixed(2)}`;
+        const confirmed = status === 'completed';
+        const title = confirmed ? 'Cash remittance confirmed' : 'Cash remittance rejected';
+        const stillDue = `${summary.currency || 'GBP'} ${Number(summary.cashDueToPlatform || 0).toFixed(2)}`;
+        const body = confirmed
+            ? `Admin confirmed your ${amountLabel} cash payment. Cash still due: ${stillDue}.`
+            : `Admin could not confirm your ${amountLabel} cash remittance${adminNote ? `: ${adminNote}` : ''}. It has been returned to pending cash due.`;
+        const payload = {
+            remittanceId: String(entry.id),
+            type: 'CASH_REMITTANCE_UPDATE',
+            status,
+            amount: parseFloat(entry.amount || 0).toFixed(2),
+            cashDueToPlatform: Number(summary.cashDueToPlatform || 0).toFixed(2),
+        };
+        sendNotification(entry.userId, title, body, payload).catch((e) =>
+            console.error('[remittance] FCM notify failed:', e?.message || e)
+        );
+        sendEvent(entry.userId, { type: 'cashRemittanceUpdate', data: payload }).catch((e) =>
+            console.error('[remittance] socket notify failed:', e?.message || e)
+        );
+    } catch (e) {
+        console.error('[remittance] notify block failed:', e?.message || e);
+    }
 
     const shopByOwner = await shopIdsByOwnerUserIds([entry.userId]);
     return {
