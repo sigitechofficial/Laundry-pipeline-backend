@@ -734,6 +734,8 @@ router.get('/getShopInformation', asyncMiddleware(adminController.getShopInforma
 router.get('/getShopsData', asyncMiddleware(adminController.shopsData))
 //Single Shop Data
 router.get('/singleShopData/:Id', asyncMiddleware(adminController.singleShopData))
+// Update shop profile + settings from the admin shop-detail Settings tab.
+router.patch('/updateLaundryShop/:id', asyncMiddleware(adminController.updateLaundryShop))
 router.get(
     '/singleShopData/:shopId/revenue',
     asyncMiddleware(shopRevenueController.getShopRevenue)
