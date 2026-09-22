@@ -136,6 +136,7 @@ class AgentRegistrationService {
             'Other',
         ];
         const ALLOWED_MACHINE_TOTALS = ['0', '1-2', '3-5', '5+'];
+        const ALLOWED_TURNAROUND = ['N/A', '24 Hours', '48 Hours', 'More Than 48 Hours'];
 
         if (!shopName || !String(shopName).trim()) {
             throw new ValidationError('Shop name is required');
@@ -167,6 +168,25 @@ class AgentRegistrationService {
             if (badMachine) {
                 throw new ValidationError(
                     `Invalid machine count "${badMachine.total}" — allowed: ${ALLOWED_MACHINE_TOTALS.join(', ')}`
+                );
+            }
+        }
+
+        // serviceTimeRequired is an ENUM — a number (the admin panel's old bug)
+        // truncates and 500s. Reject a bad bucket with a clear message. Match
+        // the ENUM case-insensitively so the agent app's "24 hours" also passes.
+        if (Array.isArray(serviceTimes)) {
+            const allowedLc = ALLOWED_TURNAROUND.map((t) => t.toLowerCase());
+            const badTime = serviceTimes.find(
+                (t) =>
+                    t &&
+                    t.serviceTimeRequired != null &&
+                    t.serviceTimeRequired !== '' &&
+                    !allowedLc.includes(String(t.serviceTimeRequired).toLowerCase())
+            );
+            if (badTime) {
+                throw new ValidationError(
+                    `Invalid turnaround "${badTime.serviceTimeRequired}" — allowed: ${ALLOWED_TURNAROUND.join(', ')}`
                 );
             }
         }
