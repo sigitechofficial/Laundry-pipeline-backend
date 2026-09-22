@@ -6799,6 +6799,16 @@ exports.submitCashRemittance = async (req, res) => {
     return ResponseHelper.success(res, "Cash remittance submitted", data);
 };
 
+// GET /agent/cash-remittances — the agent's own remittance history (all statuses).
+exports.listMyCashRemittances = async (req, res) => {
+    const agentId = req.user.id;
+    const data = await agentSettlementService.listAgentRemittances(agentId, {
+        page: req.query.page,
+        limit: req.query.limit,
+    });
+    return ResponseHelper.success(res, "Cash remittances", data);
+};
+
 
 /*
   * Update Invoice  
