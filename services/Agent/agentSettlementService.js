@@ -170,6 +170,61 @@ async function submitCashRemittance(agentUserId, { amount, note }) {
     };
 }
 
+/**
+ * The agent's OWN cash-remittance history, all statuses, newest first, so the
+ * app can show pending / confirmed / rejected from the server instead of a
+ * device-local list.
+ */
+async function listAgentRemittances(agentUserId, options = {}) {
+    const page = Math.max(parseInt(options.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await wallet.findAndCountAll({
+        where: {
+            userId: agentUserId,
+            referenceType: CASH_REMITTED_REFERENCE,
+            type: "credit",
+        },
+        order: [["createdAt", "DESC"], ["id", "DESC"]],
+        limit,
+        offset,
+    });
+
+    const STATUS_LABEL = {
+        pending: "Pending admin confirmation",
+        completed: "Confirmed by admin",
+        failed: "Rejected by admin",
+    };
+
+    const remittances = rows.map((row) => {
+        const plain = row.get ? row.get({ plain: true }) : row;
+        return {
+            id: plain.id,
+            amount: parseFloat(plain.amount || 0),
+            currency: plain.currency || DEFAULT_CURRENCY,
+            status: plain.status, // pending | completed | failed
+            statusLabel: STATUS_LABEL[plain.status] || plain.status,
+            description: plain.description || null,
+            createdAt: plain.createdAt,
+            updatedAt: plain.updatedAt,
+        };
+    });
+
+    const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+    return {
+        remittances,
+        pagination: {
+            page,
+            limit,
+            total: count,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
+    };
+}
+
 async function listPendingRemittances(options = {}) {
     const page = Math.max(parseInt(options.page, 10) || 1, 1);
     const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
@@ -800,6 +855,7 @@ async function syncAgentWalletsFromBookings(options = {}) {
 
 module.exports = {
     submitCashRemittance,
+    listAgentRemittances,
     listPendingRemittances,
     confirmCashRemittance,
     rejectCashRemittance,

@@ -832,6 +832,12 @@ router.post(
     requireShopOwner,
     asyncMiddleware(agentController.submitCashRemittance)
 );
+router.get(
+    "/cash-remittances",
+    validateAccessToken,
+    requireShopOwner,
+    asyncMiddleware(agentController.listMyCashRemittances)
+);
 
 //!----------------------------Agent Postcode Lookup---------------------//
 router.get(
