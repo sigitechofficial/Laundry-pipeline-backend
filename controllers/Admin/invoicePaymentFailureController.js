@@ -2,6 +2,7 @@
 
 const ResponseHelper = require("../../utils/responseHelper");
 const invoiceAutoChargeService = require("../../services/Agent/invoiceAutoChargeService");
+const paymentMethodChangeService = require("../../services/Admin/paymentMethodChangeService");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 
 exports.listPaymentFailures = async (req, res) => {
@@ -47,4 +48,34 @@ exports.resolvePaymentFailure = async (req, res) => {
         }
         throw err;
     }
+};
+
+/**
+ * PATCH /admin/bookings/:bookingId/payment-method
+ * Change how the order's outstanding balance is collected (card <-> cash),
+ * with a required reason. Body: { method, reasonCode?, reason?, note? }.
+ */
+exports.changePaymentMethod = async (req, res) => {
+    const bookingId = req.params.bookingId || req.params.id;
+    const { method, reasonCode, reason, note } = req.body || {};
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const result = await paymentMethodChangeService.changeBalancePaymentMethod(
+        bookingId,
+        {
+            method,
+            reasonCode,
+            reason,
+            note,
+            adminUserId: req.user?.id,
+        }
+    );
+    return ResponseHelper.success(
+        res,
+        result.changed ? "Payment method updated" : result.message || "No change",
+        result
+    );
 };

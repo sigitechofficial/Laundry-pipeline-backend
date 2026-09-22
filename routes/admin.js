@@ -660,6 +660,11 @@ router.patch(
     '/payment-failures/:bookingId/resolve',
     asyncMiddleware(invoicePaymentFailureController.resolvePaymentFailure)
 )
+// Change how an order's outstanding balance is collected (card <-> cash) with a reason.
+router.patch(
+    '/bookings/:bookingId/payment-method',
+    asyncMiddleware(invoicePaymentFailureController.changePaymentMethod)
+)
 
 //!-----------------------------------Action required (admin attention feed)---------//
 router.get(
