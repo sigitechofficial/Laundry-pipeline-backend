@@ -827,6 +827,99 @@ class ShopManagementService {
             message: 'Shop, user, and address deleted successfully'
         };
     }
+
+    /**
+     * Update a shop's profile + settings from the admin shop-detail Settings
+     * tab. `shopId` is the bussinessInformation id (falls back to owner user id
+     * / shop address id, same resolution as getSingleShopData).
+     *
+     * Persists only fields with real columns: shopName / website / description /
+     * adminNotes / collectionMethod / deliveryMethod / leadTimeHours /
+     * maxActiveOrders (bussinessInformation), email / phoneNum (owner user), and
+     * streetAddress (shop address). Empty/undefined fields are left unchanged.
+     */
+    async updateLaundryShop(shopId, body = {}) {
+        const id = parseInt(shopId, 10);
+        if (!Number.isFinite(id) || id <= 0) {
+            throw new NotFoundError('Shop not found');
+        }
+
+        // Resolve the business row (same 3-key order as getSingleShopData).
+        const bizAttrs = ['id', 'agentId', 'shopAddressId'];
+        let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+        if (!biz) biz = await bussinessInformation.findOne({ where: { agentId: id }, attributes: bizAttrs });
+        if (!biz) biz = await bussinessInformation.findOne({ where: { shopAddressId: id }, attributes: bizAttrs });
+        if (!biz) throw new NotFoundError('Shop not found');
+
+        const ownerUserId = biz.agentId;
+
+        // ---- bussinessInformation columns ----
+        const bizUpdate = {};
+        const setIf = (key, value) => {
+            if (value !== undefined) bizUpdate[key] = value;
+        };
+        if (body.shopName != null && String(body.shopName).trim()) {
+            bizUpdate.shopName = String(body.shopName).trim();
+        }
+        setIf('website', body.website != null ? String(body.website).trim() || null : undefined);
+        setIf('description', body.description != null ? String(body.description).trim() || null : undefined);
+        setIf('adminNotes', body.adminNotes != null ? String(body.adminNotes).trim() || null : undefined);
+        setIf('collectionMethod', body.collectionMethod != null ? String(body.collectionMethod).trim() || null : undefined);
+        setIf('deliveryMethod', body.deliveryMethod != null ? String(body.deliveryMethod).trim() || null : undefined);
+        if (body.leadTimeHours !== undefined && body.leadTimeHours !== '' && body.leadTimeHours !== null) {
+            const n = Number(body.leadTimeHours);
+            if (Number.isFinite(n) && n >= 0) bizUpdate.leadTimeHours = Math.round(n);
+        }
+        if (body.maxActiveOrders !== undefined && body.maxActiveOrders !== '' && body.maxActiveOrders !== null) {
+            const n = Number(body.maxActiveOrders);
+            if (Number.isFinite(n) && n >= 0) bizUpdate.maxActiveOrders = Math.round(n);
+        }
+        if (Object.keys(bizUpdate).length > 0) {
+            await bussinessInformation.update(bizUpdate, { where: { id: biz.id } });
+        }
+
+        // ---- owner user (email / phone) ----
+        if (ownerUserId) {
+            const userUpdate = {};
+            if (body.email != null && String(body.email).trim()) {
+                const email = String(body.email).trim();
+                // Guard the unique-email constraint with a friendly error.
+                const clash = await users.findOne({
+                    where: { email, id: { [Op.ne]: ownerUserId } },
+                    attributes: ['id'],
+                });
+                if (clash) {
+                    throw new ConflictError('That email is already used by another account');
+                }
+                userUpdate.email = email;
+            }
+            if (body.phone != null && String(body.phone).trim()) {
+                userUpdate.phoneNum = String(body.phone).replace(/[^\d]/g, '') || String(body.phone).trim();
+            }
+            if (body.countryCode != null && String(body.countryCode).trim()) {
+                userUpdate.countryCode = String(body.countryCode).trim();
+            }
+            if (Object.keys(userUpdate).length > 0) {
+                await users.update(userUpdate, { where: { id: ownerUserId } });
+            }
+        }
+
+        // ---- shop address (street address only; structured parts stay put) ----
+        if (body.address != null && String(body.address).trim()) {
+            const addr = await addressDb.findOne({
+                where: { userId: ownerUserId, addressType: 'LaundaryShopAddress' },
+                attributes: ['id'],
+            });
+            if (addr) {
+                await addressDb.update(
+                    { streetAddress: String(body.address).trim() },
+                    { where: { id: addr.id } }
+                );
+            }
+        }
+
+        return this.getSingleShopData(biz.id);
+    }
 }
 
 module.exports = new ShopManagementService();

@@ -1123,6 +1123,16 @@ async function singleShopData(req, res) {
 }
 
 /*
+ * Update a shop's profile + settings from the admin shop-detail Settings tab.
+ * PATCH /admin/updateLaundryShop/:id
+ */
+async function updateLaundryShop(req, res) {
+    const { id } = req.params;
+    const shopData = await shopManagementService.updateLaundryShop(id, req.body || {});
+    return ResponseHelper.success(res, "Shop updated successfully", shopData);
+}
+
+/*
    * Delete Shop (Soft Delete)
 */
 async function deleteShop(req, res) {
@@ -3121,6 +3131,7 @@ module.exports = {
     getShopInformation,
     shopsData,
     singleShopData,
+    updateLaundryShop,
     deleteShop,
     getShopEmployees,
     getAllEmployeesWithShopInfo,
