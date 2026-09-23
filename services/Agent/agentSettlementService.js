@@ -656,7 +656,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
 
     const emptyPage = { page: 1, limit: 20, total: 0, totalPages: 0, hasNextPage: false, hasPrevPage: false };
 
-    const [agentUser, businessInfo, summary, ledger, orders, recentActivity, earningsReport] = await Promise.all([
+    const [agentUser, businessInfo, summary, ledger, orders, recentActivity, earningsReport, remittanceHistory] = await Promise.all([
         users.findByPk(agentUserId, {
             attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
         }),
@@ -688,6 +688,10 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         loadShopSettlementReport(shop.id).catch((err) => {
             console.warn(`[settlement-detail] earnings report skipped for shop ${shop.id}:`, err.message);
             return { ...emptySettlementReport(), loadError: err.message };
+        }),
+        listAgentRemittances(agentUserId, { page: 1, limit: 50 }).catch((err) => {
+            console.warn(`[settlement-detail] remittances skipped for ${agentUserId}:`, err.message);
+            return { remittances: [], pagination: emptyPage };
         }),
     ]);
 
@@ -723,6 +727,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         orders: orders.orders,
         ordersPagination: orders.pagination,
         earningsReport,
+        remittances: remittanceHistory.remittances || [],
         recentActivity,
         formulas: {
             cashDue:
