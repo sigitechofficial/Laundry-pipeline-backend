@@ -9,6 +9,7 @@ const {
 } = require('../../models');
 const { chargeOffSession } = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
+const { slotDateTime } = require('../../utils/bookingPunctuality');
 const {
     resolveNoShowPolicyForBooking,
     loadBookingForAttempts,
@@ -349,10 +350,19 @@ class NoShowEnforcementService {
         let feeWaiveReason = null;
         let policyApplied = 'no_show_fee';
 
-        if (config && driverLateMinutes > (config.driverLateSLA || 0)) {
+        // No penalty when the driver arrived AFTER the scheduled window — it's
+        // not the customer's fault. Admin-configurable per no-show policy:
+        //   waiveFeeIfDriverLate — master on/off (default ON)
+        //   driverLateSLA        — minutes of driver lateness tolerated before
+        //                          the waiver applies (0 = any lateness waives)
+        // When no config exists the waiver defaults ON with 0 grace.
+        const driverLateWaiverEnabled = config ? config.waiveFeeIfDriverLate !== false : true;
+        const parsedGrace = parseInt(config?.driverLateSLA, 10);
+        const driverLateGrace = Number.isFinite(parsedGrace) && parsedGrace > 0 ? parsedGrace : 0;
+        if (driverLateWaiverEnabled && driverLateMinutes > driverLateGrace) {
             feeAmount = 0;
             feeWaived = true;
-            feeWaiveReason = `Driver late ${driverLateMinutes}m (SLA ${config.driverLateSLA}m)`;
+            feeWaiveReason = `Driver arrived ${driverLateMinutes}m after the scheduled window`;
             policyApplied = 'driver_late_waiver';
         }
 
@@ -394,6 +404,25 @@ class NoShowEnforcementService {
             policyApplied,
             orderValue,
         };
+    }
+
+    /**
+     * Minutes the driver was late vs the scheduled window END for this leg
+     * (pickup uses collectionDate/collectionTimeTo, delivery uses
+     * deliveryDate/deliveryTimeTo). 0 when on time / early or when the window
+     * cannot be resolved. Drives the "no penalty for a late driver" waiver.
+     */
+    _computeDriverLateMinutes(bookingData, attemptType, arrivedAt) {
+        if (!arrivedAt) return 0;
+        const isPickup = attemptType === 'pickup';
+        const dateVal = isPickup ? bookingData.collectionDate : bookingData.deliveryDate;
+        const timeTo = isPickup ? bookingData.collectionTimeTo : bookingData.deliveryTimeTo;
+        const windowEnd = slotDateTime(dateVal, timeTo, true);
+        if (!windowEnd) return 0;
+        const arrived = arrivedAt instanceof Date ? arrivedAt : new Date(arrivedAt);
+        if (Number.isNaN(arrived.getTime())) return 0;
+        const lateMs = arrived.getTime() - windowEnd.getTime();
+        return lateMs > 0 ? Math.floor(lateMs / 60000) : 0;
     }
 
     _graceState(arrivedAt, graceMinutes) {
@@ -747,12 +776,28 @@ class NoShowEnforcementService {
             );
         }
 
+        // Authoritative driver-lateness computed from the recorded arrival vs
+        // the scheduled window — never trust the client's driverLateMinutes.
+        const computedLateMinutes = this._computeDriverLateMinutes(
+            bookingData,
+            normalizedType,
+            openAttempt.arrivedAt
+        );
+        const effectiveLateMinutes = Math.max(
+            parseInt(driverLateMinutes, 10) || 0,
+            computedLateMinutes
+        );
+
         const policyFee = await this.calculateNoShowFee({
             bookingData,
             attemptType: normalizedType,
-            driverLateMinutes,
+            driverLateMinutes: effectiveLateMinutes,
             policyRecord,
         });
+        // Flag the booking as "driver was late" only when the policy actually
+        // waived the fee for that reason — this keeps the customer's free
+        // reschedule aligned with the admin's waiveFeeIfDriverLate toggle.
+        const driverArrivedLate = policyFee.policyApplied === 'driver_late_waiver';
         const feeResult = attemptFailReasonService.applyReasonToFee(
             policyFee,
             resolvedReason
@@ -903,6 +948,9 @@ class NoShowEnforcementService {
                 {
                     pickupAttemptCount: newPickupCount,
                     pickupRescheduleRequired: true,
+                    // No penalty on the customer's reschedule when the driver
+                    // arrived after the scheduled pickup window.
+                    pickupDriverLate: driverArrivedLate,
                     noShowFeeAccrued: accrued,
                     bookingStatusId: AWAITING_COLLECTION_STATUS,
                 },

@@ -407,7 +407,7 @@ class RescheduleBookingService {
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
                 'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId',
-                'pickupAttemptCount', 'pickupRescheduleRequired', 'deliveryAttemptCount',
+                'pickupAttemptCount', 'pickupRescheduleRequired', 'pickupDriverLate', 'deliveryAttemptCount',
                 'invoiceStatus'
             ]
         });
@@ -709,6 +709,9 @@ class RescheduleBookingService {
         } else if (isPickupFailed) {
             resolvedBookingStatusId = AWAITING_COLLECTION_STATUS_ID;
             statusResetFields.pickupRescheduleRequired = false;
+            // Consume the late-driver waiver: this reschedule was free; a later
+            // voluntary reschedule should be charged normally.
+            statusResetFields.pickupDriverLate = false;
         }
 
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
@@ -897,6 +900,18 @@ class RescheduleBookingService {
                 currency: config.atPickupAbsoluteCurrency || config.atDeliveryAbsoluteCurrency || 'GBP',
                 policyApplied: 'Free Reschedule',
                 message: 'No reschedule charges applied (reschedule policy config is inactive)'
+            };
+        }
+
+        // No penalty when this reschedule is needed because the DRIVER arrived
+        // after the scheduled pickup window — the failed pickup wasn't the
+        // customer's fault, so the reschedule is free.
+        if (bookingData.pickupRescheduleRequired && bookingData.pickupDriverLate) {
+            return {
+                rescheduleCharge: 0,
+                currency: config.atPickupAbsoluteCurrency || 'GBP',
+                policyApplied: 'Free Reschedule — Driver Late',
+                message: 'No charge — the driver arrived after the scheduled pickup time'
             };
         }
 

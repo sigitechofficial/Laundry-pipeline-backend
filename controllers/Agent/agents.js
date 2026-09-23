@@ -3804,20 +3804,11 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         );
     }
 
-    let recurringResult = null;
-    try {
-        const recurringBookingService = require("../../services/Customer/recurringBookingService");
-        recurringResult = await recurringBookingService.generateNextBookingFromCompleted({
-            bookingId: Number(bookingId),
-            actorUserId: actorId,
-            timeZone: req.body?.timeZone || null,
-        });
-    } catch (err) {
-        console.error(
-            `[bookingDeliverToCustomer] recurring generation failed for ${bookingId}:`,
-            err?.message || err
-        );
-    }
+    // NOTE: recurring orders are NOT generated on completion any more. The next
+    // cycle is created by the time-based scheduler (recurringGenerationJob) when
+    // its scheduled nextRunAt arrives — i.e. one frequency interval after the
+    // order was placed, not immediately after delivery. See recurringBookingService.
+    const recurringResult = null;
 
     return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {
         bookingId: Number(bookingId),

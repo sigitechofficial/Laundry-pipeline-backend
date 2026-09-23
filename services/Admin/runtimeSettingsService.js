@@ -113,6 +113,26 @@ const DEFINITIONS = {
     min: 1,
     max: 10,
   },
+  recurringTestModeEnabled: {
+    type: "boolean",
+    label: "Recurring test mode",
+    description:
+      "TEST ONLY. When on, every recurring order regenerates after 'Recurring test interval' minutes instead of its real weekly/2-weekly/4-weekly cadence, so the cycle can be verified in minutes. Turn OFF in production.",
+    group: "booking_assignment",
+    envKey: "RECURRING_TEST_MODE_ENABLED",
+    defaultValue: false,
+  },
+  recurringTestIntervalMinutes: {
+    type: "integer",
+    label: "Recurring test interval (minutes)",
+    description:
+      "When 'Recurring test mode' is on, generate the next cycle this many minutes after the previous order (e.g. 3 = next order in 3 minutes).",
+    group: "booking_assignment",
+    envKey: "RECURRING_TEST_INTERVAL_MINUTES",
+    defaultValue: 3,
+    min: 1,
+    max: 43200,
+  },
 };
 
 let cache = { at: 0, byKey: null };

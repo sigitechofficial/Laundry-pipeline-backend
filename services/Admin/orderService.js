@@ -1222,6 +1222,32 @@ class OrderService {
             };
         }
 
+        // Returning-customer signal: how many OTHER COMPLETED orders this
+        // customer has finished at the SAME shop (booking.laundryShopId =
+        // shop addressDb.id). Only completed orders count as real repeat
+        // business. Helps admin spot a repeat customer of the shop at a glance.
+        enriched.customerOrdersAtShop = 0;
+        enriched.isReturningCustomerAtShop = false;
+        try {
+            if (plain.customerId && plain.laundryShopId) {
+                const priorAtShop = await booking.count({
+                    where: {
+                        customerId: plain.customerId,
+                        laundryShopId: plain.laundryShopId,
+                        bookingStatusId: COMPLETED,
+                        id: { [Op.ne]: orderId },
+                    },
+                });
+                enriched.customerOrdersAtShop = priorAtShop;
+                enriched.isReturningCustomerAtShop = priorAtShop > 0;
+            }
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] returning-customer count unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
+
         return enriched;
     }
 

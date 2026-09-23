@@ -467,6 +467,8 @@ async function startServer() {
     startInvoiceAutoChargeJob();
     const { startLiveTrackingCleanupJob } = require('./services/liveTrackingCleanupService');
     startLiveTrackingCleanupJob();
+    const { startRecurringGenerationJob } = require('./services/Customer/recurringBookingService');
+    startRecurringGenerationJob();
 
     server.listen(server_port, function (err) {
       if (err) throw err;

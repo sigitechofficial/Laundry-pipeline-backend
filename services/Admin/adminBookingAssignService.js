@@ -8,6 +8,8 @@ const {
     sequelize,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
+const { Op } = require("sequelize");
+const { COMPLETED } = require("../../constants/bookingStatusIds");
 const {
     isShopScheduleOpenNow,
     getWallClockContextForCountry,
@@ -118,6 +120,34 @@ class AdminBookingAssignService {
             attributes: ["id", "userId", "zoneId", "status"],
         });
 
+        // Returning-customer signal per shop: how many COMPLETED orders this
+        // customer has finished at each candidate shop (excluding this booking).
+        // Only completed orders count as real repeat business. One grouped
+        // query up front — avoids an N+1 per-shop count in the loop.
+        const ordersAtShopMap = new Map();
+        try {
+            const shopIds = shops.map((s) => s.id);
+            if (bookingRow.customerId && shopIds.length) {
+                const grouped = await booking.count({
+                    where: {
+                        customerId: bookingRow.customerId,
+                        laundryShopId: { [Op.in]: shopIds },
+                        bookingStatusId: COMPLETED,
+                        id: { [Op.ne]: bookingRow.id },
+                    },
+                    group: ["laundryShopId"],
+                });
+                (Array.isArray(grouped) ? grouped : []).forEach((row) => {
+                    ordersAtShopMap.set(Number(row.laundryShopId), Number(row.count) || 0);
+                });
+            }
+        } catch (err) {
+            console.warn(
+                `[getAssignableShops] returning-customer counts unavailable for booking ${bookingRow.id}:`,
+                err?.message || err
+            );
+        }
+
         const shopList = [];
         for (const shop of shops) {
             if (Number(shop.zoneId) !== orderZoneId) {
@@ -139,6 +169,7 @@ class AdminBookingAssignService {
             const isCurrentShop =
                 bookingRow.laundryShopId != null &&
                 Number(bookingRow.laundryShopId) === Number(shop.id);
+            const customerOrdersAtShop = ordersAtShopMap.get(Number(shop.id)) || 0;
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
@@ -148,6 +179,8 @@ class AdminBookingAssignService {
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
                 isCurrentShop,
+                customerOrdersAtShop,
+                isReturningCustomerAtShop: customerOrdersAtShop > 0,
                 todayDayOfWeek,
                 todayOpenTime: hoursRow?.openTime || null,
                 todayCloseTime: hoursRow?.closeTime || null,
@@ -155,11 +188,17 @@ class AdminBookingAssignService {
             });
         }
 
-        shopList.sort((a, b) =>
-            String(a.shopName).localeCompare(String(b.shopName), undefined, {
+        // Surface shops where this customer is a returning customer first
+        // (most orders here → top), then fall back to alphabetical. Makes the
+        // admin's "assign to a shop they already know" choice obvious.
+        shopList.sort((a, b) => {
+            if ((b.customerOrdersAtShop || 0) !== (a.customerOrdersAtShop || 0)) {
+                return (b.customerOrdersAtShop || 0) - (a.customerOrdersAtShop || 0);
+            }
+            return String(a.shopName).localeCompare(String(b.shopName), undefined, {
                 sensitivity: "base",
-            })
-        );
+            });
+        });
 
         const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 

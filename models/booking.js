@@ -234,6 +234,12 @@ module.exports = (sequelize, DataTypes) => {
     defaultValue: false,
     comment: 'True only while a failed pickup attempt still needs customer rescheduling',
   },
+  pickupDriverLate: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: 'True when a pickup attempt failed because the driver arrived after the scheduled window — waives the customer reschedule fee (no penalty)',
+  },
   deliveryAttemptCount: {
     type: DataTypes.INTEGER,
     allowNull: false,

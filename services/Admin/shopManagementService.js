@@ -1,4 +1,4 @@
-const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, units, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails, bookingRefund } = require('../../models');
+const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, units, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails, bookingRefund, bookingAgentDecline } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { 
@@ -608,6 +608,60 @@ class ShopManagementService {
                 });
                 result.orders = mappedOrders;
                 result.punctuality = summarizeOrderPunctuality(mappedOrders);
+
+                // Orders this shop declined, with the reason + order detail, so
+                // admin can see a per-shop decline history (not just per order).
+                try {
+                    const declineRows = await bookingAgentDecline.findAll({
+                        where: { agentUserId: result.agentId },
+                        order: [['createdAt', 'DESC'], ['id', 'DESC']],
+                        limit: 50,
+                        include: [
+                            {
+                                model: booking,
+                                required: false,
+                                attributes: [
+                                    'id',
+                                    'orderTrackId',
+                                    'collectionDate',
+                                    'deliveryDate',
+                                    'bookingStatusId',
+                                ],
+                                include: [
+                                    {
+                                        model: users,
+                                        as: 'customer',
+                                        attributes: ['id', 'firstName', 'lastName'],
+                                        required: false,
+                                    },
+                                ],
+                            },
+                        ],
+                    });
+                    result.declines = declineRows.map((row) => {
+                        const p = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+                        const b = p.booking || {};
+                        const c = b.customer || {};
+                        return {
+                            id: p.id,
+                            reason: p.reason || null,
+                            createdAt: p.createdAt,
+                            bookingId: p.bookingId,
+                            orderTrackId: b.orderTrackId || null,
+                            collectionDate: b.collectionDate || null,
+                            deliveryDate: b.deliveryDate || null,
+                            bookingStatusId: b.bookingStatusId || null,
+                            customerName:
+                                [c.firstName, c.lastName].filter(Boolean).join(' ') || null,
+                        };
+                    });
+                } catch (declineErr) {
+                    console.warn(
+                        '[getSingleShopData] declines skipped:',
+                        declineErr.message
+                    );
+                    result.declines = [];
+                }
             }
 
             return result;

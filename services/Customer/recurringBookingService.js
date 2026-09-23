@@ -1,6 +1,7 @@
 'use strict';
 
 const otpGenerator = require('otp-generator');
+const { Op } = require('sequelize');
 const db = require('../../models');
 const {
   booking,
@@ -69,6 +70,51 @@ function shiftDateByDays(input, days) {
   return out;
 }
 
+/**
+ * The effective GENERATION interval (in ms) for a recurring frequency.
+ *
+ * Normally this is the frequency's real cadence (7 / 14 / 28 days). When the
+ * admin runtime setting `recurringTestModeEnabled` is ON, every recurring
+ * frequency is compressed to `recurringTestIntervalMinutes` minutes so the
+ * whole cycle can be exercised in minutes instead of waiting days.
+ *
+ * NOTE: this only controls WHEN the next order is generated. The generated
+ * order's own collection/delivery dates still shift by the real day interval
+ * (see shiftDateByDays usage) so the cloned order always carries sane dates.
+ */
+async function getEffectiveIntervalMs(frequency) {
+  const runtimeSettings = require('../Admin/runtimeSettingsService');
+  let testMode = false;
+  try {
+    testMode = await runtimeSettings.getBoolean('recurringTestModeEnabled');
+  } catch (_) {
+    testMode = false;
+  }
+  if (testMode) {
+    let minutes = 3;
+    try {
+      minutes = await runtimeSettings.getInteger('recurringTestIntervalMinutes');
+    } catch (_) {
+      minutes = 3;
+    }
+    return Math.max(1, Number(minutes) || 1) * 60 * 1000;
+  }
+  const days = getRecurringIntervalDays(frequency);
+  return days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * When the next cycle should be generated, measured from `fromInstant`
+ * (usually now). Returns null for non-recurring / zero interval.
+ */
+async function computeNextRunAt(fromInstant, frequency) {
+  const ms = await getEffectiveIntervalMs(frequency);
+  if (!ms || ms <= 0) return null;
+  const base = new Date(fromInstant);
+  if (!Number.isFinite(base.getTime())) return null;
+  return new Date(base.getTime() + ms);
+}
+
 function makeOrderTrackSuffix() {
   return otpGenerator.generate(6, {
     lowerCaseAlphabets: false,
@@ -95,13 +141,16 @@ async function ensurePlanForBooking(bookingId, transaction) {
   });
 
   if (!plan) {
+    // Arm the first cycle one interval AFTER the order is placed (now), so the
+    // next order is generated on schedule — NOT immediately on completion.
+    const firstRunAt = await computeNextRunAt(new Date(), row.frequency);
     plan = await recurringPlan.create(
       {
         customerId: row.customerId,
         sourceBookingId: rootSourceBookingId,
         frequency: normalizeFrequencyLabel(row.frequency),
         status: 'active',
-        nextRunAt: null,
+        nextRunAt: firstRunAt,
         lastGeneratedFromBookingId: null,
         lastGeneratedAt: null,
         failureCount: 0,
@@ -690,11 +739,15 @@ async function generateNextBookingFromCompleted({
     );
 
     if (plan) {
+      // Schedule the FOLLOWING cycle one interval from now (generation time),
+      // so the chain keeps rolling on a time-based cadence rather than firing
+      // instantly. The scheduler reads this nextRunAt.
+      const followingRunAt = await computeNextRunAt(new Date(), source.frequency);
       await plan.update(
         {
           frequency: normalizeFrequencyLabel(source.frequency),
           status: 'active',
-          nextRunAt: nextCollectionDate,
+          nextRunAt: followingRunAt,
           lastGeneratedFromBookingId: source.id,
           lastGeneratedAt: new Date(),
           failureCount: 0,
@@ -826,6 +879,116 @@ async function generateNextBookingFromCompleted({
   }
 }
 
+// ─── Time-based recurring generation scheduler ───────────────────────────────
+// Decoupled from order completion: a plan is "armed" (nextRunAt set) at order
+// placement and each cycle. This job creates + broadcasts the next order only
+// when its scheduled time arrives.
+
+const RECURRING_JOB_INTERVAL_MS =
+  Number(process.env.RECURRING_JOB_INTERVAL_MS) > 0
+    ? Number(process.env.RECURRING_JOB_INTERVAL_MS)
+    : 30 * 1000;
+let recurringTimer = null;
+
+/**
+ * Process every active recurring plan whose nextRunAt is due. Generates one
+ * child per due plan (from the current tail of the chain) and advances the
+ * schedule. Safe to run repeatedly — it never double-generates a cycle.
+ */
+async function runDueRecurringPlans({ limit = 100 } = {}) {
+  const runtimeSettings = require('../Admin/runtimeSettingsService');
+  let enabled = true;
+  try {
+    enabled = await runtimeSettings.getBoolean('recurringAutoCreateEnabled');
+  } catch (_) {
+    enabled = true;
+  }
+  if (!enabled) return { generated: 0, skipped: 'disabled' };
+
+  const now = new Date();
+  const duePlans = await recurringPlan.findAll({
+    where: {
+      status: 'active',
+      nextRunAt: { [Op.ne]: null, [Op.lte]: now },
+    },
+    order: [['nextRunAt', 'ASC']],
+    limit,
+  });
+  if (!duePlans.length) return { generated: 0, due: 0 };
+
+  let generated = 0;
+  for (const plan of duePlans) {
+    try {
+      // Generate from the current tail of the chain (latest booking with no
+      // child yet). Falls back to the root source booking.
+      const tail = await booking.findOne({
+        where: { recurringPlanId: plan.id, recurringNextBookingId: null },
+        order: [['id', 'DESC']],
+        attributes: ['id'],
+      });
+      const sourceId = tail?.id || plan.sourceBookingId;
+      if (!sourceId) {
+        await plan.update({ nextRunAt: null, notes: 'no source booking to generate from' });
+        continue;
+      }
+
+      const result = await generateNextBookingFromCompleted({ bookingId: sourceId });
+
+      if (result.generated) {
+        generated += 1;
+        // nextRunAt already advanced inside generateNextBookingFromCompleted.
+      } else if (result.reason === 'already_generated') {
+        // Tail already had a child — advance so we pick the new tail next tick.
+        await plan.update({ nextRunAt: await computeNextRunAt(new Date(), plan.frequency) });
+      } else if (
+        ['just_once', 'source_not_found', 'customer_blocked', 'plan_not_active', 'invalid_source_dates']
+          .includes(result.reason)
+      ) {
+        // Terminal for this plan — stop scheduling to avoid a hot loop.
+        await plan.update({ nextRunAt: null, notes: `stopped: ${result.reason}` });
+      }
+    } catch (err) {
+      console.error(`[recurring] scheduler error for plan ${plan.id}:`, err?.message || err);
+      // generateNextBookingFromCompleted already bumps failureCount / may pause.
+      // Push nextRunAt forward so a transient error doesn't hot-loop every tick.
+      try {
+        await plan.reload();
+        if (plan.status === 'active') {
+          await plan.update({ nextRunAt: await computeNextRunAt(new Date(), plan.frequency) });
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+
+  return { generated, due: duePlans.length };
+}
+
+function startRecurringGenerationJob() {
+  if (recurringTimer) return;
+  const tick = async () => {
+    try {
+      await runDueRecurringPlans();
+    } catch (err) {
+      console.error('[recurring] generation job error:', err?.message || err);
+    } finally {
+      recurringTimer = setTimeout(tick, RECURRING_JOB_INTERVAL_MS);
+    }
+  };
+  recurringTimer = setTimeout(tick, 0);
+  console.log(
+    `[recurring] generation job scheduled every ${RECURRING_JOB_INTERVAL_MS / 1000}s`
+  );
+}
+
+function stopRecurringGenerationJob() {
+  if (recurringTimer) {
+    clearTimeout(recurringTimer);
+    recurringTimer = null;
+  }
+}
+
 function buildRecurringDeliveryHint(bookingRow) {
   const frequency = normalizeFrequencyLabel(bookingRow?.frequency);
   if (!isRecurringFrequency(frequency)) {
@@ -854,4 +1017,9 @@ module.exports = {
   buildRecurringDeliveryHint,
   ensurePlanForBooking,
   generateNextBookingFromCompleted,
+  computeNextRunAt,
+  getEffectiveIntervalMs,
+  runDueRecurringPlans,
+  startRecurringGenerationJob,
+  stopRecurringGenerationJob,
 };
