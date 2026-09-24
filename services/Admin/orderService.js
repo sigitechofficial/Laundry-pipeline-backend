@@ -1223,43 +1223,44 @@ class OrderService {
             };
         }
 
-        // Returning-customer signal: how many OTHER COMPLETED orders (real
-        // repeat business) and how many TOTAL orders (any status) this
-        // customer has placed at the SAME shop (booking.laundryShopId =
-        // shop addressDb.id). Helps admin spot a repeat customer at a glance.
+        // Returning-customer signal: how many COMPLETED orders (real repeat
+        // business) and how many TOTAL orders (any status) this customer has
+        // at the SAME shop (booking.laundryShopId = shop addressDb.id).
+        // Counts INCLUDE this booking when it is already completed — otherwise
+        // an admin opening one of three completed orders would see "2" and
+        // think a completed order is missing. Threshold still uses the same
+        // absolute completed count (>= RETURNING_CUSTOMER_MIN_COMPLETED).
         enriched.customerOrdersAtShop = 0;
         enriched.customerTotalOrdersAtShop = 0;
         enriched.isReturningCustomerAtShop = false;
         enriched.customerShopHistory = [];
         try {
             if (plain.customerId && plain.laundryShopId) {
-                const [priorAtShop, totalAtShop] = await Promise.all([
+                const [completedAtShop, totalAtShop] = await Promise.all([
                     booking.count({
                         where: {
                             customerId: plain.customerId,
                             laundryShopId: plain.laundryShopId,
                             bookingStatusId: COMPLETED,
-                            id: { [Op.ne]: orderId },
                         },
                     }),
                     booking.count({
                         where: {
                             customerId: plain.customerId,
                             laundryShopId: plain.laundryShopId,
-                            id: { [Op.ne]: orderId },
                         },
                     }),
                 ]);
-                enriched.customerOrdersAtShop = priorAtShop;
+                enriched.customerOrdersAtShop = completedAtShop;
                 enriched.customerTotalOrdersAtShop = totalAtShop;
                 enriched.isReturningCustomerAtShop =
-                    priorAtShop >= RETURNING_CUSTOMER_MIN_COMPLETED;
+                    completedAtShop >= RETURNING_CUSTOMER_MIN_COMPLETED;
             }
             if (plain.customerId) {
                 enriched.customerShopHistory =
                     await adminBookingAssignService.getCustomerShopHistory(
                         plain.customerId,
-                        orderId
+                        null
                     );
             }
         } catch (err) {

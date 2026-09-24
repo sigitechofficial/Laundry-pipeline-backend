@@ -123,10 +123,10 @@ class AdminBookingAssignService {
             attributes: ["id", "userId", "zoneId", "status"],
         });
 
-        // Returning-customer signal per shop: how many COMPLETED orders (real
-        // repeat business) and how many TOTAL orders (any status) this customer
-        // has placed at each candidate shop, excluding this booking. Two grouped
-        // queries up front — avoids an N+1 per-shop count in the loop.
+        // Returning-customer signal per shop: absolute COMPLETED + TOTAL order
+        // counts for this customer at each candidate shop (includes this booking
+        // when it is already completed / assigned here — so the number matches
+        // what the admin sees in the customer's completed list).
         const ordersAtShopMap = new Map();
         const totalOrdersAtShopMap = new Map();
         try {
@@ -138,7 +138,6 @@ class AdminBookingAssignService {
                             customerId: bookingRow.customerId,
                             laundryShopId: { [Op.in]: shopIds },
                             bookingStatusId: COMPLETED,
-                            id: { [Op.ne]: bookingRow.id },
                         },
                         group: ["laundryShopId"],
                     }),
@@ -146,7 +145,6 @@ class AdminBookingAssignService {
                         where: {
                             customerId: bookingRow.customerId,
                             laundryShopId: { [Op.in]: shopIds },
-                            id: { [Op.ne]: bookingRow.id },
                         },
                         group: ["laundryShopId"],
                     }),
@@ -165,12 +163,11 @@ class AdminBookingAssignService {
             );
         }
 
-        // Full cross-zone order history for this customer — surfaces shops
-        // outside this booking's zone too, so the admin can see the customer's
-        // whole track record, not just what's assignable in this zone.
+        // Full cross-zone order history for this customer — absolute counts
+        // (no exclude) so completed totals match the customer's order list.
         const customerShopHistory = await this.getCustomerShopHistory(
             bookingRow.customerId,
-            bookingRow.id
+            null
         );
 
         const shopList = [];
@@ -422,14 +419,19 @@ class AdminBookingAssignService {
     /**
      * Cross-shop order history for a customer, regardless of zone — every shop
      * they have ever ordered from, with total + completed counts, ranked by
-     * completed orders (real repeat business) then total. Lets admin see a
-     * customer's full track record even for shops outside the current booking's
-     * zone/candidate list, not just the one shop currently being considered.
+     * completed orders (real repeat business) then total.
+     *
+     * @param {number|null} excludeBookingId - optional; when set, that booking
+     *   is omitted. Prefer null so totals match the customer's completed list.
      */
     async getCustomerShopHistory(customerId, excludeBookingId, options = {}) {
         if (!customerId) return [];
         const limit = Number(options.limit) > 0 ? Number(options.limit) : 10;
         try {
+            const excludeClause =
+                excludeBookingId != null && Number(excludeBookingId) > 0
+                    ? "AND b.id != :excludeBookingId"
+                    : "";
             const rows = await sequelize.query(
                 `
                 SELECT
@@ -442,7 +444,7 @@ class AdminBookingAssignService {
                 LEFT JOIN bussinessInformations bi ON bi.shopAddressId = a.id
                 WHERE b.customerId = :customerId
                   AND b.laundryShopId IS NOT NULL
-                  AND b.id != :excludeBookingId
+                  ${excludeClause}
                 GROUP BY a.id, bi.shopName
                 ORDER BY completedOrders DESC, totalOrders DESC
                 LIMIT :limit
