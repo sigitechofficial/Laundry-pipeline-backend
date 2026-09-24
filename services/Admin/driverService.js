@@ -61,14 +61,17 @@ class DriverService {
      * Get all drivers with booking statistics
      * @returns {Array} List of drivers with order counts and earnings
      */
-    async getAllDriversWithStats() {
+    /**
+     * @param {{ includeInactive?: boolean }} [opts] includeInactive=true also returns
+     *   blocked drivers (status=false) so the directory can show/filter them and
+     *   admin can unblock. Default stays active-only for assignment dropdowns.
+     */
+    async getAllDriversWithStats(opts = {}) {
         try {
+            const where = { roleId: 6, classifiedAsId: 1 };
+            if (!opts.includeInactive) where.status = true;
             const findDrivers = await users.findAll({
-                where: {
-                    roleId: 6,
-                    classifiedAsId: 1,
-                    status: true
-                },
+                where,
                 attributes: [
                     'id',
                     'firstName',
@@ -78,6 +81,7 @@ class DriverService {
                     'classifiedAsId',
                     'roleId',
                     'phoneNum',
+                    'countryCode',
                     'status',
                     'createdAt'
                 ],
@@ -506,7 +510,7 @@ class DriverService {
         // Get created driver with role information
         const createdDriver = await users.findOne({
             where: { id: user.id },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt', 'employeeOff'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt', 'employeeOff'],
             include: [
                 {
                     model: roles,

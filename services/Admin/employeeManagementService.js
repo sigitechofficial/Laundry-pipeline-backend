@@ -54,17 +54,31 @@ class EmployeeManagementService {
      * Get all admin employees
      * @returns {Object} List of admin employees
      */
-    async getAdminEmployees() {
+    /**
+     * @param {{ includeInactive?: boolean }} [opts] includeInactive=true also returns
+     *   deactivated staff (status=false) so the directory can filter Active/Inactive
+     *   and admins can re-activate someone. Default keeps legacy active-only output
+     *   for dropdown consumers.
+     */
+    async getAdminEmployees(opts = {}) {
+        const where = { classifiedAsId: 2 };
+        if (!opts.includeInactive) where.status = true;
+
         const adminEmployees = await users.findAll({
-            where: {
-                classifiedAsId: 2,
-                status: true
-            },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
+            where,
+            attributes: [
+                'id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId',
+                'phoneNum', 'countryCode', 'status', 'createdAt', 'updatedAt',
+            ],
+            include: [{ model: roles, attributes: ['id', 'name'], required: false }],
+            order: [['createdAt', 'DESC'], ['id', 'DESC']],
         });
 
         return {
-            adminEmployees
+            adminEmployees: adminEmployees.map((row) => {
+                const plain = row.toJSON();
+                return { ...plain, roleName: plain.role?.name ?? null };
+            }),
         };
     }
 
@@ -284,7 +298,7 @@ class EmployeeManagementService {
                 id: employeeId,
                 classifiedAsId: 2
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'countryCode', 'status'],
             include: [
                 {
                     model: roles,
@@ -353,7 +367,7 @@ class EmployeeManagementService {
                 id: employeeId,
                 classifiedAsId: 2
             },
-            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'status']
+            attributes: ['id', 'firstName', 'lastName', 'email', 'classifiedAsId', 'roleId', 'phoneNum', 'countryCode', 'status']
         });
 
         return { employee: updatedEmployee };

@@ -13,6 +13,15 @@ const {
 const { literal, fn, col } = require("sequelize");
 const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
+const {
+    resolveListWindow,
+    parseSearchTerm,
+    buildSearchWhere,
+    andWhere,
+    buildDateRangeWhere,
+    resolveSort,
+    buildPagination,
+} = require('../../utils/listQuery');
 const { customerPhoneError } = require('../../utils/customerPhone');
 const { isUserBlocked } = require('../../utils/accountBlocked');
 const { presentCustomerUserDetails } = require('../../utils/customerUserDetails');
@@ -22,84 +31,114 @@ class CustomerService {
      * Get all customers with booking statistics
      * @returns {Array} List of customers with booking counts and amounts
      */
-    async getAllCustomers(startPage = 1, endPage = 10, offset = 0) {
-        const start = clampPage(startPage, 1);
-        const end = clampPage(endPage, 10);
-        const span = Math.min(Math.max(end - start + 1, 1), 10);
-        const limit = clampListLimit(span * 10, 10, 100);
-        const offsetNum = Math.max(0, parseInt(offset, 10) || 0);
-        const calculatedOffset = offsetNum + ((start - 1) * 10);
+    /**
+     * Admin customer directory. Query contract (see utils/listQuery):
+     *   search    id / first / last / full name / email / phone
+     *   status    "active" | "blocked"
+     *   startDate/endDate  signup (createdAt) calendar range
+     *   sortBy    name | email | createdAt | bookingCount | totalAmountSpent | lastBookingDate
+     *   page/limit or export=1
+     */
+    async getAllCustomers(query = {}) {
+        const window = resolveListWindow(query, { defaultLimit: 25 });
 
-        const findCustomers = await users.findAll({
-            where: {
-                userTypeId: 2,  // Ensuring we're fetching only customers
+        let where = { userTypeId: 2 };
+
+        const statusFilter = String(query.status || '').trim().toLowerCase();
+        if (statusFilter === 'blocked') where.status = { [Op.in]: [false, 0] };
+        else if (statusFilter === 'active') where.status = { [Op.notIn]: [false, 0] };
+
+        const createdRange = buildDateRangeWhere(query.startDate, query.endDate);
+        if (createdRange) where.createdAt = createdRange;
+
+        const searchTerm = parseSearchTerm(query.search);
+        const searchWhere = buildSearchWhere(
+            searchTerm,
+            ['firstName', 'lastName', 'email', 'phoneNum'],
+            { idFields: ['id'] }
+        );
+        if (searchWhere && searchTerm.includes(' ')) {
+            // "Jane Doe" → match the concatenated name too.
+            searchWhere[Op.or].push(
+                sequelize.where(
+                    sequelize.fn('CONCAT_WS', ' ', sequelize.col('firstName'), sequelize.col('lastName')),
+                    { [Op.like]: `%${searchTerm}%` }
+                )
+            );
+        }
+        where = andWhere(where, searchWhere);
+
+        const BOOKING_COUNT = `(SELECT COUNT(*) FROM bookings WHERE bookings.customerId = users.id)`;
+        const TOTAL_SPENT = `(SELECT COALESCE(SUM(orderAmount), 0) FROM bookings WHERE bookings.customerId = users.id)`;
+        const LAST_BOOKING = `(SELECT MAX(createdAt) FROM bookings WHERE bookings.customerId = users.id)`;
+
+        const { order } = resolveSort(
+            query,
+            {
+                name: 'firstName',
+                email: 'email',
+                createdAt: 'createdAt',
+                bookingCount: sequelize.literal(BOOKING_COUNT),
+                totalAmountSpent: sequelize.literal(TOTAL_SPENT),
+                lastBookingDate: sequelize.literal(LAST_BOOKING),
             },
-            attributes: [
-                'id',
-                'firstName',
-                'lastName',
-                'email',
-                'phoneNum',
-                'status',
-                [
-                    sequelize.literal(`(
-                SELECT COUNT(*)
-                FROM bookings
-                WHERE bookings.customerId = users.id
-              )`),
-                    'bookingCount'
-                ],
-                [
-                    sequelize.literal(`(
-                SELECT COALESCE(SUM(orderAmount), 0)
-                FROM bookings
-                WHERE bookings.customerId = users.id
-              )`),
-                    'totalAmountSpent'
-                ],
-                [
-                    sequelize.literal(`(
-                SELECT MAX(createdAt)
-                FROM bookings
-                WHERE bookings.customerId = users.id
-              )`),
-                    'lastBookingDate'
-                ]
-            ],
-            limit: limit,
-            offset: calculatedOffset,
-            order: [['createdAt', 'DESC']] // Add ordering for consistent pagination
-        });
+            { sortBy: 'createdAt', sortDir: 'DESC' }
+        );
+        // Stable tiebreaker for paging.
+        order.push(['id', 'DESC']);
 
-        // Get total count for pagination info
-        const totalCount = await users.count({
-            where: {
-                userTypeId: 2,
-            }
-        });
+        const [totalCount, findCustomers] = await Promise.all([
+            users.count({ where }),
+            users.findAll({
+                where,
+                attributes: [
+                    'id',
+                    'firstName',
+                    'lastName',
+                    'email',
+                    'phoneNum',
+                    'countryCode',
+                    'status',
+                    'createdAt',
+                    'updatedAt',
+                    [sequelize.literal(BOOKING_COUNT), 'bookingCount'],
+                    [sequelize.literal(TOTAL_SPENT), 'totalAmountSpent'],
+                    [sequelize.literal(LAST_BOOKING), 'lastBookingDate'],
+                ],
+                limit: window.limit,
+                offset: window.offset,
+                order,
+            }),
+        ]);
 
-        // Format the last booking date and totalAmountSpent
-        const formattedCustomers = findCustomers.map(customer => {
-            const customerData = customer.toJSON(); // Convert to plain object
+        const formattedCustomers = findCustomers.map((customer) => {
+            const customerData = customer.toJSON();
             return {
                 ...customerData,
                 blocked: isUserBlocked(customerData.status),
+                bookingCount: Number(customerData.bookingCount || 0),
                 lastBookingDate: customerData.lastBookingDate
                     ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
                     : null,
-                totalAmountSpent: customerData.totalAmountSpent.toFixed(2) // Limit to 2 decimals
+                totalAmountSpent: Number(customerData.totalAmountSpent || 0).toFixed(2),
             };
         });
 
+        const pagination = buildPagination(totalCount, window);
         return {
             customers: formattedCustomers,
             pagination: {
-                currentPage: start,
-                totalPages: Math.ceil(totalCount / 10),
-                totalCount: totalCount,
-                hasNextPage: end < Math.ceil(totalCount / 10),
-                hasPreviousPage: start > 1
-            }
+                ...pagination,
+                // legacy aliases kept for older clients
+                totalCount: pagination.totalRecords,
+                hasPreviousPage: pagination.hasPrevPage,
+            },
+            filters: {
+                search: searchTerm,
+                status: statusFilter || null,
+                startDate: query.startDate || null,
+                endDate: query.endDate || null,
+            },
         };
     }
 
@@ -291,7 +330,7 @@ class CustomerService {
             }
             const customer = await users.findOne({
                 where: { id: normalizedCustomerId, userTypeId: 2 },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt'],
             });
             if (!customer) {
                 throw new NotFoundError('Customer not found');
@@ -303,6 +342,9 @@ class CustomerService {
                     include: [
                         {
                             model: customerSelectedService,
+                            // Active lines only; edited invoices deactivate replaced lines.
+                            required: false,
+                            where: { status: true },
                             include: [
                                 {
                                     model:service,
@@ -332,12 +374,12 @@ class CustomerService {
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
                         }
                     ],
                     order: [['id', 'DESC']],
@@ -356,7 +398,7 @@ class CustomerService {
                     include: [
                         {
                             model: users,
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt'],
                         },
                     ],
                     order: [['createdAt', 'DESC']],
@@ -388,7 +430,7 @@ class CustomerService {
                 throw new NotFoundError('Customer not found');
             }
 
-            const allowed = ['firstName', 'lastName', 'email', 'phoneNum', 'status', 'password'];
+            const allowed = ['firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'password'];
             const updateFields = {};
             for (const key of allowed) {
                 if (updateData[key] !== undefined) updateFields[key] = updateData[key];
@@ -477,7 +519,7 @@ class CustomerService {
                     id: customerId,
                     userTypeId: 2
                 },
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'status', 'createdAt']
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode', 'status', 'createdAt']
             });
 
             return updatedCustomerData;

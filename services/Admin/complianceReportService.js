@@ -1,8 +1,19 @@
 'use strict';
 
 const { Op, fn, col, literal } = require('sequelize');
-const { agentComplianceEvent, booking, users } = require('../../models');
+const {
+  agentComplianceEvent,
+  booking,
+  users,
+  bussinessInformation,
+} = require('../../models');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
+const { resolveListWindow, andWhere, buildPagination } = require('../../utils/listQuery');
+const {
+  buildComplianceEventSearchWhere,
+  mergeCreatedAtRange,
+  COMPLIANCE_EVENTS_DEFAULT_LIMIT,
+} = require('../../utils/adminListFilters');
 
 const GEO_ACTIONS = [
   'arrived_pickup',
@@ -98,12 +109,21 @@ async function getGeofenceOverrideAggregates(query = {}) {
       }
     }
     if (row.shopId) {
+      // Shop name lives on bussinessInformation (users has no shopName column).
       const s = await users.findByPk(row.shopId, {
-        attributes: ['id', 'firstName', 'lastName', 'shopName', 'email'],
+        attributes: ['id', 'firstName', 'lastName', 'email'],
+        include: [
+          {
+            model: bussinessInformation,
+            as: 'businessInfo',
+            attributes: ['id', 'shopName'],
+            required: false,
+          },
+        ],
       });
       if (s) {
         shopName =
-          s.shopName ||
+          s.businessInfo?.shopName ||
           [s.firstName, s.lastName].filter(Boolean).join(' ').trim() ||
           s.email ||
           `Shop #${s.id}`;
@@ -145,16 +165,27 @@ async function getGeofenceOverrideAggregates(query = {}) {
   };
 }
 
+/**
+ * Agent compliance event log.
+ *
+ * Legacy filters: from/to, shopId, driverId|actorUserId, action, bookingId, overridesOnly.
+ * Shared list contract (utils/listQuery): search (order track id, driver name/email,
+ * shop owner name/email, shop name), startDate/endDate (inclusive, on createdAt),
+ * page/limit (default 20), export=1 → whole filtered set (capped).
+ */
 async function listComplianceEvents(query = {}) {
-  const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(query.limit, 10) || 20));
-  const offset = (page - 1) * limit;
-  const where = parseDateRange(query);
+  const window = resolveListWindow(query, {
+    defaultLimit: COMPLIANCE_EVENTS_DEFAULT_LIMIT,
+  });
+  let where = mergeCreatedAtRange(parseDateRange(query), query);
 
   if (query.overridesOnly === 'true' || query.overridesOnly === true) {
     where.overrideUsed = true;
     where.geofenceBypassedGlobal = false;
   }
+
+  const searchWhere = buildComplianceEventSearchWhere(query.search);
+  where = andWhere(where, searchWhere);
 
   const { rows, count } = await agentComplianceEvent.findAndCountAll({
     where,
@@ -171,17 +202,39 @@ async function listComplianceEvents(query = {}) {
         attributes: ['id', 'firstName', 'lastName', 'email'],
         required: false,
       },
+      {
+        model: users,
+        as: 'shop',
+        attributes: ['id', 'firstName', 'lastName', 'email'],
+        required: false,
+        include: [
+          {
+            model: bussinessInformation,
+            as: 'businessInfo',
+            attributes: ['id', 'shopName'],
+            required: false,
+          },
+        ],
+      },
     ],
-    order: [['createdAt', 'DESC']],
-    limit,
-    offset,
+    order: [['createdAt', 'DESC'], ['id', 'DESC']],
+    limit: window.limit,
+    offset: window.offset,
+    distinct: true,
+    // Search references $booking.*$ / $actor.*$ / $shop.*$; keep the joins in
+    // the same SELECT so limit+includes never push them outside a subquery.
+    subQuery: searchWhere ? false : undefined,
   });
 
+  const pagination = buildPagination(count, window);
   return {
-    page,
-    limit,
+    // legacy keys
+    page: pagination.currentPage,
+    limit: pagination.recordsPerPage,
     total: count,
     rows,
+    // standard list contract
+    pagination,
   };
 }
 

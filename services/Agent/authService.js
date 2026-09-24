@@ -217,11 +217,15 @@ class AgentAuthService {
 
         // Check if user exists by email
         if (userfindByEmail && userfindByEmail.email === data.email) {
-            // If user exists with different userTypeId, throw error
-            // if (userfindByEmail.userTypeId === 4) {
-            //     throw new ConflictError('User With This Email Already Exists');
-            // }
-            
+            // This email already belongs to a customer account (userTypeId 2).
+            // Do NOT let agent registration take over / overwrite a customer row.
+            // Shop accounts must use a separate email.
+            if (Number(userfindByEmail.userTypeId) === 2) {
+                throw new ConflictError(
+                    'This email is already registered as a customer account. Please use a different email for your shop account.'
+                );
+            }
+
             // User exists with userTypeId 4 (Agent)
             // If user is verified, don't allow re-registration
             if (userfindByEmail.verifiedAt) {
@@ -828,6 +832,47 @@ class AgentAuthService {
             data.bussinessWorkingDays
         );
 
+        // Guard: an agent cannot close the shop for TODAY while they still have
+        // accepted orders in progress that admin has not reassigned. Editing
+        // other days, or closing a day that was already closed, stays allowed.
+        const {
+            getWallClockContextForCountry,
+            findTodayWorkingHoursRow,
+        } = require('../../utils/shopWorkingHours');
+        const { countActiveAssignedOrders } = require('../../utils/agentActiveOrders');
+        const { dayOfWeek } = await getWallClockContextForCountry(
+            countryCtx.countryId,
+            data.timeZone,
+            data.clientTimeZone
+        );
+        const incomingToday = (data.bussinessWorkingDays || []).find(
+            (d) =>
+                String(d.dayOfWeek).toLowerCase() ===
+                String(dayOfWeek).toLowerCase()
+        );
+        const closingToday =
+            incomingToday &&
+            (incomingToday.status === false ||
+                incomingToday.status === 0 ||
+                incomingToday.status === '0' ||
+                incomingToday.status === 'false');
+        if (closingToday) {
+            const currentToday = await findTodayWorkingHoursRow(
+                data.userId,
+                dayOfWeek
+            );
+            if (Boolean(currentToday?.status)) {
+                const activeCount = await countActiveAssignedOrders(data.userId);
+                if (activeCount > 0) {
+                    throw new ConflictError(
+                        `You still have ${activeCount} active order${
+                            activeCount === 1 ? '' : 's'
+                        } to complete. Finish them or ask admin to reassign before closing the shop today.`
+                    );
+                }
+            }
+        }
+
         for (const ele of data.bussinessWorkingDays) {
             await bussinessWorkingHours.update(
                 {
@@ -946,6 +991,19 @@ class AgentAuthService {
 
         if (!userFind) {
             throw new NotFoundError("User not Exists with this credentials");
+        }
+
+        // The agent app is for shop owners (userTypeId 4) only. Customer accounts
+        // (userTypeId 2) share the same users table + email space, so block them
+        // here — otherwise a customer's email/password would log in to the agent app.
+        if (Number(userFind.userTypeId) === 2) {
+            throw new UnauthorizedError(
+                "This email is registered as a customer account. Please use the customer app to sign in.",
+                {
+                    message:
+                        "This email is registered as a customer account. Please use the customer app to sign in.",
+                }
+            );
         }
 
         const tzUpdate = this._ianaTimeZoneUpdate(data);
@@ -1075,7 +1133,7 @@ class AgentAuthService {
             const socialUser = await users.findOne({
                 where: {
                     email: data.email,
-                    userTypeId: 2,
+                    userTypeId: 4,
                     deletedAt: { [Op.is]: null }
                 },
                 include: [

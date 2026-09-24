@@ -31,16 +31,21 @@ const BLOCK_USER_TYPES = Object.freeze({
     admin_employee: 'admin_employee',
 });
 
+// userTypes seed (20250121073345-userType.js): 1 Admin, 2 Customer, 3 Driver, 4 Agent.
+const USER_TYPE_ID = Object.freeze({ CUSTOMER: 2, DRIVER: 3, AGENT: 4 });
+
 /** Build a Sequelize WHERE clause that targets the right user type. */
 function whereForType(userId, userType) {
     const id = Number(userId);
     switch (userType) {
         case BLOCK_USER_TYPES.customer:
-            return { id, userTypeId: 2 };
+            return { id, userTypeId: USER_TYPE_ID.CUSTOMER };
         case BLOCK_USER_TYPES.driver:
             return { id, roleId: SYSTEM_ROLES.LAUNDRY_SHOP_DRIVER, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE };
         case BLOCK_USER_TYPES.agent:
-            return { id, userTypeId: 3 };
+            // Shop owner. Was userTypeId 3 (Driver) — never matched, so every
+            // shop Block / Unblock / Delete returned "User not found".
+            return { id, userTypeId: USER_TYPE_ID.AGENT };
         case BLOCK_USER_TYPES.agent_employee:
             return { id, classifiedAsId: CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE };
         case BLOCK_USER_TYPES.admin_employee:

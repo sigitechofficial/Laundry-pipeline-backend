@@ -36,6 +36,7 @@ const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { sendNotification } = require('../../utils/notification');
 const activePoliciesService = require('../Admin/activePoliciesService');
+const zoneCatalogService = require('../Admin/zoneCatalogService');
 
 // Booking status IDs relevant to failed-attempt recovery on reschedule.
 const AWAITING_COLLECTION_STATUS_ID = 3;
@@ -406,7 +407,7 @@ class RescheduleBookingService {
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
                 'paymentMethodId', 'paymentType', 'driverId', 'adminAssignedShopId',
-                'pickupAttemptCount', 'pickupRescheduleRequired', 'deliveryAttemptCount',
+                'pickupAttemptCount', 'pickupRescheduleRequired', 'pickupDriverLate', 'deliveryAttemptCount',
                 'invoiceStatus'
             ]
         });
@@ -511,7 +512,6 @@ class RescheduleBookingService {
             await customerSelectedService.destroy({ where: { bookingId } });
 
             // Build and bulk-insert new service rows (zone catalog resolver)
-            const zoneCatalogService = require("../Admin/zoneCatalogService");
             const serviceRows = [];
             let categoryCharge = 0;
             for (const s of services) {
@@ -592,6 +592,11 @@ class RescheduleBookingService {
                         `Preference type ${preferenceTypeId} is not available for the selected service(s)`
                     );
                 }
+                await zoneCatalogService.assertPreferenceEnabled(bookingData.zoneId, {
+                    preferenceTypeId,
+                    serviceIds: targetServiceIds,
+                    serviceId: serviceId || null,
+                });
 
                 // Validate preference value belongs to preference type
                 const prefValue = await preferenceValues.findOne({
@@ -704,6 +709,9 @@ class RescheduleBookingService {
         } else if (isPickupFailed) {
             resolvedBookingStatusId = AWAITING_COLLECTION_STATUS_ID;
             statusResetFields.pickupRescheduleRequired = false;
+            // Consume the late-driver waiver: this reschedule was free; a later
+            // voluntary reschedule should be charged normally.
+            statusResetFields.pickupDriverLate = false;
         }
 
         // Step 8: Update booking with new dates, new order amount and reschedule metadata
@@ -892,6 +900,18 @@ class RescheduleBookingService {
                 currency: config.atPickupAbsoluteCurrency || config.atDeliveryAbsoluteCurrency || 'GBP',
                 policyApplied: 'Free Reschedule',
                 message: 'No reschedule charges applied (reschedule policy config is inactive)'
+            };
+        }
+
+        // No penalty when this reschedule is needed because the DRIVER arrived
+        // after the scheduled pickup window — the failed pickup wasn't the
+        // customer's fault, so the reschedule is free.
+        if (bookingData.pickupRescheduleRequired && bookingData.pickupDriverLate) {
+            return {
+                rescheduleCharge: 0,
+                currency: config.atPickupAbsoluteCurrency || 'GBP',
+                policyApplied: 'Free Reschedule — Driver Late',
+                message: 'No charge — the driver arrived after the scheduled pickup time'
             };
         }
 

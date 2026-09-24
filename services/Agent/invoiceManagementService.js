@@ -343,6 +343,10 @@ class AgentInvoiceManagementService {
                 zoneAdminCommission: totals.finalZoneAdminCommissionAmount,
                 agentEarning: totals.finalAgentEarningAmount,
                 serviceCharge: totals.parsedServiceCharge,
+                // Laundry / services subtotal. Admin settlement + order finance
+                // read this as the "laundry" line; without it every agent-built
+                // invoice reported Laundry £0.00 (only admin edit-order set it).
+                categoryCharge: totals.servicesSubtotal,
             },
             { where: { bookingId } }
         );

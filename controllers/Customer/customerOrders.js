@@ -326,18 +326,13 @@ async function createIntentUsingStripe(req, res) {
     console.log("Request Body:", JSON.stringify(req.body, null, 2));
     console.log("User ID:", req.user?.id);
     
-    const { customerId } = req.body;
-
-    // Validate required fields in controller
-    if (!customerId) {
-        throw new ValidationError('Customer ID is required');
-    }
-
-    // Call service to handle business logic
-    // NOTE: Setup Intent is created to save payment method without charging
-    // Payment will be charged later when booking reaches laundry shop (status 8)
+    // Stripe customer is resolved server-side from the authenticated user
+    // (any client-sent customerId is ignored). The service self-heals users
+    // that don't have a Stripe customer yet.
+    // NOTE: Setup Intent is created to save payment method without charging;
+    // payment is charged later when the booking reaches the laundry shop.
     const result = await customerOrderService.createIntentUsingStripe({
-        customerId
+        userId: req.user?.id
     });
 
     // Return response using ResponseHelper success method
@@ -431,6 +426,13 @@ async function getAllServiceWithPreferenceDetails(req, res) {
                 getData.serviceCategoriesData,
                 catalogZoneId,
                 serviceId
+            );
+        getData.preferencesData =
+            await zoneCatalogService.applyToServicePreferencesData(
+                getData.preferencesData,
+                catalogZoneId,
+                serviceId,
+                { includeDisabled: false }
             );
     }
     return ResponseHelper.success(res, "All Preferences and Services Data Fetched", getData);

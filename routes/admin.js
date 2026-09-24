@@ -412,6 +412,7 @@ router.delete('/deleteAccountDeletionReason/:id', asyncMiddleware(adminControlle
 router.get('/getReviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
 router.post('/createReviewReasonCode', asyncMiddleware(shopReviewController.createReviewReasonCode))
 router.patch('/updateReviewReasonCode/:id', asyncMiddleware(shopReviewController.updateReviewReasonCode))
+router.patch('/reorderReviewReasonCodes', asyncMiddleware(shopReviewController.reorderReviewReasonCodes))
 router.delete('/deleteReviewReasonCode/:id', asyncMiddleware(shopReviewController.deleteReviewReasonCode))
 
 //!-------------------------Shop Reviews (moderation inbox)-------------------------------------------------//
@@ -659,6 +660,11 @@ router.patch(
     '/payment-failures/:bookingId/resolve',
     asyncMiddleware(invoicePaymentFailureController.resolvePaymentFailure)
 )
+// Change how an order's outstanding balance is collected (card <-> cash) with a reason.
+router.patch(
+    '/bookings/:bookingId/payment-method',
+    asyncMiddleware(invoicePaymentFailureController.changePaymentMethod)
+)
 
 //!-----------------------------------Action required (admin attention feed)---------//
 router.get(
@@ -728,6 +734,8 @@ router.get('/getShopInformation', asyncMiddleware(adminController.getShopInforma
 router.get('/getShopsData', asyncMiddleware(adminController.shopsData))
 //Single Shop Data
 router.get('/singleShopData/:Id', asyncMiddleware(adminController.singleShopData))
+// Update shop profile + settings from the admin shop-detail Settings tab.
+router.patch('/updateLaundryShop/:id', asyncMiddleware(adminController.updateLaundryShop))
 router.get(
     '/singleShopData/:shopId/revenue',
     asyncMiddleware(shopRevenueController.getShopRevenue)

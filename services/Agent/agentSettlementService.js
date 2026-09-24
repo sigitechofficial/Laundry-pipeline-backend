@@ -9,6 +9,9 @@ const { loadShopSettlementReport } = require("./shopSettlementReport");
 const { emptySettlementReport } = require("../../utils/shopSettlementReportMap");
 const agentWithdrawalService = require("./agentWithdrawalService");
 const { buildAdminConnectPayoutLedger } = require("../../utils/adminPayoutLedger");
+const { applyCashDueListQuery } = require("../../utils/adminListFilters");
+const { sendNotification } = require("../../utils/notification");
+const { sendEvent } = require("../../socket_io");
 
 const {
     CASH_REMITTED_REFERENCE,
@@ -40,36 +43,84 @@ async function resolveAgentShop(agentUserId) {
     return shop;
 }
 
-/** Public admin identity is the shop. Wallet still settles on the owner user. */
+const SHOP_ADDRESS_ATTRS = ["id", "userId", "streetAddress", "district"];
+
+/**
+ * Public admin identity is the shop (`bussinessInformation.id`, the same id
+ * Shop Management uses in `/shop-management/details/:id`). Wallet still
+ * settles on the owner user. Resolution order mirrors
+ * shopManagementService.getSingleShopData / shopRevenueService.resolveShop:
+ * business id → owner (agentId) → shop address id, then the legacy address
+ * id so older settlement links keep working.
+ */
 async function resolveShopForSettlement(shopId) {
     const id = parsePositiveId(shopId, "shopId");
-    const shop = await addressDb.findOne({
-        where: {
-            id,
-            addressType: SHOP_ADDRESS_TYPE,
-        },
-        attributes: ["id", "userId", "streetAddress", "district"],
-    });
+
+    const bizAttrs = ["id", "agentId", "shopAddressId"];
+    let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { agentId: id }, attributes: bizAttrs });
+    if (!biz) biz = await bussinessInformation.findOne({ where: { shopAddressId: id }, attributes: bizAttrs });
+
+    let shop = null;
+    if (biz) {
+        if (biz.shopAddressId) {
+            shop = await addressDb.findOne({
+                where: { id: biz.shopAddressId, addressType: SHOP_ADDRESS_TYPE },
+                attributes: SHOP_ADDRESS_ATTRS,
+            });
+        }
+        if (!shop && biz.agentId) {
+            shop = await addressDb.findOne({
+                where: { userId: biz.agentId, addressType: SHOP_ADDRESS_TYPE },
+                attributes: SHOP_ADDRESS_ATTRS,
+            });
+        }
+    }
+    if (!shop) {
+        shop = await addressDb.findOne({
+            where: { id, addressType: SHOP_ADDRESS_TYPE },
+            attributes: SHOP_ADDRESS_ATTRS,
+        });
+    }
     if (!shop) {
         throw new NotFoundError("Shop not found");
     }
-    if (!shop.userId) {
+
+    const ownerUserId = shop.userId || biz?.agentId || null;
+    if (!ownerUserId) {
         throw new NotFoundError("Shop has no owner account");
     }
-    return shop;
+    return {
+        id: shop.id,
+        userId: ownerUserId,
+        streetAddress: shop.streetAddress,
+        district: shop.district,
+        businessId: biz?.id || null,
+    };
 }
 
+/** Map owner userId → public shop id (business id; address id only if no business row). */
 async function shopIdsByOwnerUserIds(userIds) {
     const ids = [...new Set((userIds || []).filter(Boolean).map((id) => Number(id)))];
     if (!ids.length) return new Map();
-    const shops = await addressDb.findAll({
-        where: {
-            userId: { [Op.in]: ids },
-            addressType: SHOP_ADDRESS_TYPE,
-        },
-        attributes: ["id", "userId"],
-    });
-    return new Map(shops.map((shop) => [Number(shop.userId), shop.id]));
+    const [shops, businesses] = await Promise.all([
+        addressDb.findAll({
+            where: {
+                userId: { [Op.in]: ids },
+                addressType: SHOP_ADDRESS_TYPE,
+            },
+            attributes: ["id", "userId"],
+        }),
+        bussinessInformation.findAll({
+            where: { agentId: { [Op.in]: ids } },
+            attributes: ["id", "agentId"],
+        }),
+    ]);
+    const map = new Map(shops.map((shop) => [Number(shop.userId), shop.id]));
+    for (const biz of businesses) {
+        map.set(Number(biz.agentId), biz.id);
+    }
+    return map;
 }
 
 /**
@@ -116,6 +167,61 @@ async function submitCashRemittance(agentUserId, { amount, note }) {
         status: entry.status,
         currency: entry.currency,
         cashDueToPlatform: summary.cashDueToPlatform,
+    };
+}
+
+/**
+ * The agent's OWN cash-remittance history, all statuses, newest first, so the
+ * app can show pending / confirmed / rejected from the server instead of a
+ * device-local list.
+ */
+async function listAgentRemittances(agentUserId, options = {}) {
+    const page = Math.max(parseInt(options.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await wallet.findAndCountAll({
+        where: {
+            userId: agentUserId,
+            referenceType: CASH_REMITTED_REFERENCE,
+            type: "credit",
+        },
+        order: [["createdAt", "DESC"], ["id", "DESC"]],
+        limit,
+        offset,
+    });
+
+    const STATUS_LABEL = {
+        pending: "Pending admin confirmation",
+        completed: "Confirmed by admin",
+        failed: "Rejected by admin",
+    };
+
+    const remittances = rows.map((row) => {
+        const plain = row.get ? row.get({ plain: true }) : row;
+        return {
+            id: plain.id,
+            amount: parseFloat(plain.amount || 0),
+            currency: plain.currency || DEFAULT_CURRENCY,
+            status: plain.status, // pending | completed | failed
+            statusLabel: STATUS_LABEL[plain.status] || plain.status,
+            description: plain.description || null,
+            createdAt: plain.createdAt,
+            updatedAt: plain.updatedAt,
+        };
+    });
+
+    const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
+    return {
+        remittances,
+        pagination: {
+            page,
+            limit,
+            total: count,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1,
+        },
     };
 }
 
@@ -204,6 +310,34 @@ async function updateRemittanceStatus(remittanceId, status, adminNote) {
     });
 
     const summary = await agentWalletService.getWalletSummary(entry.userId);
+
+    // Notify the agent that admin confirmed/rejected their cash remittance, so
+    // they know it landed (or was declined) without re-polling. Never fail the
+    // status update because a notification failed.
+    try {
+        const amountLabel = `${summary.currency || 'GBP'} ${parseFloat(entry.amount || 0).toFixed(2)}`;
+        const confirmed = status === 'completed';
+        const title = confirmed ? 'Cash remittance confirmed' : 'Cash remittance rejected';
+        const stillDue = `${summary.currency || 'GBP'} ${Number(summary.cashDueToPlatform || 0).toFixed(2)}`;
+        const body = confirmed
+            ? `Admin confirmed your ${amountLabel} cash payment. Cash still due: ${stillDue}.`
+            : `Admin could not confirm your ${amountLabel} cash remittance${adminNote ? `: ${adminNote}` : ''}. It has been returned to pending cash due.`;
+        const payload = {
+            remittanceId: String(entry.id),
+            type: 'CASH_REMITTANCE_UPDATE',
+            status,
+            amount: parseFloat(entry.amount || 0).toFixed(2),
+            cashDueToPlatform: Number(summary.cashDueToPlatform || 0).toFixed(2),
+        };
+        sendNotification(entry.userId, title, body, payload).catch((e) =>
+            console.error('[remittance] FCM notify failed:', e?.message || e)
+        );
+        sendEvent(entry.userId, { type: 'cashRemittanceUpdate', data: payload }).catch((e) =>
+            console.error('[remittance] socket notify failed:', e?.message || e)
+        );
+    } catch (e) {
+        console.error('[remittance] notify block failed:', e?.message || e);
+    }
 
     const shopByOwner = await shopIdsByOwnerUserIds([entry.userId]);
     return {
@@ -358,16 +492,45 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
             {
                 adminUserId: adminUserId || null,
                 walletId: credit.id,
+                note: note || null,
                 transferKind: "admin_payout",
                 withdrawalType: "admin_payout",
             }
         ));
     } catch (error) {
         const reason = String(error?.message || error).slice(0, 500);
-        await credit.update({
-            status: "failed",
-            failureReason: reason,
-        });
+        // The Stripe transfer did not go through — this pending credit must
+        // reach "failed" no matter what, or it silently keeps depressing
+        // platformOwesAgent (pendingAgentPayouts) forever, making "Still
+        // Payable" look like the agent was already paid when they weren't.
+        try {
+            await credit.update({
+                status: "failed",
+                failureReason: reason,
+            });
+        } catch (updateError) {
+            // If the ORM write itself fails (e.g. schema drift on a column
+            // this app expects), fall back to the smallest possible raw
+            // write so the row still reaches a terminal status. Log loudly —
+            // this is a wallet-ledger inconsistency, not a normal 4xx.
+            console.error(
+                `[recordAgentPayout] CRITICAL: could not mark wallet credit ${credit.id} as failed ` +
+                    `after a Stripe transfer error (agentUserId=${agentUserId}, amount=${parsedAmount}). ` +
+                    `Row is stuck "pending" and will distort platformOwesAgent until fixed. ` +
+                    `Transfer error: ${reason} | Update error: ${updateError?.message || updateError}`
+            );
+            try {
+                await sequelize.query(
+                    "UPDATE wallets SET status = :status WHERE id = :id",
+                    { replacements: { status: "failed", id: credit.id } }
+                );
+            } catch (fallbackError) {
+                console.error(
+                    `[recordAgentPayout] CRITICAL: raw-SQL fallback also failed for wallet credit ${credit.id}. ` +
+                        `Manual reconciliation required. ${fallbackError?.message || fallbackError}`
+                );
+            }
+        }
         throw error;
     }
 
@@ -380,18 +543,65 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
         stripeTransferId: transfer.id,
     });
 
-    const debit = await sequelize.transaction(async (transaction) => {
-        await credit.update(
-            {
-                status: "completed",
-                stripeTransferId: transfer.id,
-                description: completedPair.credit.description,
-                failureReason: null,
-            },
-            { transaction }
+    let debit;
+    try {
+        debit = await sequelize.transaction(async (transaction) => {
+            await credit.update(
+                {
+                    status: "completed",
+                    stripeTransferId: transfer.id,
+                    description: completedPair.credit.description,
+                    failureReason: null,
+                },
+                { transaction }
+            );
+            return wallet.create(completedPair.debit, { transaction });
+        });
+    } catch (error) {
+        // Stripe transfer `transfer.id` has ALREADY succeeded — real money moved.
+        // The only thing that failed is recording it. Leaving the credit
+        // "pending" here is the worst outcome: it counts as in-flight against
+        // "Still Payable", hides the money from every balance, and invites a
+        // retry that sends the same earnings again. Land the two facts needed
+        // to reconcile (completed + transfer id) with a minimal raw write.
+        console.error(
+            `[recordAgentPayout] CRITICAL: Stripe transfer ${transfer.id} succeeded but wallet credit ${credit.id} ` +
+                `could not be completed (agentUserId=${agentUserId}, amount=${parsedAmount}). ` +
+                `Attempting raw-SQL fallback. ${error?.message || error}`
         );
-        return wallet.create(completedPair.debit, { transaction });
-    });
+        try {
+            await sequelize.query(
+                "UPDATE wallets SET status = :status, stripeTransferId = :stripeTransferId WHERE id = :id",
+                {
+                    replacements: {
+                        status: "completed",
+                        stripeTransferId: transfer.id,
+                        id: credit.id,
+                    },
+                }
+            );
+        } catch (fallbackError) {
+            console.error(
+                `[recordAgentPayout] CRITICAL: raw-SQL fallback also failed for wallet credit ${credit.id} ` +
+                    `(Stripe transfer ${transfer.id} already succeeded — money moved, ledger does not reflect it). ` +
+                    `Manual reconciliation required. ${fallbackError?.message || fallbackError}`
+            );
+            throw error;
+        }
+        // The paired debit keeps the released amount out of the agent's
+        // withdrawable balance. Without it the wallet would offer these same
+        // earnings for withdrawal again, so treat its absence as an error too.
+        try {
+            debit = await wallet.create(completedPair.debit);
+        } catch (debitError) {
+            console.error(
+                `[recordAgentPayout] CRITICAL: credit ${credit.id} recorded as completed for Stripe transfer ${transfer.id}, ` +
+                    `but the paired withdrawal debit could not be created — the agent wallet will show this amount as ` +
+                    `withdrawable until reconciled. ${debitError?.message || debitError}`
+            );
+            throw error;
+        }
+    }
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
 
@@ -447,13 +657,13 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
 
     const emptyPage = { page: 1, limit: 20, total: 0, totalPages: 0, hasNextPage: false, hasPrevPage: false };
 
-    const [agentUser, businessInfo, summary, ledger, orders, recentActivity, earningsReport] = await Promise.all([
+    const [agentUser, businessInfo, summary, ledger, orders, recentActivity, earningsReport, remittanceHistory] = await Promise.all([
         users.findByPk(agentUserId, {
             attributes: ["id", "firstName", "lastName", "email", "phoneNum", "status", "createdAt"],
         }),
         bussinessInformation.findOne({
             where: { shopAddressId: shop.id },
-            attributes: ["shopName", "connectAccountId", "isConnectAccountConnected"],
+            attributes: ["id", "shopName", "connectAccountId", "isConnectAccountConnected"],
         }),
         agentWalletService.getWalletSummary(agentUserId),
         agentWalletService.listAdminSettlementLedger(agentUserId, {
@@ -480,11 +690,16 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
             console.warn(`[settlement-detail] earnings report skipped for shop ${shop.id}:`, err.message);
             return { ...emptySettlementReport(), loadError: err.message };
         }),
+        listAgentRemittances(agentUserId, { page: 1, limit: 50 }).catch((err) => {
+            console.warn(`[settlement-detail] remittances skipped for ${agentUserId}:`, err.message);
+            return { remittances: [], pagination: emptyPage };
+        }),
     ]);
 
     return {
         identity: {
-            shopId: shop.id,
+            shopId: businessInfo?.id || shop.id,
+            shopAddressId: shop.id,
             ownerUserId: agentUser?.id || agentUserId,
         },
         agent: {
@@ -513,6 +728,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         orders: orders.orders,
         ordersPagination: orders.pagination,
         earningsReport,
+        remittances: remittanceHistory.remittances || [],
         recentActivity,
         formulas: {
             cashDue:
@@ -535,11 +751,15 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
     };
 }
 
+/**
+ * Shops/agents with settlement activity, for the admin cash-due tab.
+ *
+ * Shared list contract (utils/listQuery, applied in memory after the wallet
+ * summaries are built): search (shop name, owner name, email, phone, address),
+ * sortBy (cashDueToPlatform default | shopName | agentName) / sortDir,
+ * page / limit (default 20), export=1 → whole filtered set (capped).
+ */
 async function listAgentsWithCashDue(options = {}) {
-    const page = Math.max(parseInt(options.page, 10) || 1, 1);
-    const limit = Math.min(Math.max(parseInt(options.limit, 10) || 20, 1), 100);
-    const offset = (page - 1) * limit;
-
     try {
         await agentWalletService.backfillMissingCashLedger({ limit: 200 });
     } catch (err) {
@@ -558,12 +778,12 @@ async function listAgentsWithCashDue(options = {}) {
         include: [
             {
                 model: users,
-                attributes: ["id", "firstName", "lastName", "email"],
+                attributes: ["id", "firstName", "lastName", "email", "phoneNum", "countryCode"],
                 required: false,
             },
             {
                 model: bussinessInformation,
-                attributes: ["shopName"],
+                attributes: ["id", "shopName"],
                 required: false,
             },
         ],
@@ -576,18 +796,20 @@ async function listAgentsWithCashDue(options = {}) {
             const summary = await agentWalletService.getWalletSummary(shop.userId);
             if (agentWalletService.hasSettlementActivity(summary)) {
                 const businessRows = shop.bussinessInformations || shop.bussinessInformation;
-                const shopName = Array.isArray(businessRows)
-                    ? businessRows[0]?.shopName
-                    : businessRows?.shopName;
+                const businessRow = Array.isArray(businessRows) ? businessRows[0] : businessRows;
+                const shopName = businessRow?.shopName;
                 summaries.push({
                     agentUserId: shop.userId,
-                    shopId: shop.id,
+                    shopId: businessRow?.id || shop.id,
+                    shopAddressId: shop.id,
                     shopName: shopName || null,
                     shopAddress: shop.streetAddress,
                     agentName: shop.user
                         ? `${shop.user.firstName || ""} ${shop.user.lastName || ""}`.trim()
                         : null,
                     agentEmail: shop.user?.email || null,
+                    agentPhone: shop.user?.phoneNum || null,
+                    agentCountryCode: shop.user?.countryCode || null,
                     ...summary,
                 });
             }
@@ -600,20 +822,35 @@ async function listAgentsWithCashDue(options = {}) {
     }
 
     summaries.sort((a, b) => b.cashDueToPlatform - a.cashDueToPlatform);
-    const total = summaries.length;
-    const paged = summaries.slice(offset, offset + limit);
-    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+    const listed = applyCashDueListQuery(summaries, options);
+
+    // Totals over the WHOLE filtered set (search applied), independent of the
+    // page window, so the admin summary cards never reflect just one page.
+    const matched = applyCashDueListQuery(summaries, { ...options, export: '1', page: undefined, limit: undefined }).rows;
+    const sum = (key) =>
+        Math.round(matched.reduce((acc, row) => acc + (Number(row[key]) || 0), 0) * 100) / 100;
+    const summary = {
+        shops: matched.length,
+        totalCashDue: sum('cashDueToPlatform'),
+        totalPending: sum('pendingCashRemittance'),
+        totalPayable: sum('platformOwesAgent'),
+        totalRemitted: sum('totalCashRemitted'),
+        totalReleased: sum('totalAgentPayouts'),
+        totalCollected: sum('totalCashCollected'),
+    };
 
     return {
-        agents: paged,
+        agents: listed.rows,
+        summary,
         pagination: {
-            page,
-            limit,
-            total,
-            totalPages,
-            hasNextPage: page < totalPages,
-            hasPrevPage: page > 1,
+            // legacy keys
+            page: listed.pagination.currentPage,
+            limit: listed.pagination.recordsPerPage,
+            total: listed.pagination.totalRecords,
+            // standard list contract (utils/listQuery)
+            ...listed.pagination,
         },
+        search: listed.search,
     };
 }
 
@@ -623,6 +860,7 @@ async function syncAgentWalletsFromBookings(options = {}) {
 
 module.exports = {
     submitCashRemittance,
+    listAgentRemittances,
     listPendingRemittances,
     confirmCashRemittance,
     rejectCashRemittance,

@@ -108,6 +108,7 @@ const supportContactService = require('../../services/Admin/supportContactServic
 const platformOperationalHoursService = require('../../services/Admin/platformOperationalHoursService');
 const adminBookingAssignService = require('../../services/Admin/adminBookingAssignService');
 const repairCatalogService = require('../../services/Admin/repairCatalogService');
+const zoneCatalogService = require('../../services/Admin/zoneCatalogService');
 const userBlockService = require('../../services/Admin/userBlockService');
 const shopAssignmentPolicyService = require('../../services/Admin/shopAssignmentPolicyService');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
@@ -115,6 +116,7 @@ const accountDeletionReasonService = require('../../services/Admin/accountDeleti
 const customerOrderService = require('../../services/Customer/customerOrderService');
 const { zoneIdFromRequest } = require('../../utils/adminZoneScope');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
+const { isExportRequest } = require('../../utils/listQuery');
 
 //!----------------------------------Admin Dashboard-----------------------------------------//
 async function adminDashboard(req, res) {
@@ -142,14 +144,9 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-            const { startPage = 1, endPage = 10, offset = 0 } = req.query;
-            // Convert query parameters to numbers
-            const startPageNum = parseInt(startPage);
-            const endPageNum = parseInt(endPage);
-            const offsetNum = parseInt(offset);
-            
-            const result = await customerService.getAllCustomers(startPageNum, endPageNum, offsetNum);
-            return ResponseHelper.success(res, "All Customer Details", result);
+    // search / status / startDate / endDate / sortBy / sortDir / page / limit / export
+    const result = await customerService.getAllCustomers(req.query);
+    return ResponseHelper.success(res, "All Customer Details", result);
 }
 
 /*
@@ -260,7 +257,9 @@ async function countTotalDrivers(req, res) {
  *  All Drivers Detail 
 */
 async function allDriverMiniDetails(req, res) {
-        const driversWithBookingCounts = await driverService.getAllDriversWithStats();
+        // ?includeInactive=1 → directory view (blocked drivers included, with status)
+        const includeInactive = ['1', 'true'].includes(String(req.query.includeInactive || '').toLowerCase());
+        const driversWithBookingCounts = await driverService.getAllDriversWithStats({ includeInactive });
         return ResponseHelper.success(res, "Drivers Details fetched", driversWithBookingCounts);
 }
 
@@ -400,6 +399,8 @@ function buildOrderListFilters(req) {
     if (req.query.includeCounts != null) filters.includeCounts = req.query.includeCounts;
     if (req.query.sortBy) filters.sortBy = String(req.query.sortBy).trim();
     if (req.query.sortDir) filters.sortDir = String(req.query.sortDir).trim();
+    // ?export=1 → whole filtered set in one window (capped) for CSV download.
+    if (isExportRequest(req.query)) filters.exportMode = true;
     return filters;
 }
 
@@ -575,7 +576,9 @@ async function addServiceItems(req, res) {
 */
 async function getAdminEmployess(req, res) {
 
-    const adminEmployees = await employeeManagementService.getAdminEmployees();
+    // ?includeInactive=1 → directory view (deactivated staff included, with status)
+    const includeInactive = ['1', 'true'].includes(String(req.query.includeInactive || '').toLowerCase());
+    const adminEmployees = await employeeManagementService.getAdminEmployees({ includeInactive });
 
     return ResponseHelper.success(res, "Admin Employees", adminEmployees);
 
@@ -1097,6 +1100,8 @@ function buildShopListFilters(req) {
     if (req.query.search) filters.search = String(req.query.search).trim();
     if (req.query.page) filters.page = req.query.page;
     if (req.query.limit) filters.limit = req.query.limit;
+    // ?export=1 → whole filtered set in one window (capped) for CSV download.
+    if (isExportRequest(req.query)) filters.exportMode = true;
     return filters;
 }
 
@@ -1115,6 +1120,16 @@ async function singleShopData(req, res) {
         const shopData = await shopManagementService.getSingleShopData(Id);
         return ResponseHelper.success(res, "Single Shop Data", shopData);
 
+}
+
+/*
+ * Update a shop's profile + settings from the admin shop-detail Settings tab.
+ * PATCH /admin/updateLaundryShop/:id
+ */
+async function updateLaundryShop(req, res) {
+    const { id } = req.params;
+    const shopData = await shopManagementService.updateLaundryShop(id, req.body || {});
+    return ResponseHelper.success(res, "Shop updated successfully", shopData);
 }
 
 /*
@@ -1174,14 +1189,25 @@ async function getCancellationPolicyByIdController(req, res) {
 /*
  * Get All Cancellation Policies
  */
-async function getAllCancellationPoliciesController(req, res) {
-    const filters = {
+/**
+ * Shared filters for the policy lists (cancellation / no-show / reschedule).
+ * Query: isActive, isDefault, zoneId, search, page, limit, export=1.
+ */
+function buildPolicyListFilters(req) {
+    return {
         isActive: req.query.isActive,
         isDefault: req.query.isDefault,
         zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
+        search: req.query.search,
         page: clampPage(req.query.page),
-        limit: clampListLimit(req.query.limit, 10)
+        limit: clampListLimit(req.query.limit, 10),
+        // ?export=1 → whole filtered set in one window (capped) for CSV download.
+        exportMode: isExportRequest(req.query),
     };
+}
+
+async function getAllCancellationPoliciesController(req, res) {
+    const filters = buildPolicyListFilters(req);
     const result = await cancellationPolicyServiceImport.getAllCancellationPolicies(filters);
     return ResponseHelper.success(res, "All cancellation policies", result);
 }
@@ -1272,13 +1298,7 @@ async function getNoShowPolicyByIdController(req, res) {
  * Get All No-Show Policies
  */
 async function getAllNoShowPoliciesController(req, res) {
-    const filters = {
-        isActive: req.query.isActive,
-        isDefault: req.query.isDefault,
-        zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
-        page: clampPage(req.query.page),
-        limit: clampListLimit(req.query.limit, 10)
-    };
+    const filters = buildPolicyListFilters(req);
     const result = await noShowPolicyService.getAllNoShowPolicies(filters);
     return ResponseHelper.success(res, "All no-show policies", result);
 }
@@ -1369,13 +1389,7 @@ async function getReschedulePolicyByIdController(req, res) {
  * Get All Reschedule Policies
  */
 async function getAllReschedulePoliciesController(req, res) {
-    const filters = {
-        isActive: req.query.isActive,
-        isDefault: req.query.isDefault,
-        zoneId: req.query.zoneId ? parseInt(req.query.zoneId) : undefined,
-        page: clampPage(req.query.page),
-        limit: clampListLimit(req.query.limit, 10)
-    };
+    const filters = buildPolicyListFilters(req);
     const result = await reschedulePolicyService.getAllReschedulePolicies(filters);
     return ResponseHelper.success(res, "All reschedule policies", result);
 }
@@ -2404,6 +2418,22 @@ async function getPreferenceTypes(req, res) {
 async function servicesAndPreferencesData(req,res) {
     const {serviceId}=req.params
     const getData=await serviceManagementService.getAllPreferenceTypesAndServiceDetails(serviceId)
+    const catalogZoneId = await zoneCatalogService.resolveCatalogZoneId(req.query || {});
+    if (catalogZoneId) {
+        getData.serviceCategoriesData =
+            await zoneCatalogService.applyToServiceCategoriesData(
+                getData.serviceCategoriesData,
+                catalogZoneId,
+                serviceId
+            );
+        getData.preferencesData =
+            await zoneCatalogService.applyToServicePreferencesData(
+                getData.preferencesData,
+                catalogZoneId,
+                serviceId,
+                { includeDisabled: false }
+            );
+    }
     return ResponseHelper.success(res,"All Preferences and Services Data Fetched",getData)
     
 }
@@ -3101,6 +3131,7 @@ module.exports = {
     getShopInformation,
     shopsData,
     singleShopData,
+    updateLaundryShop,
     deleteShop,
     getShopEmployees,
     getAllEmployeesWithShopInfo,

@@ -53,6 +53,35 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true
     },
+    // Shop-profile / settings fields edited from the admin Settings tab.
+    website: {
+      type: DataTypes.STRING(255),
+      allowNull: true
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    adminNotes: {
+      type: DataTypes.STRING(1000),
+      allowNull: true
+    },
+    collectionMethod: {
+      type: DataTypes.STRING(64),
+      allowNull: true
+    },
+    deliveryMethod: {
+      type: DataTypes.STRING(64),
+      allowNull: true
+    },
+    leadTimeHours: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    maxActiveOrders: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
   }, {
     sequelize,
     modelName: 'bussinessInformation',

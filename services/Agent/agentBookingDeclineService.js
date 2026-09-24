@@ -52,7 +52,49 @@ class AgentBookingDeclineService {
         await bookingAgentDecline.destroy({ where: { bookingId } });
     }
 
-    async rejectBooking(agentUserId, bookingId) {
+    /**
+     * Declines for one booking with the agent identity + reason, newest first.
+     * Used by the admin order view so admins can see why shops declined.
+     */
+    async listDeclinesForBooking(bookingId) {
+        const { users } = require('../../models');
+        const rows = await bookingAgentDecline.findAll({
+            where: { bookingId },
+            attributes: ['id', 'agentUserId', 'reason', 'createdAt'],
+            include: [
+                {
+                    model: users,
+                    as: 'agent',
+                    attributes: ['id', 'firstName', 'lastName'],
+                    required: false,
+                },
+            ],
+            order: [['createdAt', 'DESC'], ['id', 'DESC']],
+        });
+        return rows.map((row) => {
+            const plain = row.get ? row.get({ plain: true }) : row;
+            const name = [plain.agent?.firstName, plain.agent?.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim();
+            return {
+                id: plain.id,
+                agentUserId: plain.agentUserId,
+                agentName: name || null,
+                reason: plain.reason || null,
+                createdAt: plain.createdAt,
+            };
+        });
+    }
+
+    async rejectBooking(agentUserId, bookingId, reason) {
+        const cleanReason = String(reason || '').trim();
+        if (!cleanReason) {
+            throw new ValidationError('A reason is required to decline an order');
+        }
+        if (cleanReason.length > 500) {
+            throw new ValidationError('Reason must be 500 characters or less');
+        }
         const bookingRow = await booking.findByPk(bookingId, {
             attributes: [
                 'id',
@@ -125,6 +167,10 @@ class AgentBookingDeclineService {
         });
 
         if (existing) {
+            // Keep the latest reason if the agent re-submits.
+            if (existing.reason !== cleanReason) {
+                await existing.update({ reason: cleanReason });
+            }
             return {
                 bookingId: Number(bookingId),
                 alreadyDeclined: true,
@@ -134,6 +180,7 @@ class AgentBookingDeclineService {
         await bookingAgentDecline.create({
             bookingId,
             agentUserId,
+            reason: cleanReason,
         });
 
         // If the preferred shop just declined, immediately open to all shops (Phase 2)

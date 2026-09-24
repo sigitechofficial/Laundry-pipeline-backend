@@ -125,9 +125,70 @@ class AgentRegistrationService {
             bussinessWorkingDays
         } = data;
 
-        // Validate business information
+        // ---- Validate business information (defense-in-depth) ----
+        // These mirror the ENUM columns on bussinessInformation / machineCount.
+        // The admin panel now enforces the same rules client-side, but a bad
+        // value here otherwise silently corrupts the shop (empty ENUM) or 500s.
+        const ALLOWED_PROFILE_OPTIONS = [
+            'ALL IN HOUSE- Washing, Ironing and Dry cleaning all done by us',
+            'OUTSOURCE DRY CLEANING- Washing and Drying handled in house',
+            'OUTSOURCE ALL- We are just a shop front that outsources all of the processing',
+            'Other',
+        ];
+        const ALLOWED_MACHINE_TOTALS = ['0', '1-2', '3-5', '5+'];
+        const ALLOWED_TURNAROUND = ['N/A', '24 Hours', '48 Hours', 'More Than 48 Hours'];
+
+        if (!shopName || !String(shopName).trim()) {
+            throw new ValidationError('Shop name is required');
+        }
+
+        if (
+            matchProfileOptions != null &&
+            matchProfileOptions !== '' &&
+            !ALLOWED_PROFILE_OPTIONS.includes(matchProfileOptions)
+        ) {
+            throw new ValidationError('Invalid shop profile option');
+        }
+
         if (matchProfileOptions !== 'Other' && otherText) {
             throw new ValidationError('You can Add this Field Only when Select Other Option');
+        }
+
+        if (matchProfileOptions === 'Other' && !(otherText && String(otherText).trim())) {
+            throw new ValidationError('Please describe the profile when selecting "Other"');
+        }
+
+        if (machineryCount != null && !Array.isArray(machineryCount)) {
+            throw new ValidationError('machineryCount must be an array');
+        }
+        if (Array.isArray(machineryCount)) {
+            const badMachine = machineryCount.find(
+                (m) => m && m.total != null && !ALLOWED_MACHINE_TOTALS.includes(String(m.total))
+            );
+            if (badMachine) {
+                throw new ValidationError(
+                    `Invalid machine count "${badMachine.total}" — allowed: ${ALLOWED_MACHINE_TOTALS.join(', ')}`
+                );
+            }
+        }
+
+        // serviceTimeRequired is an ENUM — a number (the admin panel's old bug)
+        // truncates and 500s. Reject a bad bucket with a clear message. Match
+        // the ENUM case-insensitively so the agent app's "24 hours" also passes.
+        if (Array.isArray(serviceTimes)) {
+            const allowedLc = ALLOWED_TURNAROUND.map((t) => t.toLowerCase());
+            const badTime = serviceTimes.find(
+                (t) =>
+                    t &&
+                    t.serviceTimeRequired != null &&
+                    t.serviceTimeRequired !== '' &&
+                    !allowedLc.includes(String(t.serviceTimeRequired).toLowerCase())
+            );
+            if (badTime) {
+                throw new ValidationError(
+                    `Invalid turnaround "${badTime.serviceTimeRequired}" — allowed: ${ALLOWED_TURNAROUND.join(', ')}`
+                );
+            }
         }
 
         // Check if user exists

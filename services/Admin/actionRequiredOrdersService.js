@@ -19,6 +19,8 @@ const {
     PICKUP_RESCHEDULE_STATUSES,
     DELIVERY_FAILED,
 } = require('../../constants/bookingStatusIds');
+const { EXPORT_MAX_ROWS, buildDateRangeWhere } = require('../../utils/listQuery');
+const { applyActionRequiredListQuery } = require('../../utils/adminListFilters');
 
 /** Slot end = date + timeTo (fallback end of day). Compared in DB local NOW(). */
 const OVERDUE_PICKUP_SQL = literal(
@@ -132,7 +134,19 @@ function mapRow(row, reasons) {
 
 /**
  * Orders that need admin attention — single feed for the Action Required tab.
- * @param {{ limit?: number, zoneId?: string|number|null, forCount?: boolean, reason?: string|null }} options
+ *
+ * Two modes:
+ *  - legacy `limit` (per-queue fetch cap, used by countActionRequiredOrders / forCount)
+ *  - `listQuery` (req.query-like: search, sortBy, sortDir, page, limit, export):
+ *    every queue is fetched up to EXPORT_MAX_ROWS, merged, then the shared
+ *    in-memory list contract is applied AFTER reason/zone/date filters and the
+ *    response carries the standard `pagination` block.
+ *
+ * @param {{
+ *   limit?: number|string|null, zoneId?: string|number|null, forCount?: boolean,
+ *   reason?: string|null, startDate?: string|null, endDate?: string|null,
+ *   listQuery?: Record<string, unknown>|null,
+ * }} options
  */
 async function listActionRequiredOrders({
     limit = null,
@@ -141,11 +155,13 @@ async function listActionRequiredOrders({
     reason = null,
     startDate = null,
     endDate = null,
+    listQuery = null,
 } = {}) {
     const reasonFilter =
         reason && String(reason).trim() && String(reason).trim() !== 'all'
             ? String(reason).trim()
             : null;
+    const paged = !forCount && listQuery && typeof listQuery === 'object';
     const limitProvided =
         limit !== undefined && limit !== null && String(limit).trim() !== '';
     const requestedLimit = limitProvided
@@ -153,29 +169,28 @@ async function listActionRequiredOrders({
         : reasonFilter
           ? 1000
           : 150;
-    const capped = forCount
-        ? Math.min(Math.max(requestedLimit || 10000, 1), 50000)
-        : reasonFilter
-          ? Math.min(Math.max(requestedLimit || 1000, 1), 2000)
-          : Math.min(Math.max(requestedLimit || 150, 1), 300);
+    // Paged mode: page/limit are a window over the merged set, so every queue is
+    // fetched up to the export ceiling and the window is applied in memory.
+    const capped = paged
+        ? EXPORT_MAX_ROWS
+        : forCount
+          ? Math.min(Math.max(requestedLimit || 10000, 1), 50000)
+          : reasonFilter
+            ? Math.min(Math.max(requestedLimit || 1000, 1), 2000)
+            : Math.min(Math.max(requestedLimit || 150, 1), 300);
     const scopedFilter = {};
     if (zoneId != null && String(zoneId).trim() !== '') {
         scopedFilter.zoneId = parseInt(zoneId, 10);
     }
-    if (startDate && endDate) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
-            end.setHours(23, 59, 59, 999);
-            scopedFilter.createdAt = { [Op.between]: [start, end] };
-        }
-    }
+    // Inclusive calendar-day range on order placed (YYYY-MM-DD or ISO); either bound optional.
+    const placedRange = buildDateRangeWhere(startDate, endDate);
+    if (placedRange) scopedFilter.createdAt = placedRange;
 
     const include = [
         {
             model: users,
             as: 'customer',
-            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
             required: false,
         },
         {
@@ -406,7 +421,19 @@ async function listActionRequiredOrders({
         ? items.filter((row) => (row.reasons || []).includes(reasonFilter))
         : items;
 
-    const resultItems = forCount ? scoped : scoped.slice(0, capped);
+    let resultItems;
+    let pagination = null;
+    let searchTerm = '';
+    if (forCount) {
+        resultItems = scoped;
+    } else if (paged) {
+        const listed = applyActionRequiredListQuery(scoped, listQuery);
+        resultItems = listed.rows;
+        pagination = listed.pagination;
+        searchTerm = listed.search;
+    } else {
+        resultItems = scoped.slice(0, capped);
+    }
     if (!forCount) {
         await attachLastStatusChanges(booking.sequelize, resultItems);
     }
@@ -421,14 +448,18 @@ async function listActionRequiredOrders({
         delivery_failed: deliveryFailed.length,
     };
 
+    const filteredCount = pagination ? pagination.totalRecords : scoped.length;
+
     return {
         items: resultItems,
-        count: scoped.length,
-        totalCount: scoped.length,
+        // count/totalCount: rows matching reason + zone + date (+ search in paged mode)
+        count: filteredCount,
+        totalCount: filteredCount,
         allReasonsCount: items.length,
         reason: reasonFilter || 'all',
         countsByReason,
         reasonMeta: REASON_META,
+        ...(pagination ? { pagination, search: searchTerm } : {}),
     };
 }
 

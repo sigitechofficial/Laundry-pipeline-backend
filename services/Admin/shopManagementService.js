@@ -1,4 +1,4 @@
-const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, units, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails, bookingRefund } = require('../../models');
+const { addressDb, bussinessInformation, bussinessWorkingHours, agentSelectServices, countries, cities, zone, units, users, roles, booking, bookingStatus, customerSelectedService, service, categories, billingDetails, bookingRefund, bookingAgentDecline } = require('../../models');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { 
@@ -8,6 +8,12 @@ const {
     UnprocessableEntityError 
 } = require('../../middlewares/universalErrorHandler');
 const { clampListLimit, UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
+const {
+    EXPORT_MAX_ROWS,
+    parseSearchTerm,
+    escapeLike,
+    buildPagination,
+} = require('../../utils/listQuery');
 // Keep the shop "pending" count in sync with the admin order sidebar / pendingOrders
 // list (services/Admin/orderService.js). Canonical exclusions: Completed, On-Hold
 // (customer + agent), Cancelled — see constants/bookingStatusIds.js.
@@ -102,10 +108,10 @@ class ShopManagementService {
             };
         }
 
-        const term = String(filters.search || '').trim();
+        const term = parseSearchTerm(filters.search);
         if (term) {
             searchActive = true;
-            const like = `%${term}%`;
+            const like = `%${escapeLike(term)}%`;
             const or = [
                 { shopName: { [Op.like]: like } },
                 { '$businessInfo.email$': { [Op.like]: like } },
@@ -127,16 +133,19 @@ class ShopManagementService {
 
     /**
      * Get all shops data with detailed information
-     * @param {Object} [filters] - zoneId, search, startDate, endDate, status, page, limit
+     * @param {Object} [filters] - zoneId, search, startDate, endDate, status, page, limit,
+     *   exportMode (export=1 → page/limit ignored, whole filtered set up to EXPORT_MAX_ROWS)
      * @returns {Object} Paginated shops + top performers
      */
     async getShopsData(filters = {}) {
+            const exportMode = filters.exportMode === true;
             // Paginate only when client asks (shops list UI). Other callers expect full list.
             const wantsPagination =
+                exportMode ||
                 Object.prototype.hasOwnProperty.call(filters, 'page') ||
                 Object.prototype.hasOwnProperty.call(filters, 'limit');
-            const page = Math.max(1, parseInt(filters.page, 10) || 1);
-            const limit = clampListLimit(filters.limit, 25, 100);
+            const page = exportMode ? 1 : Math.max(1, parseInt(filters.page, 10) || 1);
+            const limit = exportMode ? EXPORT_MAX_ROWS : clampListLimit(filters.limit, 25, 100);
             const offset = (page - 1) * limit;
 
             const {
@@ -204,6 +213,7 @@ class ShopManagementService {
                     'lastName',
                     'email',
                     'phoneNum',
+                    'countryCode',
                     'userTypeId',
                     [
                         sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
@@ -298,7 +308,7 @@ class ShopManagementService {
                         model: users,
                         as: 'businessInfo',
                         required: userRequired,
-                        attributes: ['id', 'email', 'phoneNum'],
+                        attributes: ['id', 'email', 'phoneNum', 'countryCode'],
                     },
                     topAddressInclude,
                 ],
@@ -335,18 +345,30 @@ class ShopManagementService {
                 };
             });
 
+            const effectivePage = wantsPagination ? page : 1;
+            const effectiveLimit = wantsPagination
+                ? limit
+                : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX);
+            const standardPagination = buildPagination(total, {
+                page: effectivePage,
+                limit: Math.max(1, effectiveLimit),
+                exportMode,
+            });
+
             return {
                 AllShopsData: getShopData,
                 topPerformingShops: formattedTopShops,
                 total,
-                page: wantsPagination ? page : 1,
-                limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
+                page: effectivePage,
+                limit: effectiveLimit,
                 pagination: {
+                    // legacy keys (shop list UI)
                     total,
-                    totalRecords: total,
-                    page: wantsPagination ? page : 1,
-                    limit: wantsPagination ? limit : Math.min(total, UNBOUNDED_LIST_SAFETY_MAX),
-                    totalPages: wantsPagination ? (Math.ceil(total / limit) || 1) : 1,
+                    page: effectivePage,
+                    limit: effectiveLimit,
+                    // standard list contract (utils/listQuery)
+                    ...standardPagination,
+                    totalPages: wantsPagination ? standardPagination.totalPages : 1,
                 },
             };
     }
@@ -373,6 +395,7 @@ class ShopManagementService {
                             'lastName',
                             'email',
                             'phoneNum',
+                            'countryCode',
                             'status',
                             [
                                 sequelize.literal(`(SELECT COUNT(*) FROM users WHERE users.employeeOff = businessInfo.id)`),
@@ -488,18 +511,18 @@ class ShopManagementService {
                         {
                             model: users,
                             as: 'customer',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                         },
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                             required: false
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                             required: false
                         },
                         {
@@ -518,6 +541,9 @@ class ShopManagementService {
                         },
                         {
                             model: customerSelectedService,
+                            // Active lines only; edited invoices deactivate replaced lines.
+                            required: false,
+                            where: { status: true },
                             attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
                             include: [
                                 {
@@ -582,6 +608,60 @@ class ShopManagementService {
                 });
                 result.orders = mappedOrders;
                 result.punctuality = summarizeOrderPunctuality(mappedOrders);
+
+                // Orders this shop declined, with the reason + order detail, so
+                // admin can see a per-shop decline history (not just per order).
+                try {
+                    const declineRows = await bookingAgentDecline.findAll({
+                        where: { agentUserId: result.agentId },
+                        order: [['createdAt', 'DESC'], ['id', 'DESC']],
+                        limit: 50,
+                        include: [
+                            {
+                                model: booking,
+                                required: false,
+                                attributes: [
+                                    'id',
+                                    'orderTrackId',
+                                    'collectionDate',
+                                    'deliveryDate',
+                                    'bookingStatusId',
+                                ],
+                                include: [
+                                    {
+                                        model: users,
+                                        as: 'customer',
+                                        attributes: ['id', 'firstName', 'lastName'],
+                                        required: false,
+                                    },
+                                ],
+                            },
+                        ],
+                    });
+                    result.declines = declineRows.map((row) => {
+                        const p = typeof row.get === 'function' ? row.get({ plain: true }) : row;
+                        const b = p.booking || {};
+                        const c = b.customer || {};
+                        return {
+                            id: p.id,
+                            reason: p.reason || null,
+                            createdAt: p.createdAt,
+                            bookingId: p.bookingId,
+                            orderTrackId: b.orderTrackId || null,
+                            collectionDate: b.collectionDate || null,
+                            deliveryDate: b.deliveryDate || null,
+                            bookingStatusId: b.bookingStatusId || null,
+                            customerName:
+                                [c.firstName, c.lastName].filter(Boolean).join(' ') || null,
+                        };
+                    });
+                } catch (declineErr) {
+                    console.warn(
+                        '[getSingleShopData] declines skipped:',
+                        declineErr.message
+                    );
+                    result.declines = [];
+                }
             }
 
             return result;
@@ -800,6 +880,99 @@ class ShopManagementService {
             shopId,
             message: 'Shop, user, and address deleted successfully'
         };
+    }
+
+    /**
+     * Update a shop's profile + settings from the admin shop-detail Settings
+     * tab. `shopId` is the bussinessInformation id (falls back to owner user id
+     * / shop address id, same resolution as getSingleShopData).
+     *
+     * Persists only fields with real columns: shopName / website / description /
+     * adminNotes / collectionMethod / deliveryMethod / leadTimeHours /
+     * maxActiveOrders (bussinessInformation), email / phoneNum (owner user), and
+     * streetAddress (shop address). Empty/undefined fields are left unchanged.
+     */
+    async updateLaundryShop(shopId, body = {}) {
+        const id = parseInt(shopId, 10);
+        if (!Number.isFinite(id) || id <= 0) {
+            throw new NotFoundError('Shop not found');
+        }
+
+        // Resolve the business row (same 3-key order as getSingleShopData).
+        const bizAttrs = ['id', 'agentId', 'shopAddressId'];
+        let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+        if (!biz) biz = await bussinessInformation.findOne({ where: { agentId: id }, attributes: bizAttrs });
+        if (!biz) biz = await bussinessInformation.findOne({ where: { shopAddressId: id }, attributes: bizAttrs });
+        if (!biz) throw new NotFoundError('Shop not found');
+
+        const ownerUserId = biz.agentId;
+
+        // ---- bussinessInformation columns ----
+        const bizUpdate = {};
+        const setIf = (key, value) => {
+            if (value !== undefined) bizUpdate[key] = value;
+        };
+        if (body.shopName != null && String(body.shopName).trim()) {
+            bizUpdate.shopName = String(body.shopName).trim();
+        }
+        setIf('website', body.website != null ? String(body.website).trim() || null : undefined);
+        setIf('description', body.description != null ? String(body.description).trim() || null : undefined);
+        setIf('adminNotes', body.adminNotes != null ? String(body.adminNotes).trim() || null : undefined);
+        setIf('collectionMethod', body.collectionMethod != null ? String(body.collectionMethod).trim() || null : undefined);
+        setIf('deliveryMethod', body.deliveryMethod != null ? String(body.deliveryMethod).trim() || null : undefined);
+        if (body.leadTimeHours !== undefined && body.leadTimeHours !== '' && body.leadTimeHours !== null) {
+            const n = Number(body.leadTimeHours);
+            if (Number.isFinite(n) && n >= 0) bizUpdate.leadTimeHours = Math.round(n);
+        }
+        if (body.maxActiveOrders !== undefined && body.maxActiveOrders !== '' && body.maxActiveOrders !== null) {
+            const n = Number(body.maxActiveOrders);
+            if (Number.isFinite(n) && n >= 0) bizUpdate.maxActiveOrders = Math.round(n);
+        }
+        if (Object.keys(bizUpdate).length > 0) {
+            await bussinessInformation.update(bizUpdate, { where: { id: biz.id } });
+        }
+
+        // ---- owner user (email / phone) ----
+        if (ownerUserId) {
+            const userUpdate = {};
+            if (body.email != null && String(body.email).trim()) {
+                const email = String(body.email).trim();
+                // Guard the unique-email constraint with a friendly error.
+                const clash = await users.findOne({
+                    where: { email, id: { [Op.ne]: ownerUserId } },
+                    attributes: ['id'],
+                });
+                if (clash) {
+                    throw new ConflictError('That email is already used by another account');
+                }
+                userUpdate.email = email;
+            }
+            if (body.phone != null && String(body.phone).trim()) {
+                userUpdate.phoneNum = String(body.phone).replace(/[^\d]/g, '') || String(body.phone).trim();
+            }
+            if (body.countryCode != null && String(body.countryCode).trim()) {
+                userUpdate.countryCode = String(body.countryCode).trim();
+            }
+            if (Object.keys(userUpdate).length > 0) {
+                await users.update(userUpdate, { where: { id: ownerUserId } });
+            }
+        }
+
+        // ---- shop address (street address only; structured parts stay put) ----
+        if (body.address != null && String(body.address).trim()) {
+            const addr = await addressDb.findOne({
+                where: { userId: ownerUserId, addressType: 'LaundaryShopAddress' },
+                attributes: ['id'],
+            });
+            if (addr) {
+                await addressDb.update(
+                    { streetAddress: String(body.address).trim() },
+                    { where: { id: addr.id } }
+                );
+            }
+        }
+
+        return this.getSingleShopData(biz.id);
     }
 }
 

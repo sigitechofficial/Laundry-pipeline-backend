@@ -91,6 +91,12 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 30,
       comment: 'Driver late SLA in minutes - auto-waive if exceeded'
     },
+    waiveFeeIfDriverLate: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true,
+      comment: 'When ON, waive the customer no-show/reschedule penalty if the driver arrives after the scheduled window (beyond driverLateSLA grace)'
+    },
     arrivalRadiusMeters: {
       type: DataTypes.INTEGER,
       allowNull: true,

@@ -24,6 +24,7 @@ const {
     countries,
     users,
     bookingAssignmentEvent,
+    bookingPaymentMethodEvent,
     bookingAttempt,
     attemptFailReason,
     bookingHistory,
@@ -46,11 +47,13 @@ const {
     buildOrderListSequelizeOrder,
 } = require('../../utils/orderListSort');
 const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
+const { EXPORT_MAX_ROWS } = require('../../utils/listQuery');
 const {
     serviceLineHasAddOnPayload,
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const zoneCatalogService = require('./zoneCatalogService');
 const { attachCommercialTerms } = require('../../utils/bookingRateSnapshot');
 const {
     resolveAgentCommissionBase,
@@ -185,6 +188,11 @@ class OrderService {
         const includes = [
             {
                 model: customerSelectedService,
+                // Only active lines — an edited invoice deactivates replaced lines
+                // (status:false); including them inflates the Items badge and
+                // shows stale services in the list.
+                required: false,
+                where: { status: true },
                 attributes: ['id', 'serviceId', 'items'],
                 include: [
                     {
@@ -236,7 +244,7 @@ class OrderService {
             includes.push({
                 model: users,
                 as: 'customer',
-                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum'],
+                attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                 required: false,
             });
         }
@@ -451,9 +459,16 @@ class OrderService {
      * @returns {Object} Bookings with pagination info
      */
     async getOptimizedBookings(whereClause, page = 1, limit = 50, filters = {}) {
-        page = clampPage(page);
-        // Keep caller defaults (All Orders 20, this helper 50). Cap abuse only.
-        limit = clampListLimit(limit, limit || 20, DEFAULT_MAX_LIST_LIMIT);
+        const exportMode = typeof filters === 'object' && filters !== null && filters.exportMode === true;
+        if (exportMode) {
+            // CSV export: one window over the whole filtered set (capped).
+            page = 1;
+            limit = EXPORT_MAX_ROWS;
+        } else {
+            page = clampPage(page);
+            // Keep caller defaults (All Orders 20, this helper 50). Cap abuse only.
+            limit = clampListLimit(limit, limit || 20, DEFAULT_MAX_LIST_LIMIT);
+        }
         const search = typeof filters === 'string' ? filters : filters.search;
         const sortBy = typeof filters === 'string' ? undefined : filters.sortBy;
         const sortDir = typeof filters === 'string' ? undefined : filters.sortDir;
@@ -540,7 +555,9 @@ class OrderService {
                 totalRecords: totalCount,
                 recordsPerPage: limit,
                 hasNextPage: hasNextPage,
-                hasPrevPage: hasPrevPage
+                hasPrevPage: hasPrevPage,
+                exportMode,
+                truncated: exportMode && totalCount > limit,
             }
         };
     }
@@ -823,7 +840,14 @@ class OrderService {
                         {
                             model: bussinessInformation,
                             required: false,
-                            attributes: ['id', 'shopName', 'agentId', 'shopAddressId'],
+                            attributes: [
+                                'id',
+                                'shopName',
+                                'agentId',
+                                'shopAddressId',
+                                'matchProfileOptions',
+                                'isConnectAccountConnected',
+                            ],
                             include: [
                                 {
                                     // Shop owner/agent contact info — powers the
@@ -831,7 +855,16 @@ class OrderService {
                                     model: users,
                                     as: 'businessInfo',
                                     required: false,
-                                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
+                                    attributes: [
+                                        'id',
+                                        'firstName',
+                                        'lastName',
+                                        'email',
+                                        'phoneNum',
+                                        'countryCode',
+                                        'status',
+                                        'agentApprovalStatus',
+                                    ],
                                 },
                             ],
                         }
@@ -859,7 +892,7 @@ class OrderService {
                 {
                     model: users,
                     as: 'customer',
-                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                 },
                 {
                     model: users,
@@ -956,11 +989,22 @@ class OrderService {
         }
 
         const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
+        let agentDeclines = [];
+        try {
+            const agentBookingDeclineService = require('../Agent/agentBookingDeclineService');
+            agentDeclines = await agentBookingDeclineService.listDeclinesForBooking(orderId);
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] agent declines unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,
             countryCtx.ianaTimeZone,
-            0
+            agentDeclines.length
         );
+        enriched.agentDeclines = agentDeclines;
 
         try {
             enriched.paymentSummary =
@@ -1007,6 +1051,31 @@ class OrderService {
                 err?.message || err
             );
             enriched.assignmentEvents = [];
+        }
+
+        try {
+            const pmEvents = await bookingPaymentMethodEvent.findAll({
+                where: { bookingId: orderId },
+                order: [['createdAt', 'DESC'], ['id', 'DESC']],
+                limit: 50,
+                include: [
+                    {
+                        model: users,
+                        as: 'actedByUser',
+                        attributes: ['id', 'firstName', 'lastName'],
+                        required: false,
+                    },
+                ],
+            });
+            enriched.paymentMethodEvents = pmEvents.map((ev) =>
+                ev.get ? ev.get({ plain: true }) : ev
+            );
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] paymentMethodEvents unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.paymentMethodEvents = [];
         }
 
         try {
@@ -1153,6 +1222,51 @@ class OrderService {
             };
         }
 
+        // Returning-customer signal: how many OTHER COMPLETED orders (real
+        // repeat business) and how many TOTAL orders (any status) this
+        // customer has placed at the SAME shop (booking.laundryShopId =
+        // shop addressDb.id). Helps admin spot a repeat customer at a glance.
+        enriched.customerOrdersAtShop = 0;
+        enriched.customerTotalOrdersAtShop = 0;
+        enriched.isReturningCustomerAtShop = false;
+        enriched.customerShopHistory = [];
+        try {
+            if (plain.customerId && plain.laundryShopId) {
+                const [priorAtShop, totalAtShop] = await Promise.all([
+                    booking.count({
+                        where: {
+                            customerId: plain.customerId,
+                            laundryShopId: plain.laundryShopId,
+                            bookingStatusId: COMPLETED,
+                            id: { [Op.ne]: orderId },
+                        },
+                    }),
+                    booking.count({
+                        where: {
+                            customerId: plain.customerId,
+                            laundryShopId: plain.laundryShopId,
+                            id: { [Op.ne]: orderId },
+                        },
+                    }),
+                ]);
+                enriched.customerOrdersAtShop = priorAtShop;
+                enriched.customerTotalOrdersAtShop = totalAtShop;
+                enriched.isReturningCustomerAtShop = priorAtShop > 0;
+            }
+            if (plain.customerId) {
+                enriched.customerShopHistory =
+                    await adminBookingAssignService.getCustomerShopHistory(
+                        plain.customerId,
+                        orderId
+                    );
+            }
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] returning-customer count unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+        }
+
         return enriched;
     }
 
@@ -1172,7 +1286,6 @@ class OrderService {
         }
 
         const serviceManagementService = require('./serviceManagementService');
-        const zoneCatalogService = require('./zoneCatalogService');
         const allServices = await service.findAll({
             where: { status: true },
             attributes: ['id', 'name', 'status', 'image', 'description', 'timeRequired'],
@@ -1667,6 +1780,9 @@ class OrderService {
             const serviceIds = services
                 ? services.map((s) => s.serviceId)
                 : existingOrder.customerSelectedServices.map((s) => s.serviceId);
+            const scopedServiceIds = serviceIds
+                .map((id) => Number(id))
+                .filter((id) => Number.isFinite(id) && id > 0);
 
             const bookingPreferencesToCreate = [];
 
@@ -1693,10 +1809,14 @@ class OrderService {
                             `Preference type ${preferenceTypeId} is not available for service ${serviceId}`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(existingOrder.zoneId, {
+                        serviceId,
+                        preferenceTypeId,
+                    });
                 } else {
                     const servicePreferenceExists = await serviceWithPreferences.findOne({
                         where: {
-                            serviceId: { [Op.in]: serviceIds },
+                            serviceId: { [Op.in]: scopedServiceIds },
                             preferenceTypeId: preferenceTypeId,
                             status: true
                         }
@@ -1707,6 +1827,10 @@ class OrderService {
                             `Preference type ${preferenceTypeId} is not available for any selected services`
                         );
                     }
+                    await zoneCatalogService.assertPreferenceEnabled(existingOrder.zoneId, {
+                        preferenceTypeId,
+                        serviceIds: scopedServiceIds,
+                    });
                 }
 
                 const preferenceValue = await preferenceValues.findOne({
@@ -1787,7 +1911,7 @@ class OrderService {
                 {
                     model: users,
                     as: 'customer',
-                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum']
+                    attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode']
                 },
                 {
                     model: users,

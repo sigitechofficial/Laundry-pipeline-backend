@@ -54,4 +54,21 @@ assert.strictEqual(mapped.mixed.orders, 1);
 assert.strictEqual(mapped.card.customers, 4);
 assert.deepStrictEqual(emptySettlementReport().card.orders, 0);
 
+const reconciled = mapSettlementReport({
+  ordersPaid: 2,
+  customers: 2,
+  laundry: 279,
+  serviceFee: 80,
+  discount: 15,
+  refunded: 10,
+  orderTotal: 359,
+  bookingTips: 0,
+  paidAtBooking: 0,
+  rescheduleCharges: 0,
+});
+assert.strictEqual(reconciled.orderTotal, 359);
+assert.strictEqual(reconciled.refunded, 10);
+assert.strictEqual(reconciled.customersPaidNet, 334);
+assert.strictEqual(emptySettlementReport().customersPaidNet, 0);
+
 console.log("shopSettlementReportMap tests passed");

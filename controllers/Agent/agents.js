@@ -191,6 +191,10 @@ const {
     buildCollectPaymentFlags,
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
+const {
+    countActiveAssignedOrders,
+    listActiveAssignedOrders,
+} = require("../../utils/agentActiveOrders");
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const {
     getCustomerDeclaredServices,
@@ -894,6 +898,13 @@ exports.getBookingHome = async (req, res) => {
         twentyFourHoursAgo.toISOString()
     );
 
+    // Orders the agent has accepted and must still finish (or have admin
+    // reassign) before they can close the shop / log out.
+    const activeAssignedOrders = await countActiveAssignedOrders(
+        agentId,
+        userData.addressDb.id
+    );
+
     if (!agentShopOpen) {
         return ResponseHelper.success(res, "Agent Orders fetched", {
             bookingData: [],
@@ -903,6 +914,7 @@ exports.getBookingHome = async (req, res) => {
             zoneShopsOpen: false,
             platformOpenNow,
             afterHoursMode: !platformOpenNow,
+            activeAssignedOrders,
         });
     }
 
@@ -927,8 +939,27 @@ exports.getBookingHome = async (req, res) => {
         zoneShopsOpen,
         platformOpenNow,
         afterHoursMode: !platformOpenNow,
+        activeAssignedOrders,
     });
 }
+
+/**
+ * GET /agent/activeOrdersCount
+ * Authoritative count (+ short list) of orders the agent has accepted and
+ * still owns. The app calls this before closing the shop or logging out so it
+ * can block the action while work is outstanding (unless admin reassigns).
+ */
+exports.getActiveAssignedOrders = async (req, res) => {
+    const agentId = shopAgentIdFromReq(req);
+    const [count, orders] = await Promise.all([
+        countActiveAssignedOrders(agentId),
+        listActiveAssignedOrders(agentId),
+    ]);
+    return ResponseHelper.success(res, "Active assigned orders", {
+        count,
+        orders,
+    });
+};
 
 exports.agentRejectOrder = async (req, res) => {
     if (!actorCanAcceptOrders(req)) {
@@ -937,13 +968,16 @@ exports.agentRejectOrder = async (req, res) => {
         );
     }
     const agentId = shopAgentIdFromReq(req);
-    const { bookingId } = req.body;
+    const { bookingId, reason } = req.body;
 
     if (!bookingId) {
         throw new ValidationError('bookingId is required');
     }
+    if (!String(reason || '').trim()) {
+        throw new ValidationError('A reason is required to decline an order');
+    }
 
-    const result = await agentBookingDeclineService.rejectBooking(agentId, bookingId);
+    const result = await agentBookingDeclineService.rejectBooking(agentId, bookingId, reason);
 
     const message = result.alreadyDeclined
         ? 'Booking already declined'
@@ -3770,20 +3804,11 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         );
     }
 
-    let recurringResult = null;
-    try {
-        const recurringBookingService = require("../../services/Customer/recurringBookingService");
-        recurringResult = await recurringBookingService.generateNextBookingFromCompleted({
-            bookingId: Number(bookingId),
-            actorUserId: actorId,
-            timeZone: req.body?.timeZone || null,
-        });
-    } catch (err) {
-        console.error(
-            `[bookingDeliverToCustomer] recurring generation failed for ${bookingId}:`,
-            err?.message || err
-        );
-    }
+    // NOTE: recurring orders are NOT generated on completion any more. The next
+    // cycle is created by the time-based scheduler (recurringGenerationJob) when
+    // its scheduled nextRunAt arrives — i.e. one frequency interval after the
+    // order was placed, not immediately after delivery. See recurringBookingService.
+    const recurringResult = null;
 
     return ResponseHelper.success(res, "Laundry Delivered to customer sucessfully", {
         bookingId: Number(bookingId),
@@ -6763,6 +6788,16 @@ exports.submitCashRemittance = async (req, res) => {
         note,
     });
     return ResponseHelper.success(res, "Cash remittance submitted", data);
+};
+
+// GET /agent/cash-remittances — the agent's own remittance history (all statuses).
+exports.listMyCashRemittances = async (req, res) => {
+    const agentId = req.user.id;
+    const data = await agentSettlementService.listAgentRemittances(agentId, {
+        page: req.query.page,
+        limit: req.query.limit,
+    });
+    return ResponseHelper.success(res, "Cash remittances", data);
 };
 
 

@@ -1,6 +1,8 @@
 const { policy, noShowPolicyConfig, zone } = require('../../models');
 const { NotFoundError, ConflictError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { Op } = require('sequelize');
+const { resolveListWindow, andWhere, buildPagination } = require('../../utils/listQuery');
+const { buildPolicySearchWhere, POLICY_LIST_DEFAULT_LIMIT } = require('../../utils/adminListFilters');
 
 /**
  * No-Show Policy Management Service
@@ -178,6 +180,8 @@ class NoShowPolicyService {
      * Get All No-Show Policies with Filters.
      * Pass `status: 'active_now'` to return only currently-effective policies.
      * Pass `zoneId` to scope results to a specific zone.
+     * `search` matches name / description / zone name (numeric → id).
+     * `exportMode` (export=1) ignores page/limit and returns the whole filtered set (capped).
      */
     async getAllNoShowPolicies(filters = {}) {
         const {
@@ -185,8 +189,10 @@ class NoShowPolicyService {
             isDefault,
             status,
             zoneId,
+            search,
+            exportMode = false,
             page  = 1,
-            limit = 10
+            limit = POLICY_LIST_DEFAULT_LIMIT
         } = filters;
 
         let whereClause = { type: 'no_show' };
@@ -198,8 +204,12 @@ class NoShowPolicyService {
             if (isActive  !== undefined) whereClause.isActive  = isActive;
             if (isDefault !== undefined) whereClause.isDefault = isDefault;
         }
+        whereClause = andWhere(whereClause, buildPolicySearchWhere(search));
 
-        const offset = (page - 1) * limit;
+        const window = resolveListWindow(
+            { page, limit, export: exportMode ? '1' : undefined },
+            { defaultLimit: POLICY_LIST_DEFAULT_LIMIT }
+        );
 
         const { count, rows } = await policy.findAndCountAll({
             where: whereClause,
@@ -221,17 +231,22 @@ class NoShowPolicyService {
                 ['effectiveFrom', 'DESC'],
                 ['createdAt', 'DESC']
             ],
-            limit:  parseInt(limit),
-            offset: parseInt(offset)
+            limit:  window.limit,
+            offset: window.offset,
+            distinct: true,
         });
 
+        const pagination = buildPagination(count, window);
         return {
             policies: rows,
             pagination: {
+                // legacy keys (policy pages read total / page / limit)
                 total: count,
-                page:  parseInt(page),
-                limit: parseInt(limit),
-                pages: Math.ceil(count / limit)
+                page:  pagination.currentPage,
+                limit: pagination.recordsPerPage,
+                pages: pagination.totalPages,
+                // standard list contract (utils/listQuery)
+                ...pagination,
             }
         };
     }

@@ -8,6 +8,8 @@ const {
     sequelize,
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
+const { Op } = require("sequelize");
+const { COMPLETED } = require("../../constants/bookingStatusIds");
 const {
     isShopScheduleOpenNow,
     getWallClockContextForCountry,
@@ -118,6 +120,56 @@ class AdminBookingAssignService {
             attributes: ["id", "userId", "zoneId", "status"],
         });
 
+        // Returning-customer signal per shop: how many COMPLETED orders (real
+        // repeat business) and how many TOTAL orders (any status) this customer
+        // has placed at each candidate shop, excluding this booking. Two grouped
+        // queries up front — avoids an N+1 per-shop count in the loop.
+        const ordersAtShopMap = new Map();
+        const totalOrdersAtShopMap = new Map();
+        try {
+            const shopIds = shops.map((s) => s.id);
+            if (bookingRow.customerId && shopIds.length) {
+                const [completedGrouped, totalGrouped] = await Promise.all([
+                    booking.count({
+                        where: {
+                            customerId: bookingRow.customerId,
+                            laundryShopId: { [Op.in]: shopIds },
+                            bookingStatusId: COMPLETED,
+                            id: { [Op.ne]: bookingRow.id },
+                        },
+                        group: ["laundryShopId"],
+                    }),
+                    booking.count({
+                        where: {
+                            customerId: bookingRow.customerId,
+                            laundryShopId: { [Op.in]: shopIds },
+                            id: { [Op.ne]: bookingRow.id },
+                        },
+                        group: ["laundryShopId"],
+                    }),
+                ]);
+                (Array.isArray(completedGrouped) ? completedGrouped : []).forEach((row) => {
+                    ordersAtShopMap.set(Number(row.laundryShopId), Number(row.count) || 0);
+                });
+                (Array.isArray(totalGrouped) ? totalGrouped : []).forEach((row) => {
+                    totalOrdersAtShopMap.set(Number(row.laundryShopId), Number(row.count) || 0);
+                });
+            }
+        } catch (err) {
+            console.warn(
+                `[getAssignableShops] returning-customer counts unavailable for booking ${bookingRow.id}:`,
+                err?.message || err
+            );
+        }
+
+        // Full cross-zone order history for this customer — surfaces shops
+        // outside this booking's zone too, so the admin can see the customer's
+        // whole track record, not just what's assignable in this zone.
+        const customerShopHistory = await this.getCustomerShopHistory(
+            bookingRow.customerId,
+            bookingRow.id
+        );
+
         const shopList = [];
         for (const shop of shops) {
             if (Number(shop.zoneId) !== orderZoneId) {
@@ -139,6 +191,8 @@ class AdminBookingAssignService {
             const isCurrentShop =
                 bookingRow.laundryShopId != null &&
                 Number(bookingRow.laundryShopId) === Number(shop.id);
+            const customerOrdersAtShop = ordersAtShopMap.get(Number(shop.id)) || 0;
+            const customerTotalOrdersAtShop = totalOrdersAtShopMap.get(Number(shop.id)) || 0;
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
@@ -148,6 +202,9 @@ class AdminBookingAssignService {
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
                 isCurrentShop,
+                customerOrdersAtShop,
+                customerTotalOrdersAtShop,
+                isReturningCustomerAtShop: customerOrdersAtShop > 0,
                 todayDayOfWeek,
                 todayOpenTime: hoursRow?.openTime || null,
                 todayCloseTime: hoursRow?.closeTime || null,
@@ -155,11 +212,17 @@ class AdminBookingAssignService {
             });
         }
 
-        shopList.sort((a, b) =>
-            String(a.shopName).localeCompare(String(b.shopName), undefined, {
+        // Surface shops where this customer is a returning customer first
+        // (most orders here → top), then fall back to alphabetical. Makes the
+        // admin's "assign to a shop they already know" choice obvious.
+        shopList.sort((a, b) => {
+            if ((b.customerOrdersAtShop || 0) !== (a.customerOrdersAtShop || 0)) {
+                return (b.customerOrdersAtShop || 0) - (a.customerOrdersAtShop || 0);
+            }
+            return String(a.shopName).localeCompare(String(b.shopName), undefined, {
                 sensitivity: "base",
-            })
-        );
+            });
+        });
 
         const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 
@@ -178,6 +241,7 @@ class AdminBookingAssignService {
             collectionTimeTo: bookingRow.collectionTimeTo,
             shopCount: shopList.length,
             shops: shopList,
+            customerShopHistory,
         };
     }
 
@@ -342,6 +406,59 @@ class AdminBookingAssignService {
             canAdminAssign: canAdminAssignOrReassignBooking(plain),
             agentBroadcastHeld: Boolean(plain.agentBroadcastHeld),
         };
+    }
+
+    /**
+     * Cross-shop order history for a customer, regardless of zone — every shop
+     * they have ever ordered from, with total + completed counts, ranked by
+     * completed orders (real repeat business) then total. Lets admin see a
+     * customer's full track record even for shops outside the current booking's
+     * zone/candidate list, not just the one shop currently being considered.
+     */
+    async getCustomerShopHistory(customerId, excludeBookingId, options = {}) {
+        if (!customerId) return [];
+        const limit = Number(options.limit) > 0 ? Number(options.limit) : 10;
+        try {
+            const rows = await sequelize.query(
+                `
+                SELECT
+                    a.id AS shopId,
+                    bi.shopName AS shopName,
+                    COUNT(*) AS totalOrders,
+                    SUM(CASE WHEN b.bookingStatusId = :completedStatus THEN 1 ELSE 0 END) AS completedOrders
+                FROM bookings b
+                JOIN addressDbs a ON a.id = b.laundryShopId
+                LEFT JOIN bussinessInformations bi ON bi.shopAddressId = a.id
+                WHERE b.customerId = :customerId
+                  AND b.laundryShopId IS NOT NULL
+                  AND b.id != :excludeBookingId
+                GROUP BY a.id, bi.shopName
+                ORDER BY completedOrders DESC, totalOrders DESC
+                LIMIT :limit
+                `,
+                {
+                    replacements: {
+                        customerId,
+                        excludeBookingId: excludeBookingId || 0,
+                        completedStatus: COMPLETED,
+                        limit,
+                    },
+                    type: sequelize.QueryTypes.SELECT,
+                }
+            );
+            return (Array.isArray(rows) ? rows : []).map((row) => ({
+                shopId: Number(row.shopId),
+                shopName: row.shopName || `Shop #${row.shopId}`,
+                totalOrders: Number(row.totalOrders) || 0,
+                completedOrders: Number(row.completedOrders) || 0,
+            }));
+        } catch (err) {
+            console.warn(
+                `[getCustomerShopHistory] unavailable for customer ${customerId}:`,
+                err?.message || err
+            );
+            return [];
+        }
     }
 
     /**

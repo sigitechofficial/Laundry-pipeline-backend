@@ -2,18 +2,28 @@
 
 const ResponseHelper = require("../../utils/responseHelper");
 const invoiceAutoChargeService = require("../../services/Agent/invoiceAutoChargeService");
+const paymentMethodChangeService = require("../../services/Admin/paymentMethodChangeService");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
+const { zoneIdFromRequest } = require("../../utils/adminZoneScope");
 
+/**
+ * GET /admin/payment-failures
+ * Query (shared list contract): search, zoneId, startDate, endDate,
+ * sortBy, sortDir, page, limit (default 25), export=1.
+ * Response keeps `failures`, `count`, `totalCount` and adds `pagination`.
+ */
 exports.listPaymentFailures = async (req, res) => {
     const result = await invoiceAutoChargeService.listPaymentFailures({
-        limit: req.query.limit,
-        sortBy: req.query.sortBy,
-        sortDir: req.query.sortDir,
+        ...req.query,
+        // Zone staff: JWT zone wins over any client zoneId (enforceAdminZoneScope).
+        zoneId: zoneIdFromRequest(req),
     });
     return ResponseHelper.success(res, "Payment failures", {
         failures: result.failures,
         count: result.totalCount,
         totalCount: result.totalCount,
+        pagination: result.pagination,
+        filters: result.filters,
     });
 };
 
@@ -47,4 +57,34 @@ exports.resolvePaymentFailure = async (req, res) => {
         }
         throw err;
     }
+};
+
+/**
+ * PATCH /admin/bookings/:bookingId/payment-method
+ * Change how the order's outstanding balance is collected (card <-> cash),
+ * with a required reason. Body: { method, reasonCode?, reason?, note? }.
+ */
+exports.changePaymentMethod = async (req, res) => {
+    const bookingId = req.params.bookingId || req.params.id;
+    const { method, reasonCode, reason, note } = req.body || {};
+
+    if (!bookingId) {
+        throw new ValidationError("bookingId is required");
+    }
+
+    const result = await paymentMethodChangeService.changeBalancePaymentMethod(
+        bookingId,
+        {
+            method,
+            reasonCode,
+            reason,
+            note,
+            adminUserId: req.user?.id,
+        }
+    );
+    return ResponseHelper.success(
+        res,
+        result.changed ? "Payment method updated" : result.message || "No change",
+        result
+    );
 };
