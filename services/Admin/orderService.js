@@ -1222,24 +1222,43 @@ class OrderService {
             };
         }
 
-        // Returning-customer signal: how many OTHER COMPLETED orders this
-        // customer has finished at the SAME shop (booking.laundryShopId =
-        // shop addressDb.id). Only completed orders count as real repeat
-        // business. Helps admin spot a repeat customer of the shop at a glance.
+        // Returning-customer signal: how many OTHER COMPLETED orders (real
+        // repeat business) and how many TOTAL orders (any status) this
+        // customer has placed at the SAME shop (booking.laundryShopId =
+        // shop addressDb.id). Helps admin spot a repeat customer at a glance.
         enriched.customerOrdersAtShop = 0;
+        enriched.customerTotalOrdersAtShop = 0;
         enriched.isReturningCustomerAtShop = false;
+        enriched.customerShopHistory = [];
         try {
             if (plain.customerId && plain.laundryShopId) {
-                const priorAtShop = await booking.count({
-                    where: {
-                        customerId: plain.customerId,
-                        laundryShopId: plain.laundryShopId,
-                        bookingStatusId: COMPLETED,
-                        id: { [Op.ne]: orderId },
-                    },
-                });
+                const [priorAtShop, totalAtShop] = await Promise.all([
+                    booking.count({
+                        where: {
+                            customerId: plain.customerId,
+                            laundryShopId: plain.laundryShopId,
+                            bookingStatusId: COMPLETED,
+                            id: { [Op.ne]: orderId },
+                        },
+                    }),
+                    booking.count({
+                        where: {
+                            customerId: plain.customerId,
+                            laundryShopId: plain.laundryShopId,
+                            id: { [Op.ne]: orderId },
+                        },
+                    }),
+                ]);
                 enriched.customerOrdersAtShop = priorAtShop;
+                enriched.customerTotalOrdersAtShop = totalAtShop;
                 enriched.isReturningCustomerAtShop = priorAtShop > 0;
+            }
+            if (plain.customerId) {
+                enriched.customerShopHistory =
+                    await adminBookingAssignService.getCustomerShopHistory(
+                        plain.customerId,
+                        orderId
+                    );
             }
         } catch (err) {
             console.warn(
