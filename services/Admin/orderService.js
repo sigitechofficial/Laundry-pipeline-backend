@@ -40,6 +40,7 @@ const {
     ON_HOLD,
     PENDING_EXCLUDED_SQL,
     ACTIVE_EXCLUDED_SQL,
+    RETURNING_CUSTOMER_MIN_COMPLETED,
 } = require('../../constants/bookingStatusIds');
 const sequelize = require('sequelize');
 const momentTz = require('moment-timezone');
@@ -1251,7 +1252,8 @@ class OrderService {
                 ]);
                 enriched.customerOrdersAtShop = priorAtShop;
                 enriched.customerTotalOrdersAtShop = totalAtShop;
-                enriched.isReturningCustomerAtShop = priorAtShop > 0;
+                enriched.isReturningCustomerAtShop =
+                    priorAtShop >= RETURNING_CUSTOMER_MIN_COMPLETED;
             }
             if (plain.customerId) {
                 enriched.customerShopHistory =

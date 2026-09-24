@@ -65,6 +65,14 @@ const ACTIVE_EXCLUDED_SQL = ACTIVE_EXCLUDED.join(', ');
 const COLLECTED = [FACILITY_COMPLETE, COMPLETED];
 const COLLECTED_SQL = COLLECTED.join(', ');
 
+/**
+ * A customer is treated as a "returning customer" at a given shop once they
+ * have this many COMPLETED (real repeat-business) orders at that shop.
+ * Single source of truth — admin order detail + assign/reassign shop list all
+ * derive their "Returning customer" badge from this threshold. Tune here only.
+ */
+const RETURNING_CUSTOMER_MIN_COMPLETED = 2;
+
 module.exports = {
     COMPLETED,
     ON_HOLD_CUSTOMER,
@@ -86,4 +94,5 @@ module.exports = {
     FACILITY_COMPLETE,
     COLLECTED,
     COLLECTED_SQL,
+    RETURNING_CUSTOMER_MIN_COMPLETED,
 };

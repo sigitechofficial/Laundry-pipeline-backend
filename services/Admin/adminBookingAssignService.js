@@ -9,7 +9,10 @@ const {
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const { Op } = require("sequelize");
-const { COMPLETED } = require("../../constants/bookingStatusIds");
+const {
+    COMPLETED,
+    RETURNING_CUSTOMER_MIN_COMPLETED,
+} = require("../../constants/bookingStatusIds");
 const {
     isShopScheduleOpenNow,
     getWallClockContextForCountry,
@@ -204,7 +207,8 @@ class AdminBookingAssignService {
                 isCurrentShop,
                 customerOrdersAtShop,
                 customerTotalOrdersAtShop,
-                isReturningCustomerAtShop: customerOrdersAtShop > 0,
+                isReturningCustomerAtShop:
+                    customerOrdersAtShop >= RETURNING_CUSTOMER_MIN_COMPLETED,
                 todayDayOfWeek,
                 todayOpenTime: hoursRow?.openTime || null,
                 todayCloseTime: hoursRow?.closeTime || null,
@@ -212,10 +216,17 @@ class AdminBookingAssignService {
             });
         }
 
-        // Surface shops where this customer is a returning customer first
-        // (most orders here → top), then fall back to alphabetical. Makes the
-        // admin's "assign to a shop they already know" choice obvious.
+        // Ordering priority:
+        //  1. The shop the order is CURRENTLY assigned to always sits at the top
+        //     so the admin sees "who has it now" (and whether they're a returning
+        //     customer there) before considering a move.
+        //  2. Then shops where this customer has the most completed orders
+        //     (strongest repeat business → most sensible reassign target).
+        //  3. Then alphabetical for a stable, predictable list.
         shopList.sort((a, b) => {
+            if (Boolean(a.isCurrentShop) !== Boolean(b.isCurrentShop)) {
+                return a.isCurrentShop ? -1 : 1;
+            }
             if ((b.customerOrdersAtShop || 0) !== (a.customerOrdersAtShop || 0)) {
                 return (b.customerOrdersAtShop || 0) - (a.customerOrdersAtShop || 0);
             }
@@ -446,12 +457,17 @@ class AdminBookingAssignService {
                     type: sequelize.QueryTypes.SELECT,
                 }
             );
-            return (Array.isArray(rows) ? rows : []).map((row) => ({
-                shopId: Number(row.shopId),
-                shopName: row.shopName || `Shop #${row.shopId}`,
-                totalOrders: Number(row.totalOrders) || 0,
-                completedOrders: Number(row.completedOrders) || 0,
-            }));
+            return (Array.isArray(rows) ? rows : []).map((row) => {
+                const completedOrders = Number(row.completedOrders) || 0;
+                return {
+                    shopId: Number(row.shopId),
+                    shopName: row.shopName || `Shop #${row.shopId}`,
+                    totalOrders: Number(row.totalOrders) || 0,
+                    completedOrders,
+                    isReturning:
+                        completedOrders >= RETURNING_CUSTOMER_MIN_COMPLETED,
+                };
+            });
         } catch (err) {
             console.warn(
                 `[getCustomerShopHistory] unavailable for customer ${customerId}:`,
