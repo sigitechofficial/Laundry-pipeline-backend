@@ -117,18 +117,55 @@ const DEFINITIONS = {
     type: "boolean",
     label: "Recurring test mode",
     description:
-      "TEST ONLY. When on, every recurring order regenerates after 'Recurring test interval' minutes instead of its real weekly/2-weekly/4-weekly cadence, so the cycle can be verified in minutes. Turn OFF in production.",
+      "TEST ONLY. When on, each recurring frequency uses its own test-interval (minutes) instead of the real Weekly / Every-two-weeks / Every-four-weeks cadence. Turn OFF in production.",
     group: "booking_assignment",
     envKey: "RECURRING_TEST_MODE_ENABLED",
     defaultValue: false,
   },
+  /**
+   * Legacy shared fallback. Prefer the per-frequency keys below; this is kept so
+   * older deploys / env configs keep working if a per-frequency value is missing.
+   */
   recurringTestIntervalMinutes: {
     type: "integer",
-    label: "Recurring test interval (minutes)",
+    label: "Recurring test interval — shared fallback (minutes)",
     description:
-      "When 'Recurring test mode' is on, generate the next cycle this many minutes after the previous order (e.g. 3 = next order in 3 minutes).",
+      "Fallback minutes used when a per-frequency test interval is unset. Prefer Weekly / Every-two-weeks / Every-four-weeks settings.",
     group: "booking_assignment",
     envKey: "RECURRING_TEST_INTERVAL_MINUTES",
+    defaultValue: 3,
+    min: 1,
+    max: 43200,
+  },
+  recurringTestIntervalMinutesWeekly: {
+    type: "integer",
+    label: "Test interval — Weekly (minutes)",
+    description:
+      "When test mode is on, Weekly plans regenerate after this many minutes (real cadence = 7 days).",
+    group: "booking_assignment",
+    envKey: "RECURRING_TEST_INTERVAL_MINUTES_WEEKLY",
+    defaultValue: 3,
+    min: 1,
+    max: 43200,
+  },
+  recurringTestIntervalMinutesEveryTwoWeeks: {
+    type: "integer",
+    label: "Test interval — Every two weeks (minutes)",
+    description:
+      "When test mode is on, Every-two-weeks plans regenerate after this many minutes (real cadence = 14 days).",
+    group: "booking_assignment",
+    envKey: "RECURRING_TEST_INTERVAL_MINUTES_EVERY_TWO_WEEKS",
+    defaultValue: 3,
+    min: 1,
+    max: 43200,
+  },
+  recurringTestIntervalMinutesEveryFourWeeks: {
+    type: "integer",
+    label: "Test interval — Every four weeks (minutes)",
+    description:
+      "When test mode is on, Every-four-weeks plans regenerate after this many minutes (real cadence = 28 days).",
+    group: "booking_assignment",
+    envKey: "RECURRING_TEST_INTERVAL_MINUTES_EVERY_FOUR_WEEKS",
     defaultValue: 3,
     min: 1,
     max: 43200,

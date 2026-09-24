@@ -71,12 +71,23 @@ function shiftDateByDays(input, days) {
 }
 
 /**
+ * Map a booking frequency label → the runtime-settings key that holds its
+ * test-mode interval (minutes). "Just Once" never auto-generates, so it has
+ * no key. Unknown labels fall through to the shared legacy fallback.
+ */
+const FREQUENCY_TEST_INTERVAL_SETTING_KEY = {
+  weekly: 'recurringTestIntervalMinutesWeekly',
+  'every two weeks': 'recurringTestIntervalMinutesEveryTwoWeeks',
+  'every four weeks': 'recurringTestIntervalMinutesEveryFourWeeks',
+};
+
+/**
  * The effective GENERATION interval (in ms) for a recurring frequency.
  *
  * Normally this is the frequency's real cadence (7 / 14 / 28 days). When the
- * admin runtime setting `recurringTestModeEnabled` is ON, every recurring
- * frequency is compressed to `recurringTestIntervalMinutes` minutes so the
- * whole cycle can be exercised in minutes instead of waiting days.
+ * admin runtime setting `recurringTestModeEnabled` is ON, each frequency uses
+ * its own per-frequency test-interval (minutes). A shared legacy fallback
+ * (`recurringTestIntervalMinutes`) covers older deploys / missing keys.
  *
  * NOTE: this only controls WHEN the next order is generated. The generated
  * order's own collection/delivery dates still shift by the real day interval
@@ -91,11 +102,22 @@ async function getEffectiveIntervalMs(frequency) {
     testMode = false;
   }
   if (testMode) {
-    let minutes = 3;
-    try {
-      minutes = await runtimeSettings.getInteger('recurringTestIntervalMinutes');
-    } catch (_) {
-      minutes = 3;
+    const freqKey = String(frequency || '').trim().toLowerCase();
+    const perFreqKey = FREQUENCY_TEST_INTERVAL_SETTING_KEY[freqKey] || null;
+    let minutes = null;
+    if (perFreqKey) {
+      try {
+        minutes = await runtimeSettings.getInteger(perFreqKey);
+      } catch (_) {
+        minutes = null;
+      }
+    }
+    if (!Number.isFinite(Number(minutes)) || Number(minutes) < 1) {
+      try {
+        minutes = await runtimeSettings.getInteger('recurringTestIntervalMinutes');
+      } catch (_) {
+        minutes = 3;
+      }
     }
     return Math.max(1, Number(minutes) || 1) * 60 * 1000;
   }
