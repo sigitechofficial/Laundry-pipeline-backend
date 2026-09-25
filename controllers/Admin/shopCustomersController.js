@@ -1,6 +1,6 @@
 'use strict';
 
-const ResponseHelper = require('../../helper/ResponseHelper');
+const ResponseHelper = require('../../utils/responseHelper');
 const shopManagementService = require('../../services/Admin/shopManagementService');
 
 /**
