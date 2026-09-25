@@ -7,18 +7,18 @@ const {
     calcDiscount,
     evaluateCouponAgainstLaundry,
     roundMoney,
+    parseZoneIds,
+    couponAppliesToZone,
+    CUSTOMER_RESERVE_MESSAGE,
 } = require('../../utils/couponDiscount');
 
 /**
  * Enterprise laundry coupons:
- * - minOrder + discount vs laundry merchandise only (not zone prepaid)
- * - Stripe auth hold / Pay Now never reduced by promo
- * - Invoice finalize re-resolves discount via resolveBookingDiscount()
+ * - Checkout reserves the code only (discountAmt always 0 until invoice)
+ * - Invoice finalize is authoritative (laundry subtotal + zone + min order)
+ * - Pay Now / Stripe hold never reduced
  */
 class CouponService {
-    /**
-     * Load active coupon + enforce lifecycle / usage limits (no money math).
-     */
     async _loadRedeemableCoupon(code, userId) {
         if (!code || typeof code !== 'string') {
             throw new ValidationError('Coupon code is required');
@@ -58,62 +58,65 @@ class CouponService {
         return couponData;
     }
 
+    _assertZoneAllowed(couponData, zoneId) {
+        const allowed = parseZoneIds(couponData.zoneIds);
+        if (!allowed.length) return; // all zones
+        if (zoneId == null || zoneId === '') {
+            throw new ValidationError(
+                'This promo is zone-specific. Choose a collection address in a valid zone.'
+            );
+        }
+        if (!couponAppliesToZone(couponData, zoneId)) {
+            throw new ValidationError('This promo is not valid for your area / zone');
+        }
+    }
+
     /**
-     * Validate a coupon against laundry cart / services total.
-     * Does NOT record redemption — use recordRedemption() after booking create.
+     * Checkout / booking: reserve coupon only. Money discount is always £0 here.
      *
      * @param {string} code
-     * @param {number} laundryCartAmount - laundry merchandise (£); 0 = unknown/bags-only
+     * @param {number} laundryCartAmount - ignored for money; kept for API compat
      * @param {number} userId
      * @param {object} [options]
-     * @param {boolean} [options.deferMinOrderWhenLaundryUnknown=true]
+     * @param {number} [options.zoneId]
      */
     async validateCoupon(code, laundryCartAmount, userId, options = {}) {
-        const deferMinOrderWhenLaundryUnknown =
-            options.deferMinOrderWhenLaundryUnknown !== false;
-
         const couponData = await this._loadRedeemableCoupon(code, userId);
+        this._assertZoneAllowed(couponData, options.zoneId);
 
         const laundry = roundMoney(laundryCartAmount);
-        const evaluation = evaluateCouponAgainstLaundry({
-            couponData,
-            laundryAmount: laundry,
-            deferMinOrderWhenLaundryUnknown,
-        });
-
-        if (evaluation.rejected) {
-            throw new ValidationError(evaluation.rejectReason);
-        }
+        const zoneIds = parseZoneIds(couponData.zoneIds);
 
         return {
             couponId: couponData.id,
-            discountAmt: evaluation.discountAmt,
-            // Laundry remaining after discount (preview only — not Pay Now).
-            finalAmount: roundMoney(Math.max(0, laundry - evaluation.discountAmt)),
+            // Invoice-only: never reduce Pay Now / prepaid at checkout.
+            discountAmt: 0,
+            finalAmount: laundry,
             laundryCartAmount: laundry,
-            minOrderAmount: evaluation.minOrderAmount,
-            minOrderDeferred: evaluation.minOrderDeferred,
+            minOrderAmount:
+                couponData.minOrderAmount != null
+                    ? roundMoney(couponData.minOrderAmount)
+                    : null,
+            minOrderDeferred: true,
+            appliesAt: 'invoice',
             appliesTo: 'laundry',
             prepaidUnchanged: true,
+            zoneScope: zoneIds.length ? 'specific' : 'all',
+            zoneIds,
+            customerMessage: CUSTOMER_RESERVE_MESSAGE,
             couponData,
         };
     }
 
     /**
-     * Authoritative discount for a booking at invoice time (or any laundry refresh).
-     * Updates couponRedemptions.discountAmt when a redemption exists.
-     *
-     * @param {number} bookingId
-     * @param {number} laundrySubtotal
-     * @param {number} [fallbackDiscount] - billing.discount if no redemption row
-     * @param {object} [transaction]
-     * @returns {Promise<number>}
+     * Authoritative discount when agent builds / refreshes the invoice.
      */
     async resolveBookingDiscount(
         bookingId,
         laundrySubtotal,
         fallbackDiscount = 0,
-        transaction = null
+        transaction = null,
+        zoneId = null
     ) {
         const opts = transaction ? { transaction } : {};
         const redemption = await couponRedemption.findOne({
@@ -124,6 +127,13 @@ class CouponService {
 
         if (!redemption || !redemption.coupon) {
             return roundMoney(fallbackDiscount);
+        }
+
+        if (!couponAppliesToZone(redemption.coupon, zoneId)) {
+            if (roundMoney(redemption.discountAmt) !== 0) {
+                await redemption.update({ discountAmt: 0 }, opts);
+            }
+            return 0;
         }
 
         const evaluation = evaluateCouponAgainstLaundry({
@@ -141,9 +151,6 @@ class CouponService {
         return discountAmt;
     }
 
-    /**
-     * Record a coupon redemption after booking create.
-     */
     async recordRedemption(couponId, userId, bookingId, discountAmt, transaction = null) {
         const opts = transaction ? { transaction } : {};
 
@@ -152,7 +159,7 @@ class CouponService {
                 couponId,
                 userId,
                 bookingId,
-                discountAmt,
+                discountAmt: roundMoney(discountAmt),
             },
             opts
         );
@@ -168,3 +175,6 @@ class CouponService {
 module.exports = new CouponService();
 module.exports.calcDiscount = calcDiscount;
 module.exports.evaluateCouponAgainstLaundry = evaluateCouponAgainstLaundry;
+module.exports.parseZoneIds = parseZoneIds;
+module.exports.couponAppliesToZone = couponAppliesToZone;
+module.exports.CUSTOMER_RESERVE_MESSAGE = CUSTOMER_RESERVE_MESSAGE;

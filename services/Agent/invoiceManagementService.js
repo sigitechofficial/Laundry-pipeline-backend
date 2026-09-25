@@ -602,7 +602,9 @@ class AgentInvoiceManagementService {
         const existingDiscount = await couponService.resolveBookingDiscount(
             bookingId,
             servicesSubtotal,
-            fallbackDiscount
+            fallbackDiscount,
+            null,
+            bookingRow?.zoneId ?? bookingRow?.zone?.id ?? null
         );
 
         // Persist authoritative laundry discount onto billing when it changed.

@@ -4,11 +4,11 @@
  * Enterprise laundry coupon math.
  *
  * Contract:
- * - Eligibility (minOrderAmount) and discount base = laundry merchandise only
- *   (customer/agent service lines), never zone prepaid (min + service fee + tip).
- * - Auth hold / Pay Now stays full prepaid; promo does not reduce Stripe hold.
- * - Booking may store a provisional discount from a laundry estimate; invoice
- *   finalize is authoritative.
+ * - Eligibility (minOrderAmount) and discount base = laundry merchandise only.
+ * - Auth hold / Pay Now stays full prepaid; promo never zeros prepaid.
+ * - Checkout only *reserves* the code (discountAmt = 0). Invoice finalize
+ *   is authoritative via resolveBookingDiscount().
+ * - zoneIds null/[] = all zones; otherwise must include booking.zoneId.
  */
 
 function roundMoney(value) {
@@ -18,10 +18,41 @@ function roundMoney(value) {
 }
 
 /**
- * @param {object} couponData
- * @param {number} laundryAmount - laundry / services subtotal (£)
- * @returns {number}
+ * Normalize coupon.zoneIds / banner.zoneIds payloads to number[].
+ * null, [], "", "all" → [] (meaning all zones).
  */
+function parseZoneIds(raw) {
+    if (raw == null || raw === '' || raw === 'all') return [];
+    if (Array.isArray(raw)) {
+        return raw
+            .map((id) => parseInt(id, 10))
+            .filter((id) => Number.isFinite(id) && id > 0);
+    }
+    if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (!trimmed || trimmed === '[]') return [];
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) return parseZoneIds(parsed);
+        } catch (_) {
+            /* comma-separated */
+        }
+        return trimmed
+            .split(',')
+            .map((id) => parseInt(id.trim(), 10))
+            .filter((id) => Number.isFinite(id) && id > 0);
+    }
+    return [];
+}
+
+function couponAppliesToZone(couponData, zoneId) {
+    const allowed = parseZoneIds(couponData?.zoneIds);
+    if (!allowed.length) return true;
+    const z = parseInt(zoneId, 10);
+    if (!Number.isFinite(z) || z <= 0) return false;
+    return allowed.includes(z);
+}
+
 function calcDiscount(couponData, laundryAmount) {
     const orderAmount = roundMoney(laundryAmount);
     if (orderAmount <= 0 || !couponData) return 0;
@@ -42,24 +73,6 @@ function calcDiscount(couponData, laundryAmount) {
     return roundMoney(Math.min(discountAmt, orderAmount));
 }
 
-/**
- * Evaluate coupon against a known laundry cart / invoice laundry subtotal.
- *
- * @param {object} options
- * @param {object} options.couponData
- * @param {number} options.laundryAmount
- * @param {boolean} [options.deferMinOrderWhenLaundryUnknown=false] - bags-only
- *   booking with £0 estimate: skip min check and return discount 0 until invoice
- * @returns {{
- *   discountAmt: number,
- *   laundryAmount: number,
- *   minOrderAmount: number|null,
- *   minOrderMet: boolean,
- *   minOrderDeferred: boolean,
- *   rejected: boolean,
- *   rejectReason: string|null
- * }}
- */
 function evaluateCouponAgainstLaundry({
     couponData,
     laundryAmount,
@@ -107,8 +120,14 @@ function evaluateCouponAgainstLaundry({
     };
 }
 
+const CUSTOMER_RESERVE_MESSAGE =
+    'Promo saved. Your discount applies when the invoice is ready after inspection — Pay Now is unchanged.';
+
 module.exports = {
     roundMoney,
     calcDiscount,
     evaluateCouponAgainstLaundry,
+    parseZoneIds,
+    couponAppliesToZone,
+    CUSTOMER_RESERVE_MESSAGE,
 };

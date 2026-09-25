@@ -936,14 +936,13 @@ async function getHomeConfig(req, res) {
 /*
  * Apply / validate a coupon code before checkout.
  * POST /customer/applyCoupon
- * Body: { code, laundryCartAmount? }
+ * Body: { code, zoneId?, laundryCartAmount? }
  *
- * Enterprise: minOrder + discount vs laundry merchandise only.
- * Legacy `orderAmount` is ignored for money math (old clients sent prepaid).
- * Omit laundryCartAmount (or 0) to reserve the code; min is checked at invoice.
+ * Enterprise: reserves the promo only. Discount money applies at invoice.
+ * Pay Now / prepaid is never reduced. Legacy orderAmount is ignored.
  */
 async function applyCoupon(req, res) {
-    const { code, laundryCartAmount } = req.body;
+    const { code, laundryCartAmount, zoneId } = req.body;
     const userId = req.user.id;
 
     const couponService = require('../../services/Customer/couponService');
@@ -957,21 +956,25 @@ async function applyCoupon(req, res) {
     }
 
     const result = await couponService.validateCoupon(code, laundry, userId, {
-        deferMinOrderWhenLaundryUnknown: laundry <= 0,
+        zoneId: zoneId ?? req.body?.zone?.id,
     });
 
-    return ResponseHelper.success(res, 'Coupon applied successfully', {
+    return ResponseHelper.success(res, result.customerMessage || 'Coupon reserved', {
         couponId: result.couponId,
-        discountAmt: result.discountAmt,
+        discountAmt: 0,
         finalAmount: result.finalAmount,
         discountType: result.couponData.discountType,
         discountValue: result.couponData.discountValue,
         code: result.couponData.code,
         laundryCartAmount: result.laundryCartAmount,
         minOrderAmount: result.minOrderAmount,
-        minOrderDeferred: result.minOrderDeferred,
+        minOrderDeferred: true,
+        appliesAt: 'invoice',
         appliesTo: result.appliesTo,
-        prepaidUnchanged: result.prepaidUnchanged,
+        prepaidUnchanged: true,
+        zoneScope: result.zoneScope,
+        zoneIds: result.zoneIds,
+        customerMessage: result.customerMessage,
     });
 }
 

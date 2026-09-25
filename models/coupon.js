@@ -69,6 +69,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: true
+    },
+    // null / [] = all zones; otherwise JSON array of zone ids (same as banners).
+    zoneIds: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null
     }
   }, {
     sequelize,

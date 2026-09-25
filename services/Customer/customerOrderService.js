@@ -1779,10 +1779,11 @@ class CustomerOrderService {
                 couponCode,
                 laundryEstimate,
                 userId,
-                { deferMinOrderWhenLaundryUnknown: laundryEstimate <= 0 }
+                { zoneId }
             );
             appliedCouponId = couponResult.couponId;
-            discount = couponResult.discountAmt;
+            // Invoice-only: never store a money discount at booking / prepaid.
+            discount = 0;
         }
 
         // Prepaid basket (auth hold / Pay Now) — never reduced by laundry promo.
