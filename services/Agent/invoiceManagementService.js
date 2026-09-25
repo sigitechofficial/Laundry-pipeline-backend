@@ -33,6 +33,7 @@ const { redactCustomerPhone } = require("../../utils/maskPhone");
 const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
+const couponService = require("../Customer/couponService");
 const {
     getLineQuantity,
     getUnitCategoryCharge,
@@ -597,7 +598,23 @@ class AgentInvoiceManagementService {
         const tipAmount = bookingTipAmountFromTips(bookingRow.tips);
 
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
-        const existingDiscount = parseFloat(existingBilling?.discount || 0);
+        const fallbackDiscount = parseFloat(existingBilling?.discount || 0);
+        const existingDiscount = await couponService.resolveBookingDiscount(
+            bookingId,
+            servicesSubtotal,
+            fallbackDiscount
+        );
+
+        // Persist authoritative laundry discount onto billing when it changed.
+        if (
+            existingBilling &&
+            parseFloat(existingBilling.discount || 0) !== existingDiscount
+        ) {
+            await billingDetails.update(
+                { discount: existingDiscount },
+                { where: { bookingId } }
+            );
+        }
 
         const paymentSummary = enrichPaymentSummary(
             buildPaymentSummaryForBooking(bookingRow.paymentType, {

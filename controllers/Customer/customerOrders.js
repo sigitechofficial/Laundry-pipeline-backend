@@ -936,14 +936,29 @@ async function getHomeConfig(req, res) {
 /*
  * Apply / validate a coupon code before checkout.
  * POST /customer/applyCoupon
- * Body: { code, orderAmount }
+ * Body: { code, laundryCartAmount? }
+ *
+ * Enterprise: minOrder + discount vs laundry merchandise only.
+ * Legacy `orderAmount` is ignored for money math (old clients sent prepaid).
+ * Omit laundryCartAmount (or 0) to reserve the code; min is checked at invoice.
  */
 async function applyCoupon(req, res) {
-    const { code, orderAmount } = req.body;
+    const { code, laundryCartAmount } = req.body;
     const userId = req.user.id;
 
     const couponService = require('../../services/Customer/couponService');
-    const result = await couponService.validateCoupon(code, orderAmount, userId);
+
+    let laundry = 0;
+    if (laundryCartAmount != null && laundryCartAmount !== '') {
+        laundry = parseFloat(laundryCartAmount);
+        if (!Number.isFinite(laundry) || laundry < 0) {
+            throw new ValidationError('laundryCartAmount must be a non-negative number');
+        }
+    }
+
+    const result = await couponService.validateCoupon(code, laundry, userId, {
+        deferMinOrderWhenLaundryUnknown: laundry <= 0,
+    });
 
     return ResponseHelper.success(res, 'Coupon applied successfully', {
         couponId: result.couponId,
@@ -951,7 +966,12 @@ async function applyCoupon(req, res) {
         finalAmount: result.finalAmount,
         discountType: result.couponData.discountType,
         discountValue: result.couponData.discountValue,
-        code: result.couponData.code
+        code: result.couponData.code,
+        laundryCartAmount: result.laundryCartAmount,
+        minOrderAmount: result.minOrderAmount,
+        minOrderDeferred: result.minOrderDeferred,
+        appliesTo: result.appliesTo,
+        prepaidUnchanged: result.prepaidUnchanged,
     });
 }
 

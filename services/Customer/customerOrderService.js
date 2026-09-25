@@ -1612,20 +1612,10 @@ class CustomerOrderService {
         console.log(currentDate);
         console.log(currentTime);
 
-        // Validate coupon early so we fail fast before creating services/billing
+        // Coupon is applied against laundry merchandise only (not zone prepaid).
+        // Validated after service lines are priced; invoice finalize re-resolves.
         let appliedCouponId = null;
         let discount = 0;
-
-        if (couponCode) {
-            // We validate against the zone upfront amount + service charge as the pre-discount total.
-            // Actual discount is recorded after booking row is created.
-            const preDiscountTotal = parseFloat(
-                (parseFloat(zoneUpfrontAmount) + parseFloat(zoneSeviceCharge) + parseFloat(tipAmount || 0)).toFixed(2)
-            );
-            const couponResult = await couponService.validateCoupon(couponCode, preDiscountTotal, userId);
-            appliedCouponId = couponResult.couponId;
-            discount = couponResult.discountAmt;
-        }
 
         let serviceCreate = [];
         if (services && services.length > 0) {
@@ -1782,26 +1772,47 @@ class CustomerOrderService {
         const upfrontAmount = zoneUpfrontAmount;
         console.log("🚀 ~ createBooking ~ upfrontAmount:", upfrontAmount);
 
-        // Create the billing details
+        // Laundry estimate from priced customer lines (bags-only often £0 until agent invoice).
+        const laundryEstimate = parseFloat(total) || 0;
+        if (couponCode) {
+            const couponResult = await couponService.validateCoupon(
+                couponCode,
+                laundryEstimate,
+                userId,
+                { deferMinOrderWhenLaundryUnknown: laundryEstimate <= 0 }
+            );
+            appliedCouponId = couponResult.couponId;
+            discount = couponResult.discountAmt;
+        }
+
+        // Prepaid basket (auth hold / Pay Now) — never reduced by laundry promo.
         const parsedUpfront = parseFloat(upfrontAmount) || 0;
         const parsedServiceCharge = parseFloat(zoneSeviceCharge) || 0;
         const parsedTip = parseFloat(tipAmount) || 0;
-        const subTotal = parseFloat((parsedUpfront + parsedServiceCharge + parsedTip).toFixed(2));
-        const discountedTotal = parseFloat(Math.max(0, subTotal - discount).toFixed(2));
+        const prepaidTotal = parseFloat(
+            (parsedUpfront + parsedServiceCharge + parsedTip).toFixed(2)
+        );
 
         await billingDetails.create({
             bookingId: bookingData.id,
             upfrontAmount,
             serviceCharge: parsedServiceCharge,
             discount,
-            total: discountedTotal,
+            // Until invoice: store prepaid authorized amount (not prepaid − discount).
+            total: prepaidTotal,
+            categoryCharge: laundryEstimate,
             paymentStatus: "Pending",
             prepaidTipAmount: paymentType === "cash" ? 0 : parsedTip,
         });
 
-        // Record coupon redemption after billing is created
-        if (appliedCouponId && discount > 0) {
-            await couponService.recordRedemption(appliedCouponId, userId, bookingData.id, discount);
+        // Reserve redemption even when provisional discount is £0 (bags-only / deferred min).
+        if (appliedCouponId) {
+            await couponService.recordRedemption(
+                appliedCouponId,
+                userId,
+                bookingData.id,
+                discount
+            );
         }
 
         await bookingHistory.create({
@@ -1822,7 +1833,7 @@ class CustomerOrderService {
                 orderTrackId: ordertrackingNumber,
                 orderExpireTime: null,
                 partialPayment: paymentType !== "cash",
-                subTotal: discountedTotal,
+                subTotal: prepaidTotal,
                 tipId: tipCreate.id,
             },
             { where: { id: bookingData.id } }
