@@ -304,6 +304,18 @@ async function bookingEventSentCheckTheShops(
         }
 
         const ownerId = shop.user?.id || shop.userId;
+        const { evaluateShopAcceptCapacity } = require('../../utils/shopAcceptCapacity');
+        const capacity = await evaluateShopAcceptCapacity(ownerId, shop.id, {
+            excludeBookingId: bookingId,
+        });
+        if (!capacity.allowed) {
+            console.log(
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — accept capacity ` +
+                    `(${capacity.acceptedInWindow}/${capacity.cap.maxOrders} in ${capacity.cap.windowMinutes}m, ${capacity.reason})`
+            );
+            continue;
+        }
+
         const shopEligible = await isShopEligibleForBroadcast(
             ownerId,
             countryCtx.countryId,

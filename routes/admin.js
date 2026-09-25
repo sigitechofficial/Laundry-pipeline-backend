@@ -30,6 +30,7 @@ const mapsGeocodeController = require('../controllers/Admin/mapsGeocodeControlle
 const geminiController = require('../controllers/Admin/geminiController');
 const zoneCatalogController = require('../controllers/Admin/zoneCatalogController');
 const shopRevenueController = require('../controllers/Admin/shopRevenueController');
+const shopCustomersController = require('../controllers/Admin/shopCustomersController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -739,6 +740,10 @@ router.patch('/updateLaundryShop/:id', asyncMiddleware(adminController.updateLau
 router.get(
     '/singleShopData/:shopId/revenue',
     asyncMiddleware(shopRevenueController.getShopRevenue)
+)
+router.get(
+    '/singleShopData/:shopId/customers',
+    asyncMiddleware(shopCustomersController.getShopCustomers)
 )
 router.get(
     '/shops/:shopId/settlement',

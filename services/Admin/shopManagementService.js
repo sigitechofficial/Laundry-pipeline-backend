@@ -974,6 +974,92 @@ class ShopManagementService {
 
         return this.getSingleShopData(biz.id);
     }
+
+    /**
+     * Resolve bussinessInformation → laundryShopId (addressDb id) for customer
+     * analytics. Accepts business id, owner user id, or shop address id.
+     */
+    async resolveShopAddressId(shopId) {
+        const id = parseInt(shopId, 10);
+        if (!Number.isFinite(id) || id <= 0) {
+            throw new NotFoundError('Shop not found');
+        }
+        const bizAttrs = ['id', 'shopName', 'shopAddressId', 'agentId'];
+        let biz = await bussinessInformation.findOne({ where: { id }, attributes: bizAttrs });
+        if (!biz) {
+            biz = await bussinessInformation.findOne({
+                where: { agentId: id },
+                attributes: bizAttrs,
+            });
+        }
+        if (!biz) {
+            biz = await bussinessInformation.findOne({
+                where: { shopAddressId: id },
+                attributes: bizAttrs,
+            });
+        }
+        if (!biz || !biz.shopAddressId) {
+            throw new NotFoundError('Shop not found');
+        }
+        return {
+            businessInfoId: biz.id,
+            shopAddressId: biz.shopAddressId,
+            shopName: biz.shopName || `Shop #${biz.shopAddressId}`,
+        };
+    }
+
+    /**
+     * Customers for a shop: full list + returning subset + top-N by spend.
+     * Query: top=5|10 (default 10), returningOnly=1 filters the main list.
+     */
+    async getShopCustomers(shopId, query = {}) {
+        const adminBookingAssignService = require('./adminBookingAssignService');
+        const { RETURNING_CUSTOMER_MIN_COMPLETED } = require('../../constants/bookingStatusIds');
+
+        const resolved = await this.resolveShopAddressId(shopId);
+        const topRaw = Number(query.top);
+        const topN = topRaw === 5 || topRaw === 10 ? topRaw : 10;
+        const returningOnly =
+            query.returningOnly === true ||
+            query.returningOnly === 1 ||
+            query.returningOnly === '1' ||
+            query.returningOnly === 'true';
+
+        const customers = await adminBookingAssignService.getShopCustomerHistory(
+            resolved.shopAddressId,
+            { limit: 500 }
+        );
+
+        const returning = customers.filter((c) => c.isReturning);
+        const topReturning = [...returning]
+            .sort(
+                (a, b) =>
+                    (b.totalSpend || 0) - (a.totalSpend || 0) ||
+                    (b.completedOrders || 0) - (a.completedOrders || 0)
+            )
+            .slice(0, topN);
+
+        const sumSpend = (list) =>
+            list.reduce((acc, row) => acc + (Number(row.totalSpend) || 0), 0);
+
+        const list = returningOnly ? returning : customers;
+
+        return {
+            shopId: resolved.shopAddressId,
+            businessInfoId: resolved.businessInfoId,
+            shopName: resolved.shopName,
+            returningThreshold: RETURNING_CUSTOMER_MIN_COMPLETED,
+            summary: {
+                totalCustomers: customers.length,
+                returningCustomers: returning.length,
+                totalSpend: sumSpend(customers),
+                returningSpend: sumSpend(returning),
+            },
+            topReturning,
+            topN,
+            customers: list,
+        };
+    }
 }
 
 module.exports = new ShopManagementService();

@@ -81,6 +81,22 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
                 "Your shop is on hold and cannot take new orders. Contact support."
             );
         }
+
+        const { evaluateShopAcceptCapacity } = require("../../utils/shopAcceptCapacity");
+        const capacity = await evaluateShopAcceptCapacity(
+            shopOwnerUserId,
+            shopAddress.id,
+            { excludeBookingId: bookingId }
+        );
+        if (!capacity.allowed) {
+            const max = capacity.cap?.maxOrders;
+            const mins = capacity.cap?.windowMinutes;
+            throw new ConflictError(
+                max === 0
+                    ? "Your shop cannot accept marketplace orders right now (capacity set to 0). Contact support."
+                    : `Your shop has reached its accept limit (${capacity.acceptedInWindow}/${max} in ${mins} minutes). Try again later.`
+            );
+        }
     }
 
     const [affectedCount] = await booking.update(

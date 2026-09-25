@@ -3,14 +3,14 @@
 /**
  * Admin routing restrictions per shop.
  *
- * Two independent levers, deliberately not folded into users.status:
- *  - preferredEligible=false → skip this shop when picking the returning
- *    customer's preferred shop. It can still receive broadcast bookings.
- *  - marketplaceHold=true    → send no new offers at all. Admin can still
- *    assign manually, and orders already accepted continue normally.
+ * Levers (independent of users.status / login block):
+ *  - preferredEligible=false → skip preferred head-start; still gets broadcasts
+ *  - marketplaceHold=true    → no new offers; admin assign still OK
+ *  - acceptCapOverride       → per-shop rolling accept limit (window × max);
+ *                              inherits global runtime settings when off
  *
- * A row with expiresAt in the past is treated as unrestricted, so temporary
- * suspensions heal themselves without a cron.
+ * expiresAt only heals preferred/hold restrictions — accept capacity override
+ * stays until cleared.
  */
 const { Op } = require('sequelize');
 const { shopAssignmentPolicy, users, addressDb } = require('../../models');
@@ -24,6 +24,9 @@ const DEFAULT_POLICY = Object.freeze({
     marketplaceHold: false,
     reason: null,
     expiresAt: null,
+    acceptCapOverride: false,
+    acceptWindowMinutes: null,
+    acceptMaxOrders: null,
 });
 
 function parseBoolean(value, fallback) {
@@ -36,22 +39,49 @@ function parseBoolean(value, fallback) {
     return fallback;
 }
 
+function parseNullableInt(value, fallback) {
+    if (value === undefined) return fallback;
+    if (value === null || value === '') return null;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.trunc(n);
+}
+
 function isExpired(row, now = new Date()) {
     return row?.expiresAt != null && new Date(row.expiresAt).getTime() <= now.getTime();
 }
 
-/** Effective policy for a row (or missing row), with expiry applied. */
+function acceptCapFields(row) {
+    if (!row) {
+        return {
+            acceptCapOverride: false,
+            acceptWindowMinutes: null,
+            acceptMaxOrders: null,
+        };
+    }
+    return {
+        acceptCapOverride: Boolean(row.acceptCapOverride),
+        acceptWindowMinutes:
+            row.acceptWindowMinutes == null ? null : Number(row.acceptWindowMinutes),
+        acceptMaxOrders:
+            row.acceptMaxOrders == null ? null : Number(row.acceptMaxOrders),
+    };
+}
+
+/** Effective policy for a row (or missing row), with expiry applied to hold/preferred. */
 function toEffectivePolicy(row, now = new Date()) {
+    const cap = acceptCapFields(row);
     if (!row || isExpired(row, now)) {
         return {
             ...DEFAULT_POLICY,
+            ...cap,
             ...(row
                 ? {
                       reason: row.reason ?? null,
                       expiresAt: row.expiresAt ?? null,
                       expired: true,
                   }
-                : {}),
+                : { expired: false }),
         };
     }
     return {
@@ -60,6 +90,7 @@ function toEffectivePolicy(row, now = new Date()) {
         reason: row.reason ?? null,
         expiresAt: row.expiresAt ?? null,
         expired: false,
+        ...cap,
     };
 }
 
@@ -80,8 +111,7 @@ class ShopAssignmentPolicyService {
 
     /**
      * Upsert restrictions for a shop owner.
-     * A reason is mandatory whenever either lever is restrictive, so the audit
-     * trail explains why a shop stopped receiving work.
+     * A reason is mandatory whenever preferred/hold is restrictive.
      */
     async setPolicy(shopUserId, payload = {}, adminUserId = null) {
         const id = Number(shopUserId);
@@ -107,6 +137,50 @@ class ShopAssignmentPolicyService {
             payload.marketplaceHold,
             existing ? Boolean(existing.marketplaceHold) : false
         );
+
+        const acceptCapOverride = parseBoolean(
+            payload.acceptCapOverride,
+            existing ? Boolean(existing.acceptCapOverride) : false
+        );
+
+        let acceptWindowMinutes = existing?.acceptWindowMinutes ?? null;
+        let acceptMaxOrders = existing?.acceptMaxOrders ?? null;
+        if (payload.acceptWindowMinutes !== undefined) {
+            acceptWindowMinutes = parseNullableInt(
+                payload.acceptWindowMinutes,
+                acceptWindowMinutes
+            );
+        }
+        if (payload.acceptMaxOrders !== undefined) {
+            acceptMaxOrders = parseNullableInt(
+                payload.acceptMaxOrders,
+                acceptMaxOrders
+            );
+        }
+
+        if (acceptCapOverride) {
+            if (acceptWindowMinutes == null) {
+                throw new ValidationError(
+                    'Accept window (minutes) is required when using a shop-specific capacity'
+                );
+            }
+            if (acceptWindowMinutes < 1 || acceptWindowMinutes > 1440) {
+                throw new ValidationError(
+                    'Accept window must be between 1 and 1440 minutes'
+                );
+            }
+            if (acceptMaxOrders == null) {
+                throw new ValidationError(
+                    'Max accepts is required when using a shop-specific capacity (use 0 for none)'
+                );
+            }
+            if (acceptMaxOrders < 0 || acceptMaxOrders > 500) {
+                throw new ValidationError('Max accepts must be between 0 and 500');
+            }
+        } else {
+            acceptWindowMinutes = null;
+            acceptMaxOrders = null;
+        }
 
         const restrictive = !preferredEligible || marketplaceHold;
         const reason =
@@ -139,6 +213,9 @@ class ShopAssignmentPolicyService {
             marketplaceHold,
             reason: restrictive ? reason : null,
             expiresAt: restrictive ? expiresAt : null,
+            acceptCapOverride,
+            acceptWindowMinutes: acceptCapOverride ? acceptWindowMinutes : null,
+            acceptMaxOrders: acceptCapOverride ? acceptMaxOrders : null,
             updatedByUserId: adminUserId ? Number(adminUserId) : null,
         };
 
@@ -201,7 +278,14 @@ class ShopAssignmentPolicyService {
 
         const row = await shopAssignmentPolicy.findOne({
             where: { shopUserId: id },
-            attributes: ['marketplaceHold', 'preferredEligible', 'expiresAt'],
+            attributes: [
+                'marketplaceHold',
+                'preferredEligible',
+                'expiresAt',
+                'acceptCapOverride',
+                'acceptWindowMinutes',
+                'acceptMaxOrders',
+            ],
         });
         return toEffectivePolicy(row).marketplaceHold;
     }

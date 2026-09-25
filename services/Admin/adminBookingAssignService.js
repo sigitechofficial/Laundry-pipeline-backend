@@ -437,16 +437,26 @@ class AdminBookingAssignService {
                 SELECT
                     a.id AS shopId,
                     bi.shopName AS shopName,
+                    bi.id AS businessInfoId,
                     COUNT(*) AS totalOrders,
-                    SUM(CASE WHEN b.bookingStatusId = :completedStatus THEN 1 ELSE 0 END) AS completedOrders
+                    SUM(CASE WHEN b.bookingStatusId = :completedStatus THEN 1 ELSE 0 END) AS completedOrders,
+                    SUM(COALESCE(bd.total, b.orderAmount, 0)) AS totalSpend,
+                    SUM(
+                        CASE
+                            WHEN b.bookingStatusId = :completedStatus
+                            THEN COALESCE(bd.total, b.orderAmount, 0)
+                            ELSE 0
+                        END
+                    ) AS completedSpend
                 FROM bookings b
                 JOIN addressDbs a ON a.id = b.laundryShopId
                 LEFT JOIN bussinessInformations bi ON bi.shopAddressId = a.id
+                LEFT JOIN billingDetails bd ON bd.bookingId = b.id
                 WHERE b.customerId = :customerId
                   AND b.laundryShopId IS NOT NULL
                   ${excludeClause}
-                GROUP BY a.id, bi.shopName
-                ORDER BY completedOrders DESC, totalOrders DESC
+                GROUP BY a.id, bi.shopName, bi.id
+                ORDER BY completedOrders DESC, totalSpend DESC, totalOrders DESC
                 LIMIT :limit
                 `,
                 {
@@ -463,9 +473,15 @@ class AdminBookingAssignService {
                 const completedOrders = Number(row.completedOrders) || 0;
                 return {
                     shopId: Number(row.shopId),
+                    businessInfoId:
+                        row.businessInfoId != null
+                            ? Number(row.businessInfoId)
+                            : null,
                     shopName: row.shopName || `Shop #${row.shopId}`,
                     totalOrders: Number(row.totalOrders) || 0,
                     completedOrders,
+                    totalSpend: Number(row.totalSpend) || 0,
+                    completedSpend: Number(row.completedSpend) || 0,
                     isReturning:
                         completedOrders >= RETURNING_CUSTOMER_MIN_COMPLETED,
                 };
@@ -473,6 +489,86 @@ class AdminBookingAssignService {
         } catch (err) {
             console.warn(
                 `[getCustomerShopHistory] unavailable for customer ${customerId}:`,
+                err?.message || err
+            );
+            return [];
+        }
+    }
+
+    /**
+     * Customers who have ordered at a shop (laundryShopId = addressDb id),
+     * with completed counts, returning flag, and spend.
+     * Ranked by completed orders then spend — same returning threshold as
+     * getCustomerShopHistory.
+     */
+    async getShopCustomerHistory(shopAddressId, options = {}) {
+        const shopId = Number(shopAddressId);
+        if (!Number.isFinite(shopId) || shopId <= 0) return [];
+        const limit = Number(options.limit) > 0 ? Number(options.limit) : 200;
+        try {
+            const rows = await sequelize.query(
+                `
+                SELECT
+                    u.id AS customerId,
+                    u.firstName AS firstName,
+                    u.lastName AS lastName,
+                    u.email AS email,
+                    u.phoneNum AS phoneNum,
+                    u.countryCode AS countryCode,
+                    COUNT(*) AS totalOrders,
+                    SUM(CASE WHEN b.bookingStatusId = :completedStatus THEN 1 ELSE 0 END) AS completedOrders,
+                    SUM(COALESCE(bd.total, b.orderAmount, 0)) AS totalSpend,
+                    SUM(
+                        CASE
+                            WHEN b.bookingStatusId = :completedStatus
+                            THEN COALESCE(bd.total, b.orderAmount, 0)
+                            ELSE 0
+                        END
+                    ) AS completedSpend,
+                    MAX(b.createdAt) AS lastOrderAt
+                FROM bookings b
+                JOIN users u ON u.id = b.customerId
+                LEFT JOIN billingDetails bd ON bd.bookingId = b.id
+                WHERE b.laundryShopId = :shopId
+                  AND b.customerId IS NOT NULL
+                GROUP BY u.id, u.firstName, u.lastName, u.email, u.phoneNum, u.countryCode
+                ORDER BY completedOrders DESC, totalSpend DESC, totalOrders DESC
+                LIMIT :limit
+                `,
+                {
+                    replacements: {
+                        shopId,
+                        completedStatus: COMPLETED,
+                        limit,
+                    },
+                    type: sequelize.QueryTypes.SELECT,
+                }
+            );
+            return (Array.isArray(rows) ? rows : []).map((row) => {
+                const completedOrders = Number(row.completedOrders) || 0;
+                const first = String(row.firstName || "").trim();
+                const last = String(row.lastName || "").trim();
+                const name = [first, last].filter(Boolean).join(" ") || "Customer";
+                return {
+                    customerId: Number(row.customerId),
+                    firstName: first || null,
+                    lastName: last || null,
+                    name,
+                    email: row.email || null,
+                    phoneNum: row.phoneNum || null,
+                    countryCode: row.countryCode || null,
+                    totalOrders: Number(row.totalOrders) || 0,
+                    completedOrders,
+                    totalSpend: Number(row.totalSpend) || 0,
+                    completedSpend: Number(row.completedSpend) || 0,
+                    lastOrderAt: row.lastOrderAt || null,
+                    isReturning:
+                        completedOrders >= RETURNING_CUSTOMER_MIN_COMPLETED,
+                };
+            });
+        } catch (err) {
+            console.warn(
+                `[getShopCustomerHistory] unavailable for shop ${shopId}:`,
                 err?.message || err
             );
             return [];

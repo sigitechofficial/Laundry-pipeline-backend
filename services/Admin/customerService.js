@@ -11,7 +11,8 @@ const {
     UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
 const { literal, fn, col } = require("sequelize");
-const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation,service } = require('../../models');
+const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation, service, billingDetails } = require('../../models');
+const adminBookingAssignService = require('./adminBookingAssignService');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
 const {
     resolveListWindow,
@@ -336,7 +337,7 @@ class CustomerService {
                 throw new NotFoundError('Customer not found');
             }
 
-            const [bookingsFind, userInfo] = await Promise.all([
+            const [bookingsFind, userInfo, customerShopHistory] = await Promise.all([
                 booking.findAll({
                     where: { customerId: normalizedCustomerId },
                     include: [
@@ -347,40 +348,50 @@ class CustomerService {
                             where: { status: true },
                             include: [
                                 {
-                                    model:service,
-                                    attributes: ['name']
-                                }
+                                    model: service,
+                                    attributes: ['id', 'name'],
+                                },
                             ],
                             attributes: ['id', 'date', 'time', 'items', 'serviceId', 'categoryPrice'],
                         },
                         {
                             model: OnHoldConfirmation,
                             required: false,
-                            attributes: ['onHoldImg', 'noOfItems', 'description', 'bookingId'],
+                            attributes: ['id', 'onHoldImg', 'noOfItems', 'description', 'bookingId'],
                         },
                         {
                             model: addressDb,
                             as: 'laundryShop',
+                            required: false,
+                            attributes: ['id', 'userId'],
                             include: {
                                 model: bussinessInformation,
-                                attributes: ['shopName'],
+                                attributes: ['id', 'shopName'],
+                                required: false,
                             },
-                            attributes: ['id'],
                         },
                         {
                             model: bookingStatus,
-                            attributes: ['title', 'description'],
+                            attributes: ['id', 'title', 'description'],
+                        },
+                        {
+                            model: billingDetails,
+                            as: 'billingDetail',
+                            required: false,
+                            attributes: ['upfrontAmount', 'total', 'paymentStatus'],
                         },
                         {
                             model: users,
                             as: 'driver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
+                            required: false,
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
                         },
                         {
                             model: users,
                             as: 'deliveryDriver',
-                            attributes: ['id', 'firstName', 'lastName', 'email','phoneNum', 'countryCode']
-                        }
+                            required: false,
+                            attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'countryCode'],
+                        },
                     ],
                     order: [['id', 'DESC']],
                     attributes: {
@@ -388,7 +399,7 @@ class CustomerService {
                             'updatedAt', 'categoryId', 'serviceId', 'subCategoryId', 'vehicleTypeId',
                             'driverInstructionOptions', 'driverInstructionOptions1', 'paymentConfirmed',
                             'partialPayment', 'subTotal', 'onHoldReason', 'OnHoldOtherReason',
-                            'paymentMethodId', 'paymentIntentId', 'pickupAddresId', 'dropOffAddressId', 'tipId'
+                            'paymentMethodId', 'paymentIntentId', 'pickupAddresId', 'dropOffAddressId', 'tipId',
                         ],
                     },
                 }),
@@ -404,11 +415,22 @@ class CustomerService {
                     order: [['createdAt', 'DESC']],
                     attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'lat', 'lng', 'status', 'addressType', 'userId'],
                 }),
+
+                // Every shop this customer has ordered from + returning flag
+                // (same contract as order assign / order detail).
+                adminBookingAssignService.getCustomerShopHistory(
+                    normalizedCustomerId,
+                    null,
+                    { limit: 50 }
+                ),
             ]);
 
             return {
                 bookingDetails: bookingsFind,
                 userDetails: presentCustomerUserDetails(customer, userInfo),
+                customerShopHistory: Array.isArray(customerShopHistory)
+                    ? customerShopHistory
+                    : [],
             };
     }
 

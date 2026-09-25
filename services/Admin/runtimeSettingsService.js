@@ -84,6 +84,37 @@ const DEFINITIONS = {
     min: 1,
     max: 60,
   },
+  shopAcceptCapEnabled: {
+    type: "boolean",
+    label: "Shop accept capacity (all shops)",
+    description:
+      "When on, each shop may only accept a limited number of marketplace orders inside a rolling time window. Shops over the limit are skipped; other shops still receive the offer. Admin manual assign always bypasses. Per-shop overrides live on the shop Order routing card.",
+    group: "booking_assignment",
+    envKey: "SHOP_ACCEPT_CAP_ENABLED",
+    defaultValue: false,
+  },
+  shopAcceptWindowMinutes: {
+    type: "integer",
+    label: "Accept capacity window (minutes)",
+    description:
+      "Rolling window used for the global accept limit (e.g. 60 = last 1 hour). Per-shop overrides can set their own window.",
+    group: "booking_assignment",
+    envKey: "SHOP_ACCEPT_WINDOW_MINUTES",
+    defaultValue: 60,
+    min: 1,
+    max: 1440,
+  },
+  shopAcceptMaxOrders: {
+    type: "integer",
+    label: "Max accepts per window (all shops)",
+    description:
+      "How many orders a shop may accept inside the window. 0 = no shop may accept via marketplace (admin can still assign). Example: 4 in 60 minutes.",
+    group: "booking_assignment",
+    envKey: "SHOP_ACCEPT_MAX_ORDERS",
+    defaultValue: 4,
+    min: 0,
+    max: 500,
+  },
   recurringAutoCreateEnabled: {
     type: "boolean",
     label: "Recurring auto-create",

@@ -233,6 +233,12 @@ async function resolvePreferredShop({
                 continue;
             }
 
+            const { evaluateShopAcceptCapacity } = require('../utils/shopAcceptCapacity');
+            const capacity = await evaluateShopAcceptCapacity(ownerId, shop.id, {
+                excludeBookingId,
+            });
+            if (!capacity.allowed) continue;
+
             return { shop, skipReason: null, candidateShopIds: history };
         }
 
