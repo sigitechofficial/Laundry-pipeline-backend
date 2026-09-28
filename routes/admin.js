@@ -31,6 +31,7 @@ const geminiController = require('../controllers/Admin/geminiController');
 const zoneCatalogController = require('../controllers/Admin/zoneCatalogController');
 const shopRevenueController = require('../controllers/Admin/shopRevenueController');
 const shopCustomersController = require('../controllers/Admin/shopCustomersController');
+const shopPrinterController = require('../controllers/Admin/shopPrinterController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -304,6 +305,15 @@ router.get(
 router.patch(
     '/bookings/:bookingId/assignShop',
     asyncMiddleware(adminController.assignBookingToShop)
+)
+//Star garment tags — queued for the shop's agent app, which prints on its LAN
+router.post(
+    '/bookings/:bookingId/print/tags',
+    asyncMiddleware(shopPrinterController.printBookingTags)
+)
+router.get(
+    '/bookings/:bookingId/print/jobs/:jobId',
+    asyncMiddleware(shopPrinterController.getBookingPrintJob)
 )
 
 //Add vehicle
@@ -798,6 +808,11 @@ router.get('/getAllEmployeesWithShopInfo', asyncMiddleware(adminController.getAl
 //Shop routing restrictions (preferred head-start / marketplace hold)
 router.get('/shopAssignmentPolicy/:shopUserId', asyncMiddleware(adminController.getShopAssignmentPolicy))
 router.patch('/shopAssignmentPolicy/:shopUserId', asyncMiddleware(adminController.updateShopAssignmentPolicy))
+//Shop Star printer (shopId = shop owner users.id)
+router.get('/shops/:shopId/printer', asyncMiddleware(shopPrinterController.getShopPrinter))
+router.put('/shops/:shopId/printer', asyncMiddleware(shopPrinterController.putShopPrinter))
+router.post('/shops/:shopId/printer/test', asyncMiddleware(shopPrinterController.testShopPrinter))
+router.get('/shops/:shopId/printer/jobs/:jobId', asyncMiddleware(shopPrinterController.getShopPrintJob))
 
 
 //!-----------------------------------Cancellation Policy Management------------------------------------>>>>

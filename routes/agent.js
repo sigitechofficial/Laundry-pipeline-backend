@@ -5,6 +5,7 @@ const agentAuthController = require("../controllers/Agent/authController");
 const agentController = require("../controllers/Agent/agents");
 const bookingAttemptController = require("../controllers/Agent/bookingAttemptController");
 const shopReviewAgentController = require("../controllers/Agent/shopReviewController");
+const printerController = require("../controllers/Agent/printerController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
@@ -13,6 +14,7 @@ const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
 const {
     requireShopOwner,
+    requireShopManagerOrOwner,
     requireCapability,
     requireAnyCapability,
     requireBookingAssignee,
@@ -550,6 +552,34 @@ router.put(
     validateAccessToken,
     requireCapability("canManageAutoAssign"),
     asyncMiddleware(agentController.putAutoAssignSettings)
+);
+// Shop Star printer — settings shared by every device of the shop
+router.get(
+    "/printer",
+    validateAccessToken,
+    asyncMiddleware(printerController.getMyShopPrinter)
+);
+router.put(
+    "/printer",
+    validateAccessToken,
+    requireShopManagerOrOwner,
+    asyncMiddleware(printerController.putMyShopPrinter)
+);
+// Admin-requested print jobs, claimed by the one device that can reach the printer
+router.get(
+    "/printJobs/pending",
+    validateAccessToken,
+    asyncMiddleware(printerController.listPendingPrintJobs)
+);
+router.post(
+    "/printJobs/:jobId/claim",
+    validateAccessToken,
+    asyncMiddleware(printerController.claimPrintJob)
+);
+router.post(
+    "/printJobs/:jobId/complete",
+    validateAccessToken,
+    asyncMiddleware(printerController.completePrintJob)
 );
 // Per-employee capability overrides
 router.get(
