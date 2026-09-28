@@ -9,7 +9,7 @@ const {
   buildDeclineReasonBreakdown,
   normalizeDeclineReason,
 } = require('../constants/agentDeclineReasons');
-const { summarizeShopTrack } = require('../services/Admin/shopAssignmentAuditService');
+const { summarizeShopTrack } = require('./shopAssignmentTrack');
 const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
 
 // ── Distance rank / top-3 badges ─────────────────────────────────────────────
