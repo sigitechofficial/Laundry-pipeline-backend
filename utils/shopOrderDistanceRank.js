@@ -5,6 +5,37 @@
  * Pure helpers — used by fetchVisibleNewBookings and unit tests.
  */
 
+const getdistance = require('./distanceCalculator');
+
+function toCoord(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * km from a shop to an order's pickup / delivery address. Null when either
+ * side has no usable coordinates (0,0 means the shop was never geocoded).
+ */
+async function computeShopOrderDistances(shopLat, shopLng, pickupAddress, dropOffAddress) {
+  const sLat = toCoord(shopLat);
+  const sLng = toCoord(shopLng);
+  const result = { pickupDistanceKm: null, deliveryDistanceKm: null };
+  if (sLat == null || sLng == null) return result;
+  if (Math.abs(sLat) < 0.0001 && Math.abs(sLng) < 0.0001) return result;
+
+  const legs = [
+    ['pickupDistanceKm', pickupAddress],
+    ['deliveryDistanceKm', dropOffAddress],
+  ];
+  for (const [key, address] of legs) {
+    const lat = toCoord(address?.lat);
+    const lng = toCoord(address?.lng);
+    if (lat == null || lng == null) continue;
+    result[key] = await getdistance(sLat, sLng, lat, lng);
+  }
+  return result;
+}
+
 function sortByPickupThenDelivery(rows) {
   if (!Array.isArray(rows) || rows.length < 2) return rows || [];
   return [...rows].sort((a, b) => {
@@ -64,6 +95,7 @@ function applyNearestDistanceRanks(rows) {
 }
 
 module.exports = {
+  computeShopOrderDistances,
   sortByPickupThenDelivery,
   applyNearestDistanceRanks,
 };

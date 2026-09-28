@@ -128,4 +128,40 @@ const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
   );
 }
 
-console.log('shopOrderDistanceRank + related feature tests: OK');
+// ── Shop → order distances (broadcast, preferred offer, home list) ──────────
+(async () => {
+  const { computeShopOrderDistances } = require('./shopOrderDistanceRank');
+  const shop = { lat: '51.5074', lng: '-0.1278' };
+  const pickup = { lat: '51.5155', lng: '-0.1420' };
+  const dropOff = { lat: 51.5074, lng: -0.1278 };
+
+  const both = await computeShopOrderDistances(shop.lat, shop.lng, pickup, dropOff);
+  assert.ok(both.pickupDistanceKm > 1 && both.pickupDistanceKm < 1.6, `pickup km ${both.pickupDistanceKm}`);
+  assert.strictEqual(both.deliveryDistanceKm, 0);
+
+  assert.deepStrictEqual(
+    await computeShopOrderDistances(null, null, pickup, dropOff),
+    { pickupDistanceKm: null, deliveryDistanceKm: null },
+    'shop without coordinates'
+  );
+  assert.deepStrictEqual(
+    await computeShopOrderDistances('0', '0', pickup, dropOff),
+    { pickupDistanceKm: null, deliveryDistanceKm: null },
+    'ungeocoded 0,0 shop'
+  );
+  assert.deepStrictEqual(
+    await computeShopOrderDistances(shop.lat, shop.lng, pickup, undefined),
+    { pickupDistanceKm: both.pickupDistanceKm, deliveryDistanceKm: null },
+    'no drop-off address'
+  );
+  assert.deepStrictEqual(
+    await computeShopOrderDistances(shop.lat, shop.lng, { lat: '', lng: 'x' }, {}),
+    { pickupDistanceKm: null, deliveryDistanceKm: null },
+    'bad address coordinates'
+  );
+
+  console.log('shopOrderDistanceRank + related feature tests: OK');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

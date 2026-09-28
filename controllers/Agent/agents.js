@@ -64,7 +64,6 @@ const { time } = require("console");
 const { request } = require("http");
 const checkServiceAvailability = require("../../utils/haversineFormula");
 const { literal } = require("sequelize");
-const getdistance = require("../../utils/distanceCalculator");
 const { type } = require("os");
 const { sendEvent } = require("../../socket_io");
 const { bookingTipAmountFromTips, summarizeTips } = require("../../utils/bookingTips");
@@ -813,49 +812,22 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 async function attachShopOrderDistances(rows, shopLat, shopLng) {
     if (!Array.isArray(rows) || !rows.length) return rows;
 
-    const hasShop =
-        Number.isFinite(shopLat) && Number.isFinite(shopLng);
+    const {
+        computeShopOrderDistances,
+        applyNearestDistanceRanks,
+    } = require('../../utils/shopOrderDistanceRank');
 
     for (const row of rows) {
-        let pickupDistanceKm = null;
-        let deliveryDistanceKm = null;
-        if (hasShop) {
-            const pLat = parseFloat(row.pickupAddress?.lat);
-            const pLng = parseFloat(row.pickupAddress?.lng);
-            const dLat = parseFloat(row.dropOffAddress?.lat);
-            const dLng = parseFloat(row.dropOffAddress?.lng);
-            try {
-                if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
-                    pickupDistanceKm = await getdistance(
-                        shopLat,
-                        shopLng,
-                        pLat,
-                        pLng
-                    );
-                }
-            } catch (_) {
-                pickupDistanceKm = null;
-            }
-            try {
-                if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
-                    deliveryDistanceKm = await getdistance(
-                        shopLat,
-                        shopLng,
-                        dLat,
-                        dLng
-                    );
-                }
-            } catch (_) {
-                deliveryDistanceKm = null;
-            }
-        }
+        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
+            shopLat,
+            shopLng,
+            row.pickupAddress,
+            row.dropOffAddress
+        );
         row.pickupDistanceKm = pickupDistanceKm;
         row.deliveryDistanceKm = deliveryDistanceKm;
     }
 
-    const {
-        applyNearestDistanceRanks,
-    } = require('../../utils/shopOrderDistanceRank');
     applyNearestDistanceRanks(rows);
     return rows;
 }

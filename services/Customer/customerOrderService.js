@@ -536,48 +536,19 @@ async function bookingEventSentCheckTheShops(
         };
         let notifiedCount = 0;
         const { sendNotification } = require('../../utils/notification');
-        const getdistance = require('../../utils/distanceCalculator');
+        const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
         const fcmPromises = [];
-
-        const pickupLat = parseFloat(bookingDetails.pickupAddress?.lat);
-        const pickupLng = parseFloat(bookingDetails.pickupAddress?.lng);
-        const dropLat = parseFloat(bookingDetails.dropOffAddress?.lat);
-        const dropLng = parseFloat(bookingDetails.dropOffAddress?.lng);
 
         // Nearest shop first among eligible (time slot already filtered above).
         const shopsWithDistance = [];
         for (const shop of availableShops) {
-            const sLat = parseFloat(shop.lat);
-            const sLng = parseFloat(shop.lng);
-            let pickupDistanceKm = null;
-            let deliveryDistanceKm = null;
-            if (Number.isFinite(sLat) && Number.isFinite(sLng)) {
-                try {
-                    if (Number.isFinite(pickupLat) && Number.isFinite(pickupLng)) {
-                        pickupDistanceKm = await getdistance(
-                            sLat,
-                            sLng,
-                            pickupLat,
-                            pickupLng
-                        );
-                    }
-                } catch (_) { /* ignore */ }
-                try {
-                    if (Number.isFinite(dropLat) && Number.isFinite(dropLng)) {
-                        deliveryDistanceKm = await getdistance(
-                            sLat,
-                            sLng,
-                            dropLat,
-                            dropLng
-                        );
-                    }
-                } catch (_) { /* ignore */ }
-            }
-            shopsWithDistance.push({
-                shop,
-                pickupDistanceKm,
-                deliveryDistanceKm,
-            });
+            const distances = await computeShopOrderDistances(
+                shop.lat,
+                shop.lng,
+                bookingDetails.pickupAddress,
+                bookingDetails.dropOffAddress
+            );
+            shopsWithDistance.push({ shop, ...distances });
         }
         shopsWithDistance.sort((a, b) => {
             const ap = a.pickupDistanceKm ?? Number.POSITIVE_INFINITY;
@@ -644,6 +615,14 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
         const ownerId = preferredShop.user?.id || preferredShop.userId;
         if (!ownerId) return false;
 
+        const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
+        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
+            preferredShop.lat,
+            preferredShop.lng,
+            bookingDetails.pickupAddress,
+            bookingDetails.dropOffAddress
+        );
+
         const eventData = {
             type: 'newBookingRequest',
             data: {
@@ -674,6 +653,9 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
                 laundryShopId: preferredShop.id,
                 customerId: bookingDetails.customer?.id,
                 pickupAddress: bookingDetails.pickupAddress || {},
+                dropOffAddress: bookingDetails.dropOffAddress || {},
+                pickupDistanceKm,
+                deliveryDistanceKm,
                 customer: {
                     id: bookingDetails.customer?.id,
                     firstName: bookingDetails.customer?.firstName,
@@ -2116,6 +2098,7 @@ class CustomerOrderService {
                     include: [
                         { model: users, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'userTypeId', 'image'] },
                         { model: addressDb, as: 'pickupAddress', attributes: ['id', 'streetAddress', 'district', 'province', 'postalcode', 'lat', 'lng', 'addressType'] },
+                        { model: addressDb, as: 'dropOffAddress', required: false, attributes: ['id', 'streetAddress', 'district', 'province', 'postalcode', 'lat', 'lng', 'addressType'] },
                         { model: billingDetails, as: 'billingDetail', attributes: ['total', 'serviceCharge', 'categoryCharge'] },
                         { model: zone, attributes: ['id', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'] },
                     ].filter(Boolean),

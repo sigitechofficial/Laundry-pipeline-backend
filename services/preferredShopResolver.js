@@ -88,7 +88,7 @@ async function loadCandidateShops(shopAddressIds, zoneId, requiredServiceIds) {
             zoneId,
             addressType: 'LaundaryShopAddress',
         },
-        attributes: ['id', 'status', 'zoneId', 'userId'],
+        attributes: ['id', 'status', 'zoneId', 'userId', 'lat', 'lng'],
         include: [
             {
                 model: users,
