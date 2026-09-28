@@ -745,6 +745,18 @@ router.get(
     '/singleShopData/:shopId/customers',
     asyncMiddleware(shopCustomersController.getShopCustomers)
 )
+router.post(
+    '/customerShopExclusions',
+    asyncMiddleware(shopCustomersController.excludeCustomerFromShop)
+)
+router.delete(
+    '/customerShopExclusions',
+    asyncMiddleware(shopCustomersController.includeCustomerForShop)
+)
+router.get(
+    '/customers/:customerId/shop-exclusions',
+    asyncMiddleware(shopCustomersController.listCustomerExclusions)
+)
 router.get(
     '/shops/:shopId/settlement',
     asyncMiddleware(agentSettlementController.getShopSettlement)

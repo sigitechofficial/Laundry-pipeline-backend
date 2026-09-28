@@ -578,12 +578,18 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 
     const shopAddr = await addressDb.findOne({
         where: { userId: agentId, deletedAt: null },
-        attributes: ["id", "zoneId"],
+        attributes: ["id", "zoneId", "lat", "lng"],
     });
     if (!shopAddr || !shopAddr.zoneId) return [];
 
     const agentShopId = shopAddr.id;
     const agentZone = shopAddr.zoneId;
+    const shopLat = parseFloat(shopAddr.lat);
+    const shopLng = parseFloat(shopAddr.lng);
+    const shopHasCoords =
+        Number.isFinite(shopLat) &&
+        Number.isFinite(shopLng) &&
+        !(Math.abs(shopLat) < 0.0001 && Math.abs(shopLng) < 0.0001);
 
     const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
     const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
@@ -631,6 +637,16 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             ],
         },
         {
+            model: addressDb,
+            as: "dropOffAddress",
+            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+            required: false,
+            include: [
+                { model: countries, attributes: ['id', 'name', 'shortName'] },
+                { model: cities, attributes: ['id', 'name'] },
+            ],
+        },
+        {
             model: users,
             as: 'customer',
             attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum'],
@@ -653,9 +669,25 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         },
     ];
 
+    // Lightweight coords for distance sort when list details are not needed (counts).
+    const distanceIncludes = [
+        {
+            model: addressDb,
+            as: "pickupAddress",
+            attributes: ["id", "lat", "lng"],
+            required: false,
+        },
+        {
+            model: addressDb,
+            as: "dropOffAddress",
+            attributes: ["id", "lat", "lng"],
+            required: false,
+        },
+    ];
+
     const bookingData = await booking.findAll({
         where: bookingWhere,
-        include: withDetails ? detailIncludes : [],
+        include: withDetails ? detailIncludes : distanceIncludes,
         attributes: ['id',
             'orderTrackId',
             'collectionDate',
@@ -768,7 +800,64 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         }
     }
 
+    // Distance from THIS shop to each order's pickup / delivery — then nearest-first.
+    await attachShopOrderDistances(out, shopHasCoords ? shopLat : null, shopHasCoords ? shopLng : null);
+
     return out;
+}
+
+/**
+ * Attach pickup/delivery km from the agent's shop and sort nearest pickup first.
+ * Also flags top-3 nearest pickup / delivery ranks in the current list.
+ */
+async function attachShopOrderDistances(rows, shopLat, shopLng) {
+    if (!Array.isArray(rows) || !rows.length) return rows;
+
+    const hasShop =
+        Number.isFinite(shopLat) && Number.isFinite(shopLng);
+
+    for (const row of rows) {
+        let pickupDistanceKm = null;
+        let deliveryDistanceKm = null;
+        if (hasShop) {
+            const pLat = parseFloat(row.pickupAddress?.lat);
+            const pLng = parseFloat(row.pickupAddress?.lng);
+            const dLat = parseFloat(row.dropOffAddress?.lat);
+            const dLng = parseFloat(row.dropOffAddress?.lng);
+            try {
+                if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
+                    pickupDistanceKm = await getdistance(
+                        shopLat,
+                        shopLng,
+                        pLat,
+                        pLng
+                    );
+                }
+            } catch (_) {
+                pickupDistanceKm = null;
+            }
+            try {
+                if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
+                    deliveryDistanceKm = await getdistance(
+                        shopLat,
+                        shopLng,
+                        dLat,
+                        dLng
+                    );
+                }
+            } catch (_) {
+                deliveryDistanceKm = null;
+            }
+        }
+        row.pickupDistanceKm = pickupDistanceKm;
+        row.deliveryDistanceKm = deliveryDistanceKm;
+    }
+
+    const {
+        applyNearestDistanceRanks,
+    } = require('../../utils/shopOrderDistanceRank');
+    applyNearestDistanceRanks(rows);
+    return rows;
 }
 
 /*

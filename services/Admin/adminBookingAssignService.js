@@ -193,6 +193,9 @@ class AdminBookingAssignService {
                 Number(bookingRow.laundryShopId) === Number(shop.id);
             const customerOrdersAtShop = ordersAtShopMap.get(Number(shop.id)) || 0;
             const customerTotalOrdersAtShop = totalOrdersAtShopMap.get(Number(shop.id)) || 0;
+            const historyRow = customerShopHistory.find(
+                (h) => Number(h.shopId) === Number(shop.id)
+            );
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
@@ -206,6 +209,7 @@ class AdminBookingAssignService {
                 customerTotalOrdersAtShop,
                 isReturningCustomerAtShop:
                     customerOrdersAtShop >= RETURNING_CUSTOMER_MIN_COMPLETED,
+                customerExcludedFromShop: Boolean(historyRow?.isExcluded),
                 todayDayOfWeek,
                 todayOpenTime: hoursRow?.openTime || null,
                 todayCloseTime: hoursRow?.closeTime || null,
@@ -253,7 +257,8 @@ class AdminBookingAssignService {
         };
     }
 
-    async assignBookingToShop(bookingId, laundryShopId) {
+    async assignBookingToShop(bookingId, laundryShopId, options = {}) {
+        const actedByUserId = options.actedByUserId ?? null;
         const bookingRow = await booking.findByPk(bookingId);
         if (!bookingRow) {
             throw new NotFoundError("Booking not found");
@@ -315,6 +320,11 @@ class AdminBookingAssignService {
             previousOwnerUserId = pendingShop?.userId || null;
         }
 
+        const previousShopId =
+            bookingRow.laundryShopId != null
+                ? Number(bookingRow.laundryShopId)
+                : null;
+
         const isReassign =
             bookingRow.laundryShopId != null &&
             Number(bookingRow.bookingStatusId) !== 1;
@@ -338,6 +348,25 @@ class AdminBookingAssignService {
             },
             { where: { id: bookingId } }
         );
+
+        try {
+            const shopAssignmentAuditService = require("./shopAssignmentAuditService");
+            await shopAssignmentAuditService.recordShopAssignment({
+                bookingId,
+                fromShopId: previousShopId,
+                toShopId: shop.id,
+                actedByUserId,
+                source: "admin",
+                note: previousShopId
+                    ? "Admin reassigned shop"
+                    : "Admin assigned shop",
+            });
+        } catch (auditErr) {
+            console.warn(
+                "[assignBookingToShop] shop audit skipped:",
+                auditErr?.message || auditErr
+            );
+        }
 
         try {
             const { lockBookingRateSnapshot } = require("../../utils/bookingRateSnapshot");
@@ -469,7 +498,7 @@ class AdminBookingAssignService {
                     type: sequelize.QueryTypes.SELECT,
                 }
             );
-            return (Array.isArray(rows) ? rows : []).map((row) => {
+            const mapped = (Array.isArray(rows) ? rows : []).map((row) => {
                 const completedOrders = Number(row.completedOrders) || 0;
                 return {
                     shopId: Number(row.shopId),
@@ -484,8 +513,52 @@ class AdminBookingAssignService {
                     completedSpend: Number(row.completedSpend) || 0,
                     isReturning:
                         completedOrders >= RETURNING_CUSTOMER_MIN_COMPLETED,
+                    isExcluded: false,
+                    exclusionId: null,
+                    exclusionReason: null,
                 };
             });
+
+            try {
+                const customerShopExclusionService = require('./customerShopExclusionService');
+                const exclusions =
+                    await customerShopExclusionService.listForCustomer(customerId);
+                const byShop = new Map(
+                    exclusions.map((e) => [Number(e.shopAddressId), e])
+                );
+                for (const row of mapped) {
+                    const ex = byShop.get(Number(row.shopId));
+                    if (ex) {
+                        row.isExcluded = true;
+                        row.exclusionId = ex.id;
+                        row.exclusionReason = ex.reason || null;
+                    }
+                }
+                for (const ex of exclusions) {
+                    const sid = Number(ex.shopAddressId);
+                    if (mapped.some((m) => Number(m.shopId) === sid)) continue;
+                    mapped.push({
+                        shopId: sid,
+                        businessInfoId: null,
+                        shopName: ex.shopName || `Shop #${sid}`,
+                        totalOrders: 0,
+                        completedOrders: 0,
+                        totalSpend: 0,
+                        completedSpend: 0,
+                        isReturning: false,
+                        isExcluded: true,
+                        exclusionId: ex.id,
+                        exclusionReason: ex.reason || null,
+                    });
+                }
+            } catch (exErr) {
+                console.warn(
+                    `[getCustomerShopHistory] exclusions skipped for customer ${customerId}:`,
+                    exErr?.message || exErr
+                );
+            }
+
+            return mapped;
         } catch (err) {
             console.warn(
                 `[getCustomerShopHistory] unavailable for customer ${customerId}:`,

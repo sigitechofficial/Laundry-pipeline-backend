@@ -2,7 +2,7 @@
 
 const { coupon, couponRedemption, users, booking, zone } = require('../../models');
 const { getCouponLifecycle } = require('../../utils/couponValidity');
-const { parseZoneIds } = require('../../utils/couponDiscount');
+const { parseZoneIds, couponAppliesToZone } = require('../../utils/couponDiscount');
 const { Op } = require('sequelize');
 const {
     ValidationError,
@@ -116,7 +116,7 @@ class AdminCouponService {
         };
     }
 
-    async getAllCoupons({ page = 1, limit = 20, isActive } = {}) {
+    async getAllCoupons({ page = 1, limit = 20, isActive, zoneId } = {}) {
         const offset = (parseInt(page) - 1) * parseInt(limit);
         const where = {};
 
@@ -124,31 +124,52 @@ class AdminCouponService {
             where.isActive = isActive === 'true' || isActive === true;
         }
 
+        const zoneIdFilter = zoneId != null && zoneId !== ''
+            ? parseInt(zoneId, 10)
+            : null;
+        const filterByZone =
+            Number.isFinite(zoneIdFilter) && zoneIdFilter > 0;
+
+        // When filtering by zone, fetch a wider page then filter in memory —
+        // zoneIds is JSON (null/[] = all zones) so SQL paging alone is wrong.
         const { count, rows } = await coupon.findAndCountAll({
             where,
             order: [['createdAt', 'DESC']],
-            limit: parseInt(limit),
-            offset
+            ...(filterByZone
+                ? {}
+                : { limit: parseInt(limit), offset }),
         });
 
-        const plain = rows.map((row) => {
+        let plain = rows.map((row) => {
             const p = row.get ? row.get({ plain: true }) : row;
             return {
                 ...p,
                 status: getCouponLifecycle(p),
             };
         });
+
+        if (filterByZone) {
+            plain = plain.filter((row) =>
+                couponAppliesToZone(row, zoneIdFilter)
+            );
+        }
+
+        const total = filterByZone ? plain.length : count;
+        if (filterByZone) {
+            plain = plain.slice(offset, offset + parseInt(limit));
+        }
+
         const data = await attachZoneNames(plain);
 
         return {
             message: 'Coupons fetched successfully',
             data,
             meta: {
-                total: count,
+                total,
                 page: parseInt(page),
                 limit: parseInt(limit),
-                totalPages: Math.ceil(count / parseInt(limit))
-            }
+                totalPages: Math.ceil(total / parseInt(limit)) || 1,
+            },
         };
     }
 

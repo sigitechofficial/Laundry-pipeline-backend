@@ -945,13 +945,57 @@ class AgentInvoiceManagementService {
         const billing = bookingData.billingDetail || {};
         const tipAmount = bookingTipAmountFromTips(bookingData.tips);
 
+        // Authoritative laundry discount from reserved coupon (same as finalize).
+        const resolvedDiscount = await couponService.resolveBookingDiscount(
+            bookingId,
+            servicesSubtotal,
+            parseFloat(billing.discount || 0),
+            null,
+            bookingData.zoneId ?? bookingData.zone?.id ?? null
+        );
+        if (parseFloat(billing.discount || 0) !== resolvedDiscount) {
+            await billingDetails.update(
+                { discount: resolvedDiscount },
+                { where: { bookingId } }
+            );
+            if (bookingData.billingDetail) {
+                bookingData.billingDetail.discount = resolvedDiscount;
+            }
+        }
+
+        let couponInfo = null;
+        try {
+            const { couponRedemption, coupon: couponModel } = require("../../models");
+            const redemption = await couponRedemption.findOne({
+                where: { bookingId },
+                include: [
+                    {
+                        model: couponModel,
+                        as: "coupon",
+                        attributes: ["id", "code", "discountType", "discountValue"],
+                        required: false,
+                    },
+                ],
+            });
+            if (redemption?.coupon) {
+                couponInfo = {
+                    code: redemption.coupon.code,
+                    discountType: redemption.coupon.discountType,
+                    discountValue: redemption.coupon.discountValue,
+                    discountAmt: resolvedDiscount,
+                };
+            }
+        } catch (_) {
+            /* non-fatal */
+        }
+
         const paymentSummary = buildPaymentSummaryForBooking(bookingData.paymentType, {
             laundrySubtotal: servicesSubtotal,
             serviceFee: parseFloat(billing.serviceCharge || 0),
             minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
             driverTip: tipAmount,
             prepaidDriverTip: billing.prepaidTipAmount,
-            discount: parseFloat(billing.discount || 0),
+            discount: resolvedDiscount,
         });
 
         return {
@@ -963,6 +1007,7 @@ class AgentInvoiceManagementService {
             subTotal: bookingData.subTotal,
             total: bookingData.orderAmount,
             paymentSummary,
+            coupon: couponInfo,
             extraTip: summarizeTips(bookingData.tips || []),
         };
     }

@@ -2740,7 +2740,8 @@ async function assignBookingToShop(req, res) {
     }
     const data = await adminBookingAssignService.assignBookingToShop(
         bookingId,
-        laundryShopId
+        laundryShopId,
+        { actedByUserId: req.user?.id }
     );
     return ResponseHelper.success(res, 'Order assigned to shop successfully', data);
 }

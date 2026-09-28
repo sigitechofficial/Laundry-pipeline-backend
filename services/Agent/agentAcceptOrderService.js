@@ -42,6 +42,7 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             "laundryShopId",
             "bookingStatusId",
             "adminAssignedShopId",
+            "customerId",
         ],
     });
 
@@ -82,6 +83,18 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             );
         }
 
+        const customerShopExclusionService = require("../Admin/customerShopExclusionService");
+        const customerExcluded =
+            await customerShopExclusionService.isCustomerExcludedFromShop(
+                bookingRow.customerId,
+                shopAddress.id
+            );
+        if (customerExcluded) {
+            throw new ConflictError(
+                "This customer is excluded from your shop and cannot be accepted via marketplace."
+            );
+        }
+
         const { evaluateShopAcceptCapacity } = require("../../utils/shopAcceptCapacity");
         const capacity = await evaluateShopAcceptCapacity(
             shopOwnerUserId,
@@ -117,6 +130,23 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
 
     if (!affectedCount) {
         throw new ConflictError("This order was already taken");
+    }
+
+    try {
+        const shopAssignmentAuditService = require("../Admin/shopAssignmentAuditService");
+        await shopAssignmentAuditService.recordShopAssignment({
+            bookingId,
+            fromShopId: null,
+            toShopId: shopAddress.id,
+            actedByUserId: shopOwnerUserId,
+            source: "agent_accept",
+            note: "Shop accepted marketplace order",
+        });
+    } catch (auditErr) {
+        console.warn(
+            "[acceptOrder] shop audit skipped:",
+            auditErr?.message || auditErr
+        );
     }
 
     try {

@@ -180,6 +180,12 @@ async function resolvePreferredShop({
         const { preferredExcluded } =
             await shopAssignmentPolicyService.getRestrictedShopUserIds();
 
+        const customerShopExclusionService = require('./Admin/customerShopExclusionService');
+        const customerExcludedShopIds =
+            await customerShopExclusionService.getExcludedShopAddressIds(
+                customerId
+            );
+
         const countryCtx = await getCountryContextFromZoneId(zoneId);
         const resolvedTz = timeZone || countryCtx.ianaTimeZone;
         const pickup =
@@ -214,6 +220,9 @@ async function resolvePreferredShop({
 
             // Admin took this shop out of preferred routing (or put it on hold).
             if (preferredExcluded.has(ownerId)) continue;
+
+            // Customer excluded from this shop (dissatisfaction / ops block).
+            if (customerExcludedShopIds.has(Number(shop.id))) continue;
 
             const openForPickup = await isShopEligibleForBroadcast(
                 ownerId,

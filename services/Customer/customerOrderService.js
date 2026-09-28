@@ -233,7 +233,7 @@ async function bookingEventSentCheckTheShops(
                 ],
             },
         ],
-        attributes: ["id", "status", "zoneId", "userId"],
+        attributes: ["id", "status", "zoneId", "userId", "lat", "lng"],
     });
 
     console.log(
@@ -258,6 +258,16 @@ async function bookingEventSentCheckTheShops(
     const { holdExcluded } =
         await shopAssignmentPolicyService.getRestrictedShopUserIds();
 
+    // Per-customer shop exclusions (admin: customer not satisfied with shop).
+    const bookingForCustomer = await booking.findByPk(bookingId, {
+        attributes: ['id', 'customerId'],
+    });
+    const customerShopExclusionService = require('../Admin/customerShopExclusionService');
+    const customerExcludedShopIds =
+        await customerShopExclusionService.getExcludedShopAddressIds(
+            bookingForCustomer?.customerId
+        );
+
     // Count shops in the zone that actively offer ALL selected services,
     // independent of slot/working-hours availability. Used to detect a service
     // coverage gap (→ notify admin for manual assignment).
@@ -278,6 +288,13 @@ async function bookingEventSentCheckTheShops(
         if (holdExcluded.has(Number(shop.user?.id || shop.userId))) {
             console.log(
                 `[broadcast] booking ${bookingId} skipping shop ${shop.id} — marketplace hold`
+            );
+            continue;
+        }
+
+        if (customerExcludedShopIds.has(Number(shop.id))) {
+            console.log(
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — customer excluded from shop`
             );
             continue;
         }
@@ -347,6 +364,12 @@ async function bookingEventSentCheckTheShops(
                     model: addressDb,
                     as: "pickupAddress",
                     attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+                },
+                {
+                    model: addressDb,
+                    as: "dropOffAddress",
+                    attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+                    required: false,
                 },
                 {
                     model: billingDetails,
@@ -498,6 +521,7 @@ async function bookingEventSentCheckTheShops(
                 laundryShopId: availableShops[0]?.id || null,
                 customerId: bookingDetails.customer.id,
                 pickupAddress: bookingDetails.pickupAddress || {},
+                dropOffAddress: bookingDetails.dropOffAddress || {},
                 customer: {
                     id: bookingDetails.customer.id,
                     firstName: bookingDetails.customer.firstName,
@@ -512,11 +536,71 @@ async function bookingEventSentCheckTheShops(
         };
         let notifiedCount = 0;
         const { sendNotification } = require('../../utils/notification');
+        const getdistance = require('../../utils/distanceCalculator');
         const fcmPromises = [];
-        availableShops.forEach((shop) => {
+
+        const pickupLat = parseFloat(bookingDetails.pickupAddress?.lat);
+        const pickupLng = parseFloat(bookingDetails.pickupAddress?.lng);
+        const dropLat = parseFloat(bookingDetails.dropOffAddress?.lat);
+        const dropLng = parseFloat(bookingDetails.dropOffAddress?.lng);
+
+        // Nearest shop first among eligible (time slot already filtered above).
+        const shopsWithDistance = [];
+        for (const shop of availableShops) {
+            const sLat = parseFloat(shop.lat);
+            const sLng = parseFloat(shop.lng);
+            let pickupDistanceKm = null;
+            let deliveryDistanceKm = null;
+            if (Number.isFinite(sLat) && Number.isFinite(sLng)) {
+                try {
+                    if (Number.isFinite(pickupLat) && Number.isFinite(pickupLng)) {
+                        pickupDistanceKm = await getdistance(
+                            sLat,
+                            sLng,
+                            pickupLat,
+                            pickupLng
+                        );
+                    }
+                } catch (_) { /* ignore */ }
+                try {
+                    if (Number.isFinite(dropLat) && Number.isFinite(dropLng)) {
+                        deliveryDistanceKm = await getdistance(
+                            sLat,
+                            sLng,
+                            dropLat,
+                            dropLng
+                        );
+                    }
+                } catch (_) { /* ignore */ }
+            }
+            shopsWithDistance.push({
+                shop,
+                pickupDistanceKm,
+                deliveryDistanceKm,
+            });
+        }
+        shopsWithDistance.sort((a, b) => {
+            const ap = a.pickupDistanceKm ?? Number.POSITIVE_INFINITY;
+            const bp = b.pickupDistanceKm ?? Number.POSITIVE_INFINITY;
+            if (ap !== bp) return ap - bp;
+            const ad = a.deliveryDistanceKm ?? Number.POSITIVE_INFINITY;
+            const bd = b.deliveryDistanceKm ?? Number.POSITIVE_INFINITY;
+            return ad - bd;
+        });
+
+        for (const { shop, pickupDistanceKm, deliveryDistanceKm } of shopsWithDistance) {
             if (shop.user && shop.user.id) {
-                sendEvent(shop.user.id, eventData);
-                // FCM push — non-blocking, fire-and-forget
+                const payload = {
+                    ...eventData,
+                    data: {
+                        ...eventData.data,
+                        pickupDistanceKm,
+                        deliveryDistanceKm,
+                        isNearestPickup: false,
+                        isNearestDelivery: false,
+                    },
+                };
+                sendEvent(shop.user.id, payload);
                 fcmPromises.push(
                     sendNotification(
                         shop.user.id,
@@ -531,7 +615,7 @@ async function bookingEventSentCheckTheShops(
             } else {
                 console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
             }
-        });
+        }
         // Await all FCM pushes in parallel (non-blocking to booking creation)
         Promise.all(fcmPromises).catch(() => {});
         return {

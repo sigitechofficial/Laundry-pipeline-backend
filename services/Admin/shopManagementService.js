@@ -612,8 +612,9 @@ class ShopManagementService {
                 // Orders this shop declined, with the reason + order detail, so
                 // admin can see a per-shop decline history (not just per order).
                 try {
+                    const agentUserId = result.agentId;
                     const declineRows = await bookingAgentDecline.findAll({
-                        where: { agentUserId: result.agentId },
+                        where: { agentUserId },
                         order: [['createdAt', 'DESC'], ['id', 'DESC']],
                         limit: 50,
                         include: [
@@ -655,12 +656,52 @@ class ShopManagementService {
                                 [c.firstName, c.lastName].filter(Boolean).join(' ') || null,
                         };
                     });
+
+                    const totalDeclines = await bookingAgentDecline.count({
+                        where: { agentUserId },
+                    });
+                    const shopAddrId = Number(
+                        result.shopAddressId ||
+                            result.addressDb?.id ||
+                            0
+                    );
+                    const acceptedCount = shopAddrId
+                        ? await booking.count({
+                              where: { laundryShopId: shopAddrId },
+                          })
+                        : 0;
+                    const actedOn = totalDeclines + acceptedCount;
+                    const rejectionRate =
+                        actedOn > 0
+                            ? Math.round((totalDeclines / actedOn) * 1000) / 10
+                            : 0;
+
+                    const reasonRows = await bookingAgentDecline.findAll({
+                        where: { agentUserId },
+                        attributes: ['reason'],
+                        raw: true,
+                    });
+                    const {
+                        buildDeclineReasonBreakdown,
+                    } = require('../../constants/agentDeclineReasons');
+                    result.declineStats = {
+                        totalDeclines,
+                        acceptedCount,
+                        rejectionRate,
+                        reasonBreakdown: buildDeclineReasonBreakdown(reasonRows),
+                    };
                 } catch (declineErr) {
                     console.warn(
                         '[getSingleShopData] declines skipped:',
                         declineErr.message
                     );
                     result.declines = [];
+                    result.declineStats = {
+                        totalDeclines: 0,
+                        acceptedCount: 0,
+                        rejectionRate: 0,
+                        reasonBreakdown: [],
+                    };
                 }
             }
 
@@ -1030,7 +1071,34 @@ class ShopManagementService {
             { limit: 500 }
         );
 
-        const returning = customers.filter((c) => c.isReturning);
+        const customerShopExclusionService = require('./customerShopExclusionService');
+        let exclusionByCustomer = new Map();
+        try {
+            const exclusions = await customerShopExclusionService.listForShop(
+                resolved.shopAddressId
+            );
+            exclusionByCustomer = new Map(
+                exclusions.map((e) => [Number(e.customerId), e])
+            );
+        } catch (err) {
+            console.warn(
+                '[getShopCustomers] exclusions skipped:',
+                err?.message || err
+            );
+        }
+
+        const withExclusion = customers.map((c) => {
+            const ex = exclusionByCustomer.get(Number(c.customerId));
+            return {
+                ...c,
+                isExcluded: Boolean(ex),
+                exclusionId: ex?.id || null,
+                exclusionReason: ex?.reason || null,
+                excludedAt: ex?.createdAt || null,
+            };
+        });
+
+        const returning = withExclusion.filter((c) => c.isReturning);
         const topReturning = [...returning]
             .sort(
                 (a, b) =>
@@ -1042,7 +1110,8 @@ class ShopManagementService {
         const sumSpend = (list) =>
             list.reduce((acc, row) => acc + (Number(row.totalSpend) || 0), 0);
 
-        const list = returningOnly ? returning : customers;
+        const list = returningOnly ? returning : withExclusion;
+        const excludedCount = withExclusion.filter((c) => c.isExcluded).length;
 
         return {
             shopId: resolved.shopAddressId,
@@ -1050,9 +1119,10 @@ class ShopManagementService {
             shopName: resolved.shopName,
             returningThreshold: RETURNING_CUSTOMER_MIN_COMPLETED,
             summary: {
-                totalCustomers: customers.length,
+                totalCustomers: withExclusion.length,
                 returningCustomers: returning.length,
-                totalSpend: sumSpend(customers),
+                excludedCustomers: excludedCount,
+                totalSpend: sumSpend(withExclusion),
                 returningSpend: sumSpend(returning),
             },
             topReturning,

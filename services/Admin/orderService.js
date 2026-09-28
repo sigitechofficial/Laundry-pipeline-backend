@@ -1080,6 +1080,69 @@ class OrderService {
         }
 
         try {
+            const shopAssignmentAuditService = require('./shopAssignmentAuditService');
+            const shopEvents =
+                await shopAssignmentAuditService.listShopAssignmentEvents(orderId);
+            enriched.shopAssignmentEvents = shopEvents;
+            enriched.shopAssignmentTrack =
+                shopAssignmentAuditService.summarizeShopTrack(shopEvents);
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] shopAssignmentEvents unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.shopAssignmentEvents = [];
+            enriched.shopAssignmentTrack = {
+                originalShopId: null,
+                originalShopName: null,
+                currentShopId: null,
+                currentShopName: null,
+                reassignCount: 0,
+            };
+        }
+
+        try {
+            const { couponRedemption, coupon } = require('../../models');
+            const redemption = await couponRedemption.findOne({
+                where: { bookingId: orderId },
+                include: [
+                    {
+                        model: coupon,
+                        as: 'coupon',
+                        attributes: [
+                            'id',
+                            'code',
+                            'discountType',
+                            'discountValue',
+                        ],
+                        required: false,
+                    },
+                ],
+            });
+            if (redemption?.coupon) {
+                const disc = parseFloat(
+                    redemption.discountAmt ??
+                        enriched.billingDetail?.discount ??
+                        0
+                );
+                enriched.couponRedemption = {
+                    code: redemption.coupon.code,
+                    discountType: redemption.coupon.discountType,
+                    discountValue: redemption.coupon.discountValue,
+                    discountAmt: Number.isFinite(disc) ? disc : 0,
+                };
+            } else {
+                enriched.couponRedemption = null;
+            }
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] couponRedemption unavailable for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.couponRedemption = null;
+        }
+
+        try {
             const attempts = await bookingAttempt.findAll({
                 where: { bookingId: orderId },
                 order: [['id', 'ASC']],
