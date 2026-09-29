@@ -781,6 +781,26 @@ router.get(
     asyncMiddleware(shopCustomersController.listCustomerExclusions)
 )
 router.get(
+    '/customers/:customerId/assignableShops',
+    asyncMiddleware(shopCustomersController.getCustomerAssignableShops)
+)
+router.post(
+    '/customers/:customerId/shop-assignment',
+    asyncMiddleware(shopCustomersController.assignCustomerShop)
+)
+router.delete(
+    '/customers/:customerId/shop-assignment',
+    asyncMiddleware(shopCustomersController.clearCustomerShopAssignment)
+)
+router.get(
+    '/customers/:customerId/routing-events',
+    asyncMiddleware(shopCustomersController.listCustomerRoutingEvents)
+)
+router.get(
+    '/singleShopData/:shopId/routing-events',
+    asyncMiddleware(shopCustomersController.listShopRoutingEvents)
+)
+router.get(
     '/shops/:shopId/settlement',
     asyncMiddleware(agentSettlementController.getShopSettlement)
 )

@@ -88,7 +88,7 @@ async function loadCandidateShops(shopAddressIds, zoneId, requiredServiceIds) {
             zoneId,
             addressType: 'LaundaryShopAddress',
         },
-        attributes: ['id', 'status', 'zoneId', 'userId', 'lat', 'lng'],
+        attributes: ['id', 'status', 'zoneId', 'userId'],
         include: [
             {
                 model: users,
@@ -162,10 +162,42 @@ async function resolvePreferredShop({
 
         const requiredServiceIds = normalizeServiceIds(services);
         const history = await getCompletedShopHistory(customerId, zoneId);
-        if (!history.length) return emptyResult(SKIP_REASONS.NO_HISTORY);
+
+        // Admin preferred-shop assignment wins over completed-order history.
+        let assignedShopId = null;
+        try {
+            const customerShopAssignmentService = require('./Admin/customerShopAssignmentService');
+            assignedShopId =
+                await customerShopAssignmentService.getActiveAssignmentShopAddressId(
+                    customerId
+                );
+        } catch (err) {
+            console.warn(
+                '[preferredShopResolver] assignment lookup skipped:',
+                err?.message || err
+            );
+        }
+
+        const candidateIds = [];
+        const seenIds = new Set();
+        if (assignedShopId) {
+            const aid = Number(assignedShopId);
+            if (Number.isFinite(aid) && aid > 0) {
+                candidateIds.push(aid);
+                seenIds.add(aid);
+            }
+        }
+        for (const id of history) {
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+            candidateIds.push(id);
+            if (candidateIds.length >= MAX_CANDIDATE_SHOPS) break;
+        }
+
+        if (!candidateIds.length) return emptyResult(SKIP_REASONS.NO_HISTORY);
 
         const candidates = await loadCandidateShops(
-            history,
+            candidateIds,
             zoneId,
             requiredServiceIds
         );
@@ -173,7 +205,7 @@ async function resolvePreferredShop({
             return {
                 shop: null,
                 skipReason: SKIP_REASONS.NO_ELIGIBLE_HISTORY,
-                candidateShopIds: history,
+                candidateShopIds: candidateIds,
             };
         }
 
@@ -248,7 +280,7 @@ async function resolvePreferredShop({
             });
             if (!capacity.allowed) continue;
 
-            return { shop, skipReason: null, candidateShopIds: history };
+            return { shop, skipReason: null, candidateShopIds: candidateIds };
         }
 
         return {
@@ -256,7 +288,7 @@ async function resolvePreferredShop({
             skipReason: sawSlotClash
                 ? SKIP_REASONS.SLOT_TAKEN
                 : SKIP_REASONS.NO_ELIGIBLE_HISTORY,
-            candidateShopIds: history,
+            candidateShopIds: candidateIds,
         };
     } catch (err) {
         console.error('[preferredShopResolver] error:', err?.message || err);

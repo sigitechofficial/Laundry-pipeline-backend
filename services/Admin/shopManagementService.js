@@ -1087,18 +1087,42 @@ class ShopManagementService {
             );
         }
 
-        const withExclusion = customers.map((c) => {
+        const customerShopAssignmentService = require('./customerShopAssignmentService');
+        let assignmentByCustomer = new Map();
+        try {
+            assignmentByCustomer =
+                await customerShopAssignmentService.getActiveAssignmentsForCustomers(
+                    customers.map((c) => c.customerId)
+                );
+        } catch (err) {
+            console.warn(
+                '[getShopCustomers] assignments skipped:',
+                err?.message || err
+            );
+        }
+
+        const withMeta = customers.map((c) => {
             const ex = exclusionByCustomer.get(Number(c.customerId));
+            const assignment = assignmentByCustomer.get(Number(c.customerId));
+            const assignedHere =
+                assignment != null &&
+                Number(assignment.shopAddressId) ===
+                    Number(resolved.shopAddressId);
             return {
                 ...c,
                 isExcluded: Boolean(ex),
                 exclusionId: ex?.id || null,
                 exclusionReason: ex?.reason || null,
                 excludedAt: ex?.createdAt || null,
+                hasActiveAssignment: Boolean(assignment),
+                isAssignedHere: assignedHere,
+                activeAssignment: assignment || null,
+                assignedShopName: assignment?.shopName || null,
+                assignedShopAddressId: assignment?.shopAddressId || null,
             };
         });
 
-        const returning = withExclusion.filter((c) => c.isReturning);
+        const returning = withMeta.filter((c) => c.isReturning);
         const topReturning = [...returning]
             .sort(
                 (a, b) =>
@@ -1110,8 +1134,23 @@ class ShopManagementService {
         const sumSpend = (list) =>
             list.reduce((acc, row) => acc + (Number(row.totalSpend) || 0), 0);
 
-        const list = returningOnly ? returning : withExclusion;
-        const excludedCount = withExclusion.filter((c) => c.isExcluded).length;
+        const list = returningOnly ? returning : withMeta;
+        const excludedCount = withMeta.filter((c) => c.isExcluded).length;
+        const assignedCount = withMeta.filter((c) => c.hasActiveAssignment).length;
+
+        let recentRoutingEvents = [];
+        try {
+            recentRoutingEvents =
+                await customerShopAssignmentService.listRoutingEventsForShop(
+                    resolved.shopAddressId,
+                    { limit: 15 }
+                );
+        } catch (err) {
+            console.warn(
+                '[getShopCustomers] routing events skipped:',
+                err?.message || err
+            );
+        }
 
         return {
             shopId: resolved.shopAddressId,
@@ -1119,14 +1158,16 @@ class ShopManagementService {
             shopName: resolved.shopName,
             returningThreshold: RETURNING_CUSTOMER_MIN_COMPLETED,
             summary: {
-                totalCustomers: withExclusion.length,
+                totalCustomers: withMeta.length,
                 returningCustomers: returning.length,
                 excludedCustomers: excludedCount,
-                totalSpend: sumSpend(withExclusion),
+                assignedCustomers: assignedCount,
+                totalSpend: sumSpend(withMeta),
                 returningSpend: sumSpend(returning),
             },
             topReturning,
             topN,
+            recentRoutingEvents,
             customers: list,
         };
     }

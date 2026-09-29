@@ -29,6 +29,10 @@ const {
 const {
     BUSINESS_TIME_ZONE,
 } = require("../../utils/bookingTimeZone");
+const {
+    computeShopOrderDistances,
+    sortAssignableShops,
+} = require("../../utils/shopOrderDistanceRank");
 const agentBookingDeclineService = require("../Agent/agentBookingDeclineService");
 const { notifyAdminBookingAssignment } = require("../../utils/bookingAdminAssignNotify");
 const { notifyBookingTakenByAgent } = require("../../utils/bookingTakenNotify");
@@ -53,6 +57,7 @@ class AdminBookingAssignService {
                 "collectionDate",
                 "collectionTimeFrom",
                 "collectionTimeTo",
+                "pickupAddresId",
             ],
             include: [
                 {
@@ -60,6 +65,12 @@ class AdminBookingAssignService {
                     attributes: ["id", "name"],
                     required: false,
                     paranoid: false,
+                },
+                {
+                    model: addressDb,
+                    as: "pickupAddress",
+                    attributes: ["id", "lat", "lng"],
+                    required: false,
                 },
             ],
         });
@@ -120,7 +131,7 @@ class AdminBookingAssignService {
                 addressType: "LaundaryShopAddress",
                 status: true,
             },
-            attributes: ["id", "userId", "zoneId", "status"],
+            attributes: ["id", "userId", "zoneId", "status", "lat", "lng"],
         });
 
         // Returning-customer signal per shop: absolute COMPLETED + TOTAL order
@@ -196,11 +207,21 @@ class AdminBookingAssignService {
             const historyRow = customerShopHistory.find(
                 (h) => Number(h.shopId) === Number(shop.id)
             );
+            // Straight-line km from the customer's pickup to this shop (null
+            // when either side has no usable coordinates).
+            const { pickupDistanceKm: distanceKm } =
+                await computeShopOrderDistances(
+                    shop.lat,
+                    shop.lng,
+                    bookingRow.pickupAddress,
+                    null
+                );
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
                 zoneId: orderZoneId,
                 zoneName,
+                distanceKm,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
@@ -217,24 +238,9 @@ class AdminBookingAssignService {
             });
         }
 
-        // Ordering priority:
-        //  1. The shop the order is CURRENTLY assigned to always sits at the top
-        //     so the admin sees "who has it now" (and whether they're a returning
-        //     customer there) before considering a move.
-        //  2. Then shops where this customer has the most completed orders
-        //     (strongest repeat business → most sensible reassign target).
-        //  3. Then alphabetical for a stable, predictable list.
-        shopList.sort((a, b) => {
-            if (Boolean(a.isCurrentShop) !== Boolean(b.isCurrentShop)) {
-                return a.isCurrentShop ? -1 : 1;
-            }
-            if ((b.customerOrdersAtShop || 0) !== (a.customerOrdersAtShop || 0)) {
-                return (b.customerOrdersAtShop || 0) - (a.customerOrdersAtShop || 0);
-            }
-            return String(a.shopName).localeCompare(String(b.shopName), undefined, {
-                sensitivity: "base",
-            });
-        });
+        // Ordering: current shop pinned first, then NEAREST to the pickup,
+        // then most completed orders for this customer, then name.
+        sortAssignableShops(shopList);
 
         const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
 
@@ -252,6 +258,8 @@ class AdminBookingAssignService {
             collectionTimeFrom: bookingRow.collectionTimeFrom,
             collectionTimeTo: bookingRow.collectionTimeTo,
             shopCount: shopList.length,
+            // False when the pickup address has no coordinates → no distances.
+            pickupHasCoords: shopList.some((s) => s.distanceKm != null),
             shops: shopList,
             customerShopHistory,
         };
@@ -555,6 +563,49 @@ class AdminBookingAssignService {
                 console.warn(
                     `[getCustomerShopHistory] exclusions skipped for customer ${customerId}:`,
                     exErr?.message || exErr
+                );
+            }
+
+            try {
+                const customerShopAssignmentService = require('./customerShopAssignmentService');
+                const active =
+                    await customerShopAssignmentService.getActiveAssignment(
+                        customerId
+                    );
+                for (const row of mapped) {
+                    row.isAssignedShop =
+                        active != null &&
+                        Number(active.shopAddressId) === Number(row.shopId);
+                    row.activeAssignment = active || null;
+                    row.assignedShopName = active?.shopName || null;
+                }
+                if (
+                    active &&
+                    !mapped.some(
+                        (m) => Number(m.shopId) === Number(active.shopAddressId)
+                    )
+                ) {
+                    mapped.unshift({
+                        shopId: Number(active.shopAddressId),
+                        businessInfoId: null,
+                        shopName: active.shopName || `Shop #${active.shopAddressId}`,
+                        totalOrders: 0,
+                        completedOrders: 0,
+                        totalSpend: 0,
+                        completedSpend: 0,
+                        isReturning: false,
+                        isExcluded: false,
+                        exclusionId: null,
+                        exclusionReason: null,
+                        isAssignedShop: true,
+                        activeAssignment: active,
+                        assignedShopName: active.shopName || null,
+                    });
+                }
+            } catch (asErr) {
+                console.warn(
+                    `[getCustomerShopHistory] assignment skipped for customer ${customerId}:`,
+                    asErr?.message || asErr
                 );
             }
 

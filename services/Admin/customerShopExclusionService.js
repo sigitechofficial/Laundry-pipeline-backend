@@ -225,15 +225,61 @@ async function excludeCustomerFromShop({
     reason: cleanedReason,
     createdByAdminId: adminId != null ? Number(adminId) : null,
   });
+
+  try {
+    const assignmentService = require('./customerShopAssignmentService');
+    await assignmentService.recordRoutingEvent({
+      customerId: cid,
+      action: assignmentService.ACTIONS.EXCLUDE,
+      fromShopAddressId: null,
+      toShopAddressId: shopAddressId,
+      adminId,
+      note: cleanedReason,
+    });
+  } catch (err) {
+    console.warn(
+      '[customerShopExclusion] exclude audit skipped:',
+      err?.message || err
+    );
+  }
+
   return mapExclusion(created);
 }
 
-async function includeCustomerForShop({ customerId, shopId } = {}) {
+async function includeCustomerForShop({
+  customerId,
+  shopId,
+  adminId = null,
+} = {}) {
   const cid = await assertCustomer(customerId);
   const { shopAddressId } = await resolveShopAddress(shopId);
+  const existing = await customerShopExclusion.findOne({
+    where: { customerId: cid, shopAddressId },
+    attributes: ['id', 'reason'],
+  });
   const deleted = await customerShopExclusion.destroy({
     where: { customerId: cid, shopAddressId },
   });
+
+  if (deleted > 0) {
+    try {
+      const assignmentService = require('./customerShopAssignmentService');
+      await assignmentService.recordRoutingEvent({
+        customerId: cid,
+        action: assignmentService.ACTIONS.INCLUDE,
+        fromShopAddressId: shopAddressId,
+        toShopAddressId: null,
+        adminId,
+        note: existing?.reason || null,
+      });
+    } catch (err) {
+      console.warn(
+        '[customerShopExclusion] include audit skipped:',
+        err?.message || err
+      );
+    }
+  }
+
   return { removed: deleted > 0, customerId: cid, shopAddressId };
 }
 
