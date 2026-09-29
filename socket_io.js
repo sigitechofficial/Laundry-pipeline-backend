@@ -3,13 +3,6 @@ const { Server } = require('socket.io')
 const agentBookingDeclineService = require('./services/Agent/agentBookingDeclineService');
 const { notifyBookingTakenByAgent } = require('./utils/bookingTakenNotify');
 const { triggerHeldReleaseForAgent } = require('./utils/triggerHeldReleaseForAgent');
-const {
-    resolveSocketAuthMode,
-    parseSocketPayload,
-    createSocketTokenVerifier,
-    authorizeRoomJoin,
-    resolveSocketActorId,
-} = require('./utils/socketAuth');
 const { users,
     userType,
     booking,
@@ -30,8 +23,6 @@ let socket_Instance;
 
 const ACK_TIMEOUT_MS = 4000;
 
-const verifySocketAccessToken = createSocketTokenVerifier();
-
 function resolveStoredEventType(row) {
     const plain = row?.toJSON ? row.toJSON() : row;
     return plain?.event || plain?.type || null;
@@ -49,6 +40,35 @@ async function persistUnacknowledgedEvent(userId, eventData) {
         data: JSON.stringify(eventData.data),
         bookingId: bookingId != null ? Number(bookingId) : null,
     });
+}
+
+/**
+ * Socket.IO does not support acknowledgements on room broadcasts
+ * (`io.to(room).emit(..., ack)`), so emit to each socket and resolve true
+ * when at least one of them acks within ACK_TIMEOUT_MS.
+ */
+async function emitWithAckToRoom(room, eventType, payload) {
+    const sockets = await socket_Instance.in(room).fetchSockets();
+    if (!sockets.length) return { delivered: false, socketCount: 0 };
+
+    const results = await Promise.all(
+        sockets.map(
+            (sock) =>
+                new Promise((resolve) => {
+                    const timer = setTimeout(() => resolve(false), ACK_TIMEOUT_MS);
+                    try {
+                        sock.emit(eventType, payload, (ack) => {
+                            clearTimeout(timer);
+                            resolve(Boolean(ack));
+                        });
+                    } catch (_) {
+                        clearTimeout(timer);
+                        resolve(false);
+                    }
+                })
+        )
+    );
+    return { delivered: results.some(Boolean), socketCount: sockets.length };
 }
 
 async function replayUnacknowledgedEvents(userId) {
@@ -71,39 +91,8 @@ async function replayUnacknowledgedEvents(userId) {
             continue;
         }
 
-        const sockets = await socket_Instance.in(row.to).fetchSockets();
-        if (!sockets.length) {
-            console.log(`⚠️ Replay ${eventType}: no sockets in room ${row.to}`);
-            continue;
-        }
-
-        let anyAcked = false;
-        await Promise.all(
-            sockets.map(
-                (sock) =>
-                    new Promise((resolve) => {
-                        let done = false;
-                        const finish = (acked) => {
-                            if (done) return;
-                            done = true;
-                            if (acked) anyAcked = true;
-                            resolve();
-                        };
-                        const timer = setTimeout(() => finish(false), ACK_TIMEOUT_MS);
-                        try {
-                            sock.emit(eventType, payload, (ack) => {
-                                clearTimeout(timer);
-                                finish(Boolean(ack));
-                            });
-                        } catch (_) {
-                            clearTimeout(timer);
-                            finish(false);
-                        }
-                    })
-            )
-        );
-
-        if (anyAcked) {
+        const { delivered } = await emitWithAckToRoom(row.to, eventType, payload);
+        if (delivered) {
             console.log(`✅ Event acknowledged by ${row.to}`);
             await unAcknowledgedEvents.destroy({ where: { id: row.id } });
         } else {
@@ -115,67 +104,39 @@ async function replayUnacknowledgedEvents(userId) {
 }
 
 const intilizeSocketFunc = (server) => {
-    // Previous values (pingTimeout 1000 / pingInterval 500) dropped agent
-    // sockets constantly — first newBookingRequest was often missed and only
-    // appeared after a later reconnect / second order refresh.
+    // 1s/0.5s ping dropped mobile agent sockets constantly, so the first
+    // newBookingRequest was often missed.
     const io = new Server(server, {
         pingTimeout: 20000,
         pingInterval: 10000,
-    });
+    })
     socket_Instance = io
     io.on("connection", (socket) => {
         console.log(`User Connected ${socket.id}`);
-
-        // Join only the room of the user the access token belongs to
-        // (token-less legacy joins allowed while SOCKET_AUTH_MODE=optional).
-        const joinOwnRoom = async (data) => {
-            const mode = resolveSocketAuthMode();
-            const result = await authorizeRoomJoin({
-                payload: data,
-                handshake: socket.handshake,
-                mode,
-                verifyToken: verifySocketAccessToken,
-            });
-            if (!result.ok) return result;
-
-            // Account switch on a live socket: stop receiving the previous user's events.
-            const previousRoom = socket.data.userId != null ? String(socket.data.userId) : null;
-            if (previousRoom && previousRoom !== result.roomId) {
-                socket.leave(previousRoom);
-            }
-            socket.join(result.roomId);
-            socket.data.userId = result.roomId;
-            socket.data.authenticated = result.authenticated;
-
-            if (!result.authenticated) {
-                console.warn(`[socketAuth] legacy token-less join socket=${socket.id} room=${result.roomId} mode=${mode}`);
-            }
-            return result;
-        };
-
         //Event when User Connects
         socket.on("joinRoom", async (message) => {
             try {
-                const data = parseSocketPayload(message);
-                // Never log the raw payload — it carries the access token.
-                console.log("🚀 ~ joinRoom ~ userId:", data.userId, "userTypeId:", data.userTypeId)
-
-                const joined = await joinOwnRoom(data);
-                if (!joined.ok) {
-                    console.error(`❌ joinRoom refused (${joined.code}) socket=${socket.id} userId=${data.userId}`);
-                    socket.emit('error', {
-                        message: joined.message,
-                        code: joined.code
+                let data = JSON.parse(message);
+                console.log("🚀 ~ socket.on ~ data:", data)
+                const userId = data.userId
+                const userTypeId = data.userTypeId
+                
+                // Validate userId - ensure it's not null, undefined, or string 'null'
+                if (!userId || userId === 'null' || userId === 'undefined' || userId === null || userId === undefined) {
+                    console.error(`❌ Invalid userId received: ${userId}. Cannot join room.`);
+                    socket.emit('error', { 
+                        message: 'Invalid user ID. Please authenticate first.',
+                        code: 'INVALID_USER_ID'
                     });
                     return;
                 }
-
-                const userId = joined.roomId
+                
+                socket.join(userId.toString())
                 console.log(`✅ Socket ${socket.id} joined room ${userId}`);
 
                 // Agent shop open → release held bookings + deliver pending socket events.
-                // Same replay as re-connect: cold joinRoom used to skip the queue, so the
-                // first newBookingRequest stayed invisible until a later refresh/order.
+                // Cold joinRoom must replay the queue too, or an order placed while the
+                // agent was offline stays invisible until a later refresh.
                 await triggerHeldReleaseForAgent(userId).catch((err) => {
                     console.error('[joinRoom] held release error:', err.message);
                 });
@@ -198,20 +159,21 @@ const intilizeSocketFunc = (server) => {
         //Reconnect User Event
         socket.on('re-connect', async (message) => {
             try {
-                const data = parseSocketPayload(message)
-                console.log('🚀 ~ RECONNECT ROOM JOIN:', data.userId)
-
-                const joined = await joinOwnRoom(data);
-                if (!joined.ok) {
-                    console.error(`❌ re-connect refused (${joined.code}) socket=${socket.id} userId=${data.userId}`);
-                    socket.emit('error', {
-                        message: joined.message,
-                        code: joined.code
+                let data = JSON.parse(message)
+                const userId = data.userId
+                console.log('🚀 ~ RECONNECT ROOM JOIN:', userId)
+                
+                // Validate userId
+                if (!userId || userId === 'null' || userId === 'undefined' || userId === null || userId === undefined) {
+                    console.error(`❌ Invalid userId on reconnect: ${userId}`);
+                    socket.emit('error', { 
+                        message: 'Invalid user ID on reconnect. Please authenticate first.',
+                        code: 'INVALID_USER_ID'
                     });
                     return;
                 }
-
-                const userId = joined.roomId
+                
+                socket.join(userId.toString())
                 console.log(`✅ Socket ${socket.id} reconnected to room ${userId}`);
 
                 await triggerHeldReleaseForAgent(userId);
@@ -234,24 +196,9 @@ const intilizeSocketFunc = (server) => {
         //Agent Accept Order
         socket.on('agentAcceptOrder', async (bookingData) => {
             try {
-                const bookingDetails = parseSocketPayload(bookingData);
+                const bookingDetails = JSON.parse(bookingData);
                 const bookingId = bookingDetails.id;
-
-                // Authenticated sockets accept only as themselves (payload agentId is not trusted).
-                const actor = resolveSocketActorId({
-                    socketData: socket.data,
-                    requestedUserId: bookingDetails.agentId,
-                    mode: resolveSocketAuthMode(),
-                });
-                if (!actor.ok) {
-                    console.error(`❌ agentAcceptOrder refused (${actor.code}) socket=${socket.id} agentId=${bookingDetails.agentId}`);
-                    socket.emit('error', {
-                        message: actor.message,
-                        code: actor.code
-                    });
-                    return;
-                }
-                const agentId = actor.userId;
+                const agentId = bookingDetails.agentId;
 
                 const { acceptOrderForAgent } = require('./services/Agent/agentAcceptOrderService');
 
@@ -260,14 +207,11 @@ const intilizeSocketFunc = (server) => {
                 } catch (acceptError) {
                     const message =
                         acceptError.message || 'This order was already taken';
-                    // Capacity-full must not look like "taken": the order is still open.
-                    const capacityFull = acceptError.errorCode === 'SHOP_ACCEPT_CAP_REACHED';
                     await sendEvent(agentId, {
-                        type: capacityFull ? 'shopAcceptCapReached' : 'orderTakenByOtherAgent',
+                        type: 'orderTakenByOtherAgent',
                         data: {
                             bookingId: Number(bookingId),
                             message,
-                            ...(capacityFull ? { capacity: acceptError.details?.capacity } : {}),
                         },
                     });
                 }
@@ -314,63 +258,23 @@ const sendEvent = async (userId, eventData) => {
         }
 
         const room = userId.toString();
-        const sockets = await socket_Instance.in(room).fetchSockets();
+        const { delivered, socketCount } = await emitWithAckToRoom(
+            room,
+            eventData.type,
+            eventData.data
+        );
 
-        if (!sockets.length) {
+        if (!socketCount) {
             console.log(`${eventData.type} — no socket in room ${room}, persisting event`);
             await persistUnacknowledgedEvent(userId, eventData);
             return;
         }
 
-        // IMPORTANT: Socket.IO does NOT support acknowledgements when broadcasting
-        // (`io.to(room).emit(..., ack)`). Ack never fires → every event was also
-        // persisted and racey on replay. Emit per connected socket instead.
-        let anyAcked = false;
-        let settledCount = 0;
-        const total = sockets.length;
-
-        await Promise.all(
-            sockets.map(
-                (sock) =>
-                    new Promise((resolve) => {
-                        let done = false;
-                        const finish = (acked) => {
-                            if (done) return;
-                            done = true;
-                            settledCount += 1;
-                            if (acked) anyAcked = true;
-                            resolve();
-                        };
-
-                        const timer = setTimeout(() => finish(false), ACK_TIMEOUT_MS);
-
-                        try {
-                            sock.emit(eventData.type, eventData.data, (ack) => {
-                                clearTimeout(timer);
-                                finish(Boolean(ack));
-                            });
-                        } catch (emitErr) {
-                            clearTimeout(timer);
-                            console.log(
-                                `Error emitting ${eventData.type} to socket ${sock.id}:`,
-                                emitErr?.message || emitErr
-                            );
-                            finish(false);
-                        }
-                    })
-            )
-        );
-
-        if (!anyAcked) {
-            console.log(
-                `${eventData.type} not acknowledged by any socket in ${room} ` +
-                    `(${settledCount}/${total}), persisting event`
-            );
-            await persistUnacknowledgedEvent(userId, eventData);
+        if (delivered) {
+            console.log(`${eventData.type} acknowledged by ${userId}`);
         } else {
-            console.log(
-                `${eventData.type} acknowledged by at least one socket in ${room}`
-            );
+            console.log(`${eventData.type} not acknowledged by ${userId} (${socketCount} socket(s)), persisting event`);
+            await persistUnacknowledgedEvent(userId, eventData);
         }
     } catch (error) {
         console.log(`Error while sending event: ${error}`);
