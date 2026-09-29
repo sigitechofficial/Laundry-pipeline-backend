@@ -1034,8 +1034,303 @@ function buildRecurringDeliveryHint(bookingRow) {
   };
 }
 
+const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
+
+function serializeRecurringPlan(plan) {
+  if (!plan) return null;
+  const plain = plan.toJSON ? plan.toJSON() : plan;
+  const status = String(plain.status || 'active');
+  return {
+    id: plain.id,
+    status,
+    frequency: plain.frequency,
+    nextRunAt: plain.nextRunAt || null,
+    failureCount: Number(plain.failureCount || 0),
+    maxFailures: Number(plain.maxFailures || 3),
+    notes: plain.notes || null,
+    sourceBookingId: plain.sourceBookingId,
+    lastGeneratedAt: plain.lastGeneratedAt || null,
+    canPause: status === 'active',
+    canResume: status === 'paused',
+    canCancel: status === 'active' || status === 'paused',
+  };
+}
+
+/**
+ * Resolve the recurring plan linked to a booking (by plan id or source chain).
+ */
+async function findPlanForBooking(bookingId, { customerId = null } = {}) {
+  const row = await booking.findByPk(bookingId, {
+    attributes: [
+      'id',
+      'customerId',
+      'frequency',
+      'recurringPlanId',
+      'recurringSourceBookingId',
+    ],
+  });
+  if (!row) {
+    throw new NotFoundError('Booking not found');
+  }
+  if (customerId != null && Number(row.customerId) !== Number(customerId)) {
+    throw new NotFoundError('Booking not found');
+  }
+
+  let plan = null;
+  if (row.recurringPlanId) {
+    plan = await recurringPlan.findByPk(row.recurringPlanId);
+  }
+  if (!plan) {
+    const rootSourceId = row.recurringSourceBookingId || row.id;
+    plan = await recurringPlan.findOne({
+      where: {
+        sourceBookingId: rootSourceId,
+        ...(customerId != null ? { customerId: Number(customerId) } : {}),
+      },
+    });
+  }
+  if (!plan && row.recurringPlanId == null) {
+    plan = await recurringPlan.findOne({
+      where: {
+        sourceBookingId: row.id,
+        ...(customerId != null ? { customerId: Number(customerId) } : {}),
+      },
+    });
+  }
+
+  return { booking: row, plan };
+}
+
+async function getRecurringPlanSummaryForBooking(bookingId, { customerId = null } = {}) {
+  const { booking: row, plan } = await findPlanForBooking(bookingId, { customerId });
+  const frequency = normalizeFrequencyLabel(row.frequency);
+  const summary = serializeRecurringPlan(plan);
+  return {
+    frequency,
+    isRecurring: isRecurringFrequency(frequency) || Boolean(plan),
+    recurringPlan: summary,
+  };
+}
+
+/**
+ * List all recurring plans for a customer (profile / settings).
+ * Enriched with a display booking (latest in chain or source).
+ */
+async function listCustomerRecurringPlans(customerId) {
+  const plans = await recurringPlan.findAll({
+    where: { customerId: Number(customerId) },
+    order: [
+      ['updatedAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
+  });
+
+  const statusRank = { active: 0, paused: 1, cancelled: 2 };
+  plans.sort((a, b) => {
+    const ra = statusRank[a.status] ?? 9;
+    const rb = statusRank[b.status] ?? 9;
+    if (ra !== rb) return ra - rb;
+    return Number(b.id) - Number(a.id);
+  });
+
+  const result = [];
+  for (const plan of plans) {
+    const plain = serializeRecurringPlan(plan);
+    let displayBookingId = plan.sourceBookingId;
+    let orderTrackId = null;
+
+    const latest = await booking.findOne({
+      where: { recurringPlanId: plan.id },
+      order: [['id', 'DESC']],
+      attributes: ['id', 'orderTrackId', 'frequency'],
+    });
+    if (latest) {
+      displayBookingId = latest.id;
+      orderTrackId = latest.orderTrackId || null;
+    } else {
+      const source = await booking.findByPk(plan.sourceBookingId, {
+        attributes: ['id', 'orderTrackId', 'frequency'],
+      });
+      if (source) {
+        displayBookingId = source.id;
+        orderTrackId = source.orderTrackId || null;
+      }
+    }
+
+    result.push({
+      ...plain,
+      bookingId: displayBookingId,
+      orderTrackId,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Pause (temporary off), cancel (permanent stop), or resume a recurring plan.
+ * Actor: 'customer' | 'admin' — used in notes only.
+ * Resolve by bookingId and/or planId.
+ */
+async function updateRecurringPlanStatus({
+  bookingId = null,
+  planId = null,
+  customerId = null,
+  action,
+  actor = 'customer',
+  notes = null,
+}) {
+  const normalizedAction = String(action || '').trim().toLowerCase();
+  if (!['pause', 'resume', 'cancel'].includes(normalizedAction)) {
+    throw new ValidationError('action must be pause, resume, or cancel');
+  }
+  if (!bookingId && !planId) {
+    throw new ValidationError('bookingId or planId is required');
+  }
+
+  let row = null;
+  let plan = null;
+
+  if (planId) {
+    plan = await recurringPlan.findByPk(Number(planId));
+    if (!plan) {
+      throw new NotFoundError('Recurring plan not found');
+    }
+    if (actor === 'customer' && Number(plan.customerId) !== Number(customerId)) {
+      throw new NotFoundError('Recurring plan not found');
+    }
+    row = await booking.findByPk(plan.sourceBookingId, {
+      attributes: ['id', 'customerId', 'frequency', 'recurringPlanId', 'recurringSourceBookingId'],
+    });
+  } else {
+    const found = await findPlanForBooking(bookingId, {
+      customerId: actor === 'customer' ? customerId : customerId || null,
+    });
+    row = found.booking;
+    plan = found.plan;
+  }
+
+  if (!plan) {
+    if (row && !isRecurringFrequency(row.frequency)) {
+      throw new ValidationError('This order is not on a recurring frequency');
+    }
+    throw new NotFoundError('Recurring plan not found for this order');
+  }
+
+  if (actor === 'customer' && Number(plan.customerId) !== Number(customerId)) {
+    throw new NotFoundError('Recurring plan not found');
+  }
+
+  const actorLabel = actor === 'admin' ? 'admin' : 'customer';
+  const noteText =
+    notes && String(notes).trim()
+      ? String(notes).trim().slice(0, 400)
+      : null;
+
+  if (normalizedAction === 'pause') {
+    if (plan.status === 'cancelled') {
+      throw new ValidationError('Recurring service is cancelled and cannot be paused');
+    }
+    if (plan.status === 'paused') {
+      return serializeRecurringPlan(plan);
+    }
+    await plan.update({
+      status: 'paused',
+      nextRunAt: null,
+      notes:
+        noteText ||
+        `Paused by ${actorLabel} (temporary off — no further auto orders).`,
+    });
+    await plan.reload();
+    return serializeRecurringPlan(plan);
+  }
+
+  if (normalizedAction === 'cancel') {
+    if (plan.status === 'cancelled') {
+      return serializeRecurringPlan(plan);
+    }
+    await plan.update({
+      status: 'cancelled',
+      nextRunAt: null,
+      notes:
+        noteText ||
+        `Cancelled by ${actorLabel} (recurring service turned off permanently).`,
+    });
+    await plan.reload();
+    return serializeRecurringPlan(plan);
+  }
+
+  // resume
+  if (plan.status === 'cancelled') {
+    throw new ValidationError(
+      'Recurring service was cancelled. Place a new recurring order to start again.'
+    );
+  }
+  if (plan.status === 'active') {
+    return serializeRecurringPlan(plan);
+  }
+
+  const nextRunAt = await computeNextRunAt(
+    new Date(),
+    plan.frequency || row?.frequency
+  );
+  await plan.update({
+    status: 'active',
+    nextRunAt,
+    failureCount: 0,
+    notes:
+      noteText ||
+      `Resumed by ${actorLabel} — next auto order scheduled.`,
+  });
+  await plan.reload();
+  return serializeRecurringPlan(plan);
+}
+
+/**
+ * Keep recurringPlans in sync when admin changes booking.frequency.
+ * Just Once → cancel plan. Recurring → ensure/reactivate plan.
+ */
+async function syncPlanAfterFrequencyChange(bookingId, nextFrequency) {
+  const row = await booking.findByPk(bookingId);
+  if (!row) return null;
+  const frequency = normalizeFrequencyLabel(nextFrequency);
+
+  if (!isRecurringFrequency(frequency)) {
+    const { plan } = await findPlanForBooking(bookingId).catch(() => ({ plan: null }));
+    if (plan && plan.status !== 'cancelled') {
+      await plan.update({
+        status: 'cancelled',
+        nextRunAt: null,
+        notes: 'Cancelled because frequency was set to Just Once.',
+      });
+      return serializeRecurringPlan(await plan.reload());
+    }
+    return plan ? serializeRecurringPlan(plan) : null;
+  }
+
+  // Ensure plan exists and is active with this frequency
+  await row.update({ frequency });
+  const plan = await ensurePlanForBooking(bookingId);
+  if (!plan) return null;
+
+  const nextRunAt =
+    plan.status === 'active' && plan.nextRunAt
+      ? plan.nextRunAt
+      : await computeNextRunAt(new Date(), frequency);
+
+  await plan.update({
+    frequency,
+    status: 'active',
+    nextRunAt,
+    failureCount: 0,
+    notes: 'Synced from frequency update.',
+  });
+  return serializeRecurringPlan(await plan.reload());
+}
+
 module.exports = {
   isRecurringFrequency,
+  normalizeFrequencyLabel,
   buildRecurringDeliveryHint,
   ensurePlanForBooking,
   generateNextBookingFromCompleted,
@@ -1044,4 +1339,10 @@ module.exports = {
   runDueRecurringPlans,
   startRecurringGenerationJob,
   stopRecurringGenerationJob,
+  serializeRecurringPlan,
+  findPlanForBooking,
+  getRecurringPlanSummaryForBooking,
+  listCustomerRecurringPlans,
+  updateRecurringPlanStatus,
+  syncPlanAfterFrequencyChange,
 };

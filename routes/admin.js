@@ -534,6 +534,19 @@ router.get('/allCancelOrders', asyncMiddleware(adminController.allCancelOrders))
 router.get('/completeOrders', asyncMiddleware(adminController.completeOrders))
 //Get Single Order for Editing
 router.get('/getOrderForEdit/:orderId', asyncMiddleware(adminController.getOrderForEdit))
+// Pause / resume / cancel recurring frequency for an order's plan
+router.post(
+    '/orders/:orderId/recurringPlan',
+    asyncMiddleware(adminController.updateOrderRecurringPlan)
+)
+router.get(
+    '/customers/:customerId/recurringPlans',
+    asyncMiddleware(adminController.listCustomerRecurringPlansAdmin)
+)
+router.post(
+    '/customers/:customerId/recurringPlans/:planId',
+    asyncMiddleware(adminController.updateCustomerRecurringPlanAdmin)
+)
 router.get(
     '/bookings/:bookingId/refund-preview',
     validateAccessToken,

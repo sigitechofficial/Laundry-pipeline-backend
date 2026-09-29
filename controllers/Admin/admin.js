@@ -474,6 +474,102 @@ async function getOrderForEdit(req, res) {
 }
 
 /*
+ * Admin pause / resume / cancel a customer's recurring frequency plan.
+ * Body: { action: 'pause'|'resume'|'cancel', notes? }
+ */
+async function updateOrderRecurringPlan(req, res) {
+    const { orderId } = req.params;
+    const { action, notes, planId } = req.body || {};
+
+    if (!orderId && !planId) {
+        throw new ValidationError('Order ID or planId is required');
+    }
+    if (!action) {
+        throw new ValidationError('action is required (pause, resume, or cancel)');
+    }
+
+    const recurringBookingService = require('../../services/Customer/recurringBookingService');
+    const plan = await recurringBookingService.updateRecurringPlanStatus({
+        bookingId: orderId != null ? Number(orderId) : null,
+        planId: planId != null ? Number(planId) : null,
+        action,
+        actor: 'admin',
+        notes: notes || null,
+    });
+
+    const messages = {
+        pause: 'Recurring service paused for this customer.',
+        resume: 'Recurring service resumed for this customer.',
+        cancel: 'Recurring service cancelled for this customer.',
+    };
+    const key = String(action).trim().toLowerCase();
+
+    return ResponseHelper.success(res, messages[key] || 'Recurring plan updated', {
+        recurringPlan: plan,
+    });
+}
+
+/*
+ * List recurring frequency plans for a customer (Customer Management).
+ */
+async function listCustomerRecurringPlansAdmin(req, res) {
+    const { customerId } = req.params;
+    if (!customerId) {
+        throw new ValidationError('Customer ID is required');
+    }
+    const recurringBookingService = require('../../services/Customer/recurringBookingService');
+    const plans = await recurringBookingService.listCustomerRecurringPlans(
+        Number(customerId)
+    );
+    return ResponseHelper.success(res, 'Recurring plans fetched', { plans });
+}
+
+/*
+ * Pause / resume / cancel a recurring plan from Customer Management.
+ * Body: { action, notes?, planId? } — planId can also come from params.
+ */
+async function updateCustomerRecurringPlanAdmin(req, res) {
+    const customerId = Number(req.params.customerId);
+    const planId = Number(req.params.planId || req.body?.planId);
+    const { action, notes } = req.body || {};
+
+    if (!customerId) {
+        throw new ValidationError('Customer ID is required');
+    }
+    if (!planId) {
+        throw new ValidationError('planId is required');
+    }
+    if (!action) {
+        throw new ValidationError('action is required (pause, resume, or cancel)');
+    }
+
+    const { recurringPlan } = require('../../models');
+    const planRow = await recurringPlan.findByPk(planId);
+    if (!planRow || Number(planRow.customerId) !== customerId) {
+        throw new NotFoundError('Recurring plan not found for this customer');
+    }
+
+    const recurringBookingService = require('../../services/Customer/recurringBookingService');
+    const plan = await recurringBookingService.updateRecurringPlanStatus({
+        planId,
+        action,
+        actor: 'admin',
+        notes: notes || null,
+    });
+
+    const messages = {
+        pause: 'Recurring service paused for this customer.',
+        resume: 'Recurring service resumed for this customer.',
+        cancel: 'Recurring service cancelled for this customer.',
+    };
+    const key = String(action).trim().toLowerCase();
+
+    return ResponseHelper.success(res, messages[key] || 'Recurring plan updated', {
+        recurringPlan: plan,
+    });
+}
+
+/*
   * Get service details + booking selected services
 */
 async function getServiceDetailWithBookingSelection(req, res) {
@@ -3084,6 +3180,9 @@ module.exports = {
     completeOrders,
     editOrder,
     getOrderForEdit,
+    updateOrderRecurringPlan,
+    listCustomerRecurringPlansAdmin,
+    updateCustomerRecurringPlanAdmin,
     getServiceDetailWithBookingSelection,
     deleteOrder,
     updateInvoice,

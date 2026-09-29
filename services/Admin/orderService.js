@@ -1333,6 +1333,21 @@ class OrderService {
             );
         }
 
+        try {
+            const recurringBookingService = require('../Customer/recurringBookingService');
+            const recurringSummary =
+                await recurringBookingService.getRecurringPlanSummaryForBooking(orderId);
+            enriched.recurringPlan = recurringSummary.recurringPlan;
+            enriched.isRecurring = recurringSummary.isRecurring;
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] recurringPlan skipped for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.recurringPlan = null;
+            enriched.isRecurring = false;
+        }
+
         return enriched;
     }
 
@@ -1929,6 +1944,28 @@ class OrderService {
         // Update the booking record
         if (Object.keys(orderUpdateData).length > 0) {
             await booking.update(orderUpdateData, { where: { id: orderId } });
+        }
+
+        // Keep recurringPlans in sync when frequency changed (Just Once stops the series).
+        if (frequency !== undefined) {
+            try {
+                const recurringBookingService = require('../Customer/recurringBookingService');
+                const syncedFrequency =
+                    orderUpdateData.frequency != null
+                        ? orderUpdateData.frequency
+                        : frequency === 'Every week'
+                          ? 'Weekly'
+                          : frequency;
+                await recurringBookingService.syncPlanAfterFrequencyChange(
+                    orderId,
+                    syncedFrequency
+                );
+            } catch (err) {
+                console.warn(
+                    `[editOrder] recurring plan sync failed for ${orderId}:`,
+                    err?.message || err
+                );
+            }
         }
 
         // Fetch and return updated order with all relations

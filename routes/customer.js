@@ -217,6 +217,17 @@ router.post(
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
 //Cancel Customer Booking with Policy Enforcement
 router.post('/cancelBooking', validateAccessToken, asyncMiddleware(customerOtherController.cancelCustomerBooking));
+// Pause / resume / cancel recurring frequency plan (series, not single booking)
+router.post(
+    '/recurringPlan',
+    validateAccessToken,
+    asyncMiddleware(customerOtherController.updateCustomerRecurringPlan)
+);
+router.get(
+    '/recurringPlans',
+    validateAccessToken,
+    asyncMiddleware(customerOtherController.listCustomerRecurringPlans)
+);
 //Get Customer Cancellation History
 router.get('/cancellationHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerCancellationHistory));
 //Get Active Policies (cancellation, reschedule, no-show)

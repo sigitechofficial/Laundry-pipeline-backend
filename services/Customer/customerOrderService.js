@@ -3007,6 +3007,23 @@ class CustomerOrderService {
         delete resultData.noShowPolicyBookings;
         delete resultData.attempts;
 
+        try {
+            const recurringBookingService = require('./recurringBookingService');
+            const recurringSummary =
+                await recurringBookingService.getRecurringPlanSummaryForBooking(
+                    bookingPlain.id
+                );
+            resultData.recurringPlan = recurringSummary.recurringPlan;
+            resultData.isRecurring = recurringSummary.isRecurring;
+        } catch (err) {
+            console.warn(
+                '[bookingDetailsById] recurringPlan skipped:',
+                err?.message || err
+            );
+            resultData.recurringPlan = null;
+            resultData.isRecurring = false;
+        }
+
         return {
             message: "Customer Order Details Fetched",
             data: resultData

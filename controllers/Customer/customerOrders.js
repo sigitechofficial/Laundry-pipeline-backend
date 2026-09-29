@@ -504,6 +504,53 @@ async function cancelCustomerBooking(req, res) {
 }
 
 /*
+ * Pause / resume / cancel customer's recurring frequency plan (not a single booking).
+ * Body: { bookingId?, planId?, action: 'pause'|'resume'|'cancel', notes? }
+ */
+async function updateCustomerRecurringPlan(req, res) {
+    const customerId = req.user.id;
+    const { bookingId, planId, action, notes } = req.body || {};
+
+    if (!bookingId && !planId) {
+        throw new ValidationError('bookingId or planId is required');
+    }
+    if (!action) {
+        throw new ValidationError('action is required (pause, resume, or cancel)');
+    }
+
+    const recurringBookingService = require('../../services/Customer/recurringBookingService');
+    const plan = await recurringBookingService.updateRecurringPlanStatus({
+        bookingId: bookingId != null ? Number(bookingId) : null,
+        planId: planId != null ? Number(planId) : null,
+        customerId,
+        action,
+        actor: 'customer',
+        notes: notes || null,
+    });
+
+    const messages = {
+        pause: 'Recurring service paused. No further orders will be auto-created.',
+        resume: 'Recurring service resumed. The next order will be created on schedule.',
+        cancel: 'Recurring service cancelled. No further orders will be auto-created.',
+    };
+    const key = String(action).trim().toLowerCase();
+
+    return ResponseHelper.success(res, messages[key] || 'Recurring plan updated', {
+        recurringPlan: plan,
+    });
+}
+
+/*
+ * List customer's recurring frequency plans (profile / settings).
+ */
+async function listCustomerRecurringPlans(req, res) {
+    const customerId = req.user.id;
+    const recurringBookingService = require('../../services/Customer/recurringBookingService');
+    const plans = await recurringBookingService.listCustomerRecurringPlans(customerId);
+    return ResponseHelper.success(res, 'Recurring plans fetched', { plans });
+}
+
+/*
  * Get Customer Cancellation History
  */
 async function getCustomerCancellationHistory(req, res) {
@@ -1016,6 +1063,8 @@ module.exports = {
     uploadRepairImages,
     getAllOrderStatus,
     cancelCustomerBooking,
+    updateCustomerRecurringPlan,
+    listCustomerRecurringPlans,
     getCustomerCancellationHistory,
     getActivePolicies,
     //---Customer Postcode Address Lookup----//
