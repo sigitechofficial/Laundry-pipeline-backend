@@ -174,14 +174,18 @@ const intilizeSocketFunc = (server) => {
                 console.log(`✅ Socket ${socket.id} joined room ${userId}`);
 
                 // Agent shop open → release held bookings + deliver pending socket events.
-                triggerHeldReleaseForAgent(userId).catch((err) => {
+                // Same replay as re-connect: cold joinRoom used to skip the queue, so the
+                // first newBookingRequest stayed invisible until a later refresh/order.
+                await triggerHeldReleaseForAgent(userId).catch((err) => {
                     console.error('[joinRoom] held release error:', err.message);
                 });
-                
+                const pendingEvents = await replayUnacknowledgedEvents(userId);
+
                 // Confirm to client
-                socket.emit('roomJoined', { 
+                socket.emit('roomJoined', {
                     userId: userId,
-                    message: 'Successfully joined room'
+                    message: 'Successfully joined room',
+                    pendingEvents,
                 });
             } catch (error) {
                 console.error("❌ Error in joinRoom:", error)
