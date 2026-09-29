@@ -4,6 +4,8 @@ const assert = require('assert');
 const {
   sortByPickupThenDelivery,
   applyNearestDistanceRanks,
+  computeShopOrderDistances,
+  sortAssignableShops,
 } = require('./shopOrderDistanceRank');
 const {
   buildDeclineReasonBreakdown,
@@ -64,6 +66,56 @@ const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
     { id: 2, pickupDistanceKm: 3, deliveryDistanceKm: 9 },
   ]);
   assert.strictEqual(sorted[0].id, 2, 'known distance before null');
+}
+
+// ── Shop → order distances (used when notifying shops of a new booking) ──────
+(async () => {
+  // Charing Cross shop; pickup ≈ Golders Green (~8 km), drop-off has no coords.
+  const d = await computeShopOrderDistances(
+    51.5074,
+    -0.1278,
+    { lat: '51.5724', lng: '-0.1941' },
+    { lat: null, lng: undefined }
+  );
+  assert.ok(Math.abs(d.pickupDistanceKm - 8.4) < 0.3, 'pickup km');
+  assert.strictEqual(d.deliveryDistanceKm, null, 'missing coords → null');
+
+  const noShop = await computeShopOrderDistances(
+    undefined,
+    undefined,
+    { lat: 51.5, lng: -0.1 },
+    { lat: 51.6, lng: -0.2 }
+  );
+  assert.deepStrictEqual(noShop, {
+    pickupDistanceKm: null,
+    deliveryDistanceKm: null,
+  });
+
+  // null / (0,0) shop coordinates must be "unknown", not distance from (0,0).
+  for (const [la, ln] of [[null, null], ['0', '0'], ['', '']]) {
+    const r = await computeShopOrderDistances(la, ln, { lat: 51.5, lng: -0.1 }, null);
+    assert.strictEqual(r.pickupDistanceKm, null, `shop coords ${la},${ln}`);
+  }
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+
+// ── Admin assign-shop order: current first, nearest next, unknown last ───────
+{
+  const shops = sortAssignableShops([
+    { shopName: 'Far', distanceKm: 9.1, customerOrdersAtShop: 5 },
+    { shopName: 'NoGps', distanceKm: null, customerOrdersAtShop: 9 },
+    { shopName: 'Near', distanceKm: 0.8, customerOrdersAtShop: 0 },
+    { shopName: 'Current', distanceKm: 20, isCurrentShop: true },
+    { shopName: 'B tie', distanceKm: 3, customerOrdersAtShop: 1 },
+    { shopName: 'A tie', distanceKm: 3, customerOrdersAtShop: 1 },
+    { shopName: 'Loyal tie', distanceKm: 3, customerOrdersAtShop: 4 },
+  ]);
+  assert.deepStrictEqual(
+    shops.map((s) => s.shopName),
+    ['Current', 'Near', 'Loyal tie', 'A tie', 'B tie', 'Far', 'NoGps']
+  );
 }
 
 // ── Decline reason analytics ─────────────────────────────────────────────────
@@ -128,40 +180,4 @@ const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
   );
 }
 
-// ── Shop → order distances (broadcast, preferred offer, home list) ──────────
-(async () => {
-  const { computeShopOrderDistances } = require('./shopOrderDistanceRank');
-  const shop = { lat: '51.5074', lng: '-0.1278' };
-  const pickup = { lat: '51.5155', lng: '-0.1420' };
-  const dropOff = { lat: 51.5074, lng: -0.1278 };
-
-  const both = await computeShopOrderDistances(shop.lat, shop.lng, pickup, dropOff);
-  assert.ok(both.pickupDistanceKm > 1 && both.pickupDistanceKm < 1.6, `pickup km ${both.pickupDistanceKm}`);
-  assert.strictEqual(both.deliveryDistanceKm, 0);
-
-  assert.deepStrictEqual(
-    await computeShopOrderDistances(null, null, pickup, dropOff),
-    { pickupDistanceKm: null, deliveryDistanceKm: null },
-    'shop without coordinates'
-  );
-  assert.deepStrictEqual(
-    await computeShopOrderDistances('0', '0', pickup, dropOff),
-    { pickupDistanceKm: null, deliveryDistanceKm: null },
-    'ungeocoded 0,0 shop'
-  );
-  assert.deepStrictEqual(
-    await computeShopOrderDistances(shop.lat, shop.lng, pickup, undefined),
-    { pickupDistanceKm: both.pickupDistanceKm, deliveryDistanceKm: null },
-    'no drop-off address'
-  );
-  assert.deepStrictEqual(
-    await computeShopOrderDistances(shop.lat, shop.lng, { lat: '', lng: 'x' }, {}),
-    { pickupDistanceKm: null, deliveryDistanceKm: null },
-    'bad address coordinates'
-  );
-
-  console.log('shopOrderDistanceRank + related feature tests: OK');
-})().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+console.log('shopOrderDistanceRank + related feature tests: OK');

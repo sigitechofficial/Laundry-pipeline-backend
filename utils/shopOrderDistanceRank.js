@@ -5,37 +5,6 @@
  * Pure helpers — used by fetchVisibleNewBookings and unit tests.
  */
 
-const getdistance = require('./distanceCalculator');
-
-function toCoord(value) {
-  const n = parseFloat(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-/**
- * km from a shop to an order's pickup / delivery address. Null when either
- * side has no usable coordinates (0,0 means the shop was never geocoded).
- */
-async function computeShopOrderDistances(shopLat, shopLng, pickupAddress, dropOffAddress) {
-  const sLat = toCoord(shopLat);
-  const sLng = toCoord(shopLng);
-  const result = { pickupDistanceKm: null, deliveryDistanceKm: null };
-  if (sLat == null || sLng == null) return result;
-  if (Math.abs(sLat) < 0.0001 && Math.abs(sLng) < 0.0001) return result;
-
-  const legs = [
-    ['pickupDistanceKm', pickupAddress],
-    ['deliveryDistanceKm', dropOffAddress],
-  ];
-  for (const [key, address] of legs) {
-    const lat = toCoord(address?.lat);
-    const lng = toCoord(address?.lng);
-    if (lat == null || lng == null) continue;
-    result[key] = await getdistance(sLat, sLng, lat, lng);
-  }
-  return result;
-}
-
 function sortByPickupThenDelivery(rows) {
   if (!Array.isArray(rows) || rows.length < 2) return rows || [];
   return [...rows].sort((a, b) => {
@@ -94,8 +63,68 @@ function applyNearestDistanceRanks(rows) {
   return rows;
 }
 
+/**
+ * Km from a shop to an order's pickup and drop-off address. A missing or
+ * invalid coordinate gives null for that leg (never throws), so callers can
+ * sort/notify with whatever distance is known.
+ * @returns {Promise<{ pickupDistanceKm: number|null, deliveryDistanceKm: number|null }>}
+ */
+async function computeShopOrderDistances(
+  shopLat,
+  shopLng,
+  pickupAddress,
+  dropOffAddress
+) {
+  const getDistance = require('./distanceCalculator');
+  // Missing or never-geocoded (0,0) coordinates count as unknown.
+  const usable = (lat, lng) =>
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001);
+  const sLat = parseFloat(shopLat);
+  const sLng = parseFloat(shopLng);
+  const km = async (address) => {
+    const lat = parseFloat(address?.lat);
+    const lng = parseFloat(address?.lng);
+    if (!usable(sLat, sLng) || !usable(lat, lng)) return null;
+    try {
+      return await getDistance(sLat, sLng, lat, lng);
+    } catch (_) {
+      return null;
+    }
+  };
+  return {
+    pickupDistanceKm: await km(pickupAddress),
+    deliveryDistanceKm: await km(dropOffAddress),
+  };
+}
+
+/**
+ * Admin "Assign shop" order: the shop that currently holds the order first,
+ * then nearest to the pickup (unknown distance last), then the shop where the
+ * customer has the most completed orders, then name.
+ * Mutates and returns [shops].
+ */
+function sortAssignableShops(shops) {
+  return shops.sort((a, b) => {
+    if (Boolean(a.isCurrentShop) !== Boolean(b.isCurrentShop)) {
+      return a.isCurrentShop ? -1 : 1;
+    }
+    const ad = a.distanceKm == null ? Number.POSITIVE_INFINITY : Number(a.distanceKm);
+    const bd = b.distanceKm == null ? Number.POSITIVE_INFINITY : Number(b.distanceKm);
+    if (ad !== bd) return ad - bd;
+    const ac = a.customerOrdersAtShop || 0;
+    const bc = b.customerOrdersAtShop || 0;
+    if (ac !== bc) return bc - ac;
+    return String(a.shopName).localeCompare(String(b.shopName), undefined, {
+      sensitivity: 'base',
+    });
+  });
+}
+
 module.exports = {
-  computeShopOrderDistances,
   sortByPickupThenDelivery,
   applyNearestDistanceRanks,
+  computeShopOrderDistances,
+  sortAssignableShops,
 };
