@@ -64,6 +64,7 @@ const { time } = require("console");
 const { request } = require("http");
 const checkServiceAvailability = require("../../utils/haversineFormula");
 const { literal } = require("sequelize");
+const getdistance = require("../../utils/distanceCalculator");
 const { type } = require("os");
 const { sendEvent } = require("../../socket_io");
 const { bookingTipAmountFromTips, summarizeTips } = require("../../utils/bookingTips");
@@ -812,22 +813,49 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 async function attachShopOrderDistances(rows, shopLat, shopLng) {
     if (!Array.isArray(rows) || !rows.length) return rows;
 
-    const {
-        computeShopOrderDistances,
-        applyNearestDistanceRanks,
-    } = require('../../utils/shopOrderDistanceRank');
+    const hasShop =
+        Number.isFinite(shopLat) && Number.isFinite(shopLng);
 
     for (const row of rows) {
-        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
-            shopLat,
-            shopLng,
-            row.pickupAddress,
-            row.dropOffAddress
-        );
+        let pickupDistanceKm = null;
+        let deliveryDistanceKm = null;
+        if (hasShop) {
+            const pLat = parseFloat(row.pickupAddress?.lat);
+            const pLng = parseFloat(row.pickupAddress?.lng);
+            const dLat = parseFloat(row.dropOffAddress?.lat);
+            const dLng = parseFloat(row.dropOffAddress?.lng);
+            try {
+                if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
+                    pickupDistanceKm = await getdistance(
+                        shopLat,
+                        shopLng,
+                        pLat,
+                        pLng
+                    );
+                }
+            } catch (_) {
+                pickupDistanceKm = null;
+            }
+            try {
+                if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
+                    deliveryDistanceKm = await getdistance(
+                        shopLat,
+                        shopLng,
+                        dLat,
+                        dLng
+                    );
+                }
+            } catch (_) {
+                deliveryDistanceKm = null;
+            }
+        }
         row.pickupDistanceKm = pickupDistanceKm;
         row.deliveryDistanceKm = deliveryDistanceKm;
     }
 
+    const {
+        applyNearestDistanceRanks,
+    } = require('../../utils/shopOrderDistanceRank');
     applyNearestDistanceRanks(rows);
     return rows;
 }
@@ -967,8 +995,16 @@ exports.getBookingHome = async (req, res) => {
     );
 
     if (!agentShopOpen) {
+        // Still surface any New bookings that are already visible for this
+        // agent (admin-assigned / preferred / broadcast). Returning [] here
+        // used to wipe a socket-pushed first order on the next home refresh.
+        const bookingDataWhenClosed = await fetchVisibleNewBookings(agentId, {
+            timeZone: queryTimeZone,
+            clientTimeZone: queryClientTimeZone,
+            withDetails: true,
+        });
         return ResponseHelper.success(res, "Agent Orders fetched", {
-            bookingData: [],
+            bookingData: bookingDataWhenClosed,
             isConnectAccountConnected,
             connectAccountId,
             agentShopOpen: false,
