@@ -175,9 +175,114 @@ async function evaluateShopAcceptCapacity(shopUserId, shopAddressId, options = {
   return { allowed: true, acceptedInWindow, cap };
 }
 
+/**
+ * One accept timestamp per booking in the rolling window (oldest first).
+ * Used to compute when the next slot frees.
+ */
+async function listRecentAcceptTimes(shopAddressId, windowMinutes, options = {}) {
+  const shopId = Number(shopAddressId);
+  if (!Number.isFinite(shopId) || shopId <= 0) return [];
+  const mins = clampInt(windowMinutes, 1, 24 * 60, 60);
+  const since = new Date(Date.now() - mins * 60 * 1000);
+  const excludeBookingId = Number(options.excludeBookingId);
+
+  const bookingWhere = { laundryShopId: shopId };
+  if (Number.isFinite(excludeBookingId) && excludeBookingId > 0) {
+    bookingWhere.id = { [Op.ne]: excludeBookingId };
+  }
+
+  try {
+    const rows = await bookingHistory.findAll({
+      attributes: ['bookingId', 'createdAt'],
+      where: {
+        bookingStatusId: ACCEPTED_STATUS_ID,
+        createdAt: { [Op.gte]: since },
+      },
+      include: [
+        {
+          model: booking,
+          required: true,
+          attributes: [],
+          where: bookingWhere,
+        },
+      ],
+      order: [['createdAt', 'ASC']],
+    });
+    const byBooking = new Map();
+    for (const row of rows) {
+      const id = row.bookingId;
+      if (id == null || byBooking.has(id)) continue;
+      byBooking.set(id, row.createdAt);
+    }
+    return [...byBooking.values()];
+  } catch (err) {
+    console.warn(
+      '[shopAcceptCapacity] list accept times failed, using booking.updatedAt:',
+      err?.message || err
+    );
+    const rows = await booking.findAll({
+      attributes: ['id', 'updatedAt'],
+      where: {
+        laundryShopId: shopId,
+        updatedAt: { [Op.gte]: since },
+        bookingStatusId: { [Op.gte]: ACCEPTED_STATUS_ID },
+        ...(Number.isFinite(excludeBookingId) && excludeBookingId > 0
+          ? { id: { [Op.ne]: excludeBookingId } }
+          : {}),
+      },
+      order: [['updatedAt', 'ASC']],
+    });
+    return rows.map((r) => r.updatedAt);
+  }
+}
+
+/**
+ * Client snapshot for the agent banner / acceptCapacity GET.
+ * Resolves the shop address from the owner (or staff-resolved) user id.
+ */
+async function getShopAcceptCapacityStatus(shopUserId, options = {}) {
+  const {
+    buildCapacityStatus,
+    computeCapacityResetAt,
+  } = require('./shopAcceptCapacityWindow');
+  const { addressDb } = require('../models');
+
+  const cap = await resolveAcceptCapForShop(shopUserId);
+  if (!cap.enabled) {
+    return buildCapacityStatus({ cap });
+  }
+
+  const shopAddress = await addressDb.findOne({
+    where: {
+      userId: shopUserId,
+      addressType: 'LaundaryShopAddress',
+    },
+    attributes: ['id'],
+  });
+
+  if (!shopAddress) {
+    return buildCapacityStatus({ cap, used: 0 });
+  }
+
+  const times = await listRecentAcceptTimes(
+    shopAddress.id,
+    cap.windowMinutes,
+    options
+  );
+  const used = times.length;
+  const resetsAt =
+    cap.maxOrders === 0
+      ? null
+      : computeCapacityResetAt(times, cap.maxOrders, cap.windowMinutes);
+
+  return buildCapacityStatus({ cap, used, resetsAt });
+}
+
 module.exports = {
   resolveAcceptCapForShop,
   countRecentAccepts,
+  listRecentAcceptTimes,
   evaluateShopAcceptCapacity,
+  getShopAcceptCapacityStatus,
   ACCEPTED_STATUS_ID,
 };

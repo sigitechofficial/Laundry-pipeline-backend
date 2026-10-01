@@ -6,6 +6,7 @@ const agentController = require("../controllers/Agent/agents");
 const bookingAttemptController = require("../controllers/Agent/bookingAttemptController");
 const shopReviewAgentController = require("../controllers/Agent/shopReviewController");
 const printerController = require("../controllers/Agent/printerController");
+const acceptCapacityController = require("../controllers/Agent/acceptCapacityController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
@@ -227,6 +228,12 @@ router.post(
     validateAccessToken,
     requireCapability("canAcceptOrders"),
     asyncMiddleware(agentController.agentAcceptOrder)
+);
+// Rolling accept limit for this shop (used / limit / when it resets)
+router.get(
+    "/acceptCapacity",
+    validateAccessToken,
+    asyncMiddleware(acceptCapacityController.getAcceptCapacity)
 );
 //Agent reject/decline incoming booking (hidden from this agent only)
 router.post(
