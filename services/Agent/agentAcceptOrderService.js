@@ -102,13 +102,27 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             { excludeBookingId: bookingId }
         );
         if (!capacity.allowed) {
-            const max = capacity.cap?.maxOrders;
-            const mins = capacity.cap?.windowMinutes;
-            throw new ConflictError(
-                max === 0
-                    ? "Your shop cannot accept marketplace orders right now (capacity set to 0). Contact support."
-                    : `Your shop has reached its accept limit (${capacity.acceptedInWindow}/${max} in ${mins} minutes). Try again later.`
-            );
+            const {
+                getShopAcceptCapacityStatus,
+            } = require("../../utils/shopAcceptCapacity");
+            const {
+                CAPACITY_REACHED_CODE,
+                capacityReachedMessage,
+            } = require("../../utils/shopAcceptCapacityWindow");
+            const {
+                notifyShopAcceptCapacity,
+            } = require("../../utils/shopAcceptCapacityNotify");
+            const status = await getShopAcceptCapacityStatus(shopOwnerUserId);
+            const message = capacityReachedMessage(status);
+            notifyShopAcceptCapacity(shopOwnerUserId, {
+                capacity: status,
+                message,
+                reachedToast: true,
+            });
+            throw new ConflictError(message, {
+                code: CAPACITY_REACHED_CODE,
+                capacity: status,
+            });
         }
     }
 
@@ -172,6 +186,20 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         }))
     );
 
+    // Live banner + admin snapshot: history row must exist before we count.
+    let capacity = null;
+    try {
+        const { getShopAcceptCapacityStatus } = require("../../utils/shopAcceptCapacity");
+        const { notifyShopAcceptCapacity } = require("../../utils/shopAcceptCapacityNotify");
+        capacity = await getShopAcceptCapacityStatus(shopOwnerUserId);
+        notifyShopAcceptCapacity(shopOwnerUserId, { capacity });
+    } catch (capErr) {
+        console.warn(
+            "[acceptOrder] accept capacity notify skipped:",
+            capErr?.message || capErr
+        );
+    }
+
     await agentBookingDeclineService.clearDeclinesForBooking(bookingId);
 
     await notifyBookingTakenByAgent({
@@ -202,6 +230,7 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         bookingId: Number(bookingId),
         laundryShopId: shopAddress.id,
         bookingStatusId: 3,
+        ...(capacity ? { capacity } : {}),
     };
 }
 

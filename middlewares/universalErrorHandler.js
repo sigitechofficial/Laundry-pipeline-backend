@@ -61,6 +61,9 @@ class ConflictError extends UniversalHttpError {
     constructor(message = 'Resource conflict', details = null) {
         super(message, StatusCodes.CONFLICT, details);
         this.name = 'ConflictError';
+        if (details && typeof details === 'object' && details.code) {
+            this.errorCode = details.code;
+        }
     }
 }
 

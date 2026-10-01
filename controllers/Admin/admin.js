@@ -229,7 +229,20 @@ async function getUserBlockStatus(req, res) {
 async function getShopAssignmentPolicy(req, res) {
     const { shopUserId } = req.params;
     const result = await shopAssignmentPolicyService.getPolicy(shopUserId);
-    return ResponseHelper.success(res, "Shop assignment policy fetched", result);
+    let acceptCapacity = null;
+    try {
+        const { getShopAcceptCapacityStatus } = require("../../utils/shopAcceptCapacity");
+        acceptCapacity = await getShopAcceptCapacityStatus(shopUserId);
+    } catch (err) {
+        console.warn(
+            "[getShopAssignmentPolicy] acceptCapacity skipped:",
+            err?.message || err
+        );
+    }
+    return ResponseHelper.success(res, "Shop assignment policy fetched", {
+        ...result,
+        acceptCapacity,
+    });
 }
 
 async function updateShopAssignmentPolicy(req, res) {
