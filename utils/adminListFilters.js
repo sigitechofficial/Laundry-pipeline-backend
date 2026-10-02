@@ -244,6 +244,29 @@ function applyCashDueListQuery(rows, query = {}) {
     return applyListQueryInMemory(rows, query, CASH_DUE_LIST_OPTIONS);
 }
 
+const SAFE_TABLE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * Correlated EXISTS for "this customer belongs to zoneId".
+ * A customer matches when they have a non-deleted booking in the zone
+ * or a saved address in the zone. zoneId is parseZoneId-only (positive int);
+ * table names must be plain identifiers. Returns null when there is no zone filter.
+ *
+ * @param {unknown} zoneId
+ * @param {{ bookings?: string, addresses?: string }} [tables]
+ * @returns {string|null}
+ */
+function customerZoneExistsSql(zoneId, tables = {}) {
+    const raw = String(zoneId ?? '').trim();
+    if (!/^[1-9]\d*$/.test(raw)) return null;
+    const id = parseZoneId(raw);
+    if (!id || String(id) !== raw) return null;
+    const bookings = tables.bookings || 'bookings';
+    const addresses = tables.addresses || 'addressDbs';
+    if (!SAFE_TABLE.test(bookings) || !SAFE_TABLE.test(addresses)) return null;
+    return `(EXISTS (SELECT 1 FROM \`${bookings}\` AS customerZoneBookings WHERE customerZoneBookings.customerId = users.id AND customerZoneBookings.zoneId = ${id} AND customerZoneBookings.deletedAt IS NULL) OR EXISTS (SELECT 1 FROM \`${addresses}\` AS customerZoneAddresses WHERE customerZoneAddresses.userId = users.id AND customerZoneAddresses.zoneId = ${id} AND customerZoneAddresses.deletedAt IS NULL))`;
+}
+
 module.exports = {
     ACTION_REQUIRED_DEFAULT_LIMIT,
     ACTION_REQUIRED_LIST_OPTIONS,
@@ -260,4 +283,5 @@ module.exports = {
     CASH_DUE_DEFAULT_LIMIT,
     CASH_DUE_LIST_OPTIONS,
     applyCashDueListQuery,
+    customerZoneExistsSql,
 };

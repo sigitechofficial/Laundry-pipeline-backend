@@ -15,6 +15,7 @@ const {
     mergeCreatedAtRange,
     CASH_DUE_DEFAULT_LIMIT,
     applyCashDueListQuery,
+    customerZoneExistsSql,
 } = require('./adminListFilters');
 
 // ─── action required (in-memory) ─────────────────────────────────────────────
@@ -185,5 +186,24 @@ assert.deepEqual(cd.rows.map((r) => r.shopName), ['Bubbles', 'Clean Co', 'Suds']
 cd = applyCashDueListQuery(agents, { export: 'csv', limit: '1' });
 assert.equal(cd.rows.length, 3);
 assert.equal(cd.pagination.exportMode, true);
+
+// ─── customer zone membership ────────────────────────────────────────────────
+
+const zoneSql = customerZoneExistsSql(12);
+assert.ok(zoneSql.includes('customerZoneBookings.zoneId = 12'));
+assert.ok(zoneSql.includes('customerZoneAddresses.zoneId = 12'));
+assert.ok(zoneSql.includes('deletedAt IS NULL'));
+assert.equal(customerZoneExistsSql(''), null);
+assert.equal(customerZoneExistsSql('north'), null);
+assert.equal(customerZoneExistsSql(0), null);
+assert.equal(customerZoneExistsSql(-3), null);
+assert.equal(
+    customerZoneExistsSql('4; DROP TABLE users', { bookings: 'bookings', addresses: 'addressDbs' }),
+    null
+);
+const custom = customerZoneExistsSql('7', { bookings: 'bookings', addresses: 'addressDbs' });
+assert.ok(custom.includes('`bookings`'));
+assert.ok(custom.includes('`addressDbs`'));
+assert.equal(customerZoneExistsSql(3, { bookings: 'bookings;drop', addresses: 'addressDbs' }), null);
 
 console.log('adminListFilters tests passed');

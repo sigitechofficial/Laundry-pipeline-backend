@@ -144,7 +144,8 @@ async function adminDashboard(req, res) {
   * Get All Customers
 */
 async function getAllCustomers(req, res) {
-    // search / status / startDate / endDate / sortBy / sortDir / page / limit / export
+    // search / status / zoneId / startDate / endDate / sortBy / sortDir / page / limit / export
+    // Zone staff: enforceAdminZoneScope already forces query.zoneId from the JWT.
     const result = await customerService.getAllCustomers(req.query);
     return ResponseHelper.success(res, "All Customer Details", result);
 }
@@ -925,7 +926,8 @@ async function registerAgent(req, res) {
         countryId, 
         cityId, 
         email, 
-        countryCode
+        countryCode,
+        registrationStatus,
     } = req.body;
 
     // Handle profile image upload
@@ -943,11 +945,15 @@ async function registerAgent(req, res) {
         countryId,
         cityId,
         email,
-        countryCode
+        countryCode,
+        registrationStatus,
     };
 
     const result = await agentRegistrationService.registerAgent(data, profileImg);
-    return ResponseHelper.success(res, "Agent registered successfully", result);
+    const message = result.agentApprovalStatus === 'pending'
+        ? 'Shop saved in Onboarding Requests'
+        : 'Agent registered successfully';
+    return ResponseHelper.success(res, message, result);
 }
 
 /*

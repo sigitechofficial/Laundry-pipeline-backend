@@ -208,6 +208,13 @@ class ShopManagementService {
                 model: users,
                 as: 'businessInfo',
                 required: userRequired,
+                // Pending and rejected owners stay on Onboarding Requests, not the live directory.
+                where: {
+                    [Op.or]: [
+                        { agentApprovalStatus: 'approved' },
+                        { agentApprovalStatus: { [Op.is]: null } },
+                    ],
+                },
                 attributes: [
                     'firstName',
                     'lastName',

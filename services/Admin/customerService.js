@@ -11,7 +11,7 @@ const {
     UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
 const { literal, fn, col } = require("sequelize");
-const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation, service, billingDetails } = require('../../models');
+const { addressDb, customerSelectedService, OnHoldConfirmation, bookingStatus, bussinessInformation, service, billingDetails, zone } = require('../../models');
 const adminBookingAssignService = require('./adminBookingAssignService');
 const { clampListLimit, clampPage } = require('../../utils/listLimit');
 const {
@@ -23,9 +23,72 @@ const {
     resolveSort,
     buildPagination,
 } = require('../../utils/listQuery');
+const { customerZoneExistsSql } = require('../../utils/adminListFilters');
+const { parseZoneId } = require('../../utils/adminZoneScope');
 const { customerPhoneError } = require('../../utils/customerPhone');
 const { isUserBlocked } = require('../../utils/accountBlocked');
 const { presentCustomerUserDetails } = require('../../utils/customerUserDetails');
+
+function tableName(model) {
+    const name = model.getTableName();
+    if (name && typeof name === 'object') return name.tableName;
+    return String(name || '');
+}
+
+async function loadCustomerZoneLabels(customerIds) {
+    const labels = new Map();
+    if (!customerIds.length) return labels;
+
+    const [bookingRows, addressRows] = await Promise.all([
+        booking.findAll({
+            attributes: ['customerId', 'zoneId'],
+            where: {
+                customerId: { [Op.in]: customerIds },
+                zoneId: { [Op.ne]: null },
+            },
+            group: ['customerId', 'zoneId'],
+            raw: true,
+        }),
+        addressDb.findAll({
+            attributes: ['userId', 'zoneId'],
+            where: {
+                userId: { [Op.in]: customerIds },
+                zoneId: { [Op.ne]: null },
+            },
+            group: ['userId', 'zoneId'],
+            raw: true,
+        }),
+    ]);
+
+    const zoneIds = new Set();
+    for (const row of bookingRows) zoneIds.add(Number(row.zoneId));
+    for (const row of addressRows) zoneIds.add(Number(row.zoneId));
+    const ids = [...zoneIds].filter((id) => Number.isFinite(id) && id > 0);
+    const zoneRows = ids.length
+        ? await zone.findAll({
+            where: { id: { [Op.in]: ids } },
+            attributes: ['id', 'name'],
+            raw: true,
+        })
+        : [];
+    const nameById = new Map(zoneRows.map((row) => [Number(row.id), row.name]));
+
+    const add = (customerId, zoneIdValue) => {
+        const cid = Number(customerId);
+        const zid = Number(zoneIdValue);
+        const name = nameById.get(zid);
+        if (!cid || !zid || !name) return;
+        if (!labels.has(cid)) labels.set(cid, []);
+        const list = labels.get(cid);
+        if (!list.some((entry) => entry.id === zid)) list.push({ id: zid, name });
+    };
+    for (const row of bookingRows) add(row.customerId, row.zoneId);
+    for (const row of addressRows) add(row.userId, row.zoneId);
+    for (const list of labels.values()) {
+        list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }
+    return labels;
+}
 
 class CustomerService {
     /**
@@ -36,6 +99,7 @@ class CustomerService {
      * Admin customer directory. Query contract (see utils/listQuery):
      *   search    id / first / last / full name / email / phone
      *   status    "active" | "blocked"
+     *   zoneId    customers with a booking or saved address in that zone
      *   startDate/endDate  signup (createdAt) calendar range
      *   sortBy    name | email | createdAt | bookingCount | totalAmountSpent | lastBookingDate
      *   page/limit or export=1
@@ -68,6 +132,13 @@ class CustomerService {
             );
         }
         where = andWhere(where, searchWhere);
+
+        const zoneId = parseZoneId(query.zoneId);
+        const zoneSql = customerZoneExistsSql(zoneId, {
+            bookings: tableName(booking),
+            addresses: tableName(addressDb),
+        });
+        if (zoneSql) where = andWhere(where, sequelize.literal(zoneSql));
 
         const BOOKING_COUNT = `(SELECT COUNT(*) FROM bookings WHERE bookings.customerId = users.id)`;
         const TOTAL_SPENT = `(SELECT COALESCE(SUM(orderAmount), 0) FROM bookings WHERE bookings.customerId = users.id)`;
@@ -112,8 +183,11 @@ class CustomerService {
             }),
         ]);
 
+        const zoneLabels = await loadCustomerZoneLabels(findCustomers.map((row) => row.id));
+
         const formattedCustomers = findCustomers.map((customer) => {
             const customerData = customer.toJSON();
+            const zones = zoneLabels.get(Number(customerData.id)) || [];
             return {
                 ...customerData,
                 blocked: isUserBlocked(customerData.status),
@@ -122,6 +196,8 @@ class CustomerService {
                     ? new Date(customerData.lastBookingDate).toISOString().split('T')[0]
                     : null,
                 totalAmountSpent: Number(customerData.totalAmountSpent || 0).toFixed(2),
+                zones,
+                zoneNames: zones.map((entry) => entry.name).join(', '),
             };
         });
 
@@ -137,6 +213,7 @@ class CustomerService {
             filters: {
                 search: searchTerm,
                 status: statusFilter || null,
+                zoneId: zoneId || null,
                 startDate: query.startDate || null,
                 endDate: query.endDate || null,
             },

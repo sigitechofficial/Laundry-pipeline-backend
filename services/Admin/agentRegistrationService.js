@@ -35,6 +35,19 @@ const stripe = require('../../controllers/stripe');
  * Agent Registration Service
  * Handles complete agent registration process for admin side
  */
+/**
+ * Admin Add Shop status.
+ * active  → approved now, shop can sign in.
+ * inactive → pending, listed under Onboarding Requests until an admin approves.
+ * Omitted / empty stays approved so older clients keep the previous behaviour.
+ */
+function resolveAdminRegistrationApproval(raw) {
+    const value = String(raw ?? '').trim().toLowerCase();
+    if (!value || value === 'active' || value === 'approved') return 'approved';
+    if (value === 'inactive' || value === 'pending') return 'pending';
+    throw new ValidationError('registrationStatus must be active or inactive');
+}
+
 class AgentRegistrationService {
 
     /**
@@ -52,8 +65,11 @@ class AgentRegistrationService {
             countryId,
             cityId,
             email,
-            countryCode
+            countryCode,
+            registrationStatus,
         } = data;
+
+        const agentApprovalStatus = resolveAdminRegistrationApproval(registrationStatus);
 
         // Check if user already exists
         const existingUser = await users.findOne({
@@ -81,7 +97,7 @@ class AgentRegistrationService {
             userTypeId: 4, // Agent type
             password: hashedPassword,
             status: true,
-            agentApprovalStatus: 'approved',
+            agentApprovalStatus,
             countryCode,
             verifiedAt: new Date(), // Skip OTP verification for admin registration
             image: profileImg,
@@ -104,7 +120,9 @@ class AgentRegistrationService {
             email: userCreate.email,
             firstName: userCreate.firstName,
             lastName: userCreate.lastName,
-            stripeCustomerId: stripeCustomer
+            stripeCustomerId: stripeCustomer,
+            agentApprovalStatus,
+            registrationStatus: agentApprovalStatus === 'pending' ? 'inactive' : 'active',
         };
     }
 
