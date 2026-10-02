@@ -3,6 +3,11 @@ const { Server } = require('socket.io')
 const agentBookingDeclineService = require('./services/Agent/agentBookingDeclineService');
 const { notifyBookingTakenByAgent } = require('./utils/bookingTakenNotify');
 const { triggerHeldReleaseForAgent } = require('./utils/triggerHeldReleaseForAgent');
+const {
+    extractQueuedBookingId,
+    shouldDropQueuedNewBooking,
+    isQueuedEventExpired,
+} = require('./utils/unacknowledgedEventQueue');
 const { users,
     userType,
     booking,
@@ -29,14 +34,20 @@ function resolveStoredEventType(row) {
 }
 
 async function persistUnacknowledgedEvent(userId, eventData) {
-    const bookingId =
-        eventData?.data?.id ??
-        eventData?.data?.bookingId ??
-        null;
+    const bookingId = extractQueuedBookingId(eventData?.data);
+    const to = userId.toString();
+    const event = eventData.type;
+
+    if (bookingId != null) {
+        const existing = await unAcknowledgedEvents.findOne({
+            where: { to, event, bookingId: Number(bookingId) },
+        });
+        if (existing) return;
+    }
 
     await unAcknowledgedEvents.create({
-        to: userId.toString(),
-        event: eventData.type,
+        to,
+        event,
         data: JSON.stringify(eventData.data),
         bookingId: bookingId != null ? Number(bookingId) : null,
     });
@@ -74,12 +85,20 @@ async function emitWithAckToRoom(room, eventType, payload) {
 async function replayUnacknowledgedEvents(userId) {
     const rows = await unAcknowledgedEvents.findAll({
         where: { to: userId.toString() },
+        order: [['id', 'ASC']],
     });
 
     for (const row of rows) {
         const eventType = resolveStoredEventType(row);
         if (!eventType || !row.data) {
             console.warn(`⚠️ Skipping malformed unAcknowledgedEvent id=${row.id}`);
+            await row.destroy().catch(() => {});
+            continue;
+        }
+
+        if (isQueuedEventExpired(row.createdAt)) {
+            console.log(`🗑 Dropping expired queued ${eventType} id=${row.id}`);
+            await row.destroy().catch(() => {});
             continue;
         }
 
@@ -88,7 +107,24 @@ async function replayUnacknowledgedEvents(userId) {
             payload = JSON.parse(row.data);
         } catch (parseErr) {
             console.warn(`⚠️ Invalid unAcknowledgedEvent data id=${row.id}:`, parseErr.message);
+            await row.destroy().catch(() => {});
             continue;
+        }
+
+        if (eventType === 'newBookingRequest') {
+            const bookingId = extractQueuedBookingId(payload);
+            const bookingRow = bookingId
+                ? await booking.findByPk(bookingId, {
+                    attributes: ['id', 'bookingStatusId', 'laundryShopId', 'createdAt'],
+                })
+                : null;
+            if (shouldDropQueuedNewBooking(bookingRow)) {
+                console.log(
+                    `🗑 Dropping stale queued newBookingRequest booking=${bookingId} id=${row.id}`
+                );
+                await row.destroy().catch(() => {});
+                continue;
+            }
         }
 
         const { delivered } = await emitWithAckToRoom(row.to, eventType, payload);

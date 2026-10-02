@@ -23,7 +23,7 @@ const {
     resolveSort,
     buildPagination,
 } = require('../../utils/listQuery');
-const { customerZoneExistsSql } = require('../../utils/adminListFilters');
+const { customerZoneExistsSql, customerSpendTierSql } = require('../../utils/adminListFilters');
 const { parseZoneId } = require('../../utils/adminZoneScope');
 const { customerPhoneError } = require('../../utils/customerPhone');
 const { isUserBlocked } = require('../../utils/accountBlocked');
@@ -100,6 +100,7 @@ class CustomerService {
      *   search    id / first / last / full name / email / phone
      *   status    "active" | "blocked"
      *   zoneId    customers with a booking or saved address in that zone
+     *   spendTier "high" | "low" | "none"  (lifetime SUM(orderAmount); high ≥ 500)
      *   startDate/endDate  signup (createdAt) calendar range
      *   sortBy    name | email | createdAt | bookingCount | totalAmountSpent | lastBookingDate
      *   page/limit or export=1
@@ -143,6 +144,10 @@ class CustomerService {
         const BOOKING_COUNT = `(SELECT COUNT(*) FROM bookings WHERE bookings.customerId = users.id)`;
         const TOTAL_SPENT = `(SELECT COALESCE(SUM(orderAmount), 0) FROM bookings WHERE bookings.customerId = users.id)`;
         const LAST_BOOKING = `(SELECT MAX(createdAt) FROM bookings WHERE bookings.customerId = users.id)`;
+
+        const spendTier = String(query.spendTier || '').trim().toLowerCase();
+        const spendSql = customerSpendTierSql(spendTier, TOTAL_SPENT);
+        if (spendSql) where = andWhere(where, sequelize.literal(spendSql));
 
         const { order } = resolveSort(
             query,
@@ -214,6 +219,7 @@ class CustomerService {
                 search: searchTerm,
                 status: statusFilter || null,
                 zoneId: zoneId || null,
+                spendTier: spendSql ? spendTier : null,
                 startDate: query.startDate || null,
                 endDate: query.endDate || null,
             },

@@ -16,6 +16,8 @@ const {
     CASH_DUE_DEFAULT_LIMIT,
     applyCashDueListQuery,
     customerZoneExistsSql,
+    CUSTOMER_HIGH_SPEND_THRESHOLD,
+    customerSpendTierSql,
 } = require('./adminListFilters');
 
 // ─── action required (in-memory) ─────────────────────────────────────────────
@@ -205,5 +207,25 @@ const custom = customerZoneExistsSql('7', { bookings: 'bookings', addresses: 'ad
 assert.ok(custom.includes('`bookings`'));
 assert.ok(custom.includes('`addressDbs`'));
 assert.equal(customerZoneExistsSql(3, { bookings: 'bookings;drop', addresses: 'addressDbs' }), null);
+
+// ─── customer spend tier ─────────────────────────────────────────────────────
+
+const TOTAL_SPENT =
+    '(SELECT COALESCE(SUM(orderAmount), 0) FROM bookings WHERE bookings.customerId = users.id)';
+
+assert.equal(CUSTOMER_HIGH_SPEND_THRESHOLD, 500);
+assert.ok(customerSpendTierSql('high', TOTAL_SPENT).includes(`>= ${CUSTOMER_HIGH_SPEND_THRESHOLD}`));
+assert.ok(customerSpendTierSql('low', TOTAL_SPENT).includes('> 0'));
+assert.ok(customerSpendTierSql('low', TOTAL_SPENT).includes(`< ${CUSTOMER_HIGH_SPEND_THRESHOLD}`));
+assert.ok(customerSpendTierSql('none', TOTAL_SPENT).endsWith('= 0'));
+assert.equal(customerSpendTierSql('', TOTAL_SPENT), null);
+assert.equal(customerSpendTierSql('medium', TOTAL_SPENT), null);
+assert.equal(customerSpendTierSql('high', 'orderAmount'), null);
+assert.equal(customerSpendTierSql('high', `${TOTAL_SPENT}; DROP TABLE users`), null);
+assert.equal(customerSpendTierSql('high', TOTAL_SPENT, 0), null);
+assert.equal(customerSpendTierSql('high', TOTAL_SPENT, -10), null);
+assert.ok(
+    customerSpendTierSql('HIGH', TOTAL_SPENT, 250).includes('>= 250')
+);
 
 console.log('adminListFilters tests passed');

@@ -267,6 +267,45 @@ function customerZoneExistsSql(zoneId, tables = {}) {
     return `(EXISTS (SELECT 1 FROM \`${bookings}\` AS customerZoneBookings WHERE customerZoneBookings.customerId = users.id AND customerZoneBookings.zoneId = ${id} AND customerZoneBookings.deletedAt IS NULL) OR EXISTS (SELECT 1 FROM \`${addresses}\` AS customerZoneAddresses WHERE customerZoneAddresses.userId = users.id AND customerZoneAddresses.zoneId = ${id} AND customerZoneAddresses.deletedAt IS NULL))`;
 }
 
+/**
+ * Lifetime spend threshold for admin Customer Management high/low buckets.
+ * Same currency units as `bookings.orderAmount` (platform minor-unit not used).
+ * Tune here only — list filter + unit tests share this constant.
+ */
+const CUSTOMER_HIGH_SPEND_THRESHOLD = 500;
+
+const SPEND_TIERS = new Set(['high', 'low', 'none']);
+
+/**
+ * Predicate SQL for spendTier=high|low|none against a correlated SUM(orderAmount)
+ * expression (must already be a trusted server-built subquery, not user input).
+ * Returns null when tier is empty/unknown or threshold is unsafe.
+ *
+ * @param {unknown} tier
+ * @param {string} totalSpentSql  e.g. `(SELECT COALESCE(SUM(orderAmount), 0) FROM bookings WHERE …)`
+ * @param {number} [highThreshold]
+ * @returns {string|null}
+ */
+function customerSpendTierSql(
+    tier,
+    totalSpentSql,
+    highThreshold = CUSTOMER_HIGH_SPEND_THRESHOLD
+) {
+    const parsed = String(tier || '').trim().toLowerCase();
+    if (!SPEND_TIERS.has(parsed)) return null;
+    if (typeof totalSpentSql !== 'string' || !totalSpentSql.includes('SELECT')) {
+        return null;
+    }
+    // Reject anything that looks like a second statement / comment injection.
+    if (/[;`]|--/.test(totalSpentSql)) return null;
+    const threshold = Number(highThreshold);
+    if (!Number.isFinite(threshold) || threshold <= 0) return null;
+    const spent = `(${totalSpentSql})`;
+    if (parsed === 'high') return `${spent} >= ${threshold}`;
+    if (parsed === 'low') return `${spent} > 0 AND ${spent} < ${threshold}`;
+    return `${spent} = 0`;
+}
+
 module.exports = {
     ACTION_REQUIRED_DEFAULT_LIMIT,
     ACTION_REQUIRED_LIST_OPTIONS,
@@ -284,4 +323,6 @@ module.exports = {
     CASH_DUE_LIST_OPTIONS,
     applyCashDueListQuery,
     customerZoneExistsSql,
+    CUSTOMER_HIGH_SPEND_THRESHOLD,
+    customerSpendTierSql,
 };
