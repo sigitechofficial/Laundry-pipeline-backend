@@ -82,17 +82,17 @@ const {
     BOOKING_ACCEPT_WINDOW_MINUTES,
     PREFERRED_SHOP_WINDOW_MINUTES,
     getOrderExpireTime,
-    getAcceptWindowMinutesRemaining,
-    formatOrderExpireTimeForApi,
 } = require('../../utils/bookingTimeZone');
 const {
     isAnyShopOpenInZone,
     isPlatformOpenNow,
     isShopEligibleForBroadcast,
 } = require('../../utils/shopWorkingHours');
-const { getAcceptWindowAnchor } = require('../../utils/bookingAgentWindow');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { isShopSlotFree } = require('../../utils/shopSlotAvailability');
+const {
+    buildNewBookingOfferPayload,
+} = require('../../utils/newBookingOfferPayload');
 
 
 // Import stripe functions
@@ -483,61 +483,11 @@ async function bookingEventSentCheckTheShops(
         //         }
         //     }
         // };
-        const eventData = {
-            type: "newBookingRequest",
-            data: {
-                id: bookingDetails.id,
-                orderTrackId: bookingDetails.orderTrackId,
-                collectionDate: new Date(collectionDate).toISOString(),
-                collectionTimeTo,
-                collectionTimeFrom,
-                deliveryDate: new Date(deliveryDate).toISOString(),
-                deliveryTimeTo,
-                deliveryTimeFrom,
-                driverInstructionOptions:
-                    bookingDetails.driverInstructionOptions || null,
-                driverInstructionOptions1:
-                    bookingDetails.driverInstructionOptions1 || null,
-                driverInstruction: bookingDetails.driverInstruction || null,
-                paymentConfirmed: bookingDetails.paymentConfirmed || false,
-                partialPayment: bookingDetails.partialPayment || false,
-                totalItems: bookingDetails.totalItems || 0,
-                orderAmount: bookingDetails?.billingDetail?.total || 0,
-                frequency: bookingDetails.frequency || "Just Once",
-                createdAt: bookingDetails.createdAt,
-                orderExpireTime: formatOrderExpireTimeForApi(
-                    bookingDetails.orderExpireTime
-                ),
-                acceptWindowMinutes: getAcceptWindowMinutesRemaining(
-                    getAcceptWindowAnchor(bookingDetails),
-                    bookingDetails.orderExpireTime,
-                    timeZone
-                ),
-                orderExpireTimeClock: formatOrderExpireTimeForApi(
-                    bookingDetails.orderExpireTime
-                ),
-                pickupAddresId: bookingDetails.pickupAddresId || null,
-                dropOffAddressId: bookingDetails.dropOffAddressId || null,
-                laundryShopId: availableShops[0]?.id || null,
-                customerId: bookingDetails.customer.id,
-                pickupAddress: bookingDetails.pickupAddress || {},
-                dropOffAddress: bookingDetails.dropOffAddress || {},
-                customer: {
-                    id: bookingDetails.customer.id,
-                    firstName: bookingDetails.customer.firstName,
-                    lastName: bookingDetails.customer.lastName,
-                    email: bookingDetails.customer.email,
-                    userTypeId: bookingDetails.customer.userTypeId || 2,
-                    image: bookingDetails.customer.image || null,
-                    phoneNum: bookingDetails.customer.phoneNum,
-                },
-                zone: bookingDetails.zone || {},
-            },
-        };
         let notifiedCount = 0;
         const { sendNotification } = require('../../utils/notification');
         const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
         const fcmPromises = [];
+        const socketPromises = [];
 
         // Nearest shop first among eligible (time slot already filtered above).
         const shopsWithDistance = [];
@@ -562,16 +512,22 @@ async function bookingEventSentCheckTheShops(
         for (const { shop, pickupDistanceKm, deliveryDistanceKm } of shopsWithDistance) {
             if (shop.user && shop.user.id) {
                 const payload = {
-                    ...eventData,
-                    data: {
-                        ...eventData.data,
+                    type: "newBookingRequest",
+                    data: buildNewBookingOfferPayload({
+                        bookingDetails,
+                        collectionDate,
+                        collectionTimeTo,
+                        collectionTimeFrom,
+                        deliveryDate,
+                        deliveryTimeTo,
+                        deliveryTimeFrom,
+                        timeZone: resolvedTz,
+                        offeredToShopId: shop.id,
                         pickupDistanceKm,
                         deliveryDistanceKm,
-                        isNearestPickup: false,
-                        isNearestDelivery: false,
-                    },
+                    }),
                 };
-                sendEvent(shop.user.id, payload);
+                socketPromises.push(sendEvent(shop.user.id, payload));
                 fcmPromises.push(
                     sendNotification(
                         shop.user.id,
@@ -587,8 +543,14 @@ async function bookingEventSentCheckTheShops(
                 console.warn(`⚠️ Skipping shop ${shop.id} - no associated user found`);
             }
         }
-        // Await all FCM pushes in parallel (non-blocking to booking creation)
+        // sendEvent persists missed deliveries, so await it before reporting
+        // routing complete. FCM remains best-effort and non-blocking.
+        await Promise.allSettled(socketPromises);
         Promise.all(fcmPromises).catch(() => {});
+        console.log(
+            `[new-offer] booking=${bookingId} eligible=${availableShops.length} ` +
+            `recipients=${notifiedCount} held=false`
+        );
         return {
             notifiedCount,
             availableShopCount: availableShops.length,
@@ -625,52 +587,23 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
 
         const eventData = {
             type: 'newBookingRequest',
-            data: {
-                id: bookingDetails.id,
-                orderTrackId: bookingDetails.orderTrackId,
-                collectionDate: new Date(collectionDate).toISOString(),
+            data: buildNewBookingOfferPayload({
+                bookingDetails,
+                collectionDate,
                 collectionTimeTo,
                 collectionTimeFrom,
-                deliveryDate: new Date(deliveryDate).toISOString(),
+                deliveryDate,
                 deliveryTimeTo,
                 deliveryTimeFrom,
-                driverInstructionOptions: bookingDetails.driverInstructionOptions || null,
-                driverInstructionOptions1: bookingDetails.driverInstructionOptions1 || null,
-                driverInstruction: bookingDetails.driverInstruction || null,
-                paymentConfirmed: bookingDetails.paymentConfirmed || false,
-                partialPayment: bookingDetails.partialPayment || false,
-                totalItems: bookingDetails.totalItems || 0,
-                orderAmount: bookingDetails?.billingDetail?.total || 0,
-                frequency: bookingDetails.frequency || 'Just Once',
-                createdAt: bookingDetails.createdAt,
-                orderExpireTime: formatOrderExpireTimeForApi(bookingDetails.orderExpireTime),
-                acceptWindowMinutes: getAcceptWindowMinutesRemaining(
-                    getAcceptWindowAnchor(bookingDetails),
-                    bookingDetails.orderExpireTime,
-                    timeZone
-                ),
-                orderExpireTimeClock: formatOrderExpireTimeForApi(bookingDetails.orderExpireTime),
-                laundryShopId: preferredShop.id,
-                customerId: bookingDetails.customer?.id,
-                pickupAddress: bookingDetails.pickupAddress || {},
-                dropOffAddress: bookingDetails.dropOffAddress || {},
+                timeZone,
+                offeredToShopId: preferredShop.id,
                 pickupDistanceKm,
                 deliveryDistanceKm,
-                customer: {
-                    id: bookingDetails.customer?.id,
-                    firstName: bookingDetails.customer?.firstName,
-                    lastName: bookingDetails.customer?.lastName,
-                    email: bookingDetails.customer?.email,
-                    userTypeId: bookingDetails.customer?.userTypeId || 2,
-                    image: bookingDetails.customer?.image || null,
-                    phoneNum: bookingDetails.customer?.phoneNum,
-                },
-                zone: bookingDetails.zone || {},
                 isPreferredShopOffer: true,
-            },
+            }),
         };
 
-        sendEvent(ownerId, eventData);
+        await sendEvent(ownerId, eventData);
         sendNotification(
             ownerId,
             'New Booking Request (Preferred)',

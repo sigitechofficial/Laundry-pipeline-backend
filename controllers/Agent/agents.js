@@ -584,6 +584,11 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 
     const agentShopId = shopAddr.id;
     const agentZone = shopAddr.zoneId;
+    const {
+        prepareNewBookingVisibilityForZone,
+    } = require("../../services/bookingHeldReleaseService");
+    await prepareNewBookingVisibilityForZone(agentZone);
+
     const shopLat = parseFloat(shopAddr.lat);
     const shopLng = parseFloat(shopAddr.lng);
     const shopHasCoords =
@@ -690,6 +695,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         include: withDetails ? detailIncludes : distanceIncludes,
         attributes: ['id',
             'orderTrackId',
+            'bookingStatusId',
             'collectionDate',
             'collectionTimeTo',
             'collectionTimeFrom',
@@ -747,9 +753,18 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
     }
 
     const out = [];
+    const excluded = {
+        noExpiry: 0,
+        services: 0,
+        expired: 0,
+        pickupHours: 0,
+    };
     for (const row of bookingData) {
         const plain = row.get({ plain: true });
-        if (!plain.orderExpireTime) continue;
+        if (!plain.orderExpireTime) {
+            excluded.noExpiry += 1;
+            continue;
+        }
 
         const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
         if (
@@ -757,6 +772,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             requiredServiceIds.size === 0 ||
             ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
         ) {
+            excluded.services += 1;
             continue;
         }
 
@@ -768,6 +784,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
                 clientTimeZone
             )
         ) {
+            excluded.expired += 1;
             continue;
         }
 
@@ -780,7 +797,10 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             clientTimeZone,
             agentCountryCtx.countryId
         );
-        if (!pickupOk) continue;
+        if (!pickupOk) {
+            excluded.pickupHours += 1;
+            continue;
+        }
 
         if (withDetails) {
             const minutesLeft = getAcceptWindowMinutesRemaining(
@@ -802,6 +822,12 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 
     // Distance from THIS shop to each order's pickup / delivery — then nearest-first.
     await attachShopOrderDistances(out, shopHasCoords ? shopLat : null, shopHasCoords ? shopLng : null);
+    if (bookingData.length > 0 || out.length > 0) {
+        console.log(
+            `[new-list] agent=${agentId} zone=${agentZone} candidates=${bookingData.length} ` +
+            `visible=${out.length} excluded=${JSON.stringify(excluded)}`
+        );
+    }
 
     return out;
 }
@@ -1014,10 +1040,6 @@ exports.getBookingHome = async (req, res) => {
             activeAssignedOrders,
         });
     }
-
-    // Shop just opened — release any held bookings for this zone and notify agents immediately.
-    const { releaseHeldBookingsForZone } = require("../../services/bookingHeldReleaseService");
-    await releaseHeldBookingsForZone(agentZone);
 
     // Single source of truth for the New list — the badge counters
     // (bookingCounts / fetchTabCounts) call this same helper so list and

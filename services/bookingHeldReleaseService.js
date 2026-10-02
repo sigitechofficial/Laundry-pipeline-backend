@@ -71,17 +71,21 @@ async function broadcastBookingToShops(bookingOrId) {
  * booking still has no laundryShopId (not yet accepted), broadcast to all
  * available shops as normal.
  */
-async function broadcastExpiredPreferredBookings() {
+async function broadcastExpiredPreferredBookings(options = {}) {
     const now = new Date();
+    const preferredWhere = {
+        bookingStatusId: 1,
+        laundryShopId: null,
+        agentBroadcastHeld: false,
+        preferredShopBroadcastDone: false,
+        preferredShopExpiresAt: { [Op.lte]: now },
+        preferredShopAgentId: { [Op.ne]: null },
+    };
+    if (options.zoneId != null && options.zoneId !== '') {
+        preferredWhere.zoneId = options.zoneId;
+    }
     const pending = await booking.findAll({
-        where: {
-            bookingStatusId: 1,
-            laundryShopId: null,
-            agentBroadcastHeld: false,
-            preferredShopBroadcastDone: false,
-            preferredShopExpiresAt: { [Op.lte]: now },
-            preferredShopAgentId: { [Op.ne]: null },
-        },
+        where: preferredWhere,
         attributes: PHASE_TWO_BOOKING_ATTRIBUTES,
     });
 
@@ -91,20 +95,72 @@ async function broadcastExpiredPreferredBookings() {
 
     for (const row of pending) {
         try {
-            // Mark broadcast done first (idempotent — if notify fails we still
-            // don't retry endlessly; admin can reassign).
-            await booking.update(
-                { preferredShopBroadcastDone: true },
-                { where: { id: row.id } }
+            const countryCtx = await getCountryContextFromZoneId(row.zoneId);
+            const visibleAt = new Date();
+            const expireTime = getOrderExpireTime(countryCtx.ianaTimeZone);
+
+            // Atomic claim: Home, New filter, counts and cron may prepare the
+            // same zone concurrently. Exactly one caller broadcasts this row.
+            const [claimed] = await booking.update(
+                {
+                    preferredShopBroadcastDone: true,
+                    agentVisibleAt: visibleAt,
+                    orderExpireTime: expireTime,
+                },
+                {
+                    where: {
+                        id: row.id,
+                        bookingStatusId: 1,
+                        laundryShopId: null,
+                        preferredShopBroadcastDone: false,
+                    },
+                }
             );
+            if (claimed !== 1) continue;
 
             const { notifiedCount } = await broadcastBookingToShops(row);
 
-            console.log(
-                `[preferredShop phase-2] booking ${row.id} broadcast to ${notifiedCount} agent(s)`
-            );
-            broadcast += 1;
+            if (notifiedCount > 0) {
+                console.log(
+                    `[preferredShop phase-2] booking=${row.id} zone=${row.zoneId} ` +
+                    `recipients=${notifiedCount} visibleAt=${visibleAt.toISOString()}`
+                );
+                broadcast += 1;
+            } else {
+                // Keep it retryable. A slot/capacity/shop-hours condition can
+                // change without a new customer booking.
+                await booking.update(
+                    {
+                        preferredShopBroadcastDone: false,
+                        preferredShopExpiresAt: new Date(Date.now() + 60 * 1000),
+                    },
+                    {
+                        where: {
+                            id: row.id,
+                            bookingStatusId: 1,
+                            laundryShopId: null,
+                        },
+                    }
+                );
+                console.log(
+                    `[preferredShop phase-2] booking=${row.id} zone=${row.zoneId} ` +
+                    'recipients=0 retryInSeconds=60'
+                );
+            }
         } catch (err) {
+            await booking.update(
+                {
+                    preferredShopBroadcastDone: false,
+                    preferredShopExpiresAt: new Date(Date.now() + 60 * 1000),
+                },
+                {
+                    where: {
+                        id: row.id,
+                        bookingStatusId: 1,
+                        laundryShopId: null,
+                    },
+                }
+            ).catch(() => {});
             console.error(
                 `[preferredShop phase-2] error broadcasting booking ${row.id}:`,
                 err?.message || err
@@ -145,21 +201,40 @@ async function releaseSingleHeldBooking(row) {
         );
     }
 
-    await booking.update(updatePayload, { where: { id: row.id } });
+    // Atomic claim prevents duplicate socket broadcasts when Home, counts,
+    // filter and the scheduled job release the same row concurrently.
+    const [claimed] = await booking.update(updatePayload, {
+        where: {
+            id: row.id,
+            agentBroadcastHeld: true,
+            bookingStatusId: 1,
+            laundryShopId: null,
+        },
+    });
+    if (claimed !== 1) return false;
 
-    const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
-    const { notifiedCount } = await bookingEventSentCheckTheShops(
-        row.id,
-        row.zoneId,
-        row.collectionDate,
-        row.collectionTimeTo,
-        row.collectionTimeFrom,
-        row.deliveryDate,
-        row.deliveryTimeTo,
-        row.deliveryTimeFrom,
-        servicePayload,
-        countryCtx.ianaTimeZone
-    );
+    let notifiedCount = 0;
+    try {
+        const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
+        const result = await bookingEventSentCheckTheShops(
+            row.id,
+            row.zoneId,
+            row.collectionDate,
+            row.collectionTimeTo,
+            row.collectionTimeFrom,
+            row.deliveryDate,
+            row.deliveryTimeTo,
+            row.deliveryTimeFrom,
+            servicePayload,
+            countryCtx.ianaTimeZone
+        );
+        notifiedCount = Number(result?.notifiedCount || 0);
+    } catch (err) {
+        console.error(
+            `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} broadcast_error:`,
+            err?.message || err
+        );
+    }
 
     if (notifiedCount === 0) {
         const rollbackPayload = {
@@ -169,7 +244,17 @@ async function releaseSingleHeldBooking(row) {
         if (!row.placedOutsidePlatformHours) {
             rollbackPayload.orderExpireTime = null;
         }
-        await booking.update(rollbackPayload, { where: { id: row.id } });
+        await booking.update(rollbackPayload, {
+            where: {
+                id: row.id,
+                bookingStatusId: 1,
+                laundryShopId: null,
+            },
+        });
+        console.log(
+            `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} ` +
+            'released=false reason=no_eligible_recipient'
+        );
         return false;
     }
 
@@ -177,6 +262,25 @@ async function releaseSingleHeldBooking(row) {
         `[releaseHeldBookings] booking ${row.id} released to agents at ${visibleAt.toISOString()}`
     );
     return true;
+}
+
+/**
+ * Canonical preparation before any New-list/count read.
+ * Both operations are idempotent/atomically claimed, so overlapping API calls
+ * cannot duplicate socket notifications.
+ */
+async function prepareNewBookingVisibilityForZone(zoneId) {
+    if (zoneId == null || zoneId === '') {
+        return { released: 0, preferredBroadcast: 0 };
+    }
+    const [held, preferred] = await Promise.all([
+        releaseHeldBookingsForZone(zoneId),
+        broadcastExpiredPreferredBookings({ zoneId }),
+    ]);
+    return {
+        released: Number(held?.released || 0),
+        preferredBroadcast: Number(preferred?.broadcast || 0),
+    };
 }
 
 const HELD_BOOKING_ATTRIBUTES = [
@@ -271,6 +375,7 @@ function startHeldBookingReleaseJob() {
 module.exports = {
     releaseHeldBookings,
     releaseHeldBookingsForZone,
+    prepareNewBookingVisibilityForZone,
     broadcastBookingToShops,
     broadcastExpiredPreferredBookings,
     startHeldBookingReleaseJob,
