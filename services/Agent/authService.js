@@ -30,6 +30,10 @@ const {
     LAUNDRY_SHOP_MANAGER_ROLE_ID,
 } = require('../../utils/shopAgentContext');
 const { CLASSIFIED_AS } = require('../../constants/systemRoles');
+const {
+    SHOP_ADDRESS_TYPE,
+    openAgentOwnerBookingWhere,
+} = require('../../utils/openBookingGuard');
 
 /**
  * Replaces all existing device tokens for a user with a single new one.
@@ -1049,7 +1053,7 @@ class AgentAuthService {
                 { where: { userId: userFind.id } },
                 { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
             );
-            if (!otpData && userFind.classifiedAsId === null) {
+            if (!otpData && userFind.classifiedAsId === null && !userFind.verifiedAt) {
                 throw new UnauthorizedError("User Not Verified", { 
                     message: "User not verified by OTP" 
                 });
@@ -1675,7 +1679,7 @@ class AgentAuthService {
                 { where: { userId: userData.id } },
                 { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
             );
-            if (!otpData && userData.classifiedAsId === null) {
+            if (!otpData && userData.classifiedAsId === null && !userData.verifiedAt) {
                 throw new UnauthorizedError("User Not Verified", { 
                     message: "User not verified by OTP" 
                 });
@@ -2007,26 +2011,43 @@ class AgentAuthService {
     }
 
     /**
-     * Delete agent account and all related data (soft delete)
+     * Delete agent account and all related data (soft delete).
+     * Refuses while the shop still has incomplete bookings (same terminal
+     * set as admin block/delete — Completed / Cancelled / Refunded / Issue Resolved).
      * @param {number} userId - Agent user ID
      * @returns {Object} Deletion result
      */
     async deleteAgentAccount(userId) {
+        const agentUser = await users.findOne({
+            where: { id: userId, userTypeId: 4 },
+            include: [
+                { model: bussinessInformation, as: 'businessInfo' }
+            ],
+        });
+
+        if (!agentUser) {
+            throw new NotFoundError('Agent account not found');
+        }
+
+        const shopAddress = await addressDb.findOne({
+            where: { userId, addressType: SHOP_ADDRESS_TYPE },
+            attributes: ['id'],
+        });
+        const shopAddressId =
+            shopAddress?.id || agentUser.businessInfo?.shopAddressId || null;
+
+        const openCount = await booking.count({
+            where: openAgentOwnerBookingWhere(userId, shopAddressId, Op),
+        });
+        if (openCount > 0) {
+            throw new UnprocessableEntityError(
+                `You have ${openCount} active order(s). Complete or cancel them before deleting your account.`
+            );
+        }
+
         const transaction = await db.sequelize.transaction();
 
         try {
-            const agentUser = await users.findOne({
-                where: { id: userId, userTypeId: 4 },
-                include: [
-                    { model: bussinessInformation, as: 'businessInfo' }
-                ],
-                transaction
-            });
-
-            if (!agentUser) {
-                throw new NotFoundError('Agent account not found');
-            }
-
             const businessInfo = agentUser.businessInfo;
 
             // Delete business-related data
