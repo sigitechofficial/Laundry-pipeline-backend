@@ -752,17 +752,39 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         }
     }
 
+    // Per-customer shop exclusions: admin blocked this customer from this shop.
+    // Load once for all bookings so the loop below can skip them cheaply.
+    const customerShopExclusionService = require("../../services/Admin/customerShopExclusionService");
+    const customerExcludedCache = new Map();
+    async function isExcludedFromThisShop(customerId) {
+        const cid = Number(customerId);
+        if (!Number.isFinite(cid) || cid <= 0) return false;
+        if (customerExcludedCache.has(cid)) return customerExcludedCache.get(cid);
+        const result = await customerShopExclusionService.isCustomerExcludedFromShop(cid, agentShopId);
+        customerExcludedCache.set(cid, result);
+        return result;
+    }
+
     const out = [];
     const excluded = {
         noExpiry: 0,
         services: 0,
         expired: 0,
         pickupHours: 0,
+        customerExcluded: 0,
     };
     for (const row of bookingData) {
         const plain = row.get({ plain: true });
         if (!plain.orderExpireTime) {
             excluded.noExpiry += 1;
+            continue;
+        }
+
+        // Admin excluded this customer from this shop — hide the order so the
+        // agent never sees it (the accept endpoint also blocks, but hiding is
+        // cleaner and prevents confusion).
+        if (plain.customerId && await isExcludedFromThisShop(plain.customerId)) {
+            excluded.customerExcluded += 1;
             continue;
         }
 
