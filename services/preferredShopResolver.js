@@ -37,6 +37,7 @@ const SKIP_REASONS = Object.freeze({
     DISABLED: 'preferred_disabled',
     ERROR: 'resolver_error',
     SLOT_TAKEN: 'slot_taken',
+    ASSIGNED_SHOP_INELIGIBLE: 'assigned_shop_ineligible',
 });
 
 function normalizeServiceIds(services) {
@@ -178,6 +179,15 @@ async function resolvePreferredShop({
             );
         }
 
+        // When admin has explicitly assigned this customer to a shop, ONLY
+        // that shop may receive a preferred window.  History shops (which
+        // include the OLD shop before reassignment) must NOT get a private
+        // head-start — otherwise the old shop keeps winning orders even after
+        // the customer was moved.  If the assigned shop is ineligible the
+        // booking falls through to a normal zone broadcast where every shop
+        // competes equally.
+        const hasAdminAssignment = assignedShopId != null;
+
         const candidateIds = [];
         const seenIds = new Set();
         if (assignedShopId) {
@@ -187,11 +197,13 @@ async function resolvePreferredShop({
                 seenIds.add(aid);
             }
         }
-        for (const id of history) {
-            if (seenIds.has(id)) continue;
-            seenIds.add(id);
-            candidateIds.push(id);
-            if (candidateIds.length >= MAX_CANDIDATE_SHOPS) break;
+        if (!hasAdminAssignment) {
+            for (const id of history) {
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+                candidateIds.push(id);
+                if (candidateIds.length >= MAX_CANDIDATE_SHOPS) break;
+            }
         }
 
         if (!candidateIds.length) return emptyResult(SKIP_REASONS.NO_HISTORY);
@@ -285,9 +297,11 @@ async function resolvePreferredShop({
 
         return {
             shop: null,
-            skipReason: sawSlotClash
-                ? SKIP_REASONS.SLOT_TAKEN
-                : SKIP_REASONS.NO_ELIGIBLE_HISTORY,
+            skipReason: hasAdminAssignment
+                ? SKIP_REASONS.ASSIGNED_SHOP_INELIGIBLE
+                : sawSlotClash
+                    ? SKIP_REASONS.SLOT_TAKEN
+                    : SKIP_REASONS.NO_ELIGIBLE_HISTORY,
             candidateShopIds: candidateIds,
         };
     } catch (err) {
