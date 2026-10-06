@@ -20,6 +20,7 @@ const {
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const runtimeSettingsService = require("./runtimeSettingsService");
+const { applyBestDiscount } = require("./serviceDiscountService");
 const {
   attachKey,
   effectiveAttach,
@@ -137,20 +138,47 @@ async function filterEnabledServices(list, zoneId) {
 
 async function resolvePrice(zoneId, selector = {}) {
   const enabled = await overlaysEnabled();
+
+  // ── helper: apply service discount on top of the effective price ──────────
+  async function withDiscount(basePrice, discountSelector) {
+    try {
+      const { discountedPrice, appliedDiscount, originalPrice, saving } =
+        await applyBestDiscount(zoneId, discountSelector, basePrice);
+      if (!appliedDiscount) return { price: basePrice };
+      return { price: discountedPrice, originalPrice, saving, appliedDiscount };
+    } catch {
+      return { price: basePrice };
+    }
+  }
+
   if (selector.subCategoryId) {
     const master = await subCategories.findByPk(selector.subCategoryId, {
-      attributes: ["id", "price", "status"],
+      attributes: ["id", "price", "status", "categoryId"],
     });
     if (!master) throw new NotFoundError("Item not found");
+    let basePrice;
+    let inherited = true;
+    let source = "master";
     if (!enabled || !zoneId) {
-      return { price: money(master.price), inherited: true, source: "master" };
+      basePrice = money(master.price);
+    } else {
+      const maps = await loadMaps(zoneId);
+      const ov = maps.item.get(Number(selector.subCategoryId));
+      if (ov && ov.price != null && ov.price !== "") {
+        basePrice = money(ov.price);
+        inherited = false;
+        source = "override";
+      } else {
+        basePrice = money(master.price);
+      }
     }
-    const maps = await loadMaps(zoneId);
-    const ov = maps.item.get(Number(selector.subCategoryId));
-    if (ov && ov.price != null && ov.price !== "") {
-      return { price: money(ov.price), inherited: false, source: "override" };
-    }
-    return { price: money(master.price), inherited: true, source: "master" };
+    const discountCtx = {
+      subCategoryId: Number(selector.subCategoryId),
+      categoryId: selector.categoryId ? Number(selector.categoryId) : Number(master.categoryId),
+      serviceId: selector.serviceId ? Number(selector.serviceId) : undefined,
+    };
+    const discounted = await withDiscount(basePrice, discountCtx);
+    return { price: discounted.price, inherited, source, ...discounted };
   }
 
   if (selector.addOnServiceId) {
@@ -158,15 +186,25 @@ async function resolvePrice(zoneId, selector = {}) {
       attributes: ["id", "price"],
     });
     if (!master) throw new NotFoundError("Add-on not found");
+    let basePrice;
+    let inherited = true;
+    let source = "master";
     if (!enabled || !zoneId) {
-      return { price: money(master.price), inherited: true, source: "master" };
+      basePrice = money(master.price);
+    } else {
+      const maps = await loadMaps(zoneId);
+      const ov = maps.addOn.get(Number(selector.addOnServiceId));
+      if (ov && ov.price != null && ov.price !== "") {
+        basePrice = money(ov.price);
+        inherited = false;
+        source = "override";
+      } else {
+        basePrice = money(master.price);
+      }
     }
-    const maps = await loadMaps(zoneId);
-    const ov = maps.addOn.get(Number(selector.addOnServiceId));
-    if (ov && ov.price != null && ov.price !== "") {
-      return { price: money(ov.price), inherited: false, source: "override" };
-    }
-    return { price: money(master.price), inherited: true, source: "master" };
+    const discountCtx = { addOnServiceId: Number(selector.addOnServiceId) };
+    const discounted = await withDiscount(basePrice, discountCtx);
+    return { price: discounted.price, inherited, source, ...discounted };
   }
 
   if (selector.repairOptionId) {
@@ -174,15 +212,26 @@ async function resolvePrice(zoneId, selector = {}) {
       attributes: ["id", "price", "status"],
     });
     if (!master) throw new NotFoundError("Repair option not found");
+    let basePrice;
+    let inherited = true;
+    let source = "master";
     if (!enabled || !zoneId) {
-      return { price: money(master.price), inherited: true, source: "master" };
+      basePrice = money(master.price);
+    } else {
+      const maps = await loadMaps(zoneId);
+      const ov = maps.repairOption.get(Number(selector.repairOptionId));
+      if (ov && ov.price != null && ov.price !== "") {
+        basePrice = money(ov.price);
+        inherited = false;
+        source = "override";
+      } else {
+        basePrice = money(master.price);
+      }
     }
-    const maps = await loadMaps(zoneId);
-    const ov = maps.repairOption.get(Number(selector.repairOptionId));
-    if (ov && ov.price != null && ov.price !== "") {
-      return { price: money(ov.price), inherited: false, source: "override" };
-    }
-    return { price: money(master.price), inherited: true, source: "master" };
+    // Repair options don't map to service/category for discount targeting — only all/repairOption(addon type) discounts apply
+    const discountCtx = { addOnServiceId: Number(selector.repairOptionId) };
+    const discounted = await withDiscount(basePrice, discountCtx);
+    return { price: discounted.price, inherited, source, ...discounted };
   }
 
   throw new ValidationError("resolvePrice requires subCategoryId, addOnServiceId, or repairOptionId");

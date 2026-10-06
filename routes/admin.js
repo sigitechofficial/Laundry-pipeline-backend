@@ -32,6 +32,7 @@ const zoneCatalogController = require('../controllers/Admin/zoneCatalogControlle
 const shopRevenueController = require('../controllers/Admin/shopRevenueController');
 const shopCustomersController = require('../controllers/Admin/shopCustomersController');
 const shopPrinterController = require('../controllers/Admin/shopPrinterController');
+const serviceDiscountController = require('../controllers/Admin/serviceDiscountController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -1054,6 +1055,14 @@ router.get('/getCouponById/:id', validateAccessToken, asyncMiddleware(couponCont
 router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
 // Deactivate (soft-delete) a coupon
 router.delete('/deleteCoupon/:id', validateAccessToken, asyncMiddleware(couponController.deactivateCoupon));
+
+//!-----------------------------------Service Discounts------------------------------------>>>>
+// Service-level discount rules (per service/category/addon, per zone)
+router.get('/serviceDiscounts', validateAccessToken, asyncMiddleware(serviceDiscountController.list));
+router.get('/serviceDiscounts/:id', validateAccessToken, asyncMiddleware(serviceDiscountController.getById));
+router.post('/serviceDiscounts', validateAccessToken, asyncMiddleware(serviceDiscountController.create));
+router.put('/serviceDiscounts/:id', validateAccessToken, asyncMiddleware(serviceDiscountController.update));
+router.delete('/serviceDiscounts/:id', validateAccessToken, asyncMiddleware(serviceDiscountController.remove));
 
 //!-----------------------------------Maps / Gemini server proxies (keys stay on the API host)------------------------------------>>>>
 router.get('/maps/geocode', asyncMiddleware(mapsGeocodeController.geocode));
