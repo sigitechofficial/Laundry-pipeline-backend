@@ -35,6 +35,13 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: true,
         defaultValue: null,
+        comment: 'Legacy single target; prefer targetIds for multi-select',
+      },
+      targetIds: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        defaultValue: null,
+        comment: 'Array of service/category/subCategory/addon IDs (same targetType)',
       },
       zoneMode: {
         type: DataTypes.ENUM('all', 'specific'),

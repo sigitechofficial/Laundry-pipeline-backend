@@ -1,7 +1,12 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { serviceDiscount, subCategories, addOnServices } = require('../../models');
+const {
+  serviceDiscount,
+  subCategories,
+  addOnServices,
+  categories,
+} = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 
 /** Apply decimal math safely */
@@ -10,20 +15,57 @@ function money(val) {
   return Number(parseFloat(val).toFixed(2)).toFixed(2);
 }
 
+function normalizeTargetIds(payload = {}) {
+  if ((payload.targetType || 'all') === 'all') return [];
+  let raw = [];
+  if (Array.isArray(payload.targetIds) && payload.targetIds.length) {
+    raw = payload.targetIds;
+  } else if (payload.targetId != null && payload.targetId !== '') {
+    raw = [payload.targetId];
+  }
+  return [
+    ...new Set(
+      raw
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+}
+
+function targetIdsOf(row) {
+  const fromJson = Array.isArray(row.targetIds) ? row.targetIds : null;
+  if (fromJson && fromJson.length) {
+    return fromJson.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+  }
+  if (row.targetId != null && Number(row.targetId) > 0) {
+    return [Number(row.targetId)];
+  }
+  return [];
+}
+
+function matchesTarget(row, selector = {}) {
+  if (row.targetType === 'all') return true;
+  const ids = targetIdsOf(row);
+  if (!ids.length) return false;
+
+  if (row.targetType === 'service') {
+    return selector.serviceId != null && ids.includes(Number(selector.serviceId));
+  }
+  if (row.targetType === 'category') {
+    return selector.categoryId != null && ids.includes(Number(selector.categoryId));
+  }
+  if (row.targetType === 'subCategory') {
+    return selector.subCategoryId != null && ids.includes(Number(selector.subCategoryId));
+  }
+  if (row.targetType === 'addon') {
+    return selector.addOnServiceId != null && ids.includes(Number(selector.addOnServiceId));
+  }
+  return false;
+}
+
 /**
  * Find all active discounts that match a given (zoneId, selector) context.
  * selector: { subCategoryId?, addOnServiceId?, serviceId?, categoryId? }
- *
- * Matching logic (any of these conditions wins):
- *  targetType='all'         → always matches
- *  targetType='service'     → targetId matches selector.serviceId
- *  targetType='category'    → targetId matches selector.categoryId
- *  targetType='subCategory' → targetId matches selector.subCategoryId
- *  targetType='addon'       → targetId matches selector.addOnServiceId
- *
- * Zone filter:
- *  zoneMode='all'      → always matches
- *  zoneMode='specific' → zoneId must be in zoneIds array
  */
 async function findApplicableDiscounts(zoneId, selector = {}) {
   const now = new Date();
@@ -32,56 +74,29 @@ async function findApplicableDiscounts(zoneId, selector = {}) {
     where: {
       isActive: true,
       [Op.and]: [
-        // validFrom: null or past
         {
-          [Op.or]: [
-            { validFrom: null },
-            { validFrom: { [Op.lte]: now } },
-          ],
+          [Op.or]: [{ validFrom: null }, { validFrom: { [Op.lte]: now } }],
         },
-        // validTo: null or future
         {
-          [Op.or]: [
-            { validTo: null },
-            { validTo: { [Op.gte]: now } },
-          ],
+          [Op.or]: [{ validTo: null }, { validTo: { [Op.gte]: now } }],
         },
       ],
     },
   });
 
   return rows.filter((d) => {
-    // --- Zone check ---
     if (d.zoneMode === 'specific') {
       const ids = Array.isArray(d.zoneIds) ? d.zoneIds : [];
       if (!ids.length) return false;
       const zid = Number(zoneId);
       if (!ids.map(Number).includes(zid)) return false;
     }
-
-    // --- Target check ---
-    if (d.targetType === 'all') return true;
-
-    if (d.targetType === 'service') {
-      return selector.serviceId != null && Number(d.targetId) === Number(selector.serviceId);
-    }
-    if (d.targetType === 'category') {
-      return selector.categoryId != null && Number(d.targetId) === Number(selector.categoryId);
-    }
-    if (d.targetType === 'subCategory') {
-      return selector.subCategoryId != null && Number(d.targetId) === Number(selector.subCategoryId);
-    }
-    if (d.targetType === 'addon') {
-      return selector.addOnServiceId != null && Number(d.targetId) === Number(selector.addOnServiceId);
-    }
-
-    return false;
+    return matchesTarget(d, selector);
   });
 }
 
 /**
  * Apply the best (highest-value) matching discount to a price.
- * Returns { discountedPrice, appliedDiscount } where appliedDiscount may be null.
  */
 async function applyBestDiscount(zoneId, selector, basePrice) {
   const applicable = await findApplicableDiscounts(zoneId, selector);
@@ -91,7 +106,6 @@ async function applyBestDiscount(zoneId, selector, basePrice) {
 
   const base = parseFloat(basePrice) || 0;
 
-  // Pick discount that gives the largest absolute saving
   let best = null;
   let bestSaving = -1;
   for (const d of applicable) {
@@ -104,7 +118,7 @@ async function applyBestDiscount(zoneId, selector, basePrice) {
       }
       saving = s;
     } else {
-      saving = Math.min(val, base); // flat discount capped at base price
+      saving = Math.min(val, base);
     }
     if (saving > bestSaving) {
       bestSaving = saving;
@@ -131,17 +145,153 @@ async function applyBestDiscount(zoneId, selector, basePrice) {
   };
 }
 
+// ─── Price guards for flat discounts ─────────────────────────────────────────
+
+/**
+ * Resolve priced leaf items for the selected targets.
+ * Returns [{ id, name, price, kind }]
+ */
+async function resolvePricedItems(targetType, targetIds) {
+  const ids = (targetIds || []).map(Number).filter((id) => id > 0);
+  if (!ids.length && targetType !== 'all') return [];
+
+  if (targetType === 'addon') {
+    const rows = await addOnServices.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ['id', 'name', 'price'],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      price: parseFloat(r.price) || 0,
+      kind: 'addon',
+    }));
+  }
+
+  if (targetType === 'subCategory') {
+    const rows = await subCategories.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ['id', 'name', 'price'],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      price: parseFloat(r.price) || 0,
+      kind: 'item',
+    }));
+  }
+
+  if (targetType === 'category') {
+    const rows = await subCategories.findAll({
+      where: { categoryId: { [Op.in]: ids }, status: true },
+      attributes: ['id', 'name', 'price', 'categoryId'],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      price: parseFloat(r.price) || 0,
+      kind: 'item',
+      parentId: r.categoryId,
+    }));
+  }
+
+  if (targetType === 'service') {
+    const cats = await categories.findAll({
+      where: { serviceId: { [Op.in]: ids } },
+      attributes: ['id', 'serviceId'],
+    });
+    const catIds = cats.map((c) => c.id);
+    if (!catIds.length) return [];
+    const rows = await subCategories.findAll({
+      where: { categoryId: { [Op.in]: catIds }, status: true },
+      attributes: ['id', 'name', 'price', 'categoryId'],
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      price: parseFloat(r.price) || 0,
+      kind: 'item',
+    }));
+  }
+
+  if (targetType === 'all') {
+    const [items, addons] = await Promise.all([
+      subCategories.findAll({
+        where: { status: true },
+        attributes: ['id', 'name', 'price'],
+        limit: 5000,
+      }),
+      addOnServices.findAll({
+        where: { status: true },
+        attributes: ['id', 'name', 'price'],
+        limit: 5000,
+      }),
+    ]);
+    return [
+      ...items.map((r) => ({
+        id: r.id,
+        name: r.name,
+        price: parseFloat(r.price) || 0,
+        kind: 'item',
+      })),
+      ...addons.map((r) => ({
+        id: r.id,
+        name: r.name,
+        price: parseFloat(r.price) || 0,
+        kind: 'addon',
+      })),
+    ].filter((r) => r.price > 0);
+  }
+
+  return [];
+}
+
+async function assertFlatWithinCatalogPrices(targetType, targetIds, discountValue) {
+  const amount = parseFloat(discountValue);
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  const priced = await resolvePricedItems(targetType, targetIds);
+  if (!priced.length) {
+    if (targetType === 'service' || targetType === 'category') {
+      throw new ValidationError(
+        `No priced items found under the selected ${targetType === 'service' ? 'service(s)' : 'categor(y/ies)'}. ` +
+          'Add catalog prices first, or use a percentage discount.'
+      );
+    }
+    if (targetType === 'subCategory' || targetType === 'addon') {
+      throw new ValidationError('Selected target(s) were not found or have no price in the database.');
+    }
+    throw new ValidationError(
+      'Cannot validate a flat discount against an empty catalog. Use a percentage discount instead.'
+    );
+  }
+
+  const cheapest = priced.reduce((a, b) => (a.price <= b.price ? a : b));
+  if (amount > cheapest.price) {
+    const kindLabel = cheapest.kind === 'addon' ? 'add-on' : 'item';
+    throw new ValidationError(
+      `Flat discount £${amount.toFixed(2)} exceeds the price of ${kindLabel} "${cheapest.name}" ` +
+        `(£${cheapest.price.toFixed(2)}). Lower the discount to £${cheapest.price.toFixed(2)} or below, ` +
+        'remove that target, or switch to a percentage discount.'
+    );
+  }
+}
+
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
 async function createDiscount(payload, adminUserId) {
-  _validate(payload);
+  await _validateAsync(payload);
+  const targetIds = normalizeTargetIds(payload);
+  const targetId = targetIds.length === 1 ? targetIds[0] : targetIds[0] ?? null;
+
   return serviceDiscount.create({
     name: payload.name.trim(),
     discountType: payload.discountType,
     discountValue: payload.discountValue,
     maxDiscountCap: payload.maxDiscountCap ?? null,
     targetType: payload.targetType || 'all',
-    targetId: payload.targetId ?? null,
+    targetId: (payload.targetType || 'all') === 'all' ? null : targetId,
+    targetIds: (payload.targetType || 'all') === 'all' ? null : targetIds,
     zoneMode: payload.zoneMode || 'all',
     zoneIds: payload.zoneIds ?? null,
     validFrom: payload.validFrom ?? null,
@@ -170,16 +320,42 @@ async function getDiscountById(id) {
   return row;
 }
 
-async function updateDiscount(id, payload, adminUserId) {
+async function updateDiscount(id, payload) {
   const row = await getDiscountById(id);
-  _validate({ ...row.toJSON(), ...payload });
+  const merged = { ...row.toJSON(), ...payload };
+  if (payload.targetIds !== undefined || payload.targetId !== undefined) {
+    merged.targetIds = normalizeTargetIds({
+      targetType: payload.targetType ?? row.targetType,
+      targetIds: payload.targetIds !== undefined ? payload.targetIds : row.targetIds,
+      targetId: payload.targetId !== undefined ? payload.targetId : row.targetId,
+    });
+  }
+  await _validateAsync(merged);
+
+  const targetType = payload.targetType !== undefined ? payload.targetType : row.targetType;
+  let nextTargetIds;
+  let nextTargetId;
+  if (
+    payload.targetIds !== undefined ||
+    payload.targetId !== undefined ||
+    payload.targetType !== undefined
+  ) {
+    nextTargetIds = normalizeTargetIds({
+      targetType,
+      targetIds: payload.targetIds !== undefined ? payload.targetIds : row.targetIds,
+      targetId: payload.targetId !== undefined ? payload.targetId : row.targetId,
+    });
+    nextTargetId = targetType === 'all' ? null : nextTargetIds[0] ?? null;
+    if (targetType === 'all') nextTargetIds = null;
+  }
+
   await row.update({
     ...(payload.name !== undefined ? { name: payload.name.trim() } : {}),
     ...(payload.discountType !== undefined ? { discountType: payload.discountType } : {}),
     ...(payload.discountValue !== undefined ? { discountValue: payload.discountValue } : {}),
     ...(payload.maxDiscountCap !== undefined ? { maxDiscountCap: payload.maxDiscountCap ?? null } : {}),
     ...(payload.targetType !== undefined ? { targetType: payload.targetType } : {}),
-    ...(payload.targetId !== undefined ? { targetId: payload.targetId ?? null } : {}),
+    ...(nextTargetIds !== undefined ? { targetIds: nextTargetIds, targetId: nextTargetId } : {}),
     ...(payload.zoneMode !== undefined ? { zoneMode: payload.zoneMode } : {}),
     ...(payload.zoneIds !== undefined ? { zoneIds: payload.zoneIds ?? null } : {}),
     ...(payload.validFrom !== undefined ? { validFrom: payload.validFrom ?? null } : {}),
@@ -195,19 +371,31 @@ async function deleteDiscount(id) {
   return { deleted: true };
 }
 
-// Resolve target label for API responses
 async function resolveTargetLabel(row) {
-  if (!row.targetId || row.targetType === 'all') return null;
+  const ids = targetIdsOf(row);
+  if (!ids.length || row.targetType === 'all') return null;
   try {
     if (row.targetType === 'subCategory') {
-      const item = await subCategories.findByPk(row.targetId, { attributes: ['id', 'name'] });
-      return item ? { id: item.id, name: item.name } : null;
+      const items = await subCategories.findAll({
+        where: { id: { [Op.in]: ids } },
+        attributes: ['id', 'name'],
+      });
+      return items.map((i) => ({ id: i.id, name: i.name }));
     }
     if (row.targetType === 'addon') {
-      const item = await addOnServices.findByPk(row.targetId, { attributes: ['id', 'name'] });
-      return item ? { id: item.id, name: item.name } : null;
+      const items = await addOnServices.findAll({
+        where: { id: { [Op.in]: ids } },
+        attributes: ['id', 'name'],
+      });
+      return items.map((i) => ({ id: i.id, name: i.name }));
     }
-    // service and category resolved by the admin panel lookup
+    if (row.targetType === 'category') {
+      const items = await categories.findAll({
+        where: { id: { [Op.in]: ids } },
+        attributes: ['id', 'name'],
+      });
+      return items.map((i) => ({ id: i.id, name: i.name }));
+    }
     return null;
   } catch {
     return null;
@@ -216,23 +404,46 @@ async function resolveTargetLabel(row) {
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
-function _validate(p) {
+async function _validateAsync(p) {
   if (!p.name || !String(p.name).trim()) throw new ValidationError('name is required');
-  if (!['percentage', 'flat'].includes(p.discountType)) throw new ValidationError('discountType must be percentage or flat');
+  if (!['percentage', 'flat'].includes(p.discountType)) {
+    throw new ValidationError('discountType must be percentage or flat');
+  }
   const val = parseFloat(p.discountValue);
-  if (!Number.isFinite(val) || val <= 0) throw new ValidationError('discountValue must be a positive number');
-  if (p.discountType === 'percentage' && val > 100) throw new ValidationError('percentage discountValue cannot exceed 100');
-  if (!['all', 'service', 'category', 'subCategory', 'addon'].includes(p.targetType || 'all')) {
+  if (!Number.isFinite(val) || val <= 0) {
+    throw new ValidationError('discountValue must be a positive number');
+  }
+  if (p.discountType === 'percentage' && val > 100) {
+    throw new ValidationError('Percentage discount cannot exceed 100%');
+  }
+  if (p.discountType === 'percentage' && p.maxDiscountCap != null && p.maxDiscountCap !== '') {
+    const cap = parseFloat(p.maxDiscountCap);
+    if (!Number.isFinite(cap) || cap < 0) {
+      throw new ValidationError('maxDiscountCap must be a non-negative number');
+    }
+  }
+
+  const targetType = p.targetType || 'all';
+  if (!['all', 'service', 'category', 'subCategory', 'addon'].includes(targetType)) {
     throw new ValidationError('Invalid targetType');
   }
-  if ((p.targetType || 'all') !== 'all' && !p.targetId) {
-    throw new ValidationError('targetId is required when targetType is not "all"');
+
+  const targetIds = normalizeTargetIds(p);
+  if (targetType !== 'all' && !targetIds.length) {
+    throw new ValidationError('Select at least one target (service, category, item, or add-on)');
   }
-  if (!['all', 'specific'].includes(p.zoneMode || 'all')) throw new ValidationError('Invalid zoneMode');
+
+  if (!['all', 'specific'].includes(p.zoneMode || 'all')) {
+    throw new ValidationError('Invalid zoneMode');
+  }
   if ((p.zoneMode || 'all') === 'specific') {
     if (!Array.isArray(p.zoneIds) || !p.zoneIds.length) {
       throw new ValidationError('zoneIds array is required when zoneMode=specific');
     }
+  }
+
+  if (p.discountType === 'flat') {
+    await assertFlatWithinCatalogPrices(targetType, targetIds, val);
   }
 }
 
@@ -245,4 +456,6 @@ module.exports = {
   applyBestDiscount,
   findApplicableDiscounts,
   resolveTargetLabel,
+  normalizeTargetIds,
+  resolvePricedItems,
 };
