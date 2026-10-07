@@ -205,13 +205,15 @@ class AddOnServicesService {
         const zoneId = filters.zoneId != null ? Number(filters.zoneId) : null;
         const subCategoryId =
             filters.subCategoryId != null ? Number(filters.subCategoryId) : null;
-        if (Number.isFinite(zoneId) && zoneId > 0) {
-            const zoneCatalogService = require("./zoneCatalogService");
-            return zoneCatalogService.applyToAddOnRows(filtered, zoneId, {
+        // Always decorate with service-discount metadata (zone overlays only when zoneId set).
+        const zoneCatalogService = require("./zoneCatalogService");
+        return zoneCatalogService.applyToAddOnRows(
+            filtered,
+            Number.isFinite(zoneId) && zoneId > 0 ? zoneId : null,
+            {
                 subCategoryId: Number.isFinite(subCategoryId) ? subCategoryId : undefined,
-            });
-        }
-        return filtered;
+            }
+        );
     }
 
     async getAddOnServiceById(addOnServiceId) {

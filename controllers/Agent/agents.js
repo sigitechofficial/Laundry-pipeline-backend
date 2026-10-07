@@ -5660,6 +5660,11 @@ exports.serviceDetail = async (req, res) => {
                         price: plain.price,
                         unitCount: plain.unitCount ?? null,
                         description: plain.description || null,
+                        // Service-discount decoration (agent catalog badges)
+                        originalPrice: plain.originalPrice ?? null,
+                        saving: plain.saving ?? null,
+                        hasDiscount: Boolean(plain.hasDiscount),
+                        appliedDiscount: plain.appliedDiscount ?? null,
                     };
                 }),
             })),

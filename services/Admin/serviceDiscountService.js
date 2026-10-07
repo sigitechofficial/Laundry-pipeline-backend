@@ -63,14 +63,10 @@ function matchesTarget(row, selector = {}) {
   return false;
 }
 
-/**
- * Find all active discounts that match a given (zoneId, selector) context.
- * selector: { subCategoryId?, addOnServiceId?, serviceId?, categoryId? }
- */
-async function findApplicableDiscounts(zoneId, selector = {}) {
+/** Load currently active (date-valid) discount rules once for catalog decoration. */
+async function loadActiveDiscountRules() {
   const now = new Date();
-
-  const rows = await serviceDiscount.findAll({
+  return serviceDiscount.findAll({
     where: {
       isActive: true,
       [Op.and]: [
@@ -83,29 +79,40 @@ async function findApplicableDiscounts(zoneId, selector = {}) {
       ],
     },
   });
+}
 
-  return rows.filter((d) => {
-    if (d.zoneMode === 'specific') {
-      const ids = Array.isArray(d.zoneIds) ? d.zoneIds : [];
-      if (!ids.length) return false;
-      const zid = Number(zoneId);
-      if (!ids.map(Number).includes(zid)) return false;
-    }
-    return matchesTarget(d, selector);
-  });
+function ruleMatchesZone(row, zoneId) {
+  if (row.zoneMode !== 'specific') return true;
+  const ids = Array.isArray(row.zoneIds) ? row.zoneIds : [];
+  if (!ids.length) return false;
+  const zid = Number(zoneId);
+  if (!Number.isFinite(zid)) return false;
+  return ids.map(Number).includes(zid);
 }
 
 /**
- * Apply the best (highest-value) matching discount to a price.
+ * Find all active discounts that match a given (zoneId, selector) context.
+ * selector: { subCategoryId?, addOnServiceId?, serviceId?, categoryId? }
  */
-async function applyBestDiscount(zoneId, selector, basePrice) {
-  const applicable = await findApplicableDiscounts(zoneId, selector);
+async function findApplicableDiscounts(zoneId, selector = {}) {
+  const rows = await loadActiveDiscountRules();
+  return rows.filter(
+    (d) => ruleMatchesZone(d, zoneId) && matchesTarget(d, selector)
+  );
+}
+
+/**
+ * Sync best-discount picker against a preloaded rules list (no DB).
+ */
+function pickBestDiscountFromRules(rules, zoneId, selector, basePrice) {
+  const applicable = (rules || []).filter(
+    (d) => ruleMatchesZone(d, zoneId) && matchesTarget(d, selector)
+  );
   if (!applicable.length) {
     return { discountedPrice: money(basePrice), appliedDiscount: null };
   }
 
   const base = parseFloat(basePrice) || 0;
-
   let best = null;
   let bestSaving = -1;
   for (const d of applicable) {
@@ -131,6 +138,8 @@ async function applyBestDiscount(zoneId, selector, basePrice) {
   }
 
   const finalPrice = Math.max(0, base - bestSaving);
+  const discountType = best.discountType;
+  const discountValue = parseFloat(best.discountValue);
   return {
     discountedPrice: money(finalPrice),
     originalPrice: money(base),
@@ -138,10 +147,49 @@ async function applyBestDiscount(zoneId, selector, basePrice) {
     appliedDiscount: {
       id: best.id,
       name: best.name,
-      discountType: best.discountType,
-      discountValue: parseFloat(best.discountValue),
+      discountType,
+      discountValue,
       maxDiscountCap: best.maxDiscountCap ? parseFloat(best.maxDiscountCap) : null,
+      label:
+        discountType === 'percentage'
+          ? `${discountValue}% OFF`
+          : `£${Number(discountValue).toFixed(2)} OFF`,
     },
+  };
+}
+
+/**
+ * Apply the best (highest-value) matching discount to a price.
+ */
+async function applyBestDiscount(zoneId, selector, basePrice) {
+  const rules = await loadActiveDiscountRules();
+  return pickBestDiscountFromRules(rules, zoneId, selector, basePrice);
+}
+
+/**
+ * Decorate a priced catalog row with discount fields for agent/customer UI.
+ * `price` becomes the discounted amount when a rule applies.
+ */
+function decoratePriceWithDiscount(row, rules, zoneId, selector) {
+  const base = parseFloat(row.price) || 0;
+  const result = pickBestDiscountFromRules(rules, zoneId, selector, base);
+  if (!result.appliedDiscount) {
+    return {
+      ...row,
+      price: money(base),
+      originalPrice: null,
+      saving: null,
+      hasDiscount: false,
+      appliedDiscount: null,
+    };
+  }
+  return {
+    ...row,
+    price: result.discountedPrice,
+    originalPrice: result.originalPrice,
+    saving: result.saving,
+    hasDiscount: true,
+    appliedDiscount: result.appliedDiscount,
   };
 }
 
@@ -455,6 +503,9 @@ module.exports = {
   deleteDiscount,
   applyBestDiscount,
   findApplicableDiscounts,
+  loadActiveDiscountRules,
+  pickBestDiscountFromRules,
+  decoratePriceWithDiscount,
   resolveTargetLabel,
   normalizeTargetIds,
   resolvePricedItems,

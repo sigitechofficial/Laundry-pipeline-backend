@@ -20,7 +20,11 @@ const {
 } = require("../../models");
 const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
 const runtimeSettingsService = require("./runtimeSettingsService");
-const { applyBestDiscount } = require("./serviceDiscountService");
+const {
+  applyBestDiscount,
+  loadActiveDiscountRules,
+  decoratePriceWithDiscount,
+} = require("./serviceDiscountService");
 const {
   attachKey,
   effectiveAttach,
@@ -246,21 +250,33 @@ function applyItemPrice(plain, maps, overlaysOn) {
 }
 
 async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
-  if (!zoneId) return tree;
-  const overlaysOn = await overlaysEnabled();
-  const maps = await loadMaps(zoneId);
-  if (serviceId && !enabledOf(maps.service.get(Number(serviceId)))) {
+  const hasZone = Number(zoneId) > 0;
+  const overlaysOn = hasZone ? await overlaysEnabled() : false;
+  const maps = hasZone ? await loadMaps(zoneId) : null;
+  if (hasZone && serviceId && !enabledOf(maps.service.get(Number(serviceId)))) {
     return [];
   }
+
+  const discountRules = await loadActiveDiscountRules();
+  const sid = serviceId != null ? Number(serviceId) : null;
 
   const out = [];
   for (const row of tree || []) {
     const catId = Number(row.categoryId);
-    if (!enabledOf(maps.category.get(catId))) continue;
+    if (maps && !enabledOf(maps.category.get(catId))) continue;
     const items = (row.category?.subCategories || [])
       .map((sub) => (sub.toJSON ? sub.toJSON() : sub))
-      .filter((plain) => enabledOf(maps.item.get(Number(plain.id))))
-      .map((plain) => applyItemPrice(plain, maps, overlaysOn));
+      .filter((plain) => !maps || enabledOf(maps.item.get(Number(plain.id))))
+      .map((plain) => {
+        const priced = maps
+          ? applyItemPrice(plain, maps, overlaysOn)
+          : { ...plain, price: money(plain.price), priceInherited: true };
+        return decoratePriceWithDiscount(priced, discountRules, zoneId, {
+          subCategoryId: Number(priced.id),
+          categoryId: catId,
+          serviceId: sid || undefined,
+        });
+      });
     if (!items.length) continue;
     out.push({
       ...row,
@@ -473,43 +489,55 @@ async function isAddOnCategoryAttached(zoneId, subCategoryId, addOnCategoryId, m
 }
 
 async function applyToAddOnRows(rows, zoneId, { subCategoryId } = {}) {
-  const overlaysOn = await overlaysEnabled();
+  const hasZone = Number(zoneId) > 0;
+  const overlaysOn = hasZone ? await overlaysEnabled() : false;
   const mapped = (rows || []).map((row) => {
     const plain = row.toJSON ? row.toJSON() : row;
     return { ...plain, price: money(plain.price), priceInherited: true };
   });
-  if (!zoneId) {
-    return mapped;
-  }
-  const maps = await loadMaps(zoneId);
-  let masterAttach = null;
-  if (subCategoryId) {
-    const attachMap = await loadMasterAttachMap();
-    masterAttach = attachMap.byItem.get(Number(subCategoryId)) || new Set();
-  }
-  return mapped
-    .filter((plain) => {
-      const catId = Number(plain.addOnCategoryId || plain.addOnCategory?.id || plain.category?.id);
-      if (catId && !enabledOf(maps.addOnCategory.get(catId))) return false;
-      if (!enabledOf(maps.addOn.get(Number(plain.id)))) return false;
-      if (masterAttach && catId) {
-        const itemMap = maps.attach.get(Number(subCategoryId));
-        return effectiveAttach(
-          masterAttach.has(catId),
-          itemMap?.get(catId),
-          true
+
+  const discountRules = await loadActiveDiscountRules();
+
+  let filtered = mapped;
+  if (hasZone) {
+    const maps = await loadMaps(zoneId);
+    let masterAttach = null;
+    if (subCategoryId) {
+      const attachMap = await loadMasterAttachMap();
+      masterAttach = attachMap.byItem.get(Number(subCategoryId)) || new Set();
+    }
+    filtered = mapped
+      .filter((plain) => {
+        const catId = Number(
+          plain.addOnCategoryId || plain.addOnCategory?.id || plain.category?.id
         );
-      }
-      return true;
+        if (catId && !enabledOf(maps.addOnCategory.get(catId))) return false;
+        if (!enabledOf(maps.addOn.get(Number(plain.id)))) return false;
+        if (masterAttach && catId) {
+          const itemMap = maps.attach.get(Number(subCategoryId));
+          return effectiveAttach(
+            masterAttach.has(catId),
+            itemMap?.get(catId),
+            true
+          );
+        }
+        return true;
+      })
+      .map((plain) => {
+        if (!overlaysOn) return plain;
+        const ov = maps.addOn.get(Number(plain.id));
+        if (ov && ov.price != null && ov.price !== "") {
+          return { ...plain, price: money(ov.price), priceInherited: false };
+        }
+        return { ...plain, price: money(plain.price), priceInherited: true };
+      });
+  }
+
+  return filtered.map((plain) =>
+    decoratePriceWithDiscount(plain, discountRules, zoneId, {
+      addOnServiceId: Number(plain.id),
     })
-    .map((plain) => {
-      if (!overlaysOn) return plain;
-      const ov = maps.addOn.get(Number(plain.id));
-      if (ov && ov.price != null && ov.price !== "") {
-        return { ...plain, price: money(ov.price), priceInherited: false };
-      }
-      return { ...plain, price: money(plain.price), priceInherited: true };
-    });
+  );
 }
 
 async function applyToRepairOptions(options, zoneId) {
