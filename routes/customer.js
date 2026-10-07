@@ -245,6 +245,39 @@ router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherC
 //Validate and apply a coupon code (returns discount amount and final total)
 router.post('/applyCoupon', validateAccessToken, asyncMiddleware(customerOtherController.applyCoupon))
 
+//!----------------------------Enterprise Promotions (Customer)---------------------//
+router.get('/promotions/offers', validateAccessToken, asyncMiddleware(async (req, res) => {
+  const { getCustomerOffers } = require('../services/promotions/promotionEngine');
+  const zoneId = req.query.zoneId || req.user?.zoneId;
+  const offers = await getCustomerOffers(zoneId, req.user?.id);
+  res.json({ success: true, data: offers });
+}))
+
+router.post('/promotions/validate-code', validateAccessToken, asyncMiddleware(async (req, res) => {
+  const { validateCouponCodes } = require('../services/promotions/promotionEngine');
+  const { valid, errors } = await validateCouponCodes(
+    [req.body.code].filter(Boolean),
+    req.user?.id
+  );
+  if (errors.length) {
+    return res.status(400).json({ success: false, errors });
+  }
+  const entries = [...valid.entries()];
+  if (!entries.length) {
+    return res.status(400).json({ success: false, message: 'Invalid code' });
+  }
+  const [promotionId, coupon] = entries[0];
+  const { promotion: Promotion } = require('../models');
+  const promo = await Promotion.findByPk(promotionId, { attributes: ['id', 'name', 'benefitType', 'discountValue', 'maxDiscountCap', 'description'] });
+  res.json({ success: true, data: { couponCode: coupon.code, promotion: promo } });
+}))
+
+router.post('/promotions/evaluate', validateAccessToken, asyncMiddleware(async (req, res) => {
+  const { evaluatePromotions } = require('../services/promotions/promotionEngine');
+  const result = await evaluatePromotions(req.body);
+  res.json({ success: true, data: result });
+}))
+
 //!----------------------------Banners---------------------//
 //Get active banners for customer (optionally filter by zoneId or showOnHome)
 router.get('/getBanners', asyncMiddleware(customerOtherController.getActiveBanners))

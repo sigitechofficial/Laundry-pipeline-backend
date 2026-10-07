@@ -33,6 +33,8 @@ const shopRevenueController = require('../controllers/Admin/shopRevenueControlle
 const shopCustomersController = require('../controllers/Admin/shopCustomersController');
 const shopPrinterController = require('../controllers/Admin/shopPrinterController');
 const serviceDiscountController = require('../controllers/Admin/serviceDiscountController');
+const campaignController = require('../controllers/Admin/campaignController');
+const promotionController = require('../controllers/Admin/promotionController');
 
 
 //!-------------------------------------Multer Middlewares---------------------//
@@ -1082,5 +1084,30 @@ router.patch(
     asyncMiddleware(bannerController.updateBanner)
 );
 router.delete('/deleteBanner/:id', asyncMiddleware(bannerController.deleteBanner));
+
+//!-----------------------------------Enterprise Campaigns------------------------------------>>>>
+router.get('/campaigns', validateAccessToken, asyncMiddleware(campaignController.list));
+router.get('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.getById));
+router.post('/campaigns', validateAccessToken, asyncMiddleware(campaignController.create));
+router.put('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.update));
+router.delete('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.remove));
+
+//!-----------------------------------Enterprise Promotions------------------------------------>>>>
+router.get('/promotions', validateAccessToken, asyncMiddleware(promotionController.list));
+router.get('/promotions/conflicts', validateAccessToken, asyncMiddleware(promotionController.conflicts));
+router.get('/promotions/:id', validateAccessToken, asyncMiddleware(promotionController.getById));
+router.post('/promotions', validateAccessToken, asyncMiddleware(promotionController.create));
+router.put('/promotions/:id', validateAccessToken, asyncMiddleware(promotionController.update));
+router.post('/promotions/:id/publish', validateAccessToken, asyncMiddleware(promotionController.publish));
+router.post('/promotions/:id/pause', validateAccessToken, asyncMiddleware(promotionController.pause));
+router.post('/promotions/:id/archive', validateAccessToken, asyncMiddleware(promotionController.archive));
+router.post('/promotions/:id/status', validateAccessToken, asyncMiddleware(promotionController.changeStatus));
+router.post('/promotions/:id/clone', validateAccessToken, asyncMiddleware(promotionController.clone));
+router.get('/promotions/:id/analytics', validateAccessToken, asyncMiddleware(promotionController.analytics));
+// Coupon codes under a promotion
+router.post('/promotions/:id/coupons', validateAccessToken, asyncMiddleware(promotionController.addCoupon));
+router.delete('/promotions/coupons/:couponId', validateAccessToken, asyncMiddleware(promotionController.removeCoupon));
+// Simulation (admin tool — same engine as checkout)
+router.post('/promotions/simulate', validateAccessToken, asyncMiddleware(promotionController.simulate));
 
 module.exports = router
