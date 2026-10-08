@@ -370,10 +370,13 @@ async function resolveCashCollectedAmount(bookingId, bookingRow, options = {}) {
     const totalOrderAmount = Number(
         paymentSummary?.orderSummary?.totalOrderAmount ?? 0
     );
-    if (totalOrderAmount > 0) {
+    // The driver collects the bill net of any discount (coupon / promotions), never the gross.
+    const discount = Number(paymentSummary?.orderSummary?.discount ?? 0);
+    const collected = Math.max(0, totalOrderAmount - (Number.isFinite(discount) ? discount : 0));
+    if (collected > 0) {
         const channel = classifyAgentEarningChannel(bookingRow);
         if (channel === "cash" && normalizePaymentType(bookingRow.paymentType) === "cash") {
-            return parseFloat(totalOrderAmount.toFixed(2));
+            return parseFloat(collected.toFixed(2));
         }
     }
 

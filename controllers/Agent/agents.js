@@ -196,6 +196,7 @@ const {
     listActiveAssignedOrders,
 } = require("../../utils/agentActiveOrders");
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
+const bookingPromotionService = require("../../services/promotions/bookingPromotionService");
 const {
     getCustomerDeclaredServices,
     getBookingRepairItems,
@@ -3169,6 +3170,7 @@ exports.recordCashPayment = async (req, res) => {
                 },
                 { where: { bookingId } }
             );
+            await bookingPromotionService.settleForBooking(bookingId);
             await booking.update(
                 { orderAmount: fullOrderTotal },
                 { where: { id: bookingId } }
@@ -3218,6 +3220,7 @@ exports.recordCashPayment = async (req, res) => {
         },
         { where: { bookingId } }
     );
+    await bookingPromotionService.settleForBooking(bookingId);
 
     await booking.update(
         {
@@ -3370,6 +3373,7 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
                 { where: { bookingId } }
             );
         }
+        await bookingPromotionService.settleForBooking(bookingId);
 
         await tryCreditAgentWallet(bookingId);
     } else {
@@ -5304,6 +5308,8 @@ exports.agentCancelBooking = async (req, res) => {
         },
         { where: { id: bookingId } }
     );
+    // Status 13 is not a cancelled status, so the job's safety net cannot see this one.
+    await bookingPromotionService.releaseForBooking(bookingId, 'Cancelled by agent');
 
     return ResponseHelper.success(res, "Booking Cancelled Sucessfully", {});
 }

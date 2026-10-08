@@ -561,6 +561,69 @@ async function main() {
     if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
     if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
   }
+
+  // ── Payment and lifecycle (Phase 4): settle on payment, reverse on refund, job safety net ──
+  {
+    const bps = require('../services/promotions/bookingPromotionService');
+    const invoices = require('../services/Agent/invoiceManagementService');
+    const flagBefore = { on: process.env.PROMOTIONS_CHECKOUT_ENABLED, zones: process.env.PROMOTIONS_CHECKOUT_ZONE_IDS };
+    const BOOKING_ID = Number(process.env.PROMO_TEST_INVOICE_BOOKING_ID || 35);
+    const b = await models.booking.findByPk(BOOKING_ID, { attributes: ['id', 'customerId', 'zoneId', 'paymentType'] });
+    const billing = b && await models.billingDetails.findOne({ where: { bookingId: b.id } });
+    const LINE_MARK = `${PREFIX} invoice line`;
+    if (!b || !billing) {
+      check('payment', `needs booking ${BOOKING_ID} with billing`, false);
+    } else {
+      const original = { discount: billing.discount, total: billing.total, paymentStatus: billing.paymentStatus };
+      const status = async (promotionId) => (await models.promotionRedemption.findOne({ where: { bookingId: b.id, promotionId }, order: [['id', 'DESC']] }))?.status;
+      process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+      process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = String(b.zoneId);
+      const camp = await models.campaign.create({ name: `${PREFIX} payment budget`, budgetMinor: 100000, status: 'active' });
+      try {
+        await models.customerSelectedService.create({ date: new Date(), time: '10:00:00', bookingId: b.id, serviceId: 2, categoryId: 1, subCategoryId: 1, categoryPrice: 20, items: 2, status: true, serviceInstruction: LINE_MARK });
+        const applies = await mk({ name: 'payment basket 10%', benefitType: 'basket_discount', discountMode: 'percent', discountValue: 10, perCustomerLimit: null, campaignId: camp.id });
+        const misses = await mk({ name: 'payment needs £1000', benefitType: 'basket_discount', discountMode: 'amount', discountValue: 5, perCustomerLimit: null, minSubtotal: 1000 });
+        await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: b.paymentType });
+        await invoices.getPaymentSummaryForBooking(b.id); // the pricing the charge is computed from: £40 → 10% = £4
+
+        const s1 = await bps.settleForBooking(b.id);
+        check('payment', 'paid: the applied promotion is committed, the one that missed is released', (await status(applies.id)) === 'COMMITTED' && (await status(misses.id)) === 'RELEASED', JSON.stringify(s1));
+        const committed = await models.promotionRedemption.findOne({ where: { bookingId: b.id, promotionId: applies.id, status: 'COMMITTED' } });
+        check('payment', 'committed with the invoice amount (£4)', Number(committed.discountAmount) === 4, String(committed.discountAmount));
+        check('payment', 'campaign budget spent by the committed amount (£4)', (await camp.reload()).usedBudgetMinor === 400, String(camp.usedBudgetMinor));
+        check('payment', 'usage counted once', (await models.promotion.findByPk(applies.id)).globalUsedCount === 1);
+        const s2 = await bps.settleForBooking(b.id);
+        check('payment', 'settle is idempotent', s2.committed === 0 && s2.released === 0 && (await camp.reload()).usedBudgetMinor === 400);
+
+        await bps.reverseForBooking(b.id, 'test full refund');
+        check('payment', 'full refund reverses: budget and usage come back', (await status(applies.id)) === 'REVERSED' && (await camp.reload()).usedBudgetMinor === 0 && (await models.promotion.findByPk(applies.id)).globalUsedCount === 0);
+
+        // Safety net: a Paid path that did not call settle is caught by the job
+        // (a refunded booking never re-holds the same promotion: its key stays with the reversed row)
+        check('payment', 'a reversed promotion is not held again on the same booking', (await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: b.paymentType })) && (await status(applies.id)) === 'REVERSED');
+        await ledger.releaseBookingRedemptions(b.id, 'test');
+        await models.orderAdjustment.destroy({ where: { bookingId: b.id, appliedBy: 'system' } });
+        await models.promotion.update({ status: 'archived' }, { where: { id: [applies.id, misses.id] } });
+        const later = await mk({ name: 'payment safety net 5%', benefitType: 'basket_discount', discountMode: 'percent', discountValue: 5, perCustomerLimit: null });
+        await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: b.paymentType });
+        await invoices.getPaymentSummaryForBooking(b.id);
+        await models.billingDetails.update({ paymentStatus: 'Paid' }, { where: { bookingId: b.id } });
+        const net = await bps.settleClosedBookings();
+        check('payment', 'job safety net settles a paid booking it was not told about', (await status(later.id)) === 'COMMITTED' && net.settled >= 1, JSON.stringify(net));
+      } finally {
+        await ledger.reverseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await ledger.releaseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await models.orderAdjustment.destroy({ where: { bookingId: b.id, appliedBy: 'system' } });
+        await models.customerSelectedService.destroy({ where: { bookingId: b.id, serviceInstruction: LINE_MARK } });
+        await models.billingDetails.update(original, { where: { bookingId: b.id } });
+        await archiveTestPromotions();
+        await models.promotion.update({ campaignId: null }, { where: { campaignId: camp.id } });
+        await models.campaign.destroy({ where: { id: camp.id } });
+      }
+    }
+    if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
+    if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
+  }
 }
 
 main()

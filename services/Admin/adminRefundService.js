@@ -832,6 +832,8 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
       { bookingStatusId: REFUNDED },
       { where: { id: bookingId } }
     );
+    // Full refund: the promotions it used count as unused again (usage + campaign budget).
+    await require("../promotions/bookingPromotionService").reverseForBooking(bookingId, "Full refund");
     const now = new Date();
     try {
       await bookingHistory.create({

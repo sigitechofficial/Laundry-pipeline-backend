@@ -29,6 +29,7 @@ const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHel
 const { effectiveValues, resolveDiscountMode } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
+const { COMPLETED, REFUNDED } = require('../../constants/bookingStatusIds');
 
 const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 
@@ -289,6 +290,78 @@ async function priceAtInvoice({ bookingId, allowance }) {
   };
 }
 
+// ─── Payment and lifecycle (Phase 4) ────────────────────────────────────────
+
+/**
+ * The booking is paid: commit the holds that applied, with the amounts last priced on
+ * the invoice (the same pricing the charge was computed from), and release the ones that
+ * did not apply. Idempotent, and never throws into the payment flow.
+ */
+async function settleForBooking(bookingId) {
+  const out = { committed: 0, released: 0 };
+  if (!bookingId) return out;
+  try {
+    const holds = await Redemption.findAll({ where: { bookingId, status: 'RESERVED' }, order: [['id', 'ASC']] });
+    for (const h of holds) {
+      const amount = Number(h.discountAmount) || 0;
+      if (amount > 0) {
+        await ledger.commitRedemption(h.id, bookingId, amount);
+        out.committed++;
+      } else {
+        await ledger.releaseRedemption(h.id, 'Did not apply on the paid invoice');
+        out.released++;
+      }
+    }
+  } catch (err) {
+    console.error(`[promotions] booking ${bookingId}: settle failed`, err.message);
+    out.error = err.message;
+  }
+  return out;
+}
+
+/** Full refund: reverse the committed promotions (usage and campaign budget come back). */
+async function reverseForBooking(bookingId, reason) {
+  if (!bookingId) return 0;
+  try {
+    return await ledger.reverseBookingRedemptions(bookingId, reason || 'Booking refunded');
+  } catch (err) {
+    console.error(`[promotions] booking ${bookingId}: reverse failed`, err.message);
+    return 0;
+  }
+}
+
+/**
+ * Safety net for the job: settle holds of bookings that are paid or completed, and reverse
+ * committed promotions of fully refunded bookings, in case a payment/refund path missed it.
+ * (Holds of cancelled/refunded bookings are released by cleanupExpiredReservations.)
+ */
+async function settleClosedBookings({ limit = 200 } = {}) {
+  const { sequelize } = Redemption;
+  const [toSettle] = await sequelize.query(
+    `SELECT DISTINCT r.bookingId FROM promotion_redemptions r
+       JOIN bookings b ON b.id = r.bookingId
+       LEFT JOIN billingDetails bd ON bd.bookingId = r.bookingId
+     WHERE r.status = 'RESERVED' AND (bd.paymentStatus = 'Paid' OR b.bookingStatusId = :completed)
+     LIMIT :limit`,
+    { replacements: { completed: COMPLETED, limit } }
+  );
+  const [toReverse] = await sequelize.query(
+    `SELECT DISTINCT r.bookingId FROM promotion_redemptions r
+       JOIN bookings b ON b.id = r.bookingId
+     WHERE r.status = 'COMMITTED' AND b.bookingStatusId = :refunded
+     LIMIT :limit`,
+    { replacements: { refunded: REFUNDED, limit } }
+  );
+  let settled = 0;
+  let reversed = 0;
+  for (const { bookingId } of toSettle) {
+    const r = await settleForBooking(bookingId);
+    settled += r.committed + r.released;
+  }
+  for (const { bookingId } of toReverse) reversed += await reverseForBooking(bookingId, 'Booking refunded');
+  return { settled, reversed };
+}
+
 module.exports = {
   isPromotionCode,
   usesPromotionCode,
@@ -296,6 +369,9 @@ module.exports = {
   attachAtBooking,
   releaseForBooking,
   priceAtInvoice,
+  settleForBooking,
+  reverseForBooking,
+  settleClosedBookings,
   storedPromotionDiscount,
   invoiceLineItems,
   capApplied,

@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -51,9 +51,10 @@ Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3. Each phase shi
 - Rules at invoice: held promotions are honoured even if they expired after the booking; dropped if an admin paused/archived them or their campaign. Usage limits are not re-counted (the hold secured them); campaign budget is re-checked. Customer facts and the clock are taken as of the booking. Repricing policy: every policy recalculates on the final lines (nothing is priced at booking to lock).
 
 ### Phase 4: Payment and lifecycle
-- [ ] 4.1 Commit redemptions with final amounts on payment success (card charge, cash recorded, nothing due); campaign budget moves then.
-- [ ] 4.2 Release on every cancel path (customer 19, agent 13, no-show 19, on-hold 19, admin status change); reverse on full refund (21).
-- [ ] 4.3 Fix cash fallback `resolveCashCollectedAmount` using gross instead of net-of-discount.
+- [x] 4.1 Commit redemptions with final amounts on payment success (card charge, cash recorded, nothing due); campaign budget moves then.
+- [x] 4.2 Release on every cancel path (customer 19, agent 13, no-show 19, on-hold 19, admin status change); reverse on full refund (21).
+- [x] 4.3 Fix cash fallback `resolveCashCollectedAmount` using gross instead of net-of-discount.
+- How it is wired: direct calls where the money moves (card charge success `markChargeSuccess`, `recordCashPayment` both branches, "nothing due" in `bookingInvoiceGeneratedStatusUpdated`, customer cancel, agent cancel, admin full refund) plus the promotions job every 60s as a safety net: it settles holds of Paid/Completed bookings, reverses committed promotions of Refunded (21) bookings, and releases holds of Cancelled/Refunded bookings. Other Paid paths (agent wallet, paymentService), no-show and on-hold cancels and admin status edits are covered by the job. Partial refunds keep the promotion.
 
 ### Phase 5: Admin and reports
 - [ ] 5.1 Order detail shows promotion lines.
