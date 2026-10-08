@@ -467,6 +467,100 @@ async function main() {
     if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
     if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
   }
+
+  // ── Invoice stage (Phase 3): money on the real lines, cap, freeze, kill switch ──
+  {
+    const bps = require('../services/promotions/bookingPromotionService');
+    const invoices = require('../services/Agent/invoiceManagementService');
+    const flagBefore = { on: process.env.PROMOTIONS_CHECKOUT_ENABLED, zones: process.env.PROMOTIONS_CHECKOUT_ZONE_IDS };
+    const BOOKING_ID = Number(process.env.PROMO_TEST_INVOICE_BOOKING_ID || 35);
+    const b = await models.booking.findByPk(BOOKING_ID, { attributes: ['id', 'customerId', 'zoneId', 'paymentType', 'bookingStatusId'] });
+    const billing = b && await models.billingDetails.findOne({ where: { bookingId: b.id } });
+    const LINE_MARK = `${PREFIX} invoice line`;
+    const activeLines = b ? await models.customerSelectedService.count({ where: { bookingId: b.id, status: true } }) : 1;
+    if (!b || !billing || b.paymentType !== 'card' || activeLines > 0 || (await models.couponRedemption.count({ where: { bookingId: b.id } }))) {
+      check('invoice', `needs card booking ${BOOKING_ID} with billing, no lines and no legacy coupon`, false);
+    } else {
+      const original = { discount: billing.discount, total: billing.total };
+      const due = async () => {
+        const s = await invoices.getPaymentSummaryForBooking(b.id);
+        return { discount: Number(s.orderSummary.discount), due: Number(s.amountDueNow) };
+      };
+      const promoRows = () => models.orderAdjustment.findAll({ where: { bookingId: b.id, appliedBy: 'system', reversedAt: null } });
+      const sumRows = (rows) => Math.round(rows.reduce((s, r) => s + Math.abs(Number(r.amount)), 0) * 100) / 100;
+      try {
+        // Lines: 2 × £10 (sub 1) + 1 × £20 (sub 2) = £40 laundry
+        const lineA = await models.customerSelectedService.create({ date: new Date(), time: '10:00:00', bookingId: b.id, serviceId: 2, categoryId: 1, subCategoryId: 1, categoryPrice: 10, items: 2, status: true, serviceInstruction: LINE_MARK });
+        const lineB = await models.customerSelectedService.create({ date: new Date(), time: '10:00:00', bookingId: b.id, serviceId: 2, categoryId: 1, subCategoryId: 2, categoryPrice: 20, items: 1, status: true, serviceInstruction: LINE_MARK });
+
+        delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+        const base = await due();
+        check('invoice', 'baseline without promotions has no discount', base.discount === 0, `due £${base.due}`);
+
+        process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+        process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = String(b.zoneId);
+        const basket10 = await mk({ name: 'invoice basket 10%', benefitType: 'basket_discount', discountMode: 'percent', discountValue: 10, perCustomerLimit: null, zoneScopeMode: 'all' });
+        const shirt1 = await mk({ name: 'invoice £1 off each sub 1', benefitType: 'item_discount', discountMode: 'amount', discountValue: 1, targetType: 'subCategory', targetIds: [1], perCustomerLimit: null, zoneScopeMode: 'all' });
+        await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: 'card' });
+
+        // Item first: £1 × 2 = £2; then basket 10% of £38 = £3.80 → £5.80
+        const r1 = await due();
+        check('invoice', 'item + basket promotions priced on the real lines (£5.80)', r1.discount === 5.8, `£${r1.discount}`);
+        check('invoice', 'amount due drops by exactly the discount', Math.abs(r1.due - (base.due - 5.8)) < 0.001, `£${base.due} → £${r1.due}`);
+        check('invoice', 'billingDetails.discount stores the total', Number((await billing.reload()).discount) === 5.8, String(billing.discount));
+        const rows1 = await promoRows();
+        check('invoice', 'order_adjustments hold the promotion lines (sum £5.80)', sumRows(rows1) === 5.8 && rows1.length >= 2, `${rows1.length} rows, £${sumRows(rows1)}`);
+        await due();
+        check('invoice', 're-pricing is idempotent (no double discount, no extra rows)', Number((await billing.reload()).discount) === 5.8 && (await promoRows()).length === rows1.length);
+
+        // Agent removes the £20 line: £2 + 10% of £18 = £3.80
+        await lineB.update({ status: false });
+        const r2 = await due();
+        check('invoice', 'removing a line re-prices (£3.80)', r2.discount === 3.8, `£${r2.discount}`);
+        await lineB.update({ status: true });
+
+        // Cap: a £100 basket promotion cannot take more than what is still payable
+        const big = await mk({ name: 'invoice £100 off', benefitType: 'basket_discount', discountMode: 'amount', discountValue: 100, stackable: true, perCustomerLimit: null, zoneScopeMode: 'all' });
+        await models.promotion.update({ stackable: true }, { where: { id: [basket10.id] } });
+        await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: 'card' });
+        const r3 = await due();
+        check('invoice', 'discount capped at the payable balance (amount due £0, no refund)', r3.due === 0 && r3.discount === base.due, `discount £${r3.discount}, payable £${base.due}`);
+        check('invoice', 'capped lines add up to the capped discount', sumRows(await promoRows()) === base.due, `£${sumRows(await promoRows())}`);
+        for (const h of await models.promotionRedemption.findAll({ where: { bookingId: b.id, promotionId: big.id, status: 'RESERVED' } })) await ledger.releaseRedemption(h.id, 'test');
+        await models.promotion.update({ stackable: false }, { where: { id: [basket10.id] } });
+        check('invoice', 'back to £5.80 once the big hold is gone', (await due()).discount === 5.8);
+
+        // Kill switch on an unpaid invoice: promotions off, lines removed
+        delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+        const off = await due();
+        check('invoice', 'flag off: unpaid invoice loses the promotion discount', off.discount === 0 && (await promoRows()).length === 0 && Math.abs(off.due - base.due) < 0.001, `£${off.discount}`);
+        process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+        check('invoice', 'flag back on: discount returns', (await due()).discount === 5.8);
+
+        // Paid: commit the holds → later edits never re-price
+        const holds = await models.promotionRedemption.findAll({ where: { bookingId: b.id, status: 'RESERVED', promotionId: [basket10.id, shirt1.id] } });
+        for (const h of holds) await ledger.commitRedemption(h.id, b.id, Number(h.discountAmount));
+        await lineB.update({ status: false });
+        const frozen = await due();
+        check('invoice', 'after payment the discount is frozen (line removed, still £5.80)', frozen.discount === 5.8, `£${frozen.discount}`);
+        delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+        check('invoice', 'after payment the kill switch does not remove it', (await due()).discount === 5.8);
+        check('invoice', 'commit recorded the per-promotion amounts', holds.map((h) => Number(h.discountAmount)).sort().join(',') === '2,3.8', holds.map((h) => h.discountAmount).join(','));
+        await lineA.destroy();
+        await lineB.destroy();
+      } finally {
+        process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+        await ledger.reverseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await ledger.releaseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await models.orderAdjustment.destroy({ where: { bookingId: b.id, appliedBy: 'system' } });
+        await models.customerSelectedService.destroy({ where: { bookingId: b.id, serviceInstruction: LINE_MARK } });
+        await models.billingDetails.update(original, { where: { bookingId: b.id } });
+        await archiveTestPromotions();
+      }
+    }
+    if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
+    if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
+  }
 }
 
 main()

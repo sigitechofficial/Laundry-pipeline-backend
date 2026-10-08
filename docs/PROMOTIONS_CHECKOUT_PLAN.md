@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -44,10 +44,11 @@ Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2. Each phase ships 
 - Note: holds count toward a promotion's global limit until invoice. Holds that end up not applying are released when the booking is paid (4.1).
 
 ### Phase 3: Invoice stage (money)
-- [ ] 3.1 New `resolveBookingDiscount` = legacy coupon (existing redemptions) + promotions priced on the real invoice lines. Writes `order_adjustments` (idempotent) and the combined `billingDetails.discount` (string).
-- [ ] 3.2 Cap to the payable balance (decision above).
-- [ ] 3.3 Freeze once paid: no re-pricing after the balance is charged/collected.
-- [ ] 3.4 `agentUpdateInvoice` (on-hold removal) re-resolves instead of forcing discount 0.
+- [x] 3.1 New `resolveBookingDiscount` = legacy coupon (existing redemptions) + promotions priced on the real invoice lines. Writes `order_adjustments` (idempotent) and the combined `billingDetails.discount` (string).
+- [x] 3.2 Cap to the payable balance (decision above).
+- [x] 3.3 Freeze once paid: no re-pricing after the balance is charged/collected.
+- [x] 3.4 `agentUpdateInvoice` (on-hold removal) still writes discount 0 with the app's total (legacy handler, left as is), but every later pricing and every charge recomputes through `calculateInvoiceTotals`, which re-applies the promotions. Verified by the invoice tests.
+- Rules at invoice: held promotions are honoured even if they expired after the booking; dropped if an admin paused/archived them or their campaign. Usage limits are not re-counted (the hold secured them); campaign budget is re-checked. Customer facts and the clock are taken as of the booking. Repricing policy: every policy recalculates on the final lines (nothing is priced at booking to lock).
 
 ### Phase 4: Payment and lifecycle
 - [ ] 4.1 Commit redemptions with final amounts on payment success (card charge, cash recorded, nothing due); campaign budget moves then.

@@ -34,6 +34,8 @@ const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
 const couponService = require("../Customer/couponService");
+const bookingPromotionService = require("../promotions/bookingPromotionService");
+const { isPromotionsCheckoutEnabled } = require("../promotions/checkoutFlag");
 const {
     getLineQuantity,
     getUnitCategoryCharge,
@@ -584,6 +586,38 @@ class AgentInvoiceManagementService {
         return totalItems;
     }
 
+    /**
+     * Laundry discount on the invoice = legacy coupon (or an admin's manual discount) + promotions.
+     * Promotions are priced on the real lines and capped at what is still payable
+     * (docs/PROMOTIONS_CHECKOUT_PLAN.md, Phase 3). billingDetails.discount stores the total;
+     * the promotions part lives in order_adjustments, so it is never counted twice.
+     */
+    async resolveInvoiceDiscount({ bookingId, zoneId, paymentType, servicesSubtotal, storedDiscount, summaryInput }) {
+        const previousPromotion = await bookingPromotionService.storedPromotionDiscount(bookingId);
+        const nonPromotion = Math.max(0, parseFloat(((parseFloat(storedDiscount) || 0) - previousPromotion).toFixed(2)));
+        const legacyDiscount = await couponService.resolveBookingDiscount(
+            bookingId,
+            servicesSubtotal,
+            nonPromotion,
+            null,
+            zoneId
+        );
+        if (!previousPromotion && !isPromotionsCheckoutEnabled(zoneId)) {
+            return { discount: legacyDiscount, legacyDiscount, promotionDiscount: 0, promotions: [] };
+        }
+        const dueBeforeDiscount = buildPaymentSummaryForBooking(paymentType, { ...summaryInput, discount: 0 }).amountDueNow;
+        const promo = await bookingPromotionService.priceAtInvoice({
+            bookingId,
+            allowance: Math.max(0, dueBeforeDiscount - legacyDiscount),
+        });
+        return {
+            discount: parseFloat((legacyDiscount + promo.amount).toFixed(2)),
+            legacyDiscount,
+            promotionDiscount: promo.amount,
+            promotions: promo.applied,
+        };
+    }
+
     async calculateInvoiceTotals(bookingRow, bookingId, _serviceCharge, _zoneMinimumAmount) {
         const terms = await ensureRateSnapshotOnBooking(bookingRow);
         if (!bookingRow?.zone && !terms.locked) {
@@ -598,14 +632,21 @@ class AgentInvoiceManagementService {
         const tipAmount = bookingTipAmountFromTips(bookingRow.tips);
 
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
-        const fallbackDiscount = parseFloat(existingBilling?.discount || 0);
-        const existingDiscount = await couponService.resolveBookingDiscount(
+        const resolved = await this.resolveInvoiceDiscount({
             bookingId,
+            zoneId: bookingRow?.zoneId ?? bookingRow?.zone?.id ?? null,
+            paymentType: bookingRow.paymentType,
             servicesSubtotal,
-            fallbackDiscount,
-            null,
-            bookingRow?.zoneId ?? bookingRow?.zone?.id ?? null
-        );
+            storedDiscount: existingBilling?.discount,
+            summaryInput: {
+                laundrySubtotal: servicesSubtotal,
+                serviceFee: parsedServiceCharge,
+                minimumOrderPayment: parsedZoneMinimum,
+                driverTip: tipAmount,
+                prepaidDriverTip: existingBilling?.prepaidTipAmount,
+            },
+        });
+        const existingDiscount = resolved.discount;
 
         // Persist authoritative laundry discount onto billing when it changed.
         if (
@@ -660,6 +701,8 @@ class AgentInvoiceManagementService {
             total: amountDueNow,
             paymentSummary,
             existingDiscount,
+            promotionDiscount: resolved.promotionDiscount,
+            promotions: resolved.promotions,
             agentCommissionPercent,
             finalAgentEarningAmount: commissionAmounts.agentEarning,
             finalZoneAdminCommissionAmount: commissionAmounts.platformCommissionAmount,
@@ -945,14 +988,23 @@ class AgentInvoiceManagementService {
         const billing = bookingData.billingDetail || {};
         const tipAmount = bookingTipAmountFromTips(bookingData.tips);
 
-        // Authoritative laundry discount from reserved coupon (same as finalize).
-        const resolvedDiscount = await couponService.resolveBookingDiscount(
+        // Authoritative laundry discount: reserved coupon + promotions (same as finalize).
+        const draftSummaryInput = {
+            laundrySubtotal: servicesSubtotal,
+            serviceFee: parseFloat(billing.serviceCharge || 0),
+            minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
+            driverTip: tipAmount,
+            prepaidDriverTip: billing.prepaidTipAmount,
+        };
+        const resolvedDraft = await this.resolveInvoiceDiscount({
             bookingId,
+            zoneId: bookingData.zoneId ?? bookingData.zone?.id ?? null,
+            paymentType: bookingData.paymentType,
             servicesSubtotal,
-            parseFloat(billing.discount || 0),
-            null,
-            bookingData.zoneId ?? bookingData.zone?.id ?? null
-        );
+            storedDiscount: billing.discount,
+            summaryInput: draftSummaryInput,
+        });
+        const resolvedDiscount = resolvedDraft.discount;
         if (parseFloat(billing.discount || 0) !== resolvedDiscount) {
             await billingDetails.update(
                 { discount: resolvedDiscount },
@@ -982,7 +1034,7 @@ class AgentInvoiceManagementService {
                     code: redemption.coupon.code,
                     discountType: redemption.coupon.discountType,
                     discountValue: redemption.coupon.discountValue,
-                    discountAmt: resolvedDiscount,
+                    discountAmt: resolvedDraft.legacyDiscount,
                 };
             }
         } catch (_) {
@@ -990,11 +1042,7 @@ class AgentInvoiceManagementService {
         }
 
         const paymentSummary = buildPaymentSummaryForBooking(bookingData.paymentType, {
-            laundrySubtotal: servicesSubtotal,
-            serviceFee: parseFloat(billing.serviceCharge || 0),
-            minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
-            driverTip: tipAmount,
-            prepaidDriverTip: billing.prepaidTipAmount,
+            ...draftSummaryInput,
             discount: resolvedDiscount,
         });
 
@@ -1008,6 +1056,7 @@ class AgentInvoiceManagementService {
             total: bookingData.orderAmount,
             paymentSummary,
             coupon: couponInfo,
+            promotions: resolvedDraft.promotions,
             extraTip: summarizeTips(bookingData.tips || []),
         };
     }
