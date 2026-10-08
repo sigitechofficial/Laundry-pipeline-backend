@@ -86,7 +86,40 @@ function allocateProportionally(totalDiscount, lineAmounts) {
   return allocations.map(fromMinor);
 }
 
+/** Percentage of an integer minor amount, rounded half-up, in minor units. */
+function percentOfMinor(amountMinor, pct) {
+  return Math.round((Number(amountMinor) * toDecimal(pct)) / 100);
+}
+
+/**
+ * Split totalMinor across weights (minor units) with the largest-remainder method.
+ * Shares always sum to totalMinor and no share exceeds its weight when totalMinor <= sum(weights).
+ */
+function allocateMinor(totalMinor, weightsMinor) {
+  const weights = weightsMinor.map((w) => Math.max(0, Math.round(Number(w) || 0)));
+  const sum = weights.reduce((s, w) => s + w, 0);
+  const total = Math.max(0, Math.min(Math.round(Number(totalMinor) || 0), sum));
+  if (sum <= 0 || total <= 0) return weights.map(() => 0);
+
+  const exact = weights.map((w) => (w * total) / sum);
+  const shares = exact.map(Math.floor);
+  let remainder = total - shares.reduce((s, v) => s + v, 0);
+  const order = exact
+    .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (const { i } of order) {
+    if (remainder <= 0) break;
+    if (shares[i] < weights[i]) {
+      shares[i] += 1;
+      remainder -= 1;
+    }
+  }
+  return shares;
+}
+
 module.exports = {
+  percentOfMinor,
+  allocateMinor,
   toDecimal,
   money,
   toMinor,

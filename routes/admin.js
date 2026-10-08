@@ -1086,28 +1086,29 @@ router.patch(
 router.delete('/deleteBanner/:id', asyncMiddleware(bannerController.deleteBanner));
 
 //!-----------------------------------Enterprise Campaigns------------------------------------>>>>
-router.get('/campaigns', validateAccessToken, asyncMiddleware(campaignController.list));
-router.get('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.getById));
-router.post('/campaigns', validateAccessToken, asyncMiddleware(campaignController.create));
-router.put('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.update));
-router.delete('/campaigns/:id', validateAccessToken, asyncMiddleware(campaignController.remove));
+// Auth, feature permission (promotion) and zone scope come from router.use above.
+router.get('/campaigns', asyncMiddleware(campaignController.list));
+router.get('/campaigns/:id', asyncMiddleware(campaignController.getById));
+router.post('/campaigns', asyncMiddleware(campaignController.create));
+router.put('/campaigns/:id', asyncMiddleware(campaignController.update));
+router.delete('/campaigns/:id', asyncMiddleware(campaignController.remove));
 
 //!-----------------------------------Enterprise Promotions------------------------------------>>>>
-router.get('/promotions', validateAccessToken, asyncMiddleware(promotionController.list));
-router.get('/promotions/conflicts', validateAccessToken, asyncMiddleware(promotionController.conflicts));
-router.get('/promotions/:id', validateAccessToken, asyncMiddleware(promotionController.getById));
-router.post('/promotions', validateAccessToken, asyncMiddleware(promotionController.create));
-router.put('/promotions/:id', validateAccessToken, asyncMiddleware(promotionController.update));
-router.post('/promotions/:id/publish', validateAccessToken, asyncMiddleware(promotionController.publish));
-router.post('/promotions/:id/pause', validateAccessToken, asyncMiddleware(promotionController.pause));
-router.post('/promotions/:id/archive', validateAccessToken, asyncMiddleware(promotionController.archive));
-router.post('/promotions/:id/status', validateAccessToken, asyncMiddleware(promotionController.changeStatus));
-router.post('/promotions/:id/clone', validateAccessToken, asyncMiddleware(promotionController.clone));
-router.get('/promotions/:id/analytics', validateAccessToken, asyncMiddleware(promotionController.analytics));
-// Coupon codes under a promotion
-router.post('/promotions/:id/coupons', validateAccessToken, asyncMiddleware(promotionController.addCoupon));
-router.delete('/promotions/coupons/:couponId', validateAccessToken, asyncMiddleware(promotionController.removeCoupon));
+router.get('/promotions', asyncMiddleware(promotionController.list));
+router.get('/promotions/conflicts', asyncMiddleware(promotionController.conflicts));
 // Simulation (admin tool — same engine as checkout)
-router.post('/promotions/simulate', validateAccessToken, asyncMiddleware(promotionController.simulate));
+router.post('/promotions/simulate', asyncMiddleware(promotionController.simulate));
+router.get('/promotions/:id', asyncMiddleware(promotionController.getById));
+router.post('/promotions', asyncMiddleware(promotionController.create));
+router.put('/promotions/:id', asyncMiddleware(promotionController.update));
+router.post('/promotions/:id/publish', asyncMiddleware(promotionController.publish));
+router.post('/promotions/:id/pause', asyncMiddleware(promotionController.pause));
+router.post('/promotions/:id/archive', asyncMiddleware(promotionController.archive));
+router.post('/promotions/:id/status', asyncMiddleware(promotionController.changeStatus));
+router.post('/promotions/:id/clone', asyncMiddleware(promotionController.clone));
+router.get('/promotions/:id/analytics', asyncMiddleware(promotionController.analytics));
+// Coupon codes under a promotion
+router.post('/promotions/:id/coupons', asyncMiddleware(promotionController.addCoupon));
+router.delete('/promotions/coupons/:couponId', asyncMiddleware(promotionController.removeCoupon));
 
 module.exports = router

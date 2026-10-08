@@ -25,6 +25,8 @@ async function audit(entityType, entityId, action, actorId, { oldValue, newValue
 
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
+const blankToNull = (v) => (v === '' || v === undefined ? null : v);
+
 async function createCampaign(payload, adminUserId) {
   _validateCampaign(payload);
 
@@ -33,10 +35,10 @@ async function createCampaign(payload, adminUserId) {
     description: payload.description || null,
     objective: payload.objective || null,
     channel: payload.channel || null,
-    budgetMinor: payload.budgetMinor || null,
+    budgetMinor: blankToNull(payload.budgetMinor) == null ? null : Number(payload.budgetMinor),
     currency: payload.currency || 'GBP',
-    startDate: payload.startDate || null,
-    endDate: payload.endDate || null,
+    startDate: blankToNull(payload.startDate),
+    endDate: blankToNull(payload.endDate),
     status: payload.status || 'draft',
     createdBy: adminUserId,
     updatedBy: adminUserId,
@@ -50,16 +52,18 @@ async function listCampaigns({ page = 1, limit = 50, status } = {}) {
   const where = {};
   if (status) where.status = status;
 
-  const offset = (Math.max(1, Number(page)) - 1) * Number(limit);
+  const safeLimit = Math.min(200, Math.max(1, Number(limit) || 50));
+  const safePage = Math.max(1, Number(page) || 1);
   const { count, rows } = await Campaign.findAndCountAll({
     where,
     order: [['id', 'DESC']],
-    limit: Number(limit),
-    offset,
+    limit: safeLimit,
+    offset: (safePage - 1) * safeLimit,
+    distinct: true,
     include: [{ model: Promotion, as: 'promotions', attributes: ['id', 'name', 'status', 'benefitType'] }],
   });
 
-  return { count, rows, page: Number(page), limit: Number(limit) };
+  return { count, rows, page: safePage, limit: safeLimit };
 }
 
 async function getCampaignById(id) {
@@ -74,17 +78,17 @@ async function updateCampaign(id, payload, adminUserId) {
   const row = await getCampaignById(id);
   const oldValue = row.toJSON();
 
-  if (payload.name !== undefined) _validateCampaign({ ...row.toJSON(), ...payload });
+  _validateCampaign({ ...row.toJSON(), ...payload });
 
   await row.update({
     ...(payload.name !== undefined ? { name: payload.name.trim() } : {}),
     ...(payload.description !== undefined ? { description: payload.description } : {}),
     ...(payload.objective !== undefined ? { objective: payload.objective } : {}),
     ...(payload.channel !== undefined ? { channel: payload.channel } : {}),
-    ...(payload.budgetMinor !== undefined ? { budgetMinor: payload.budgetMinor } : {}),
+    ...(payload.budgetMinor !== undefined ? { budgetMinor: blankToNull(payload.budgetMinor) == null ? null : Number(payload.budgetMinor) } : {}),
     ...(payload.currency !== undefined ? { currency: payload.currency } : {}),
-    ...(payload.startDate !== undefined ? { startDate: payload.startDate } : {}),
-    ...(payload.endDate !== undefined ? { endDate: payload.endDate } : {}),
+    ...(payload.startDate !== undefined ? { startDate: blankToNull(payload.startDate) } : {}),
+    ...(payload.endDate !== undefined ? { endDate: blankToNull(payload.endDate) } : {}),
     ...(payload.status !== undefined ? { status: payload.status } : {}),
     updatedBy: adminUserId,
   });
@@ -117,6 +121,14 @@ function _validateCampaign(p) {
   if (p.status && !validStatuses.includes(p.status)) {
     throw new ValidationError(`Invalid campaign status: ${p.status}`);
   }
+  const budget = blankToNull(p.budgetMinor);
+  if (budget != null && (!Number.isInteger(Number(budget)) || Number(budget) < 0)) {
+    throw new ValidationError('Budget must be a whole number of pence ≥ 0');
+  }
+  const start = blankToNull(p.startDate) ? new Date(p.startDate) : null;
+  const end = blankToNull(p.endDate) ? new Date(p.endDate) : null;
+  if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) throw new ValidationError('Invalid start or end date');
+  if (start && end && end <= start) throw new ValidationError('End date must be after the start date');
 }
 
 module.exports = {

@@ -41,6 +41,8 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       discountValue: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+      discountMode: { type: DataTypes.ENUM('percent', 'amount'), allowNull: true },
+      benefitConfig: { type: DataTypes.JSON, allowNull: true },
       maxDiscountCap: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
 

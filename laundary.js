@@ -469,6 +469,8 @@ async function startServer() {
     startLiveTrackingCleanupJob();
     const { startRecurringGenerationJob } = require('./services/Customer/recurringBookingService');
     startRecurringGenerationJob();
+    const { startPromotionJobs } = require('./services/promotions/promotionJobs');
+    startPromotionJobs();
 
     server.listen(server_port, function (err) {
       if (err) throw err;

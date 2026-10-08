@@ -271,6 +271,9 @@ const ROUTE_FEATURE_PREFIXES = [
     ['/getAllBanners', K.PROMOTION],
     ['/updateBanner', K.PROMOTION],
     ['/deleteBanner', K.PROMOTION],
+    ['/serviceDiscounts', K.PROMOTION],
+    ['/campaigns', K.PROMOTION],
+    ['/promotions', K.PROMOTION],
 
     ['/getSupportContact', K.CUSTOMER_SUPPORT],
     ['/updateSupportContact', K.CUSTOMER_SUPPORT],

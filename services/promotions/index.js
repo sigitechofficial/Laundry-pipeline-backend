@@ -6,6 +6,7 @@
  */
 
 const promotionEngine = require('./promotionEngine');
+const contextBuilder = require('./contextBuilder');
 const conditionEvaluator = require('./conditionEvaluator');
 const benefitHandlers = require('./benefitHandlers');
 const stackingResolver = require('./stackingResolver');
@@ -13,9 +14,13 @@ const redemptionService = require('./redemptionService');
 const moneyUtils = require('./moneyUtils');
 
 module.exports = {
+  // Context (server-side facts only)
+  buildPromotionContext: contextBuilder.buildPromotionContext,
+
   // Engine (main orchestrator)
   evaluatePromotions: promotionEngine.evaluatePromotions,
   simulatePromotions: promotionEngine.simulatePromotions,
+  toCustomerView: promotionEngine.toCustomerView,
   getCustomerOffers: promotionEngine.getCustomerOffers,
   loadCandidatePromotions: promotionEngine.loadCandidatePromotions,
   validateCouponCodes: promotionEngine.validateCouponCodes,
@@ -23,15 +28,17 @@ module.exports = {
 
   // Condition evaluation
   evaluateConditions: conditionEvaluator.evaluateConditions,
+  validateCondition: conditionEvaluator.validateCondition,
 
   // Benefit calculation
   calculateBenefit: benefitHandlers.calculateBenefit,
 
   // Stacking
-  resolveStacking: stackingResolver.resolveStacking,
+  resolveAndApply: stackingResolver.resolveAndApply,
   detectConflicts: stackingResolver.detectConflicts,
 
   // Redemption ledger
+  RedemptionError: redemptionService.RedemptionError,
   reserveRedemption: redemptionService.reserveRedemption,
   commitRedemption: redemptionService.commitRedemption,
   releaseRedemption: redemptionService.releaseRedemption,

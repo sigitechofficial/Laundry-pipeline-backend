@@ -3,261 +3,270 @@
 /**
  * Redemption ledger service.
  *
- * State machine: RESERVED → COMMITTED → (RELEASED | REVERSED)
+ * State machine: RESERVED → COMMITTED → REVERSED, or RESERVED → RELEASED
  *
- * Concurrency: Uses SELECT FOR UPDATE to prevent over-redemption
- * of hard-limited promotions.
+ * Concurrency: the promotion row (and coupon row, when a code is used) is locked
+ * with SELECT … FOR UPDATE, and limits count reserved + committed entitlements,
+ * so concurrent checkouts cannot exceed a hard limit.
  */
 
 const {
-  promotion: Promotion,
   promotionRedemption: Redemption,
-  couponCode: CouponCode,
   orderAdjustment: OrderAdjustment,
-  promotionAuditLog: AuditLog,
   sequelize,
 } = require('../../models');
 const { Op } = require('sequelize');
 const { money } = require('./moneyUtils');
 
 const RESERVATION_TTL_MINUTES = 15;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+class RedemptionError extends Error {
+  constructor(code, message) {
+    super(code);
+    this.code = code;
+    this.userMessage = message || code;
+  }
+}
+
+/** Run fn inside a managed transaction (commits on success, rolls back exactly once on error). */
+function inTransaction(fn, outer) {
+  if (outer) return fn(outer);
+  return sequelize.transaction((t) => fn(t));
+}
+
+const activeEntitlementWhere = (now) => ({
+  [Op.or]: [
+    { status: 'COMMITTED' },
+    { status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now } },
+  ],
+});
+
+/** Committed discounts consume the promotion's campaign budget (reversals give it back). */
+async function adjustCampaignBudget(promotionId, discountAmount, t) {
+  const minor = Math.round(Number(discountAmount || 0) * 100);
+  if (!minor) return;
+  await sequelize.query(
+    `UPDATE campaigns c JOIN promotions p ON p.campaignId = c.id
+     SET c.usedBudgetMinor = GREATEST(0, COALESCE(c.usedBudgetMinor, 0) + ?) WHERE p.id = ?`,
+    { replacements: [minor, promotionId], transaction: t }
+  );
+}
 
 // ─── Reserve ────────────────────────────────────────────────────────────────
 
 /**
- * Reserve a promotion entitlement for a customer.
- * Called during checkout before payment.
+ * Reserve a promotion entitlement for a customer. Called during checkout before payment.
  *
  * @param {{ promotionId, customerId, couponCode?, zoneId?, discountAmount?, idempotencyKey? }} params
+ * @param {object} [transaction] join an outer transaction (e.g. booking creation)
  * @returns {object} redemption row
+ * @throws {RedemptionError} code: PROMOTION_NOT_FOUND | PROMOTION_NOT_ACTIVE | PROMOTION_USAGE_EXHAUSTED |
+ *   PROMOTION_PER_CUSTOMER_LIMIT | PROMOTION_DAILY_LIMIT | PROMOTION_WEEKLY_LIMIT | COUPON_INVALID |
+ *   COUPON_EXPIRED | COUPON_USAGE_EXHAUSTED | COUPON_ALREADY_USED | COUPON_NOT_YOUR_CODE
  */
-async function reserveRedemption({
-  promotionId,
-  customerId,
-  couponCode,
-  zoneId,
-  discountAmount,
-  idempotencyKey,
-}) {
-  const t = await sequelize.transaction();
-  try {
-    // Idempotency check
+async function reserveRedemption(params, transaction) {
+  const { promotionId, customerId, couponCode, zoneId, discountAmount, idempotencyKey } = params;
+  return inTransaction(async (t) => {
     if (idempotencyKey) {
-      const existing = await Redemption.findOne({
-        where: { idempotencyKey },
-        transaction: t,
-      });
-      if (existing) {
-        await t.commit();
-        return existing;
-      }
-    }
-
-    // Lock promotion row for atomic counter check
-    const [promos] = await sequelize.query(
-      'SELECT * FROM promotions WHERE id = ? FOR UPDATE',
-      { replacements: [promotionId], transaction: t, type: sequelize.QueryTypes.SELECT }
-    );
-    const promo = Array.isArray(promos) ? promos[0] : promos;
-    if (!promo) {
-      await t.rollback();
-      throw new Error('Promotion not found');
-    }
-
-    // Check global limit
-    if (promo.globalUsageLimit != null) {
-      const total = (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0);
-      if (total >= promo.globalUsageLimit) {
-        await t.rollback();
-        throw new Error('PROMOTION_USAGE_EXHAUSTED');
-      }
-    }
-
-    // Check per-customer limit
-    if (promo.perCustomerLimit != null) {
-      const customerUsage = await Redemption.count({
-        where: {
-          promotionId,
-          customerId,
-          status: { [Op.in]: ['RESERVED', 'COMMITTED'] },
-        },
-        transaction: t,
-      });
-      if (customerUsage >= promo.perCustomerLimit) {
-        await t.rollback();
-        throw new Error('PROMOTION_PER_CUSTOMER_LIMIT');
-      }
-    }
-
-    // Find coupon code row if applicable
-    let couponCodeId = null;
-    if (couponCode) {
-      const cc = await CouponCode.findOne({
-        where: { code: couponCode.toUpperCase(), promotionId, isActive: true },
-        transaction: t,
-      });
-      if (cc) {
-        couponCodeId = cc.id;
-        // Check coupon-level limit
-        if (cc.usageLimit != null && cc.usedCount >= cc.usageLimit) {
-          await t.rollback();
-          throw new Error('COUPON_USAGE_EXHAUSTED');
-        }
-      }
+      const existing = await Redemption.findOne({ where: { idempotencyKey }, transaction: t });
+      if (existing) return existing;
     }
 
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + RESERVATION_TTL_MINUTES * 60 * 1000);
+    const [promo] = await sequelize.query('SELECT * FROM promotions WHERE id = ? FOR UPDATE', {
+      replacements: [promotionId], transaction: t, type: sequelize.QueryTypes.SELECT,
+    });
+    if (!promo) throw new RedemptionError('PROMOTION_NOT_FOUND', 'Promotion not found');
+    const live = promo.status === 'active'
+      && (!promo.startDate || new Date(promo.startDate) <= now)
+      && (!promo.endDate || new Date(promo.endDate) >= now);
+    if (!live) throw new RedemptionError('PROMOTION_NOT_ACTIVE', 'This offer is no longer available');
+    if (promo.campaignId) {
+      const [camp] = await sequelize.query('SELECT status, budgetMinor, usedBudgetMinor FROM campaigns WHERE id = ?', {
+        replacements: [promo.campaignId], transaction: t, type: sequelize.QueryTypes.SELECT,
+      });
+      if (camp && ['paused', 'completed', 'archived'].includes(camp.status)) {
+        throw new RedemptionError('PROMOTION_NOT_ACTIVE', 'This offer is no longer available');
+      }
+      if (camp && camp.budgetMinor != null && Number(camp.usedBudgetMinor || 0) >= Number(camp.budgetMinor)) {
+        throw new RedemptionError('PROMOTION_BUDGET_EXHAUSTED', 'This offer is no longer available');
+      }
+    }
 
-    // Create reservation
+    if (promo.globalUsageLimit != null && (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0) >= promo.globalUsageLimit) {
+      throw new RedemptionError('PROMOTION_USAGE_EXHAUSTED', 'This offer has been fully redeemed');
+    }
+
+    if (customerId && (promo.perCustomerLimit != null || promo.perDayLimit != null || promo.perWeekLimit != null)) {
+      const mine = await Redemption.findAll({
+        where: { promotionId, customerId, ...activeEntitlementWhere(now) },
+        attributes: ['reservedAt', 'committedAt', 'createdAt'],
+        transaction: t,
+      });
+      const age = (r) => now.getTime() - new Date(r.committedAt || r.reservedAt || r.createdAt).getTime();
+      if (promo.perCustomerLimit != null && mine.length >= promo.perCustomerLimit) {
+        throw new RedemptionError('PROMOTION_PER_CUSTOMER_LIMIT', 'You have already used this offer');
+      }
+      if (promo.perDayLimit != null && mine.filter((r) => age(r) < DAY_MS).length >= promo.perDayLimit) {
+        throw new RedemptionError('PROMOTION_DAILY_LIMIT', 'Daily limit for this offer reached');
+      }
+      if (promo.perWeekLimit != null && mine.filter((r) => age(r) < 7 * DAY_MS).length >= promo.perWeekLimit) {
+        throw new RedemptionError('PROMOTION_WEEKLY_LIMIT', 'Weekly limit for this offer reached');
+      }
+    }
+
+    let couponCodeId = null;
+    let normalizedCode = null;
+    if (couponCode != null && String(couponCode).trim()) {
+      normalizedCode = String(couponCode).trim().toUpperCase();
+      const [cc] = await sequelize.query('SELECT * FROM coupon_codes WHERE code = ? AND promotionId = ? FOR UPDATE', {
+        replacements: [normalizedCode, promotionId], transaction: t, type: sequelize.QueryTypes.SELECT,
+      });
+      if (!cc || !cc.isActive) throw new RedemptionError('COUPON_INVALID', 'Coupon code is not valid for this offer');
+      if (cc.activationDate && new Date(cc.activationDate) > now) throw new RedemptionError('COUPON_INVALID', 'Coupon is not active yet');
+      if (cc.expiryDate && new Date(cc.expiryDate) < now) throw new RedemptionError('COUPON_EXPIRED', 'Coupon has expired');
+      if (cc.codeType === 'customer_bound' && cc.customerId && Number(cc.customerId) !== Number(customerId)) {
+        throw new RedemptionError('COUPON_NOT_YOUR_CODE', 'This coupon is assigned to another customer');
+      }
+      if (cc.usageLimit != null) {
+        const reserved = await Redemption.count({
+          where: { couponCodeId: cc.id, status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now } },
+          transaction: t,
+        });
+        if ((cc.usedCount || 0) + reserved >= cc.usageLimit) {
+          throw new RedemptionError('COUPON_USAGE_EXHAUSTED', 'Coupon has been fully redeemed');
+        }
+      }
+      if (cc.perCustomerLimit != null && customerId) {
+        const mine = await Redemption.count({
+          where: { couponCodeId: cc.id, customerId, ...activeEntitlementWhere(now) },
+          transaction: t,
+        });
+        if (mine >= cc.perCustomerLimit) throw new RedemptionError('COUPON_ALREADY_USED', 'You have already used this coupon');
+      }
+      couponCodeId = cc.id;
+    } else if (promo.activationType === 'coupon_required') {
+      throw new RedemptionError('COUPON_INVALID', 'A coupon code is required for this offer');
+    }
+
     const redemption = await Redemption.create({
       promotionId,
       promotionVersionId: promo.currentVersionId || null,
       couponCodeId,
-      couponCode: couponCode || null,
+      couponCode: normalizedCode,
       customerId,
       status: 'RESERVED',
-      discountAmount: discountAmount || null,
+      discountAmount: discountAmount != null ? money(discountAmount) : null,
       currency: promo.currency || 'GBP',
       zoneId: zoneId || null,
       idempotencyKey: idempotencyKey || null,
       reservedAt: now,
-      reservationExpiresAt: expiresAt,
+      reservationExpiresAt: new Date(now.getTime() + RESERVATION_TTL_MINUTES * 60 * 1000),
     }, { transaction: t });
 
-    // Increment reserved counter
-    await sequelize.query(
-      'UPDATE promotions SET globalReservedCount = globalReservedCount + 1 WHERE id = ?',
-      { replacements: [promotionId], transaction: t }
-    );
+    await sequelize.query('UPDATE promotions SET globalReservedCount = globalReservedCount + 1 WHERE id = ?', {
+      replacements: [promotionId], transaction: t,
+    });
 
-    await t.commit();
     return redemption;
-  } catch (err) {
-    if (t.finished !== 'commit') await t.rollback();
-    throw err;
-  }
+  }, transaction);
 }
 
 // ─── Commit ─────────────────────────────────────────────────────────────────
 
 /**
  * Commit a reservation after successful payment/order creation.
+ * Works until the cleanup job releases the reservation (it still holds its counter until then).
  *
  * @param {number} redemptionId
  * @param {number} bookingId
  * @param {number} finalDiscountAmount — actual discount applied
+ * @param {object} [transaction]
  */
-async function commitRedemption(redemptionId, bookingId, finalDiscountAmount) {
-  const t = await sequelize.transaction();
-  try {
+async function commitRedemption(redemptionId, bookingId, finalDiscountAmount, transaction) {
+  return inTransaction(async (t) => {
     const redemption = await Redemption.findByPk(redemptionId, { transaction: t, lock: t.LOCK.UPDATE });
-    if (!redemption) throw new Error('Redemption not found');
-    if (redemption.status !== 'RESERVED') throw new Error(`Cannot commit from status "${redemption.status}"`);
+    if (!redemption) throw new RedemptionError('REDEMPTION_NOT_FOUND');
+    if (redemption.status === 'COMMITTED' && (bookingId == null || Number(redemption.bookingId) === Number(bookingId))) {
+      return redemption; // idempotent retry
+    }
+    if (redemption.status !== 'RESERVED') throw new RedemptionError('REDEMPTION_INVALID_STATE', `Cannot commit from status "${redemption.status}"`);
 
     await redemption.update({
       status: 'COMMITTED',
-      bookingId,
-      discountAmount: finalDiscountAmount || redemption.discountAmount,
+      bookingId: bookingId ?? redemption.bookingId,
+      discountAmount: finalDiscountAmount != null ? money(finalDiscountAmount) : redemption.discountAmount,
       committedAt: new Date(),
     }, { transaction: t });
 
-    // Move from reserved to used
     await sequelize.query(
       'UPDATE promotions SET globalReservedCount = GREATEST(0, globalReservedCount - 1), globalUsedCount = globalUsedCount + 1 WHERE id = ?',
       { replacements: [redemption.promotionId], transaction: t }
     );
-
-    // Increment coupon used count
+    await adjustCampaignBudget(redemption.promotionId, redemption.discountAmount, t);
     if (redemption.couponCodeId) {
-      await sequelize.query(
-        'UPDATE coupon_codes SET usedCount = usedCount + 1 WHERE id = ?',
-        { replacements: [redemption.couponCodeId], transaction: t }
-      );
+      await sequelize.query('UPDATE coupon_codes SET usedCount = usedCount + 1 WHERE id = ?', {
+        replacements: [redemption.couponCodeId], transaction: t,
+      });
     }
-
-    await t.commit();
-    return redemption.reload();
-  } catch (err) {
-    if (t.finished !== 'commit') await t.rollback();
-    throw err;
-  }
+    return redemption.reload({ transaction: t });
+  }, transaction);
 }
 
 // ─── Release (timeout / abandoned checkout) ─────────────────────────────────
 
-async function releaseRedemption(redemptionId, reason) {
-  const t = await sequelize.transaction();
-  try {
+async function releaseRedemption(redemptionId, reason, transaction) {
+  return inTransaction(async (t) => {
     const redemption = await Redemption.findByPk(redemptionId, { transaction: t, lock: t.LOCK.UPDATE });
-    if (!redemption) throw new Error('Redemption not found');
-    if (redemption.status !== 'RESERVED') throw new Error(`Cannot release from status "${redemption.status}"`);
+    if (!redemption) throw new RedemptionError('REDEMPTION_NOT_FOUND');
+    if (redemption.status === 'RELEASED') return redemption;
+    if (redemption.status !== 'RESERVED') throw new RedemptionError('REDEMPTION_INVALID_STATE', `Cannot release from status "${redemption.status}"`);
 
-    await redemption.update({
-      status: 'RELEASED',
-      releasedAt: new Date(),
-      reason: reason || 'Released',
-    }, { transaction: t });
-
-    await sequelize.query(
-      'UPDATE promotions SET globalReservedCount = GREATEST(0, globalReservedCount - 1) WHERE id = ?',
-      { replacements: [redemption.promotionId], transaction: t }
-    );
-
-    await t.commit();
-    return redemption.reload();
-  } catch (err) {
-    if (t.finished !== 'commit') await t.rollback();
-    throw err;
-  }
+    await redemption.update({ status: 'RELEASED', releasedAt: new Date(), reason: reason || 'Released' }, { transaction: t });
+    await sequelize.query('UPDATE promotions SET globalReservedCount = GREATEST(0, globalReservedCount - 1) WHERE id = ?', {
+      replacements: [redemption.promotionId], transaction: t,
+    });
+    return redemption.reload({ transaction: t });
+  }, transaction);
 }
 
 // ─── Reverse (refund / cancellation) ────────────────────────────────────────
 
-async function reverseRedemption(redemptionId, reason) {
-  const t = await sequelize.transaction();
-  try {
+async function reverseRedemption(redemptionId, reason, transaction) {
+  return inTransaction(async (t) => {
     const redemption = await Redemption.findByPk(redemptionId, { transaction: t, lock: t.LOCK.UPDATE });
-    if (!redemption) throw new Error('Redemption not found');
-    if (redemption.status !== 'COMMITTED') throw new Error(`Cannot reverse from status "${redemption.status}"`);
+    if (!redemption) throw new RedemptionError('REDEMPTION_NOT_FOUND');
+    if (redemption.status === 'REVERSED') return redemption;
+    if (redemption.status !== 'COMMITTED') throw new RedemptionError('REDEMPTION_INVALID_STATE', `Cannot reverse from status "${redemption.status}"`);
 
-    await redemption.update({
-      status: 'REVERSED',
-      reversedAt: new Date(),
-      reason: reason || 'Reversed',
-    }, { transaction: t });
-
-    // Decrement usage
-    await sequelize.query(
-      'UPDATE promotions SET globalUsedCount = GREATEST(0, globalUsedCount - 1) WHERE id = ?',
-      { replacements: [redemption.promotionId], transaction: t }
-    );
-
-    // Decrement coupon count
+    await redemption.update({ status: 'REVERSED', reversedAt: new Date(), reason: reason || 'Reversed' }, { transaction: t });
+    await sequelize.query('UPDATE promotions SET globalUsedCount = GREATEST(0, globalUsedCount - 1) WHERE id = ?', {
+      replacements: [redemption.promotionId], transaction: t,
+    });
+    await adjustCampaignBudget(redemption.promotionId, -Number(redemption.discountAmount || 0), t);
     if (redemption.couponCodeId) {
-      await sequelize.query(
-        'UPDATE coupon_codes SET usedCount = GREATEST(0, usedCount - 1) WHERE id = ?',
-        { replacements: [redemption.couponCodeId], transaction: t }
+      await sequelize.query('UPDATE coupon_codes SET usedCount = GREATEST(0, usedCount - 1) WHERE id = ?', {
+        replacements: [redemption.couponCodeId], transaction: t,
+      });
+    }
+    if (redemption.bookingId) {
+      await OrderAdjustment.update(
+        { reversedAt: new Date(), reversalReason: reason || 'Reversed' },
+        { where: { bookingId: redemption.bookingId, promotionId: redemption.promotionId, reversedAt: null }, transaction: t }
       );
     }
-
-    await t.commit();
-    return redemption.reload();
-  } catch (err) {
-    if (t.finished !== 'commit') await t.rollback();
-    throw err;
-  }
+    return redemption.reload({ transaction: t });
+  }, transaction);
 }
 
 // ─── Cleanup expired reservations ───────────────────────────────────────────
 
-async function cleanupExpiredReservations() {
-  const now = new Date();
+async function cleanupExpiredReservations({ limit = 500 } = {}) {
   const expired = await Redemption.findAll({
-    where: {
-      status: 'RESERVED',
-      reservationExpiresAt: { [Op.lt]: now },
-    },
+    where: { status: 'RESERVED', reservationExpiresAt: { [Op.lt]: new Date() } },
+    attributes: ['id'],
+    limit,
   });
 
   let cleaned = 0;
@@ -269,43 +278,10 @@ async function cleanupExpiredReservations() {
       console.warn(`[RedemptionCleanup] Failed to release ${r.id}:`, err.message);
     }
   }
-
   return { cleaned, total: expired.length };
 }
 
-// ─── Create order adjustments from engine result ────────────────────────────
-
-/**
- * Write adjustments to the order_adjustments table after promotion evaluation.
- *
- * @param {number} bookingId
- * @param {Array} appliedPromotions — from promotionEngine.evaluatePromotions().applied
- * @returns {Array} created adjustment rows
- */
-async function writeOrderAdjustments(bookingId, appliedPromotions) {
-  const rows = [];
-  for (const promo of appliedPromotions) {
-    for (const adj of promo.adjustments) {
-      const row = await OrderAdjustment.create({
-        bookingId,
-        adjustmentClass: classifyAdjustment(promo.benefitType, adj.lineType),
-        promotionId: promo.promotionId,
-        promotionVersionId: null,
-        couponCode: promo.couponCode || null,
-        lineType: adj.lineType || 'basket',
-        lineItemId: adj.lineItemId || null,
-        lineDescription: adj.lineDescription || null,
-        amount: money(adj.amount),
-        currency: 'GBP',
-        label: adj.label || promo.promotionName,
-        description: adj.description || null,
-        appliedBy: 'system',
-      });
-      rows.push(row);
-    }
-  }
-  return rows;
-}
+// ─── Order adjustments ──────────────────────────────────────────────────────
 
 function classifyAdjustment(benefitType, lineType) {
   if (lineType === 'delivery') return 'DELIVERY_PROMOTION';
@@ -313,7 +289,55 @@ function classifyAdjustment(benefitType, lineType) {
   return 'BASKET_PROMOTION';
 }
 
+/**
+ * Persist the engine's adjustments for a booking. Idempotent: system-applied
+ * promotion adjustments already stored for the booking are replaced, so a retry
+ * or a re-price never duplicates rows.
+ *
+ * @param {number} bookingId
+ * @param {Array} appliedPromotions — evaluatePromotions().applied
+ * @param {{ currency?: string, transaction?: object }} [options]
+ */
+async function writeOrderAdjustments(bookingId, appliedPromotions, options = {}) {
+  return inTransaction(async (t) => {
+    await OrderAdjustment.destroy({
+      where: {
+        bookingId,
+        appliedBy: 'system',
+        adjustmentClass: ['ITEM_PROMOTION', 'BASKET_PROMOTION', 'DELIVERY_PROMOTION'],
+        reversedAt: null,
+      },
+      transaction: t,
+    });
+    const rows = [];
+    for (const promo of appliedPromotions) {
+      for (const adj of promo.adjustments) {
+        if (!adj.amountMinor && !adj.amount) continue; // cashback rows carry no order amount
+        rows.push(await OrderAdjustment.create({
+          bookingId,
+          adjustmentClass: classifyAdjustment(promo.benefitType, adj.lineType),
+          promotionId: promo.promotionId,
+          promotionVersionId: promo.promotionVersionId || null,
+          couponCodeId: promo.couponCodeId || null,
+          couponCode: promo.couponCode || null,
+          lineType: adj.lineType || 'basket',
+          lineItemId: adj.lineItemId || null,
+          lineDescription: adj.lineDescription || null,
+          amount: money(adj.amountMinor != null ? adj.amountMinor / 100 : adj.amount),
+          currency: options.currency || 'GBP',
+          label: adj.label || promo.promotionName,
+          description: adj.description || null,
+          appliedBy: 'system',
+        }, { transaction: t }));
+      }
+    }
+    return rows;
+  }, options.transaction);
+}
+
 module.exports = {
+  RedemptionError,
+  RESERVATION_TTL_MINUTES,
   reserveRedemption,
   commitRedemption,
   releaseRedemption,
