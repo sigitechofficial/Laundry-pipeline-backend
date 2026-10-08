@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4, 5, 6. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phases 0-7 and the local end-to-end test (8.1). Left: stage + production rollout (8.2, 8.3). Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -70,12 +70,16 @@ Decision (2026-10-08): no migration; legacy is removed and only Promotions + Cam
 - [x] 6.4 Banners can link a promotion: badge follows it and the banner only shows while it can apply (migration 20261009100000).
 
 ### Phase 7: Client apps (additive, need releases)
-- [ ] 7.1 Website checkout shows the promotion properly (today it forces the estimate to 0); check `utilities/URL.js` points at production before deploy.
-- [ ] 7.2 Customer app: promotion names on the invoice (new optional field).
-- [ ] 7.3 Agent app: use `orderSummary.discount`; refresh the discount after adding services.
+Each app is on its own local branch `promotions-checkout` (not pushed). Old installed apps keep working: every backend change is additive.
+- [x] 7.1 Website: "Offers on this order" at checkout, offer label after applying a code, Promotions section + struck-through item prices on the order detail. `next build` passes. `utilities/URL.js` still points at localhost locally: check before deploy.
+- [x] 7.2 Customer app: "Offers for you" on home, banner badge from the promotion, "Offers on this order" on the order summary, offer label on the coupon card, Promotions card + struck-through prices on booking detail and the receipt. `flutter analyze`: no new issues.
+- [x] 7.3 Agent app: discount kept in sync with `orderSummary.discount` (also right after adding services), Promotions card with per-item original → after on the create-invoice screen. `flutter analyze`: no new issues; 3 new model tests.
+- [x] 7.4 Backend sends `promotionSummary` on the agent invoice, draft get/save/update responses and the customer booking detail.
 
 ### Phase 8: Rollout
-- [ ] Stage first, then production with the flag on for one zone, then all zones. Rollback = flag off.
+- [x] 8.1 `npm run test:promotions-e2e`: real HTTP flow on a local stack (offers → code → cash booking → holds → shop adds services → discount on the invoice → cash collected → committed → admin report), 16/16 with the flag on. `npm run test:promotions-api` passes with the flag on and off.
+- [ ] 8.2 Stage: deploy the branches, run the e2e test against stage, test the apps on real devices (card payment too).
+- [ ] 8.3 Production: deploy with the flag off; turn it on for one zone; watch; then all zones. Rollback = flag off.
 
 ## Test gates (every phase)
 - `npm test` and `npm run test:promotions-api` green, plus new end-to-end scenarios: booking → invoice → pay → cancel/refund, with the flag on and off (flag off must match today's numbers exactly).

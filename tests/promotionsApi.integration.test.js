@@ -427,8 +427,15 @@ async function main() {
       delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
       check('booking', 'flag off: code stays on the legacy path', (await bps.usesPromotionCode(code, 1)) === false);
       check('booking', 'flag off: nothing is held', (await bps.attachAtBooking({ bookingId: open.id, customerId: open.customerId, zoneId: 1, couponCode: code, paymentType: 'card' })).reserved.length === 0);
+      // The backend reads the same .env, so its flag is what this process started with.
+      const { isPromotionsCheckoutEnabled } = require('../services/promotions/checkoutFlag');
+      const serverOn = isPromotionsCheckoutEnabled(1, { PROMOTIONS_CHECKOUT_ENABLED: flagBefore.on, PROMOTIONS_CHECKOUT_ZONE_IDS: flagBefore.zones });
       const legacyApi = await cust('POST', '/applyCoupon', { code, zoneId: 1 });
-      check('booking', 'flag off on the server: applyCoupon answers like today (legacy)', legacyApi.status !== 200, `${legacyApi.status} ${legacyApi.json?.message || ''}`);
+      if (serverOn) {
+        check('booking', 'server flag on: applyCoupon accepts the Promotions code', legacyApi.status === 200 && legacyApi.json?.data?.code === code, `${legacyApi.status}`);
+      } else {
+        check('booking', 'server flag off: applyCoupon answers like today (legacy)', legacyApi.status !== 200, `${legacyApi.status} ${legacyApi.json?.message || ''}`);
+      }
 
       process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
       process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = '1';

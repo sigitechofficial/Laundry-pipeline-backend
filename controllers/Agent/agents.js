@@ -4764,6 +4764,8 @@ exports.invoiceCreation = async (req, res) => {
         servicesSubtotal: responseServicesSubtotal,
         totalItems: bookingData.totalItems,
         paymentSummary: responsePaymentSummary,
+        // Optional (older apps ignore it): promotions on this invoice, per item original → after.
+        promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
         remainingTime,
         customerHasResponded,
         amountDueNow: paymentSummaryWithFlags.amountDueNow,

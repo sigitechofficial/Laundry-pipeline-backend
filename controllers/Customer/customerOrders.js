@@ -1033,6 +1033,8 @@ async function applyCoupon(req, res) {
         zoneScope: result.zoneScope,
         zoneIds: result.zoneIds,
         customerMessage: result.customerMessage,
+        // Promotions code only (new optional field): ready badge text, e.g. "20% OFF (up to £10.00)".
+        offerLabel: result.offerLabel,
     });
 }
 

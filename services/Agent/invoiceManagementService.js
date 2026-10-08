@@ -843,6 +843,7 @@ class AgentInvoiceManagementService {
             agentEarning: totals.finalAgentEarningAmount,
             agentCommissionPercent: totals.agentCommissionPercent,
             paymentSummary: totals.paymentSummary,
+            promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
         };
     }
 
@@ -923,6 +924,7 @@ class AgentInvoiceManagementService {
             subTotal: totals.subTotal,
             total: totals.total,
             paymentSummary: totals.paymentSummary,
+            promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
         };
     }
 
