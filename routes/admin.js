@@ -1091,7 +1091,13 @@ router.get('/campaigns', asyncMiddleware(campaignController.list));
 router.get('/campaigns/:id', asyncMiddleware(campaignController.getById));
 router.post('/campaigns', asyncMiddleware(campaignController.create));
 router.put('/campaigns/:id', asyncMiddleware(campaignController.update));
+router.get('/campaigns/:id/report', asyncMiddleware(campaignController.report));
 router.delete('/campaigns/:id', asyncMiddleware(campaignController.remove));
+
+// Promotions on one order (order management permission): view, and remove from an unpaid order.
+const orderPromotionController = require('../controllers/Admin/orderPromotionController');
+router.get('/orderPromotions/:bookingId', asyncMiddleware(orderPromotionController.get));
+router.post('/orderPromotions/:bookingId/remove/:promotionId', asyncMiddleware(orderPromotionController.remove));
 
 //!-----------------------------------Enterprise Promotions------------------------------------>>>>
 router.get('/promotions', asyncMiddleware(promotionController.list));

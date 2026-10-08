@@ -17,10 +17,11 @@ const {
   booking: Booking,
   promotionRedemption: Redemption,
   orderAdjustment: OrderAdjustment,
+  promotionAuditLog: AuditLog,
   customerSelectedService: CustomerSelectedService,
   customerSelectedServiceAddOn: CustomerSelectedServiceAddOn,
 } = require('../../models');
-const { ValidationError } = require('../../middlewares/universalErrorHandler');
+const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { CUSTOMER_RESERVE_MESSAGE } = require('../../utils/couponDiscount');
 const { normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { isPromotionsCheckoutEnabled } = require('./checkoutFlag');
@@ -362,7 +363,35 @@ async function settleClosedBookings({ limit = 200 } = {}) {
   return { settled, reversed };
 }
 
+// ─── Admin (Phase 5) ────────────────────────────────────────────────────────
+
+/**
+ * Admin takes a promotion off an unpaid order: its hold is released, the invoice is
+ * re-priced on the next pricing, and the action is audited. A paid order cannot lose a
+ * promotion this way: the money has moved, so it needs a refund.
+ */
+async function removeFromBooking(bookingId, promotionId, { actorId = null, reason = '' } = {}) {
+  const rows = await Redemption.findAll({ where: { bookingId, promotionId, status: ['RESERVED', 'COMMITTED'] } });
+  if (!rows.length) throw new NotFoundError('This promotion is not on this order');
+  if (rows.some((r) => r.status === 'COMMITTED')) {
+    throw new ValidationError('This order is already paid. Issue a refund instead of removing the promotion.');
+  }
+  const why = String(reason || '').trim().slice(0, 400) || 'Removed by admin';
+  for (const r of rows) await ledger.releaseRedemption(r.id, `Removed by admin: ${why}`);
+  await AuditLog.create({
+    entityType: 'redemption',
+    entityId: rows[0].id,
+    action: 'removed_from_order',
+    actorId,
+    actorType: 'admin',
+    reason: why,
+    newValue: { bookingId: Number(bookingId), promotionId: Number(promotionId) },
+  }).catch((err) => console.error('[promotions] audit write failed', err.message));
+  return { removed: rows.length };
+}
+
 module.exports = {
+  removeFromBooking,
   isPromotionCode,
   usesPromotionCode,
   validateCodeForCheckout,

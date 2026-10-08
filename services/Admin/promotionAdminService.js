@@ -600,7 +600,7 @@ async function clonePromotion(id, adminUserId, scope) {
 
 // ─── Analytics (basic) ──────────────────────────────────────────────────────
 
-async function getPromotionAnalytics(id, scope) {
+async function getPromotionAnalytics(id, scope, query = {}) {
   const { promotionRedemption: Redemption } = require('../../models');
   const promo = await Promotion.findByPk(id);
   if (!promo) throw new NotFoundError('Promotion not found');
@@ -630,6 +630,12 @@ async function getPromotionAnalytics(id, scope) {
     uniqueCustomers,
     globalUsedCount: promo.globalUsedCount,
     globalUsageLimit: promo.globalUsageLimit,
+    // Full report (Phase 5): by zone / day / code, recent uses, refunds, holds.
+    report: await require('../promotions/promotionReportService').promotionReport(id, {
+      from: query.from,
+      to: query.to,
+      restrictedZoneId: restrictedZoneOf(scope),
+    }),
   };
 }
 

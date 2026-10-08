@@ -61,6 +61,7 @@ const ROUTE_FEATURE_PREFIXES = [
     ['/completeOrders', K.ORDER_MANAGEMENT],
     ['/getOnHoldBookings', K.ORDER_MANAGEMENT],
     ['/getOrderForEdit', K.ORDER_MANAGEMENT],
+    ['/orderPromotions', K.ORDER_MANAGEMENT],
     ['/editOrder', K.ORDER_MANAGEMENT],
     ['/deleteOrder', K.ORDER_MANAGEMENT],
     ['/updateInvoice', K.ORDER_MANAGEMENT],

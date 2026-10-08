@@ -624,6 +624,59 @@ async function main() {
     if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
     if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
   }
+
+  // ── Admin reports and order promotions (Phase 5) ──
+  {
+    const camp = await models.campaign.create({ name: `${PREFIX} report campaign`, budgetMinor: 5000, status: 'active' });
+    try {
+      const promo = await mk({ name: 'report zone 1', benefitType: 'basket_discount', discountValue: 10, perCustomerLimit: null, zoneScopeMode: 'selected', zoneIds: [1], campaignId: camp.id, activationType: 'coupon_required', couponCodes: [{ code: `${CODE_PREFIX}RPT` }] });
+      const paid = async (customerId, zoneId, amount) => {
+        const r = await ledger.reserveRedemption({ promotionId: promo.id, customerId, zoneId, couponCode: `${CODE_PREFIX}RPT` });
+        await ledger.commitRedemption(r.id, null, amount);
+        return r;
+      };
+      await paid(7001, 1, 4);
+      await paid(7002, 1, 6);
+      await paid(7002, 2, 5); // a zone-2 row (only possible via direct ledger use; proves staff filtering)
+      const refunded = await paid(7003, 1, 3);
+      await ledger.reverseRedemption(refunded.id, 'test refund');
+
+      const rep = (await admin('GET', `/promotions/${promo.id}/analytics`)).json?.data?.report;
+      check('report', 'promotion report: paid uses, total, customers (refund excluded)', rep && rep.summary.uses === 3 && rep.summary.totalDiscount === 15 && rep.summary.uniqueCustomers === 2 && rep.summary.refunded === 1 && rep.summary.refundedDiscount === 3, JSON.stringify(rep?.summary));
+      check('report', 'promotion report: by zone and by code', rep && rep.byZone.length === 2 && rep.byZone[0].discount === 10 && rep.byCode[0]?.code === `${CODE_PREFIX}RPT` && rep.byCode[0].uses === 3, JSON.stringify(rep?.byZone));
+      check('report', 'promotion report: 30-day daily series with today filled', rep && rep.byDay.length >= 30 && rep.byDay[rep.byDay.length - 1].uses === 3, `${rep?.byDay?.length} days`);
+      check('report', 'promotion report: recent uses listed', rep && rep.recent.length === 3);
+      const staffRep = (await admin('GET', `/promotions/${promo.id}/analytics`, null, 'staff')).json?.data?.report;
+      check('report', 'zone staff see only their zone in the report', staffRep && staffRep.summary.uses === 2 && staffRep.summary.totalDiscount === 10 && staffRep.byZone.every((z) => z.zoneId === 1), JSON.stringify(staffRep?.summary));
+
+      const cr = (await admin('GET', `/campaigns/${camp.id}/report`)).json?.data;
+      check('report', 'campaign report: budget £50, spent £15, remaining £35', cr && cr.budget.budget === 50 && cr.budget.spent === 15 && cr.budget.remaining === 35 && cr.budget.percentUsed === 30, JSON.stringify(cr?.budget));
+      check('report', 'campaign report: per-promotion share', cr && cr.promotions.length === 1 && cr.promotions[0].uses === 3 && cr.promotions[0].discount === 15);
+
+      // Order promotions: view + remove from an unpaid order; a paid one cannot lose it
+      const ord = await models.booking.findOne({ where: { zoneId: 1, bookingStatusId: { [Op.notIn]: [19, 21] } }, attributes: ['id'], order: [['id', 'DESC']] });
+      const other = await models.booking.findOne({ where: { zoneId: { [Op.ne]: 1 } }, attributes: ['id'] });
+      const auto = await mk({ name: 'order remove test', benefitType: 'basket_discount', discountValue: 5, perCustomerLimit: null });
+      const hold = await ledger.reserveRedemption({ promotionId: auto.id, customerId: 7100, zoneId: 1, bookingId: ord.id, idempotencyKey: ledger.bookingReservationKey(ord.id, auto.id) });
+      const view = (await admin('GET', `/orderPromotions/${ord.id}`)).json?.data;
+      check('report', 'order promotions shows the hold in the ledger', view && view.ledger.some((l) => l.id === hold.id && l.status === 'RESERVED' && l.name.includes('order remove test')));
+      const rm = await admin('POST', `/orderPromotions/${ord.id}/remove/${auto.id}`, { reason: 'customer asked' });
+      check('report', 'admin removes a promotion from an unpaid order', rm.status === 200 && (await models.promotionRedemption.findByPk(hold.id)).status === 'RELEASED', `${rm.status} ${rm.json?.message || ''}`);
+      check('report', 'removal is audited', (await models.promotionAuditLog.count({ where: { entityType: 'redemption', entityId: hold.id, action: 'removed_from_order' } })) === 1);
+      check('report', 'removing again → 404', (await admin('POST', `/orderPromotions/${ord.id}/remove/${auto.id}`, {})).status === 404);
+      const paidHold = await ledger.reserveRedemption({ promotionId: auto.id, customerId: 7100, zoneId: 1, bookingId: ord.id, idempotencyKey: ledger.bookingReservationKey(ord.id, auto.id) });
+      await ledger.commitRedemption(paidHold.id, ord.id, 2);
+      const rmPaid = await admin('POST', `/orderPromotions/${ord.id}/remove/${auto.id}`, {});
+      check('report', 'paid order: removal refused (refund instead)', rmPaid.status === 400 && /refund/i.test(rmPaid.json?.message || ''), `${rmPaid.status} ${rmPaid.json?.message || ''}`);
+      await ledger.reverseRedemption(paidHold.id, 'test cleanup');
+      check('report', 'zone staff cannot open another zone\'s order promotions', other ? (await admin('GET', `/orderPromotions/${other.id}`, null, 'staff')).status === 404 : true);
+      check('report', 'zone staff can open their own zone\'s order', (await admin('GET', `/orderPromotions/${ord.id}`, null, 'staff')).status === 200);
+    } finally {
+      await archiveTestPromotions();
+      await models.promotion.update({ campaignId: null }, { where: { campaignId: camp.id } });
+      await models.campaign.destroy({ where: { id: camp.id } });
+    }
+  }
 }
 
 main()
