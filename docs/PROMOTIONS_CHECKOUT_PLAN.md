@@ -1,0 +1,73 @@
+# Promotions → checkout & invoice: implementation plan
+
+Status: in progress (started 2026-10-08). Each phase ships on its own, behind a flag, with tests.
+
+## Decisions (business, 2026-10-08)
+
+| Topic | Decision |
+|---|---|
+| Free Delivery / Delivery Discount | Keep. They apply to a **delivery fee only**. There is no delivery fee today (home config says "Free 24h"), so they save £0 until one exists. They must never touch the zone **service fee** (`zone.serviceCharge`). |
+| Service-fee promotions | Not now. |
+| Discount larger than what is still owed | Cap at the balance still payable after the prepaid amount. No refunds. The capped amount is what is recorded and charged to the budget. |
+| Legacy systems | Coupons (Legacy) and Service Discounts (Legacy) will be removed and replaced by Promotions. |
+| Stacking | Platform discounts on services (automatic promotions) **and** one customer code apply together, following the engine's stacking rules. |
+| Who pays for the discount | The platform. Shop/agent commission stays on gross laundry (unchanged). |
+
+## Facts the design relies on
+
+- Customers book services and bags/items without prices; the laundry total is only known when the shop builds the invoice. So money is calculated **at invoice**, eligibility is checked **at booking**.
+- Single choke point today: `invoiceManagementService.calculateInvoiceTotals` (~:602) and `getInvoiceDraft` (~:949) call `couponService.resolveBookingDiscount` and store `billingDetails.discount`.
+- `utils/invoicePaymentSummary.js:79`: `amountDueNow = max(0, total − paid − discount)`. The agent app charges/collects `amountDueNow`.
+- All clients (customer app, website, agent app) already display `billingDetail.discount` / `paymentSummary.orderSummary.discount`. No client has a force update, so **every change must be additive** and keep field names and types (agent app parses `billingDetail.*` as strings).
+- Prepaid (minimum + service fee + tip) is held at booking and captured at "On the Way". The balance is charged off-session (`invoiceAutoChargeService`) or collected as cash.
+- Booking, invoice and payment code use no DB transactions; the promotions ledger has its own.
+- Reservations currently expire after 15 minutes (`RESERVATION_TTL_MINUTES`), which is too short for booking → invoice (days).
+
+## Phases
+
+### Phase 0: Safety rails
+- [ ] 0.1 Flag `PROMOTIONS_CHECKOUT_ENABLED` + optional `PROMOTIONS_CHECKOUT_ZONE_IDS` allowlist. Off = today's behaviour exactly.
+- [ ] 0.2 Delivery fee source: engine context uses a delivery fee of £0 (none exists), not `zone.serviceCharge`.
+- [ ] 0.3 Admin: warn that delivery fee is £0 on delivery promotions; hide Cashback until a wallet payout exists.
+
+### Phase 1: Booking-held reservations (ledger)
+- [ ] 1.1 Reservations attached to a booking do not expire after 15 minutes; they end by commit, release (cancel) or reverse (refund).
+- [ ] 1.2 Idempotency key `booking-{id}-promo-{promotionId}` so retries never double-reserve.
+
+### Phase 2: Booking stage
+- [ ] 2.1 One code box: `POST /customer/applyCoupon` and `createBooking.couponCode` accept promotion codes too, with the same response shape (`data.code` always set).
+- [ ] 2.2 `createBooking`: after the booking row, reserve the coded promotion and customer-level-eligible automatic promotions; store a booking-time snapshot (collection day, booking time, payment method). A promotions error never blocks a booking; an invalid code is reported like today.
+- [ ] 2.3 Release on Stripe hold failure / status 19 at booking.
+- [ ] 2.4 Recurring: automatic promotions only, re-checked per generated booking. Reschedule keeps reservations.
+
+### Phase 3: Invoice stage (money)
+- [ ] 3.1 New `resolveBookingDiscount` = legacy coupon (existing redemptions) + promotions priced on the real invoice lines. Writes `order_adjustments` (idempotent) and the combined `billingDetails.discount` (string).
+- [ ] 3.2 Cap to the payable balance (decision above).
+- [ ] 3.3 Freeze once paid: no re-pricing after the balance is charged/collected.
+- [ ] 3.4 `agentUpdateInvoice` (on-hold removal) re-resolves instead of forcing discount 0.
+
+### Phase 4: Payment and lifecycle
+- [ ] 4.1 Commit redemptions with final amounts on payment success (card charge, cash recorded, nothing due); campaign budget moves then.
+- [ ] 4.2 Release on every cancel path (customer 19, agent 13, no-show 19, on-hold 19, admin status change); reverse on full refund (21).
+- [ ] 4.3 Fix cash fallback `resolveCashCollectedAmount` using gross instead of net-of-discount.
+
+### Phase 5: Admin and reports
+- [ ] 5.1 Order detail shows promotion lines.
+- [ ] 5.2 Promotion report: uses, unique customers, total discount, by zone, by day.
+- [ ] 5.3 Campaign report: budget, spent, remaining, per promotion.
+
+### Phase 6: Remove legacy
+- [ ] 6.1 Migrate legacy coupons to promotions (codes, limits, dates, zones, used counts).
+- [ ] 6.2 Migrate legacy service-discount rules to automatic item/category/service promotions; catalog prices keep `hasDiscount` / `originalPrice` / `saving` from promotions so apps look the same.
+- [ ] 6.3 Legacy pages read-only, then hidden; bookings already holding a legacy coupon are still honoured.
+
+### Phase 7: Client apps (additive, need releases)
+- [ ] 7.1 Website checkout shows the promotion properly (today it forces the estimate to 0); check `utilities/URL.js` points at production before deploy.
+- [ ] 7.2 Customer app: promotion names on the invoice (new optional field).
+- [ ] 7.3 Agent app: use `orderSummary.discount`; refresh the discount after adding services.
+
+### Phase 8: Rollout
+- [ ] Stage first, then production with the flag on for one zone, then all zones. Rollback = flag off.
+
+## Test gates (every phase)
+- `npm test` and `npm run test:promotions-api` green, plus new end-to-end scenarios: booking → invoice → pay → cancel/refund, with the flag on and off (flag off must match today's numbers exactly).
