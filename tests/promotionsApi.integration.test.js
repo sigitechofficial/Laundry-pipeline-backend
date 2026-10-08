@@ -290,6 +290,14 @@ async function main() {
     await archiveTestPromotions();
   }
   {
+    // There is no delivery fee today; the zone service fee must not be waived as "delivery".
+    await mk({ name: 'free delivery real zone', benefitType: 'free_delivery' });
+    const ev = await cust('POST', '/promotions/evaluate', { zoneId: 1, items: [{ subCategoryId: 1, qty: 1 }] });
+    const d = ev.json?.data || {};
+    check('customer', 'free delivery saves £0 (no delivery fee; service fee untouched)', ev.status === 200 && Number(d.deliveryFee) === 0 && Number(d.totalSaving) === 0, `fee £${d.deliveryFee} saving £${d.totalSaving}`);
+    await archiveTestPromotions();
+  }
+  {
     await mk({ name: 'draft code', benefitType: 'percentage_discount', discountValue: 50, activationType: 'coupon_required', couponCodes: [{ code: `${CODE_PREFIX}DRAFT` }] }, false);
     check('customer', 'code of a draft promotion is rejected', (await cust('POST', '/promotions/validate-code', { code: `${CODE_PREFIX}draft`, zoneId: 1 })).status === 400);
     await mk({ name: 'zone2 code', benefitType: 'percentage_discount', discountValue: 20, activationType: 'coupon_required', zoneScopeMode: 'selected', zoneIds: [2], couponCodes: [{ code: `${CODE_PREFIX}Z2` }] });

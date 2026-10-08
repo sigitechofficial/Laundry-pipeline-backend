@@ -47,14 +47,15 @@ async function loadCustomerFacts(customerId) {
 async function loadZoneFacts(zoneId) {
   const id = Number(zoneId);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('zoneId is required');
-  const row = await Zone.findByPk(id, { attributes: ['id', 'serviceCharge'] });
+  const row = await Zone.findByPk(id, { attributes: ['id'] });
   if (!row) throw new ValidationError('Zone not found');
   const country = await getCountryContextFromZoneId(id).catch(() => null);
   return {
     id,
     timezone: resolveTimeZone(country?.ianaTimeZone),
-    // The per-booking zone service charge is what "free delivery" waives.
-    serviceCharge: toDecimal(row.serviceCharge),
+    // Delivery is free today (home config "Free 24h"), so delivery promotions save £0.
+    // zone.serviceCharge is the service fee, not a delivery fee: never waive it here.
+    deliveryFee: 0,
   };
 }
 
@@ -119,7 +120,7 @@ async function buildPromotionContext(input = {}) {
   const customer = await loadCustomerFacts(input.customerId);
 
   let lineItems;
-  let deliveryFee = zone.serviceCharge;
+  let deliveryFee = zone.deliveryFee;
   if (Array.isArray(input.items) && input.items.length) {
     lineItems = await priceItems(zone.id, input.items);
   } else if (input.allowRawBasket && input.basket) {
