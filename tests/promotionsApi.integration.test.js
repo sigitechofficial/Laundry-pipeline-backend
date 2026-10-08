@@ -677,6 +677,74 @@ async function main() {
       await models.campaign.destroy({ where: { id: camp.id } });
     }
   }
+
+  // ── Legacy off where Promotions run + customer promotion summary (Phase 6) ──
+  {
+    const bps = require('../services/promotions/bookingPromotionService');
+    const invoices = require('../services/Agent/invoiceManagementService');
+    const { resolvePrice } = require('../services/Admin/zoneCatalogService');
+    const flagBefore = { on: process.env.PROMOTIONS_CHECKOUT_ENABLED, zones: process.env.PROMOTIONS_CHECKOUT_ZONE_IDS };
+    const LINE_MARK = `${PREFIX} invoice line`;
+    const rule = await models.serviceDiscount.create({ name: `${PREFIX} legacy 50%`, discountType: 'percentage', discountValue: 50, targetType: 'subCategory', targetIds: [1], zoneMode: 'all', isActive: true });
+    const legacy = await models.coupon.create({ code: `${CODE_PREFIX}OLD`, description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10, isActive: true });
+    const b = await models.booking.findByPk(Number(process.env.PROMO_TEST_INVOICE_BOOKING_ID || 35), { attributes: ['id', 'customerId', 'zoneId', 'paymentType'] });
+    const billing = b && await models.billingDetails.findOne({ where: { bookingId: b.id } });
+    const original = billing && { discount: billing.discount, total: billing.total, paymentStatus: billing.paymentStatus };
+    try {
+      delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+      const off = await resolvePrice(1, { subCategoryId: 1 });
+      check('legacy', 'flag off: legacy service discount still prices the catalog', Boolean(off.appliedDiscount) && off.price < off.originalPrice, `£${off.price} (was £${off.originalPrice})`);
+      check('legacy', 'flag off: a legacy code is allowed', (await bps.assertLegacyCodeAllowed(legacy.code, 1).then(() => true, () => false)));
+
+      process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+      process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = '1';
+      const on = await resolvePrice(1, { subCategoryId: 1 });
+      check('legacy', 'flag on: catalog price is full (legacy service discount off)', !on.appliedDiscount && Number(on.price) === Number(off.originalPrice), `£${on.price}`);
+      const other = await resolvePrice(2, { subCategoryId: 1 });
+      check('legacy', 'zone not in the rollout keeps the legacy discount', Boolean(other.appliedDiscount));
+      const blocked = await bps.assertLegacyCodeAllowed(legacy.code.toLowerCase(), 1).then(() => null, (e) => e);
+      check('legacy', 'flag on: a legacy code is answered as invalid', blocked && blocked.statusCode === 404 && /invalid or inactive/.test(blocked.message), blocked?.message);
+      check('legacy', 'flag on: a legacy code still works in a zone outside the rollout', await bps.assertLegacyCodeAllowed(legacy.code, 2).then(() => true, () => false));
+
+      if (b && billing) {
+        // Customer summary: holding → applied (per item original → after) → paid
+        const shown = await mk({ name: 'summary public 10%', benefitType: 'basket_discount', discountMode: 'percent', discountValue: 10, perCustomerLimit: null });
+        const hidden = await mk({ name: 'summary HIDDEN £1 item', benefitType: 'item_discount', discountMode: 'amount', discountValue: 1, targetType: 'subCategory', targetIds: [1], perCustomerLimit: null, visibility: 'hidden' });
+        await bps.attachAtBooking({ bookingId: b.id, customerId: b.customerId, zoneId: b.zoneId, paymentType: b.paymentType });
+        const s0 = await bps.customerPromotionSummary(b.id);
+        check('summary', 'before the invoice: state "holding" with the customer message', s0.state === 'holding' && /finalises your invoice/.test(s0.message) && s0.total === 0, s0.state);
+        check('summary', 'hidden promotion shown to the customer as "Special discount"', s0.promotions.some((p) => p.promotionId === hidden.id && p.name === 'Special discount') && s0.promotions.some((p) => p.promotionId === shown.id && p.name.includes('summary public')));
+
+        await models.customerSelectedService.create({ date: new Date(), time: '10:00:00', bookingId: b.id, serviceId: 2, categoryId: 1, subCategoryId: 1, categoryPrice: 10, items: 2, status: true, serviceInstruction: LINE_MARK });
+        await models.customerSelectedService.create({ date: new Date(), time: '10:00:00', bookingId: b.id, serviceId: 2, categoryId: 1, subCategoryId: 2, categoryPrice: 20, items: 1, status: true, serviceInstruction: LINE_MARK });
+        await invoices.getPaymentSummaryForBooking(b.id); // agent added services → priced
+        const s1 = await bps.customerPromotionSummary(b.id);
+        const item1 = s1.lines.find((l) => l.itemId === 1);
+        const item2 = s1.lines.find((l) => l.itemId === 2);
+        // item 1: £20 − £2 (item) − 10% of £18 (£1.80) = £16.20 ; item 2: £20 − 10% (£2) = £18
+        check('summary', 'after services are added: state "applied", total £5.80', s1.state === 'applied' && s1.total === 5.8, `${s1.state} £${s1.total}`);
+        check('summary', 'per item: original → discount → after (item 1 £20 → £16.20)', item1 && item1.originalAmount === 20 && item1.discount === 3.8 && item1.finalAmount === 16.2, JSON.stringify(item1));
+        check('summary', 'per item: item 2 £20 → £18', item2 && item2.originalAmount === 20 && item2.discount === 2 && item2.finalAmount === 18, JSON.stringify(item2));
+
+        await bps.settleForBooking(b.id);
+        const s2 = await bps.customerPromotionSummary(b.id);
+        check('summary', 'after payment: state "paid"', s2.state === 'paid' && s2.total === 5.8 && s2.promotions.every((p) => p.status === 'paid'));
+      }
+    } finally {
+      if (b) {
+        await ledger.reverseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await ledger.releaseBookingRedemptions(b.id, 'test cleanup').catch(() => {});
+        await models.orderAdjustment.destroy({ where: { bookingId: b.id, appliedBy: 'system' } });
+        await models.customerSelectedService.destroy({ where: { bookingId: b.id, serviceInstruction: LINE_MARK } });
+        if (original) await models.billingDetails.update(original, { where: { bookingId: b.id } });
+      }
+      await archiveTestPromotions();
+      await rule.destroy();
+      await legacy.destroy();
+      if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
+      if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
+    }
+  }
 }
 
 main()

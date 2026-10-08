@@ -1005,6 +1005,7 @@ async function applyCoupon(req, res) {
     const resolvedZoneId = zoneId ?? req.body?.zone?.id;
     // One code box: a Promotions code (flag on for the zone) answers in the legacy shape below.
     const bookingPromotionService = require('../../services/promotions/bookingPromotionService');
+    await bookingPromotionService.assertLegacyCodeAllowed(code, resolvedZoneId);
     const result = (await bookingPromotionService.usesPromotionCode(code, resolvedZoneId))
         ? await bookingPromotionService.validateCodeForCheckout({
               code,

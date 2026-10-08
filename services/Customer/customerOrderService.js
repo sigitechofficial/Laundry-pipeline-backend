@@ -1469,7 +1469,9 @@ class CustomerOrderService {
             ValidationError
         );
 
-        // A Promotions code (flag on) is checked before anything is written; legacy codes keep their path below.
+        // A Promotions code (flag on) is checked before anything is written; legacy codes keep their path
+        // below, except where Promotions run: there Coupons (Legacy) are off.
+        await bookingPromotionService.assertLegacyCodeAllowed(couponCode, zoneId);
         const promotionCodeUsed = await bookingPromotionService.usesPromotionCode(couponCode, zoneId);
         if (promotionCodeUsed) {
             await bookingPromotionService.validateCodeForCheckout({
@@ -2939,6 +2941,14 @@ class CustomerOrderService {
                 repairItems: bookingRepairItems,
             }),
             paymentSummary,
+            // New optional key (old apps ignore it): promotions on this booking, per item
+            // original → after discount, and the customer message for the current state.
+            promotionSummary: await bookingPromotionService
+                .customerPromotionSummary(bookingPlain.id)
+                .catch((err) => {
+                    console.error(`[promotions] summary for booking ${bookingPlain.id} failed:`, err.message);
+                    return null;
+                }),
             paymentIssue,
             cardDetails,
             cancellationPolicy,

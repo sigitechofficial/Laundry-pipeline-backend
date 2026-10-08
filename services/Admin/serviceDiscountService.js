@@ -8,6 +8,7 @@ const {
   categories,
 } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
+const { isPromotionsCheckoutEnabled } = require('../promotions/checkoutFlag');
 
 /** Apply decimal math safely */
 function money(val) {
@@ -105,6 +106,11 @@ async function findApplicableDiscounts(zoneId, selector = {}) {
  * Sync best-discount picker against a preloaded rules list (no DB).
  */
 function pickBestDiscountFromRules(rules, zoneId, selector, basePrice) {
+  // Legacy is switched off where Promotions run at checkout (docs/PROMOTIONS_CHECKOUT_PLAN.md,
+  // Phase 6): catalog prices stay full and the promotions engine discounts on the invoice.
+  if (isPromotionsCheckoutEnabled(zoneId)) {
+    return { discountedPrice: money(basePrice), appliedDiscount: null };
+  }
   const applicable = (rules || []).filter(
     (d) => ruleMatchesZone(d, zoneId) && matchesTarget(d, selector)
   );

@@ -41,6 +41,16 @@ async function isPromotionCode(code) {
   return Boolean(await CouponCode.findOne({ where: { code: c }, attributes: ['id'] }));
 }
 
+/**
+ * Where Promotions run, Coupons (Legacy) are switched off: a code that is not a Promotions
+ * code is answered exactly like an unknown legacy code. (Bookings that already hold a
+ * legacy coupon keep it on their invoice.)
+ */
+async function assertLegacyCodeAllowed(code, zoneId) {
+  if (!normalizeCode(code) || !isPromotionsCheckoutEnabled(zoneId)) return;
+  if (!(await isPromotionCode(code))) throw new NotFoundError('Coupon code is invalid or inactive');
+}
+
 /** Route a customer's code to Promotions only when the flag is on for the zone. */
 async function usesPromotionCode(code, zoneId) {
   if (!normalizeCode(code) || !isPromotionsCheckoutEnabled(zoneId)) return false;
@@ -363,6 +373,89 @@ async function settleClosedBookings({ limit = 200 } = {}) {
   return { settled, reversed };
 }
 
+// ─── Customer view (Phase 6) ────────────────────────────────────────────────
+
+const CUSTOMER_MESSAGES = {
+  holding: 'Your offer is saved. The discount is applied when the shop finalises your invoice after inspection.',
+  applied: 'Your discount is on the invoice. Final once the invoice is paid.',
+  paid: 'Discount applied to your paid invoice.',
+};
+
+/**
+ * What the customer (and agent) see about promotions on one booking: state + message,
+ * each promotion's amount, and per item the original price, the discount and the price
+ * after discount. Hidden/targeted promotions without a code are shown as "Special discount".
+ */
+async function customerPromotionSummary(bookingId) {
+  const [holds, adjustments, lines] = await Promise.all([
+    Redemption.findAll({
+      where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
+      include: [{ association: 'promotion', attributes: ['id', 'name', 'visibility', 'benefitType', 'discountMode', 'discountValue', 'maxDiscountCap', 'minSubtotal', 'benefitConfig', 'currency'] }],
+      order: [['id', 'ASC']],
+    }),
+    OrderAdjustment.findAll({
+      where: { bookingId, appliedBy: 'system', adjustmentClass: PROMOTION_ADJUSTMENT_CLASSES, reversedAt: null },
+      attributes: ['promotionId', 'couponCode', 'lineType', 'lineItemId', 'amount'],
+    }),
+    invoiceLineItems(bookingId),
+  ]);
+  if (!holds.length && !adjustments.length) {
+    return { state: 'none', message: null, total: 0, promotions: [], lines: [] };
+  }
+
+  const paid = holds.some((h) => h.status === 'COMMITTED');
+  const discountByPromotion = new Map();
+  const discountByLine = new Map();
+  let totalMinor = 0;
+  for (const a of adjustments) {
+    const minor = Math.abs(toMinor(a.amount));
+    totalMinor += minor;
+    discountByPromotion.set(Number(a.promotionId), (discountByPromotion.get(Number(a.promotionId)) || 0) + minor);
+    if (a.lineItemId != null && ['subCategory', 'addon'].includes(a.lineType)) {
+      const key = `${a.lineType}:${a.lineItemId}`;
+      discountByLine.set(key, (discountByLine.get(key) || 0) + minor);
+    }
+  }
+  const state = paid ? 'paid' : totalMinor > 0 ? 'applied' : 'holding';
+
+  const promotions = holds.map((h) => {
+    const p = h.promotion;
+    const shown = p && (h.couponCode || ['public', 'private_code'].includes(p.visibility));
+    return {
+      promotionId: Number(h.promotionId),
+      name: shown ? p.name : 'Special discount',
+      label: shown && p ? buildOfferLabel(p) : null,
+      couponCode: h.couponCode || null,
+      status: h.status === 'COMMITTED' ? 'paid' : 'holding',
+      amount: fromMinor(discountByPromotion.get(Number(h.promotionId)) || 0),
+    };
+  });
+
+  // Group the invoice lines by item so each item shows original → after discount.
+  const itemOriginal = new Map();
+  for (const li of lines) {
+    const key = li.addonId ? `addon:${li.addonId}` : li.subCategoryId ? `subCategory:${li.subCategoryId}` : null;
+    if (!key) continue;
+    const row = itemOriginal.get(key) || { lineType: li.addonId ? 'addon' : 'item', itemId: li.addonId || li.subCategoryId, qty: 0, originalMinor: 0 };
+    row.qty += li.qty;
+    row.originalMinor += toMinor(li.price) * li.qty;
+    itemOriginal.set(key, row);
+  }
+  const lineView = [...itemOriginal.entries()].map(([key, r]) => {
+    const discountMinor = Math.min(discountByLine.get(key) || 0, r.originalMinor);
+    return {
+      lineType: r.lineType,
+      itemId: r.itemId,
+      quantity: r.qty,
+      originalAmount: fromMinor(r.originalMinor),
+      discount: fromMinor(discountMinor),
+      finalAmount: fromMinor(r.originalMinor - discountMinor),
+    };
+  });
+
+  return { state, message: CUSTOMER_MESSAGES[state], total: fromMinor(totalMinor), promotions, lines: lineView };
+}
+
 // ─── Admin (Phase 5) ────────────────────────────────────────────────────────
 
 /**
@@ -391,6 +484,8 @@ async function removeFromBooking(bookingId, promotionId, { actorId = null, reaso
 }
 
 module.exports = {
+  customerPromotionSummary,
+  assertLegacyCodeAllowed,
   removeFromBooking,
   isPromotionCode,
   usesPromotionCode,

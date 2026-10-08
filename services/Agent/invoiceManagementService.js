@@ -1057,6 +1057,7 @@ class AgentInvoiceManagementService {
             paymentSummary,
             coupon: couponInfo,
             promotions: resolvedDraft.promotions,
+            promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
             extraTip: summarizeTips(bookingData.tips || []),
         };
     }
