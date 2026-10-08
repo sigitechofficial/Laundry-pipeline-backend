@@ -37,6 +37,7 @@ class BannerService {
       displayOrder: plain.displayOrder,
       showOnHome: plain.showOnHome,
       isActive: plain.isActive,
+      promotionId: plain.promotionId ?? null,
       createdAt: plain.createdAt,
       updatedAt: plain.updatedAt,
       ...extras
@@ -160,6 +161,69 @@ class BannerService {
     return { discountValue: dv, maxDiscountCap: cap };
   }
 
+  /** A banner may link to a promotion that is not archived. */
+  async resolveLinkedPromotion(promotionId) {
+    const id = emptyToNull(promotionId);
+    if (id == null) return null;
+    const { promotion } = require('../../models');
+    const promo = await promotion.findByPk(Number(id));
+    if (!promo || promo.status === 'archived') {
+      throw new ValidationError('Linked promotion not found or archived');
+    }
+    return promo;
+  }
+
+  /**
+   * Banner badge from a linked promotion, in the fields installed apps already read.
+   * null when the promotion has no simple badge (fixed price offer): the banner's own is kept.
+   */
+  offerFromPromotion(promo) {
+    const { resolveDiscountMode } = require('../promotions/benefitHandlers');
+    const value = promo.discountValue != null ? parseFloat(promo.discountValue) : null;
+    if (promo.benefitType === 'free_delivery') return { offerType: 'free_delivery', discountValue: null, maxDiscountCap: null };
+    if (promo.benefitType === 'fixed_price' || promo.benefitType === 'cashback') return null;
+    if (resolveDiscountMode(promo) === 'percent') {
+      const cap = promo.maxDiscountCap != null ? parseFloat(promo.maxDiscountCap) : null;
+      return { offerType: 'percentage', discountValue: value, maxDiscountCap: cap && cap > 0 ? cap : null };
+    }
+    return { offerType: 'flat', discountValue: value, maxDiscountCap: null };
+  }
+
+  /**
+   * Linked banners only show while their promotion runs for this customer: promotions on at
+   * checkout in the zone, promotion live, zone in scope, campaign not switched off.
+   */
+  async applyLinkedPromotions(banners, zoneId) {
+    const linkedIds = [...new Set(banners.map((b) => b.promotionId).filter(Boolean))];
+    if (!linkedIds.length) return banners;
+    const { isPromotionsCheckoutEnabled } = require('../promotions/checkoutFlag');
+    const { isLive } = require('../promotions/promotionEngine');
+    const { buildOfferLabel } = require('../promotions/promotionEngine');
+    const { promotion, campaign } = require('../../models');
+    const rows = await promotion.findAll({
+      where: { id: linkedIds },
+      include: [{ model: campaign, as: 'campaign', attributes: ['id', 'status'] }],
+    });
+    const byId = new Map(rows.map((p) => [p.id, p]));
+    const now = new Date();
+    const out = [];
+    for (const b of banners) {
+      if (!b.promotionId) {
+        out.push(b);
+        continue;
+      }
+      const promo = byId.get(Number(b.promotionId));
+      const live = promo
+        && isPromotionsCheckoutEnabled(zoneId)
+        && isLive(promo, now, zoneId != null ? zoneId : null)
+        && !['paused', 'completed', 'archived'].includes(promo.campaign?.status);
+      if (!live) continue;
+      const offer = this.offerFromPromotion(promo);
+      out.push({ ...b, ...(offer || {}), offerLabel: buildOfferLabel(promo) });
+    }
+    return out;
+  }
+
   validateDates(startDate, endDate) {
     if (startDate && endDate && endDate < startDate) {
       throw new ValidationError('endDate must be greater than or equal to startDate');
@@ -214,7 +278,7 @@ class BannerService {
     if (!title || !String(title).trim()) {
       throw new ValidationError('title is required');
     }
-    if (!offerType) {
+    if (!offerType && !emptyToNull(data.promotionId)) {
       throw new ValidationError('offerType is required');
     }
     if (!targetType) {
@@ -224,11 +288,11 @@ class BannerService {
       throw new ValidationError('targetType must be global, service, category, or sub_category');
     }
 
-    const { discountValue: dv, maxDiscountCap: cap } = this.validateOfferAndDiscount(
-      offerType,
-      discountValue,
-      maxDiscountCap
-    );
+    const linked = await this.resolveLinkedPromotion(data.promotionId);
+    const fromPromotion = linked ? this.offerFromPromotion(linked) : null;
+    const { discountValue: dv, maxDiscountCap: cap } = fromPromotion
+      ? { discountValue: fromPromotion.discountValue, maxDiscountCap: fromPromotion.maxDiscountCap }
+      : this.validateOfferAndDiscount(offerType, discountValue, maxDiscountCap);
     const resolvedTargetId = await this.validateTarget(targetType, targetId);
     const normalizedZoneIds = this.normalizeZoneIds(zoneIds);
     await this.validateZoneIds(normalizedZoneIds);
@@ -239,9 +303,10 @@ class BannerService {
         title: String(title).trim().slice(0, 200),
         description: emptyToNull(description),
         bannerImage: emptyToNull(bannerImage),
-        offerType,
+        offerType: fromPromotion ? fromPromotion.offerType : offerType,
         discountValue: dv,
         maxDiscountCap: cap,
+        promotionId: linked ? linked.id : null,
         targetType,
         targetId: resolvedTargetId,
         zoneIds: normalizedZoneIds,
@@ -328,10 +393,22 @@ class BannerService {
     const maxDiscountCap =
       data.maxDiscountCap !== undefined ? data.maxDiscountCap : row.maxDiscountCap;
 
+    if (data.promotionId !== undefined) {
+      const linked = await this.resolveLinkedPromotion(data.promotionId);
+      row.promotionId = linked ? linked.id : null;
+      const fromPromotion = linked ? this.offerFromPromotion(linked) : null;
+      if (fromPromotion) {
+        row.offerType = fromPromotion.offerType;
+        row.discountValue = fromPromotion.discountValue;
+        row.maxDiscountCap = fromPromotion.maxDiscountCap;
+      }
+    }
+
     if (
-      data.offerType !== undefined ||
-      data.discountValue !== undefined ||
-      data.maxDiscountCap !== undefined
+      !row.promotionId &&
+      (data.offerType !== undefined ||
+        data.discountValue !== undefined ||
+        data.maxDiscountCap !== undefined)
     ) {
       const validated = this.validateOfferAndDiscount(offerType, discountValue, maxDiscountCap);
       row.offerType = offerType;
@@ -444,12 +521,20 @@ class BannerService {
       filtered = rows.filter((row) => zoneIdsApplyTo(row.zoneIds, zoneIdFilter));
     }
 
-    const banners = await Promise.all(
+    const formatted = await Promise.all(
       filtered.map(async (row) => {
         const target = await this.resolveTarget(row.targetType, row.targetId);
         return this.formatBanner(row, { target });
       })
     );
+    let banners = formatted;
+    try {
+      banners = await this.applyLinkedPromotions(formatted, zoneIdFilter && !Number.isNaN(zoneIdFilter) ? zoneIdFilter : null);
+    } catch (err) {
+      // Never break the home screen: hide linked banners if their promotions cannot be checked.
+      console.error('getActiveBannersForCustomer linked promotions:', err.message);
+      banners = formatted.filter((b) => !b.promotionId);
+    }
 
     return {
       message: 'Banners fetched successfully',

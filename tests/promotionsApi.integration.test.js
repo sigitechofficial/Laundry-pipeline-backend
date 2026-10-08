@@ -745,6 +745,41 @@ async function main() {
       if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
     }
   }
+
+  // ── Banners linked to a promotion (badge + visibility follow it) ──
+  {
+    const bannerService = require('../services/Admin/bannerService');
+    const flagBefore = { on: process.env.PROMOTIONS_CHECKOUT_ENABLED, zones: process.env.PROMOTIONS_CHECKOUT_ZONE_IDS };
+    try {
+      const promo = await mk({ name: 'banner linked 15% cap £5', benefitType: 'basket_discount', discountMode: 'percent', discountValue: 15, maxDiscountCap: 5, perCustomerLimit: null });
+      const created = await admin('POST', '/createBanner', { title: `${PREFIX} banner linked`, targetType: 'global', promotionId: promo.id });
+      const linked = created.json?.data;
+      check('banner', 'banner can link a promotion without its own offer fields', created.status === 201 && linked?.promotionId === promo.id && linked.offerType === 'percentage' && Number(linked.discountValue) === 15 && Number(linked.maxDiscountCap) === 5, `${created.status} ${created.json?.message || ''}`);
+      const plain = await admin('POST', '/createBanner', { title: `${PREFIX} banner plain`, targetType: 'global', offerType: 'flat', discountValue: 3 });
+      check('banner', 'unlinked banner still needs and keeps its own offer', plain.status === 201 && plain.json.data.promotionId === null);
+      const archivedPromo = await models.promotion.create({ name: `${PREFIX} banner archived`, benefitType: 'basket_discount', discountValue: 5, status: 'archived' });
+      const bad = await admin('POST', '/createBanner', { title: `${PREFIX} banner bad`, targetType: 'global', promotionId: archivedPromo.id });
+      check('banner', 'linking an archived promotion → 400', bad.status === 400, `${bad.status} ${bad.json?.message || ''}`);
+
+      const titles = async (zoneId) => (await bannerService.getActiveBannersForCustomer({ zoneId })).data.banners.map((b) => b.title);
+      delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+      let t = await titles(1);
+      check('banner', 'flag off: linked banner hidden (its promotion would not apply), plain one shown', !t.includes(`${PREFIX} banner linked`) && t.includes(`${PREFIX} banner plain`));
+      process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+      process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = '1';
+      const shown = (await bannerService.getActiveBannersForCustomer({ zoneId: 1 })).data.banners.find((b) => b.title === `${PREFIX} banner linked`);
+      check('banner', 'flag on + live promotion: linked banner shown with the promotion badge', shown && shown.offerType === 'percentage' && shown.discountValue === 15 && /15% OFF/.test(shown.offerLabel || ''), shown?.offerLabel);
+      check('banner', 'zone outside the rollout: linked banner hidden', !(await titles(2)).includes(`${PREFIX} banner linked`));
+      await admin('POST', `/promotions/${promo.id}/pause`, {});
+      t = await titles(1);
+      check('banner', 'promotion paused: linked banner disappears by itself', !t.includes(`${PREFIX} banner linked`));
+    } finally {
+      await models.banner.destroy({ where: { title: { [Op.like]: `${PREFIX}%` } } });
+      await archiveTestPromotions();
+      if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
+      if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
+    }
+  }
 }
 
 main()
