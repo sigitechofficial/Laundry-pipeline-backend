@@ -6,6 +6,10 @@
  */
 
 const assert = require('assert');
+
+// Isolate from live Sequelize / gitignored config.json (CI has no config.json).
+require('./stubSequelizeModels').install();
+
 const { normalizePayload, validatePromotion, TRANSITIONS, restrictedZoneOf } = require('../services/Admin/promotionAdminService');
 
 const base = {
