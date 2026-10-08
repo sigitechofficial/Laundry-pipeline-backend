@@ -91,12 +91,17 @@ function holdsEntitlement(r, now) {
   return r.status === 'RESERVED' && (!r.reservationExpiresAt || new Date(r.reservationExpiresAt) > now);
 }
 
+/** Rows held by the booking being priced are its own entitlement, not earlier usage. */
+const notThisBooking = (bookingId) => (bookingId
+  ? { [Op.or]: [{ bookingId: null }, { bookingId: { [Op.ne]: Number(bookingId) } }] }
+  : {});
+
 /** Map promotionId → { total, lastDay, lastWeek } for one customer. */
-async function loadCustomerUsage(promotionIds, customerId, now) {
+async function loadCustomerUsage(promotionIds, customerId, now, excludeBookingId = null) {
   const usage = new Map();
   if (!customerId || !promotionIds.length) return usage;
   const rows = await Redemption.findAll({
-    where: { customerId, promotionId: promotionIds, status: { [Op.in]: ['RESERVED', 'COMMITTED'] } },
+    where: { customerId, promotionId: promotionIds, status: { [Op.in]: ['RESERVED', 'COMMITTED'] }, ...notThisBooking(excludeBookingId) },
     attributes: ['promotionId', 'status', 'reservationExpiresAt', 'reservedAt', 'committedAt', 'createdAt'],
   });
   for (const r of rows) {
@@ -121,7 +126,7 @@ function couponError(code, error, message) {
  * Validate coupon codes against live promotions.
  * Returns valid: Map promotionId → couponCode row, errors: [{ code, error, message }]
  */
-async function validateCouponCodes(codes = [], { customerId, zoneId, now = new Date() } = {}) {
+async function validateCouponCodes(codes = [], { customerId, zoneId, now = new Date(), excludeBookingId = null } = {}) {
   const list = (Array.isArray(codes) ? codes : [codes]).map((c) => String(c ?? '').trim()).filter(Boolean);
   const errors = [];
   const valid = new Map();
@@ -160,7 +165,7 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
     }
 
     const activeReservations = await Redemption.count({
-      where: { couponCodeId: row.id, status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now } },
+      where: { couponCodeId: row.id, status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now }, ...notThisBooking(excludeBookingId) },
     });
     if (row.usageLimit != null && row.usedCount + activeReservations >= row.usageLimit) {
       errors.push(couponError(code, 'USAGE_EXHAUSTED', `Coupon "${code}" has been fully redeemed`));
@@ -168,7 +173,7 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
     }
     if (row.perCustomerLimit != null && customerId) {
       const mine = await Redemption.findAll({
-        where: { couponCodeId: row.id, customerId, status: { [Op.in]: ['RESERVED', 'COMMITTED'] } },
+        where: { couponCodeId: row.id, customerId, status: { [Op.in]: ['RESERVED', 'COMMITTED'] }, ...notThisBooking(excludeBookingId) },
         attributes: ['status', 'reservationExpiresAt'],
       });
       if (mine.filter((r) => holdsEntitlement(r, now)).length >= row.perCustomerLimit) {
@@ -255,8 +260,9 @@ async function evaluatePromotions(context) {
   const customerId = context.customer?.id;
 
   const candidates = await loadCandidatePromotions(zoneId, now);
-  const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now });
-  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now);
+  const bookingId = context.bookingId || null;
+  const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
+  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now, bookingId);
 
   const eligible = [];
   const rejected = [];
@@ -462,6 +468,76 @@ async function getCustomerOffers(context) {
   return offers;
 }
 
+/** Rules that need the real laundry items, which are only known when the shop builds the invoice. */
+const BASKET_CONDITIONS = [
+  'MINIMUM_SUBTOTAL', 'MAXIMUM_SUBTOTAL', 'MINIMUM_QUANTITY', 'MAXIMUM_QUANTITY',
+  'SERVICE', 'CATEGORY', 'PRODUCT', 'ADDON',
+];
+
+/**
+ * Booking-time conditions only. Basket rules wait for the invoice; an ANY group that
+ * contains a basket rule waits too, since that rule may still pass once items are known.
+ */
+function bookingStageConditions(conditions = []) {
+  const all = conditions.filter((c) => c.logicGroup !== 'ANY');
+  const any = conditions.filter((c) => c.logicGroup === 'ANY');
+  const deferAny = any.some((c) => BASKET_CONDITIONS.includes(c.conditionType));
+  return [...all.filter((c) => !BASKET_CONDITIONS.includes(c.conditionType)), ...(deferAny ? [] : any)];
+}
+
+/**
+ * Which promotions a booking may hold, judged on what is known when it is placed:
+ * zone, customer, schedule, booking-time conditions, usage limits and budget, plus the
+ * code the customer entered. Spend/item rules and the money are decided at invoice.
+ * Cashback is skipped until a wallet payout exists.
+ *
+ * @returns {{ eligible: Array<{ promotion, coupon }>, rejected: Array<{ promotion, coupon, reasons }>, couponErrors }}
+ */
+async function evaluateBookingEligibility(context) {
+  const now = context.currentTime instanceof Date ? context.currentTime : new Date();
+  context = { ...context, currentTime: now };
+  const zoneId = context.zone?.id;
+  const customerId = context.customer?.id;
+
+  const candidates = await loadCandidatePromotions(zoneId, now);
+  const bookingId = context.bookingId || null;
+  const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
+  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now, bookingId);
+
+  const eligible = [];
+  const rejected = [];
+  for (const promo of candidates) {
+    const coupon = couponMap.get(promo.id) || null;
+    if (promo.activationType === 'coupon_required' && !coupon) continue;
+    const scope = benefitScope(promo.benefitType);
+    if (!scope || scope === 'cashback') {
+      rejected.push({ promotion: promo, coupon, reasons: [reject('UNSUPPORTED', 'This offer is not available yet', 'PROMOTION_UNSUPPORTED')] });
+      continue;
+    }
+    if (!matchesRecurringSchedule(promo, context)) {
+      rejected.push({ promotion: promo, coupon, reasons: [reject('SCHEDULE', 'Not available at this time', 'PROMOTION_OUTSIDE_SCHEDULE')] });
+      continue;
+    }
+    const limits = builtInCheck(
+      { ...promo.get({ plain: true }), campaign: promo.campaign, minSubtotal: null, maxSubtotal: null, minQuantity: null },
+      { ...context, basket: { subtotal: 0, itemCount: 0 } },
+      null,
+      usage
+    );
+    if (limits) {
+      rejected.push({ promotion: promo, coupon, reasons: [limits] });
+      continue;
+    }
+    const evaluation = evaluateConditions(bookingStageConditions(promo.conditions || []), context);
+    if (!evaluation.eligible) {
+      rejected.push({ promotion: promo, coupon, reasons: evaluation.results.filter((r) => !r.pass) });
+      continue;
+    }
+    eligible.push({ promotion: promo, coupon });
+  }
+  return { eligible, rejected, couponErrors };
+}
+
 function buildOfferLabel(promo, zoneOverride = null) {
   const { discountValue, maxDiscountCap, minSubtotal, currency } = effectiveValues(promo, zoneOverride);
   const sym = currencySymbol(currency);
@@ -507,4 +583,7 @@ module.exports = {
   zoneInScope,
   holdsEntitlement,
   builtInCheck,
+  evaluateBookingEligibility,
+  bookingStageConditions,
+  BASKET_CONDITIONS,
 };

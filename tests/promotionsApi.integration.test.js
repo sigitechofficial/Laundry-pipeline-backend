@@ -407,6 +407,66 @@ async function main() {
       check('ledger', 'booking hold tests need an open and a cancelled/refunded booking in the local DB', false);
     }
   }
+
+  // ── Booking stage (Phase 2): code check + holds at booking, behind the flag ──
+  {
+    const bps = require('../services/promotions/bookingPromotionService');
+    const { loadCustomerFacts } = require('../services/promotions/contextBuilder');
+    const flagBefore = { on: process.env.PROMOTIONS_CHECKOUT_ENABLED, zones: process.env.PROMOTIONS_CHECKOUT_ZONE_IDS };
+    const open = await models.booking.findOne({ where: { bookingStatusId: { [Op.notIn]: [19, 21] }, zoneId: 1 }, attributes: ['id', 'customerId', 'createdAt'], order: [['id', 'DESC']] });
+    if (!open) {
+      check('booking', 'needs an open zone-1 booking in the local DB', false);
+    } else {
+      const code = `${CODE_PREFIX}BK`;
+      const coded = await mk({ name: 'booking coded', benefitType: 'basket_discount', discountValue: 15, activationType: 'coupon_required', perCustomerLimit: null, couponCodes: [{ code }] });
+      const auto = await mk({ name: 'booking auto min spend', benefitType: 'basket_discount', discountValue: 5, perCustomerLimit: null, minSubtotal: 30, conditions: [{ conditionType: 'MINIMUM_SUBTOTAL', operator: 'gte', value: 30 }] });
+      const cashOnly = await mk({ name: 'booking cash only', benefitType: 'basket_discount', discountValue: 5, perCustomerLimit: null, conditions: [{ conditionType: 'PAYMENT_METHOD', operator: 'in', value: ['cash'] }] });
+      const cashback = await models.promotion.create({ name: `${PREFIX} booking cashback`, benefitType: 'cashback', discountValue: 5, status: 'active', perCustomerLimit: null });
+      const oncePer = await mk({ name: 'booking once per customer', benefitType: 'basket_discount', discountValue: 3, perCustomerLimit: 1 });
+
+      delete process.env.PROMOTIONS_CHECKOUT_ENABLED;
+      check('booking', 'flag off: code stays on the legacy path', (await bps.usesPromotionCode(code, 1)) === false);
+      check('booking', 'flag off: nothing is held', (await bps.attachAtBooking({ bookingId: open.id, customerId: open.customerId, zoneId: 1, couponCode: code, paymentType: 'card' })).reserved.length === 0);
+      const legacyApi = await cust('POST', '/applyCoupon', { code, zoneId: 1 });
+      check('booking', 'flag off on the server: applyCoupon answers like today (legacy)', legacyApi.status !== 200, `${legacyApi.status} ${legacyApi.json?.message || ''}`);
+
+      process.env.PROMOTIONS_CHECKOUT_ENABLED = 'true';
+      process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = '1';
+      check('booking', 'flag on: code goes to Promotions', (await bps.usesPromotionCode(code.toLowerCase(), 1)) === true);
+      check('booking', 'flag on but zone not allowed: legacy path', (await bps.usesPromotionCode(code, 2)) === false);
+      const v = await bps.validateCodeForCheckout({ code: code.toLowerCase(), customerId: open.customerId, zoneId: 1 });
+      check('booking', 'checkout answer keeps the legacy shape', v.discountAmt === 0 && v.appliesAt === 'invoice' && v.minOrderDeferred === true && v.couponData.code === code && v.couponData.discountType === 'percentage' && Number(v.couponData.discountValue) === 15, JSON.stringify({ c: v.couponData, m: v.customerMessage }));
+      const bad = await bps.validateCodeForCheckout({ code: `${CODE_PREFIX}NOPE`, customerId: open.customerId, zoneId: 1 }).catch((e) => e);
+      check('booking', 'unknown code → ValidationError', bad instanceof Error && /not found|inactive/i.test(bad.message), bad.message);
+      const noZone = await bps.validateCodeForCheckout({ code, customerId: open.customerId, zoneId: null }).catch((e) => e);
+      check('booking', 'code without a zone → ValidationError', noZone instanceof Error && /zone/i.test(noZone.message), noZone.message);
+
+      const first = await bps.attachAtBooking({ bookingId: open.id, customerId: open.customerId, zoneId: 1, couponCode: code, paymentType: 'card' });
+      const held = await models.promotionRedemption.findAll({ where: { bookingId: open.id, status: 'RESERVED', promotionId: [coded.id, auto.id, cashOnly.id, cashback.id] } });
+      const heldIds = held.map((r) => r.promotionId);
+      check('booking', 'coded promotion is held with its code', held.some((r) => r.promotionId === coded.id && r.couponCode === code));
+      check('booking', 'automatic promotion with a spend rule is held (spend decided at invoice)', heldIds.includes(auto.id));
+      check('booking', 'cash-only promotion is not held for a card booking', !heldIds.includes(cashOnly.id));
+      check('booking', 'cashback is not held (no payout yet)', !heldIds.includes(cashback.id));
+      const again = await bps.attachAtBooking({ bookingId: open.id, customerId: open.customerId, zoneId: 1, couponCode: code, paymentType: 'card' });
+      const heldAgain = await models.promotionRedemption.count({ where: { bookingId: open.id, status: 'RESERVED', promotionId: [coded.id, auto.id] } });
+      check('booking', 'attach is idempotent (retry holds nothing twice)', heldAgain === 2 && again.reserved.length === first.reserved.length, `${heldAgain} rows, ${first.reserved.length} vs ${again.reserved.length}`);
+      const onceRow = await models.promotionRedemption.findOne({ where: { bookingId: open.id, promotionId: oncePer.id, status: 'RESERVED' } });
+      check('booking', "a booking's own hold does not use up a 1-per-customer limit on retry", onceRow && again.reserved.includes(onceRow.id));
+
+      const total = await models.booking.count({ where: { customerId: open.customerId, bookingStatusId: { [Op.ne]: 19 } } });
+      const facts = await loadCustomerFacts(open.customerId, { excludeBookingId: open.id });
+      check('booking', 'order count never includes the booking being priced', facts.orderCount === total - 1, `${facts.orderCount} of ${total}`);
+      const asOf = await loadCustomerFacts(open.customerId, { excludeBookingId: open.id, before: open.createdAt });
+      check('booking', 'order count "as of booking time" ignores later orders', asOf.orderCount <= facts.orderCount);
+
+      const released = await bps.releaseForBooking(open.id, 'test');
+      check('booking', 'releaseForBooking gives the holds back', released >= 3 && (await models.promotionRedemption.count({ where: { bookingId: open.id, status: 'RESERVED', promotionId: [coded.id, auto.id, oncePer.id] } })) === 0);
+      await archiveTestPromotions();
+    }
+    if (flagBefore.on === undefined) delete process.env.PROMOTIONS_CHECKOUT_ENABLED; else process.env.PROMOTIONS_CHECKOUT_ENABLED = flagBefore.on;
+    if (flagBefore.zones === undefined) delete process.env.PROMOTIONS_CHECKOUT_ZONE_IDS; else process.env.PROMOTIONS_CHECKOUT_ZONE_IDS = flagBefore.zones;
+  }
 }
 
 main()

@@ -27,18 +27,27 @@ const { PAYMENT_METHODS } = require('./conditionEvaluator');
 const INACTIVE_AFTER_DAYS = 90;
 const MAX_ITEMS = 200;
 
-/** Customer facts used by eligibility rules. */
-async function loadCustomerFacts(customerId) {
+/**
+ * Customer facts used by eligibility rules.
+ * @param {object} [asOf] facts as they were when a booking was placed:
+ *   excludeBookingId — never count the booking being priced as a previous order;
+ *   before — only bookings created before this moment (the booking's own createdAt at invoice).
+ */
+async function loadCustomerFacts(customerId, asOf = {}) {
   if (!customerId) return { id: null, orderCount: 0, isFirstOrder: true, type: 'new', segments: [] };
   const where = { customerId, bookingStatusId: { [Op.ne]: CANCELLED } };
+  if (asOf.excludeBookingId) where.id = { [Op.ne]: Number(asOf.excludeBookingId) };
+  const before = toDate(asOf.before);
+  if (before) where.createdAt = { [Op.lt]: before };
   const [orderCount, last] = await Promise.all([
     Booking.count({ where }),
     Booking.findOne({ where, attributes: ['createdAt'], order: [['createdAt', 'DESC']] }),
   ]);
+  const reference = before ? before.getTime() : Date.now();
   let type = 'new';
   if (orderCount > 0) {
-    const lastAt = last?.createdAt ? new Date(last.createdAt).getTime() : Date.now();
-    type = Date.now() - lastAt > INACTIVE_AFTER_DAYS * 86400000 ? 'inactive' : 'returning';
+    const lastAt = last?.createdAt ? new Date(last.createdAt).getTime() : reference;
+    type = reference - lastAt > INACTIVE_AFTER_DAYS * 86400000 ? 'inactive' : 'returning';
   }
   // No segment system exists yet; CUSTOMER_SEGMENT rules never match until one does.
   return { id: Number(customerId), orderCount, isFirstOrder: orderCount === 0, type, segments: [] };
@@ -117,7 +126,7 @@ function normalizeCoupons(couponCodes) {
  */
 async function buildPromotionContext(input = {}) {
   const zone = await loadZoneFacts(input.zoneId);
-  const customer = await loadCustomerFacts(input.customerId);
+  const customer = await loadCustomerFacts(input.customerId, input.customerAsOf || {});
 
   let lineItems;
   let deliveryFee = zone.deliveryFee;
@@ -147,6 +156,8 @@ async function buildPromotionContext(input = {}) {
 
   return {
     customer,
+    // The booking being priced (if any): its own holds are not counted as earlier usage.
+    bookingId: input.customerAsOf?.excludeBookingId ? Number(input.customerAsOf.excludeBookingId) : null,
     zone: { id: zone.id, timezone: zone.timezone },
     basket: {
       subtotal: rawSubtotal != null ? rawSubtotal : fromMinor(subtotalMinor),

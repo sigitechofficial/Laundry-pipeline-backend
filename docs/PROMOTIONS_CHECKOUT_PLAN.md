@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, Phase 1. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -36,10 +36,12 @@ Status: in progress (started 2026-10-08). Done: Phase 0, Phase 1. Each phase shi
 - [x] 1.3 Booking helpers (`listBookingRedemptions`, `releaseBookingRedemptions`, `reverseBookingRedemptions`); cleanup releases holds of cancelled/refunded bookings and extends expired holds of open ones.
 
 ### Phase 2: Booking stage
-- [ ] 2.1 One code box: `POST /customer/applyCoupon` and `createBooking.couponCode` accept promotion codes too, with the same response shape (`data.code` always set).
-- [ ] 2.2 `createBooking`: after the booking row, reserve the coded promotion and customer-level-eligible automatic promotions; store a booking-time snapshot (collection day, booking time, payment method). A promotions error never blocks a booking; an invalid code is reported like today.
-- [ ] 2.3 Release on Stripe hold failure / status 19 at booking.
-- [ ] 2.4 Recurring: automatic promotions only, re-checked per generated booking. Reschedule keeps reservations.
+- [x] 2.1 One code box: `POST /customer/applyCoupon` and `createBooking.couponCode` accept promotion codes too, with the same response shape (`data.code` always set).
+- [x] 2.2 `createBooking`: after the booking row, reserve the coded promotion and customer-level-eligible automatic promotions; store a booking-time snapshot (collection day, booking time, payment method). A promotions error never blocks a booking; an invalid code is reported like today.
+- [x] 2.3 Release on Stripe hold failure / status 19 at booking.
+- [x] 2.4 Recurring: automatic promotions only, re-checked per generated booking. Reschedule keeps reservations.
+- [x] 2.5 Customer facts "as of the booking" (the booking itself never counts as a previous order), and a booking's own holds never count against its per-customer / per-code limits.
+- Note: holds count toward a promotion's global limit until invoice. Holds that end up not applying are released when the booking is paid (4.1).
 
 ### Phase 3: Invoice stage (money)
 - [ ] 3.1 New `resolveBookingDiscount` = legacy coupon (existing redemptions) + promotions priced on the real invoice lines. Writes `order_adjustments` (idempotent) and the combined `billingDetails.discount` (string).

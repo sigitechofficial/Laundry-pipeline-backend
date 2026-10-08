@@ -113,6 +113,7 @@ const zoneCatalogService = require('../Admin/zoneCatalogService');
 
 // Import coupon service
 const couponService = require('./couponService');
+const bookingPromotionService = require('../promotions/bookingPromotionService');
 const cancelBookingService = require('./cancelBookingService');
 const {
     ACCOUNT_BLOCKED_CODE,
@@ -1468,6 +1469,19 @@ class CustomerOrderService {
             ValidationError
         );
 
+        // A Promotions code (flag on) is checked before anything is written; legacy codes keep their path below.
+        const promotionCodeUsed = await bookingPromotionService.usesPromotionCode(couponCode, zoneId);
+        if (promotionCodeUsed) {
+            await bookingPromotionService.validateCodeForCheckout({
+                code: couponCode,
+                customerId: userId,
+                zoneId,
+                paymentType,
+                collectionDate: normalizedCollectionDate,
+                deliveryDate: normalizedDeliveryDate,
+            });
+        }
+
         // Create booking
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
         // paymentIntentId is set at booking for card (auth hold); captured at Status 4.
@@ -1785,7 +1799,7 @@ class CustomerOrderService {
 
         // Laundry estimate from priced customer lines (bags-only often £0 until agent invoice).
         const laundryEstimate = parseFloat(total) || 0;
-        if (couponCode) {
+        if (couponCode && !promotionCodeUsed) {
             const couponResult = await couponService.validateCoupon(
                 couponCode,
                 laundryEstimate,
@@ -1825,6 +1839,22 @@ class CustomerOrderService {
                 bookingData.id,
                 discount
             );
+        }
+
+        // Hold this booking's promotions (entered code + automatic). Money is decided at invoice.
+        // A promotions failure never blocks the booking.
+        try {
+            await bookingPromotionService.attachAtBooking({
+                bookingId: bookingData.id,
+                customerId: userId,
+                zoneId,
+                couponCode: promotionCodeUsed ? couponCode : null,
+                paymentType,
+                collectionDate: normalizedCollectionDate,
+                deliveryDate: normalizedDeliveryDate,
+            });
+        } catch (promoErr) {
+            console.error(`[promotions] booking ${bookingData.id}: attach failed`, promoErr.message);
         }
 
         await bookingHistory.create({
@@ -1918,11 +1948,13 @@ class CustomerOrderService {
                     { bookingStatusId: 19 },
                     { where: { id: bookingData.id } }
                 );
+                await bookingPromotionService.releaseForBooking(bookingData.id, 'Card authorization failed');
                 throw new ValidationError(
                     `Card authorization failed: ${holdErr.message || "unable to place hold"}`
                 );
             }
         } else if (paymentType === "card") {
+            await bookingPromotionService.releaseForBooking(bookingData.id, 'Booking not placed: no Stripe customer');
             throw new ValidationError(
                 "Stripe customer ID is required for card bookings"
             );
