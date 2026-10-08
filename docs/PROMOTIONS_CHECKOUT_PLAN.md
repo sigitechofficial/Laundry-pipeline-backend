@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4, 5. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -57,9 +57,10 @@ Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4. Each phase 
 - How it is wired: direct calls where the money moves (card charge success `markChargeSuccess`, `recordCashPayment` both branches, "nothing due" in `bookingInvoiceGeneratedStatusUpdated`, customer cancel, agent cancel, admin full refund) plus the promotions job every 60s as a safety net: it settles holds of Paid/Completed bookings, reverses committed promotions of Refunded (21) bookings, and releases holds of Cancelled/Refunded bookings. Other Paid paths (agent wallet, paymentService), no-show and on-hold cancels and admin status edits are covered by the job. Partial refunds keep the promotion.
 
 ### Phase 5: Admin and reports
-- [ ] 5.1 Order detail shows promotion lines.
-- [ ] 5.2 Promotion report: uses, unique customers, total discount, by zone, by day.
-- [ ] 5.3 Campaign report: budget, spent, remaining, per promotion.
+- [x] 5.1 Order detail shows promotion lines.
+- [x] 5.2 Promotion report: uses, unique customers, total discount, by zone, by day.
+- [x] 5.3 Campaign report: budget, spent, remaining, per promotion.
+- [x] 5.4 Admin can remove a promotion from an unpaid order (audited); paid orders need a refund. Zone staff see only their zone.
 
 ### Phase 6: Remove legacy
 - [ ] 6.1 Migrate legacy coupons to promotions (codes, limits, dates, zones, used counts).
