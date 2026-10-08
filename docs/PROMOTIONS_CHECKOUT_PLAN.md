@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4, 5. Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4, 5, 6. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -63,9 +63,11 @@ Status: in progress (started 2026-10-08). Done: Phase 0, 1, 2, 3, 4, 5. Each pha
 - [x] 5.4 Admin can remove a promotion from an unpaid order (audited); paid orders need a refund. Zone staff see only their zone.
 
 ### Phase 6: Remove legacy
-- [ ] 6.1 Migrate legacy coupons to promotions (codes, limits, dates, zones, used counts).
-- [ ] 6.2 Migrate legacy service-discount rules to automatic item/category/service promotions; catalog prices keep `hasDiscount` / `originalPrice` / `saving` from promotions so apps look the same.
-- [ ] 6.3 Legacy pages read-only, then hidden; bookings already holding a legacy coupon are still honoured.
+Decision (2026-10-08): no migration; legacy is removed and only Promotions + Campaigns run. Customers see the promotion, are told at booking that it applies when the invoice is finalised, and see original vs after-discount per item once the shop adds services.
+- [x] 6.1 Where the flag is on for a zone, legacy service discounts no longer change catalog prices (full prices; promotions discount on the invoice) and non-Promotions codes are answered "Coupon code is invalid or inactive". Flag off = legacy back (rollback). Bookings already holding a legacy coupon keep it.
+- [x] 6.2 Admin: Coupons (Legacy) and Service Discounts (Legacy) pages removed; old URLs redirect to Promotions.
+- [x] 6.3 `promotionSummary` (state + customer message, per promotion amount, per item original → discount → after) on customer bookingDetailsById and agent invoice draft.
+- [x] 6.4 Banners can link a promotion: badge follows it and the banner only shows while it can apply (migration 20261009100000).
 
 ### Phase 7: Client apps (additive, need releases)
 - [ ] 7.1 Website checkout shows the promotion properly (today it forces the estimate to 0); check `utilities/URL.js` points at production before deploy.
