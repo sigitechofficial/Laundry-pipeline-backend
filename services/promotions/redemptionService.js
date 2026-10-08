@@ -13,13 +13,25 @@
 const {
   promotionRedemption: Redemption,
   orderAdjustment: OrderAdjustment,
+  booking: Booking,
   sequelize,
 } = require('../../models');
 const { Op } = require('sequelize');
 const { money } = require('./moneyUtils');
+const { CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 
 const RESERVATION_TTL_MINUTES = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * A reservation made with a booking is held until the invoice is paid (commit) or the
+ * booking is cancelled (release). Booking → invoice takes days, so 15 minutes is far too
+ * short; this long expiry keeps every existing "expires > now" check working.
+ */
+const BOOKING_HOLD_DAYS = 60;
+const CLOSED_BOOKING_STATUSES = [CANCELLED, REFUNDED];
+
+/** Idempotency key for a booking's reservation of one promotion (retries never double-reserve). */
+const bookingReservationKey = (bookingId, promotionId) => `booking-${bookingId}-promo-${promotionId}`;
 
 class RedemptionError extends Error {
   constructor(code, message) {
@@ -66,7 +78,7 @@ async function adjustCampaignBudget(promotionId, discountAmount, t) {
  *   COUPON_EXPIRED | COUPON_USAGE_EXHAUSTED | COUPON_ALREADY_USED | COUPON_NOT_YOUR_CODE
  */
 async function reserveRedemption(params, transaction) {
-  const { promotionId, customerId, couponCode, zoneId, discountAmount, idempotencyKey } = params;
+  const { promotionId, customerId, couponCode, zoneId, discountAmount, idempotencyKey, bookingId } = params;
   return inTransaction(async (t) => {
     if (idempotencyKey) {
       const existing = await Redemption.findOne({ where: { idempotencyKey }, transaction: t });
@@ -156,13 +168,16 @@ async function reserveRedemption(params, transaction) {
       couponCodeId,
       couponCode: normalizedCode,
       customerId,
+      bookingId: bookingId || null,
       status: 'RESERVED',
       discountAmount: discountAmount != null ? money(discountAmount) : null,
       currency: promo.currency || 'GBP',
       zoneId: zoneId || null,
       idempotencyKey: idempotencyKey || null,
       reservedAt: now,
-      reservationExpiresAt: new Date(now.getTime() + RESERVATION_TTL_MINUTES * 60 * 1000),
+      reservationExpiresAt: bookingId
+        ? new Date(now.getTime() + BOOKING_HOLD_DAYS * DAY_MS)
+        : new Date(now.getTime() + RESERVATION_TTL_MINUTES * 60 * 1000),
     }, { transaction: t });
 
     await sequelize.query('UPDATE promotions SET globalReservedCount = globalReservedCount + 1 WHERE id = ?', {
@@ -223,7 +238,13 @@ async function releaseRedemption(redemptionId, reason, transaction) {
     if (redemption.status === 'RELEASED') return redemption;
     if (redemption.status !== 'RESERVED') throw new RedemptionError('REDEMPTION_INVALID_STATE', `Cannot release from status "${redemption.status}"`);
 
-    await redemption.update({ status: 'RELEASED', releasedAt: new Date(), reason: reason || 'Released' }, { transaction: t });
+    await redemption.update({
+      status: 'RELEASED',
+      releasedAt: new Date(),
+      reason: reason || 'Released',
+      // Free the key so the same booking can reserve this promotion again later.
+      idempotencyKey: redemption.idempotencyKey ? `${redemption.idempotencyKey}:released:${redemption.id}` : null,
+    }, { transaction: t });
     await sequelize.query('UPDATE promotions SET globalReservedCount = GREATEST(0, globalReservedCount - 1) WHERE id = ?', {
       replacements: [redemption.promotionId], transaction: t,
     });
@@ -262,23 +283,78 @@ async function reverseRedemption(redemptionId, reason, transaction) {
 
 // ─── Cleanup expired reservations ───────────────────────────────────────────
 
+/**
+ * Releases expired checkout reservations, and is the safety net for booking holds:
+ * a hold whose booking was cancelled/refunded is released even if a cancel path missed it,
+ * and an expired hold on a booking that is still open is extended rather than lost.
+ */
 async function cleanupExpiredReservations({ limit = 500 } = {}) {
+  const now = new Date();
   const expired = await Redemption.findAll({
-    where: { status: 'RESERVED', reservationExpiresAt: { [Op.lt]: new Date() } },
-    attributes: ['id'],
+    where: { status: 'RESERVED', reservationExpiresAt: { [Op.lt]: now } },
+    attributes: ['id', 'bookingId'],
+    limit,
+  });
+  const closedHolds = await Redemption.findAll({
+    where: { status: 'RESERVED', bookingId: { [Op.ne]: null } },
+    include: [{ model: Booking, as: 'booking', attributes: [], where: { bookingStatusId: CLOSED_BOOKING_STATUSES }, required: true }],
+    attributes: ['id', 'bookingId'],
     limit,
   });
 
+  const openBookingIds = new Set();
+  const expiredHoldBookingIds = [...new Set(expired.filter((r) => r.bookingId).map((r) => r.bookingId))];
+  if (expiredHoldBookingIds.length) {
+    const open = await Booking.findAll({
+      where: { id: expiredHoldBookingIds, bookingStatusId: { [Op.notIn]: CLOSED_BOOKING_STATUSES } },
+      attributes: ['id'],
+    });
+    open.forEach((b) => openBookingIds.add(b.id));
+  }
+
   let cleaned = 0;
-  for (const r of expired) {
+  let extended = 0;
+  const seen = new Set();
+  for (const r of [...expired, ...closedHolds]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
     try {
-      await releaseRedemption(r.id, 'Reservation expired');
+      if (r.bookingId && openBookingIds.has(r.bookingId) && !closedHolds.some((c) => c.id === r.id)) {
+        await Redemption.update(
+          { reservationExpiresAt: new Date(now.getTime() + BOOKING_HOLD_DAYS * DAY_MS) },
+          { where: { id: r.id, status: 'RESERVED' } }
+        );
+        extended++;
+        continue;
+      }
+      await releaseRedemption(r.id, r.bookingId ? 'Booking closed or hold expired' : 'Reservation expired');
       cleaned++;
     } catch (err) {
       console.warn(`[RedemptionCleanup] Failed to release ${r.id}:`, err.message);
     }
   }
-  return { cleaned, total: expired.length };
+  return { cleaned, extended, total: seen.size };
+}
+
+// ─── Booking-level helpers ──────────────────────────────────────────────────
+
+/** All ledger rows held by a booking, oldest first. */
+async function listBookingRedemptions(bookingId, transaction) {
+  return Redemption.findAll({ where: { bookingId }, order: [['id', 'ASC']], transaction });
+}
+
+/** Cancel before payment: release every reservation the booking still holds. */
+async function releaseBookingRedemptions(bookingId, reason, transaction) {
+  const rows = await Redemption.findAll({ where: { bookingId, status: 'RESERVED' }, attributes: ['id'], transaction });
+  for (const r of rows) await releaseRedemption(r.id, reason || 'Booking cancelled', transaction);
+  return rows.length;
+}
+
+/** Full refund after payment: reverse every committed redemption of the booking. */
+async function reverseBookingRedemptions(bookingId, reason, transaction) {
+  const rows = await Redemption.findAll({ where: { bookingId, status: 'COMMITTED' }, attributes: ['id'], transaction });
+  for (const r of rows) await reverseRedemption(r.id, reason || 'Booking refunded', transaction);
+  return rows.length;
 }
 
 // ─── Order adjustments ──────────────────────────────────────────────────────
@@ -338,10 +414,15 @@ async function writeOrderAdjustments(bookingId, appliedPromotions, options = {})
 module.exports = {
   RedemptionError,
   RESERVATION_TTL_MINUTES,
+  BOOKING_HOLD_DAYS,
+  bookingReservationKey,
   reserveRedemption,
   commitRedemption,
   releaseRedemption,
   reverseRedemption,
   cleanupExpiredReservations,
   writeOrderAdjustments,
+  listBookingRedemptions,
+  releaseBookingRedemptions,
+  reverseBookingRedemptions,
 };

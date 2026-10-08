@@ -369,6 +369,43 @@ async function main() {
     const cleaned = await ledger.cleanupExpiredReservations();
     check('ledger', 'cleanup releases expired reservations', cleaned.total >= 0);
     await models.campaign.destroy({ where: { id: camp.id } });
+
+    // Booking holds: reservation made with a booking lives until commit/release (booking → invoice takes days).
+    const openBooking = await models.booking.findOne({ where: { bookingStatusId: { [Op.notIn]: [19, 21] } }, attributes: ['id'], order: [['id', 'DESC']] });
+    const closedBooking = await models.booking.findOne({ where: { bookingStatusId: [19, 21] }, attributes: ['id'], order: [['id', 'DESC']] });
+    if (openBooking && closedBooking) {
+      const p5 = await P.create({ ...live, name: `${PREFIX} ledger booking hold`, perCustomerLimit: null });
+      const k = ledger.bookingReservationKey(openBooking.id, p5.id);
+      const h = await ledger.reserveRedemption({ promotionId: p5.id, customerId: 6001, bookingId: openBooking.id, idempotencyKey: k });
+      const days = (new Date(h.reservationExpiresAt) - Date.now()) / 86400000;
+      check('ledger', 'booking hold saves the booking and lasts ~60 days', Number(h.bookingId) === openBooking.id && days > 59 && days <= 60, `${days.toFixed(2)} days`);
+      check('ledger', 'booking hold retry returns the same row', (await ledger.reserveRedemption({ promotionId: p5.id, customerId: 6001, bookingId: openBooking.id, idempotencyKey: k })).id === h.id);
+      check('ledger', 'listBookingRedemptions finds the hold', (await ledger.listBookingRedemptions(openBooking.id)).some((r) => r.id === h.id));
+
+      // Expired hold on an open booking is extended, not lost.
+      await models.promotionRedemption.update({ reservationExpiresAt: new Date(Date.now() - 60000) }, { where: { id: h.id } });
+      await ledger.cleanupExpiredReservations();
+      const hx = await models.promotionRedemption.findByPk(h.id);
+      check('ledger', 'cleanup extends an expired hold of an open booking', hx.status === 'RESERVED' && new Date(hx.reservationExpiresAt) > new Date(), hx.status);
+
+      // Hold on a cancelled booking is released by the safety net, even before it expires.
+      const c = await ledger.reserveRedemption({ promotionId: p5.id, customerId: 6002, bookingId: closedBooking.id, idempotencyKey: ledger.bookingReservationKey(closedBooking.id, p5.id) });
+      await ledger.cleanupExpiredReservations();
+      check('ledger', 'cleanup releases a hold of a cancelled/refunded booking', (await models.promotionRedemption.findByPk(c.id)).status === 'RELEASED');
+
+      // Release frees the key: the same booking can reserve again later.
+      const released = await ledger.releaseBookingRedemptions(openBooking.id, 'test cancel');
+      check('ledger', 'releaseBookingRedemptions releases the hold', released >= 1 && (await models.promotionRedemption.findByPk(h.id)).status === 'RELEASED');
+      const again = await ledger.reserveRedemption({ promotionId: p5.id, customerId: 6001, bookingId: openBooking.id, idempotencyKey: k });
+      check('ledger', 'released key can be reserved again (new row)', again.id !== h.id && again.status === 'RESERVED');
+      await ledger.commitRedemption(again.id, openBooking.id, 4);
+      const reversed = await ledger.reverseBookingRedemptions(openBooking.id, 'test refund');
+      check('ledger', 'reverseBookingRedemptions reverses committed rows', reversed >= 1 && (await models.promotionRedemption.findByPk(again.id)).status === 'REVERSED');
+      const p5row = await P.findByPk(p5.id);
+      check('ledger', 'counters back to zero after release + reverse', p5row.globalReservedCount === 0 && p5row.globalUsedCount === 0, `reserved ${p5row.globalReservedCount} used ${p5row.globalUsedCount}`);
+    } else {
+      check('ledger', 'booking hold tests need an open and a cancelled/refunded booking in the local DB', false);
+    }
   }
 }
 

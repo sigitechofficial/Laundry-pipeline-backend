@@ -1,6 +1,6 @@
 # Promotions → checkout & invoice: implementation plan
 
-Status: in progress (started 2026-10-08). Each phase ships on its own, behind a flag, with tests.
+Status: in progress (started 2026-10-08). Done: Phase 0, Phase 1. Each phase ships on its own, behind a flag, with tests.
 
 ## Decisions (business, 2026-10-08)
 
@@ -26,13 +26,14 @@ Status: in progress (started 2026-10-08). Each phase ships on its own, behind a 
 ## Phases
 
 ### Phase 0: Safety rails
-- [ ] 0.1 Flag `PROMOTIONS_CHECKOUT_ENABLED` + optional `PROMOTIONS_CHECKOUT_ZONE_IDS` allowlist. Off = today's behaviour exactly.
-- [ ] 0.2 Delivery fee source: engine context uses a delivery fee of £0 (none exists), not `zone.serviceCharge`.
-- [ ] 0.3 Admin: warn that delivery fee is £0 on delivery promotions; hide Cashback until a wallet payout exists.
+- [x] 0.1 Flag `PROMOTIONS_CHECKOUT_ENABLED` + optional `PROMOTIONS_CHECKOUT_ZONE_IDS` allowlist. Off = today's behaviour exactly.
+- [x] 0.2 Delivery fee source: engine context uses a delivery fee of £0 (none exists), not `zone.serviceCharge`.
+- [x] 0.3 Admin: warn that delivery fee is £0 on delivery promotions; hide Cashback until a wallet payout exists.
 
 ### Phase 1: Booking-held reservations (ledger)
-- [ ] 1.1 Reservations attached to a booking do not expire after 15 minutes; they end by commit, release (cancel) or reverse (refund).
-- [ ] 1.2 Idempotency key `booking-{id}-promo-{promotionId}` so retries never double-reserve.
+- [x] 1.1 Reservations attached to a booking do not expire after 15 minutes; they end by commit, release (cancel) or reverse (refund).
+- [x] 1.2 Idempotency key `booking-{id}-promo-{promotionId}` so retries never double-reserve.
+- [x] 1.3 Booking helpers (`listBookingRedemptions`, `releaseBookingRedemptions`, `reverseBookingRedemptions`); cleanup releases holds of cancelled/refunded bookings and extends expired holds of open ones.
 
 ### Phase 2: Booking stage
 - [ ] 2.1 One code box: `POST /customer/applyCoupon` and `createBooking.couponCode` accept promotion codes too, with the same response shape (`data.code` always set).

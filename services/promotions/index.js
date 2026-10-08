@@ -45,6 +45,10 @@ module.exports = {
   reverseRedemption: redemptionService.reverseRedemption,
   cleanupExpiredReservations: redemptionService.cleanupExpiredReservations,
   writeOrderAdjustments: redemptionService.writeOrderAdjustments,
+  bookingReservationKey: redemptionService.bookingReservationKey,
+  listBookingRedemptions: redemptionService.listBookingRedemptions,
+  releaseBookingRedemptions: redemptionService.releaseBookingRedemptions,
+  reverseBookingRedemptions: redemptionService.reverseBookingRedemptions,
 
   // Money utilities
   ...moneyUtils,
