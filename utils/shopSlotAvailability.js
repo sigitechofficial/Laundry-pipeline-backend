@@ -12,7 +12,9 @@
  * matching compares on DATE() only.
  */
 const { Op, fn, col, where: sequelizeWhere } = require('sequelize');
-const { booking } = require('../models');
+// Loaded on first use: the pure date/time helpers below are also used by unit
+// tests that run without a database config (CI).
+const models = () => require('../models');
 const { SLOT_RELEASING } = require('../constants/bookingStatusIds');
 
 /** Columns backing each schedule leg of a booking. */
@@ -136,7 +138,7 @@ async function findShopSlotConflicts(shopAddressId, window = {}, options = {}) {
         criteria.id = { [Op.ne]: excludeBookingId };
     }
 
-    return booking.findAll({
+    return models().booking.findAll({
         where: criteria,
         attributes: [
             'id',
