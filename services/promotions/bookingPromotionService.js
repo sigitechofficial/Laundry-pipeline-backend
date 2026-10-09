@@ -673,9 +673,15 @@ async function bookingCreditView(bookingId) {
   const rows = await CreditEntry.findAll({ where: { bookingId }, attributes: ['type', 'status', 'amount'] });
   const sum = (list) => fromMinor(list.reduce((t, e) => t + Math.abs(toMinor(e.amount)), 0));
   const spends = rows.filter((e) => e.type === 'SPEND' && ['HELD', 'COMMITTED'].includes(e.status));
+  const returned = sum(rows.filter((e) => e.type === 'RESTORE'));
   return {
     creditUsed: spends.length
-      ? { amount: sum(spends), status: spends.some((e) => e.status === 'COMMITTED') ? 'paid' : 'held' }
+      ? {
+        amount: sum(spends),
+        status: spends.some((e) => e.status === 'COMMITTED') ? 'paid' : 'held',
+        // Given back as credit after a full refund.
+        returned,
+      }
       : null,
     earned: sum(rows.filter((e) => e.type === 'EARN')),
     takenBack: rows.some((e) => e.type === 'REVERSE'),
@@ -687,7 +693,11 @@ function cashbackView(cashbackHolds, creditView) {
   const sym = '£';
   const priced = fromMinor(cashbackHolds.reduce((t, h) => t + toMinor(h.cashbackAmount || 0), 0));
   if (creditView.takenBack) {
-    return { amount: creditView.earned, status: 'taken_back', message: 'Cashback was taken back because the order was refunded.' };
+    return {
+      amount: creditView.earned,
+      status: 'taken_back',
+      message: `${sym}${creditView.earned.toFixed(2)} cashback was taken back because the order was refunded.`,
+    };
   }
   if (creditView.earned > 0) {
     return { amount: creditView.earned, status: 'credited', message: `${sym}${creditView.earned.toFixed(2)} cashback was added to your credit.` };

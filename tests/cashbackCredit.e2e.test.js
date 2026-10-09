@@ -276,7 +276,7 @@ async function main() {
     const c6 = await credit();
     check('refund', 'full refund: unspent cashback taken back (balance £0, never negative)', rf.status === 200 && Number(c6.balance) === 0 && c6.history.entries.some((e) => e.type === 'REVERSE'), `${rf.status} ${rf.message} £${c6.balance}`);
     const d6 = await detail(b6);
-    check('refund', 'booking detail says the cashback was taken back', d6.promotionSummary?.cashback?.status === 'taken_back', d6.promotionSummary?.cashback?.status);
+    check('refund', 'booking detail says the £2.40 cashback was taken back', d6.promotionSummary?.cashback?.status === 'taken_back' && /£2\.40 cashback was taken back/.test(d6.promotionSummary?.cashback?.message || ''), d6.promotionSummary?.cashback?.message);
     await archiveAll();
 
     // Refund of an order paid partly with credit: the credit comes back
@@ -287,6 +287,8 @@ async function main() {
     check('refund', 'card balance charged net of £5 credit', Boolean(charge7?.ok) && discountOf(d7) === 5 && Number((await credit()).balance) === 0, `charge ${charge7?.ok} amount ${charge7?.amount} discount £${discountOf(d7)}`);
     const rf7 = await admin('POST', `/bookings/${b7}/refund`, { mode: 'full', reason: 'QA full refund' });
     check('refund', 'full refund: the £5 credit is given back', rf7.status === 200 && Number((await credit()).balance) === 5, `${rf7.status} ${rf7.message} £${(await credit()).balance}`);
+    const d7b = await detail(b7);
+    check('refund', 'booking detail shows the £5 credit returned', d7b.promotionSummary?.creditUsed?.returned === 5, JSON.stringify(d7b.promotionSummary?.creditUsed));
   }
 }
 
