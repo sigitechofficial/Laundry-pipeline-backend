@@ -1,6 +1,6 @@
 # Cashback as customer credit
 
-Status: in progress on branch `promotions-checkout` (not pushed).
+Status: C1–C6 done on branch `promotions-checkout` in all 5 repos (not pushed). Ships with the promotions rollout.
 
 ## Decisions
 
@@ -64,11 +64,22 @@ Table `customer_credit_entries`, one row per movement, never edited except `rema
       `POST /admin/customerCredit/:customerId/adjust { amount, reason, requestId? }` (platform admins only).
       `promotionSummary` gains `cashback { amount, status: pending|credited|taken_back, message }` and
       `creditUsed { amount, status: held|paid }`; each promotion gains `benefitType` and `cashback`.
-- [ ] C4 Admin panel: Cashback benefit enabled, customer Credit tab (balance, history, adjust), order card
+- [x] C4 Admin panel: Cashback benefit enabled, customer Credit tab (balance, history, adjust), order card
       shows cashback + credit used, report shows cashback issued.
-- [ ] C5 Customer app + website: credit balance + history screen, booking detail "Cashback £X (after
+- [x] C5 Customer app + website: credit balance + history screen, booking detail "Cashback £X (after
       delivery)" / "Credit used −£X". Agent app: "Credit used" on the invoice card.
-- [ ] C6 Full test run (flag on and off), mobile screenshots, docs.
+- [x] C6 Full test run (flag on and off), mobile screenshots, docs.
+      2026-10-09: npm test, credit-db 14, promotions-api 165 (flag on and off), promotions-e2e 16,
+      promotions-cases 33, cashback-e2e 38; kill switch checked (flag off → held credit released).
+      Screens checked at 375px: customer booking detail (credited / taken back / credit returned),
+      Credit screen, order summary credit note; agent invoice card; website order detail; admin
+      Credit tab + adjust, order card, cashback report data.
+
+Known limits:
+- Partial refunds do not change credit (decision above).
+- The agent cancel endpoint sets status 13, not 19 (old bug). Credit is released by the hook and a
+  cancel record blocks re-holding, but the job only sees status 19/21.
+- A held credit restored into a lot that expired meanwhile expires on the next job run.
 
 Old apps cannot be force-updated: credit used is part of `billingDetail.discount`, so old apps show it as
 discount and charge the right amount. Every API change is additive.
