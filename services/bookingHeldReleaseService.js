@@ -118,7 +118,8 @@ async function broadcastExpiredPreferredBookings(options = {}) {
             );
             if (claimed !== 1) continue;
 
-            const { notifiedCount } = await broadcastBookingToShops(row);
+            const phaseTwo = await broadcastBookingToShops(row);
+            const { notifiedCount } = phaseTwo;
 
             if (notifiedCount > 0) {
                 console.log(
@@ -146,6 +147,9 @@ async function broadcastExpiredPreferredBookings(options = {}) {
                     `[preferredShop phase-2] booking=${row.id} zone=${row.zoneId} ` +
                     'recipients=0 retryInSeconds=60'
                 );
+                // Tell admins (once per booking) so it does not sit until it expires.
+                const { alertAdminNoShopOnce } = require('./Customer/customerOrderService');
+                await alertAdminNoShopOnce(row.id, row.zoneId, phaseTwo).catch(() => {});
             }
         } catch (err) {
             await booking.update(
@@ -181,14 +185,6 @@ async function releaseSingleHeldBooking(row) {
     const canRelease = await canReleaseHeldBooking(row, countryCtx);
     if (!canRelease) return false;
 
-    const services = await customerSelectedService.findAll({
-        where: { bookingId: row.id },
-        attributes: ["serviceId"],
-    });
-    const servicePayload = services.map((s) => ({
-        serviceId: s.serviceId,
-    }));
-
     const visibleAt = new Date();
     const updatePayload = {
         agentBroadcastHeld: false,
@@ -214,21 +210,13 @@ async function releaseSingleHeldBooking(row) {
     if (claimed !== 1) return false;
 
     let notifiedCount = 0;
+    let routed = null;
     try {
-        const { bookingEventSentCheckTheShops } = require("./Customer/customerOrderService");
-        const result = await bookingEventSentCheckTheShops(
-            row.id,
-            row.zoneId,
-            row.collectionDate,
-            row.collectionTimeTo,
-            row.collectionTimeFrom,
-            row.deliveryDate,
-            row.deliveryTimeTo,
-            row.deliveryTimeFrom,
-            servicePayload,
-            countryCtx.ianaTimeZone
-        );
-        notifiedCount = Number(result?.notifiedCount || 0);
+        // Same routing as a new booking: the customer's preferred shop (admin
+        // assignment or last completed shop) gets the head-start window first.
+        const { routePendingBooking } = require("./Customer/customerOrderService");
+        routed = await routePendingBooking(row.id);
+        notifiedCount = Number(routed?.notifiedCount || 0);
     } catch (err) {
         console.error(
             `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} broadcast_error:`,
@@ -255,6 +243,8 @@ async function releaseSingleHeldBooking(row) {
             `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} ` +
             'released=false reason=no_eligible_recipient'
         );
+        const { alertAdminNoShopOnce } = require("./Customer/customerOrderService");
+        await alertAdminNoShopOnce(row.id, row.zoneId, routed || {}).catch(() => {});
         return false;
     }
 

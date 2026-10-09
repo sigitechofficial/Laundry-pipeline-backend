@@ -243,7 +243,16 @@ async function excludeCustomerFromShop({
     );
   }
 
-  return mapExclusion(created);
+  // Waiting orders are routed again (this shop is never offered them now);
+  // orders this shop already accepted are listed for the admin to reassign.
+  const mapped = mapExclusion(created);
+  try {
+    const { applyCustomerShopMove } = require('./customerShopMoveService');
+    mapped.openOrders = await applyCustomerShopMove(cid, { onlyShopAddressId: shopAddressId });
+  } catch (err) {
+    console.warn('[customerShopExclusion] open-order handling failed:', err?.message || err);
+  }
+  return mapped;
 }
 
 async function includeCustomerForShop({

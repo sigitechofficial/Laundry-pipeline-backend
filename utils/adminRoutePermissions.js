@@ -56,6 +56,7 @@ const ROUTE_FEATURE_PREFIXES = [
 
     ['/allOrderDetails', K.ORDER_MANAGEMENT],
     ['/ordersCount', K.ORDER_MANAGEMENT],
+    ['/orders', K.ORDER_MANAGEMENT],
     ['/pendingOrders', K.ORDER_MANAGEMENT],
     ['/allCancelOrders', K.ORDER_MANAGEMENT],
     ['/completeOrders', K.ORDER_MANAGEMENT],

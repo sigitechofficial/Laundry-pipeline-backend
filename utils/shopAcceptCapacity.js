@@ -1,10 +1,13 @@
 'use strict';
 
 /**
- * Shop accept capacity — rolling window rate limit for marketplace accepts.
+ * Shop accept capacity settings.
  *
- * Global defaults: runtime settings shopAcceptCapEnabled / WindowMinutes / MaxOrders.
- * Per-shop override: shopAssignmentPolicies.acceptCapOverride + window + max.
+ * Global: runtime settings shopAcceptCapEnabled / shopAcceptMaxOrders.
+ * Per shop: shopAssignmentPolicies.acceptCapOverride + acceptMaxOrders.
+ * The limit is applied per booking slot (pickups + deliveries in that hour) by
+ * utils/shopSlotCapacity.js. The rolling-window helpers below (countRecentAccepts,
+ * evaluateShopAcceptCapacity) are no longer used for routing or accepting.
  * Admin manual assign always bypasses. Overflow simply goes to other eligible shops.
  */
 
@@ -237,45 +240,47 @@ async function listRecentAcceptTimes(shopAddressId, windowMinutes, options = {})
 }
 
 /**
- * Client snapshot for the agent banner / acceptCapacity GET.
- * Resolves the shop address from the owner (or staff-resolved) user id.
+ * Client snapshot for the agent banner / acceptCapacity GET / socket push / admin.
+ *
+ * Capacity is per booking slot now (utils/shopSlotCapacity.js). The old rolling
+ * fields stay in the response but switched off, so agent app builds that only
+ * know the rolling window never count or block locally (the server still
+ * refuses an accept into a full slot). New clients read `slotCapacity`.
  */
-async function getShopAcceptCapacityStatus(shopUserId, options = {}) {
-  const {
-    buildCapacityStatus,
-    computeCapacityResetAt,
-  } = require('./shopAcceptCapacityWindow');
+async function getShopAcceptCapacityStatus(shopUserId) {
+  const { listUpcomingSlotLoad } = require('./shopSlotCapacity');
   const { addressDb } = require('../models');
 
   const cap = await resolveAcceptCapForShop(shopUserId);
-  if (!cap.enabled) {
-    return buildCapacityStatus({ cap });
-  }
-
+  const limit = cap.enabled ? Number(cap.maxOrders) || 0 : 1;
   const shopAddress = await addressDb.findOne({
-    where: {
-      userId: shopUserId,
-      addressType: 'LaundaryShopAddress',
-    },
+    where: { userId: shopUserId, addressType: 'LaundaryShopAddress' },
     attributes: ['id'],
   });
+  const upcoming = shopAddress ? await listUpcomingSlotLoad(shopAddress.id) : [];
 
-  if (!shopAddress) {
-    return buildCapacityStatus({ cap, used: 0 });
-  }
-
-  const times = await listRecentAcceptTimes(
-    shopAddress.id,
-    cap.windowMinutes,
-    options
-  );
-  const used = times.length;
-  const resetsAt =
-    cap.maxOrders === 0
-      ? null
-      : computeCapacityResetAt(times, cap.maxOrders, cap.windowMinutes);
-
-  return buildCapacityStatus({ cap, used, resetsAt });
+  return {
+    enabled: false,
+    limit: null,
+    used: 0,
+    remaining: null,
+    windowMinutes: null,
+    atCapacity: false,
+    resetsAt: null,
+    resetsInSeconds: null,
+    slotCapacity: {
+      enabled: cap.enabled,
+      mode: cap.enabled ? 'slot' : 'single',
+      limit,
+      source: cap.source,
+      summary: cap.enabled
+        ? limit === 0
+          ? 'Capacity 0: no marketplace orders (admin can still assign).'
+          : `Up to ${limit} pickups and deliveries per slot.`
+        : 'One order per pickup / delivery slot.',
+      upcoming: upcoming.map((r) => ({ ...r, limit, full: r.used >= limit })),
+    },
+  };
 }
 
 module.exports = {

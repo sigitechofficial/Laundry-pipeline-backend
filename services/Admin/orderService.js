@@ -1946,16 +1946,24 @@ class OrderService {
             await booking.update(orderUpdateData, { where: { id: orderId } });
         }
 
-        // Keep recurringPlans in sync when frequency changed (Just Once stops the series).
-        if (frequency !== undefined) {
+        // Keep recurringPlans in sync only when the frequency really changed
+        // (the edit form always sends it; re-sending the same value must not
+        // turn a plan the customer paused or switched off back on).
+        const recurringBookingServiceForSync = require('../Customer/recurringBookingService');
+        const syncedFrequencyValue =
+            orderUpdateData.frequency != null
+                ? orderUpdateData.frequency
+                : frequency === 'Every week'
+                  ? 'Weekly'
+                  : frequency;
+        const frequencyChanged =
+            frequency !== undefined &&
+            recurringBookingServiceForSync.normalizeFrequencyLabel(syncedFrequencyValue) !==
+                recurringBookingServiceForSync.normalizeFrequencyLabel(existingOrder?.frequency);
+        if (frequencyChanged) {
             try {
-                const recurringBookingService = require('../Customer/recurringBookingService');
-                const syncedFrequency =
-                    orderUpdateData.frequency != null
-                        ? orderUpdateData.frequency
-                        : frequency === 'Every week'
-                          ? 'Weekly'
-                          : frequency;
+                const recurringBookingService = recurringBookingServiceForSync;
+                const syncedFrequency = syncedFrequencyValue;
                 await recurringBookingService.syncPlanAfterFrequencyChange(
                     orderId,
                     syncedFrequency

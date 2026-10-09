@@ -22,7 +22,7 @@ const {
 } = require('../models');
 const { isShopEligibleForBroadcast } = require('../utils/shopWorkingHours');
 const { getCountryContextFromZoneId } = require('../utils/countryTimeZone');
-const { isShopSlotFree } = require('../utils/shopSlotAvailability');
+const { evaluateShopSlotCapacity } = require('../utils/shopSlotCapacity');
 const shopAssignmentPolicyService = require('./Admin/shopAssignmentPolicyService');
 
 const COMPLETED_STATUS_ID = 17;
@@ -277,20 +277,14 @@ async function resolvePreferredShop({
             );
             if (!openForPickup) continue;
 
-            // Already committed to other work in this pickup/delivery window.
-            const slotFree = await isShopSlotFree(shop.id, requestedWindow, {
+            // No room left in this booking's pickup / delivery slot for the shop.
+            const slotCapacity = await evaluateShopSlotCapacity(ownerId, shop.id, requestedWindow, {
                 excludeBookingId,
             });
-            if (!slotFree) {
+            if (!slotCapacity.allowed) {
                 sawSlotClash = true;
                 continue;
             }
-
-            const { evaluateShopAcceptCapacity } = require('../utils/shopAcceptCapacity');
-            const capacity = await evaluateShopAcceptCapacity(ownerId, shop.id, {
-                excludeBookingId,
-            });
-            if (!capacity.allowed) continue;
 
             return { shop, skipReason: null, candidateShopIds: candidateIds };
         }

@@ -2,28 +2,66 @@
 
 /**
  * Rank / sort new-order rows by distance from the agent's shop.
- * Pure helpers — used by fetchVisibleNewBookings and unit tests.
+ * Pure helpers — used by fetchVisibleNewBookings, the new-order broadcast and unit tests.
  */
 
-function sortByPickupThenDelivery(rows) {
-  if (!Array.isArray(rows) || rows.length < 2) return rows || [];
-  return [...rows].sort((a, b) => {
-    const ap = a.pickupDistanceKm;
-    const bp = b.pickupDistanceKm;
-    const aPickup = ap == null ? Number.POSITIVE_INFINITY : Number(ap);
-    const bPickup = bp == null ? Number.POSITIVE_INFINITY : Number(bp);
-    if (aPickup !== bPickup) return aPickup - bPickup;
-    const ad = a.deliveryDistanceKm;
-    const bd = b.deliveryDistanceKm;
-    const aDel = ad == null ? Number.POSITIVE_INFINITY : Number(ad);
-    const bDel = bd == null ? Number.POSITIVE_INFINITY : Number(bd);
-    if (aDel !== bDel) return aDel - bDel;
-    return Number(b.id || 0) - Number(a.id || 0);
-  });
+const legKm = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/**
+ * Km the shop drives for an order: shop → pickup + shop → drop-off (a missing
+ * drop-off distance counts as the pickup one; an unknown pickup sorts last).
+ */
+function tripKm(row) {
+  const pickup = legKm(row?.pickupDistanceKm);
+  if (pickup == null) return Number.POSITIVE_INFINITY;
+  const delivery = legKm(row?.deliveryDistanceKm);
+  return pickup + (delivery == null ? pickup : delivery);
+}
+
+/** "YYYY-MM-DD HH:MM:SS" of the pickup slot start, for "sooner first" ties. */
+function pickupSlotKey(row) {
+  const { toDateOnly, toTimeOnly } = require('./shopSlotAvailability');
+  return `${toDateOnly(row?.collectionDate) || '9999-12-31'} ${toTimeOnly(row?.collectionTimeFrom) || '99:99:99'}`;
 }
 
 /**
- * Mutates rows: sorts nearest-pickup-first and sets top-3 rank badges.
+ * Nearest job first: least total trip (pickup + delivery km); then the nearer
+ * pickup; then the sooner pickup slot; then the newest order.
+ */
+function compareNearestTrip(a, b) {
+  const ta = tripKm(a);
+  const tb = tripKm(b);
+  if (ta !== tb) return ta - tb;
+  const pa = legKm(a?.pickupDistanceKm) ?? Number.POSITIVE_INFINITY;
+  const pb = legKm(b?.pickupDistanceKm) ?? Number.POSITIVE_INFINITY;
+  if (pa !== pb) return pa - pb;
+  const sa = pickupSlotKey(a);
+  const sb = pickupSlotKey(b);
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  return Number(b?.id || 0) - Number(a?.id || 0);
+}
+
+/** Always a NEW array (callers clear and refill the original in place). */
+function sortNearestTrip(rows) {
+  if (!Array.isArray(rows)) return [];
+  return [...rows].sort(compareNearestTrip);
+}
+
+/** Top-3 badges for one leg (1 = nearest), independent of list order. */
+function rankLeg(rows, field, rankField, flagField) {
+  rows
+    .filter((r) => legKm(r[field]) != null)
+    .sort((a, b) => Number(a[field]) - Number(b[field]))
+    .slice(0, 3)
+    .forEach((row, idx) => {
+      row[rankField] = idx + 1;
+      row[flagField] = idx === 0;
+    });
+}
+
+/**
+ * Mutates rows: sorts nearest trip first and sets top-3 nearest pickup /
+ * nearest delivery badges.
  * @returns {object[]} sorted rows (same references)
  */
 function applyNearestDistanceRanks(rows) {
@@ -34,32 +72,16 @@ function applyNearestDistanceRanks(rows) {
     row.isNearestDelivery = false;
     row.nearestPickupRank = null;
     row.nearestDeliveryRank = null;
+    row.tripDistanceKm = Number.isFinite(tripKm(row)) ? Number(tripKm(row).toFixed(2)) : null;
   }
 
-  const sorted = sortByPickupThenDelivery(rows);
+  const sorted = sortNearestTrip(rows);
   // Keep caller array order in sync with sorted order.
   rows.length = 0;
   rows.push(...sorted);
 
-  let pickupRank = 0;
-  for (const row of rows) {
-    if (row.pickupDistanceKm == null) continue;
-    pickupRank += 1;
-    row.nearestPickupRank = pickupRank;
-    row.isNearestPickup = pickupRank === 1;
-    if (pickupRank >= 3) break;
-  }
-
-  const byDelivery = [...rows]
-    .filter((r) => r.deliveryDistanceKm != null)
-    .sort(
-      (a, b) => Number(a.deliveryDistanceKm) - Number(b.deliveryDistanceKm)
-    );
-  byDelivery.slice(0, 3).forEach((row, idx) => {
-    row.nearestDeliveryRank = idx + 1;
-    row.isNearestDelivery = idx === 0;
-  });
-
+  rankLeg(rows, 'pickupDistanceKm', 'nearestPickupRank', 'isNearestPickup');
+  rankLeg(rows, 'deliveryDistanceKm', 'nearestDeliveryRank', 'isNearestDelivery');
   return rows;
 }
 
@@ -123,7 +145,9 @@ function sortAssignableShops(shops) {
 }
 
 module.exports = {
-  sortByPickupThenDelivery,
+  tripKm,
+  compareNearestTrip,
+  sortNearestTrip,
   applyNearestDistanceRanks,
   computeShopOrderDistances,
   sortAssignableShops,

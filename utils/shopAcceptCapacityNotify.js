@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Push the shop's rolling accept-capacity snapshot to every device for that shop
- * (owner + staff). Used after marketplace accept so the agent banner updates live.
+ * Push the shop's capacity snapshot (slot capacity + upcoming slot load) to every
+ * device for that shop (owner + staff). Used after a marketplace accept and when
+ * an accept is refused because the slot is full.
  */
 
 const EVENT = 'shopAcceptCapacity';
@@ -29,22 +30,15 @@ function notifyShopAcceptCapacity(shopUserId, options = {}) {
   (async () => {
     try {
       const { getShopAcceptCapacityStatus } = require('./shopAcceptCapacity');
-      const {
-        capacityReachedMessage,
-      } = require('./shopAcceptCapacityWindow');
 
       const capacity =
         options.capacity || (await getShopAcceptCapacityStatus(ownerId));
       if (!capacity) return;
 
-      const atCap = capacity.enabled === true && capacity.atCapacity === true;
-      // Only use the "reached" event (agent fail toast) on rejected accepts.
+      // Only use the "reached" event (agent fail toast) on rejected accepts;
+      // the message then says which slot is full (shopSlotCapacity.slotFullMessage).
       const type = options.reachedToast ? REACHED_EVENT : EVENT;
-      const message =
-        options.message ||
-        (options.reachedToast && atCap
-          ? capacityReachedMessage(capacity)
-          : undefined);
+      const message = options.message || undefined;
 
       const { sendEvent } = require('../socket_io');
       const ids = await shopDeviceUserIds(ownerId);

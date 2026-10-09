@@ -580,9 +580,10 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 
     const shopAddr = await addressDb.findOne({
         where: { userId: agentId, deletedAt: null },
-        attributes: ["id", "zoneId", "lat", "lng"],
+        attributes: ["id", "zoneId", "lat", "lng", "status"],
     });
-    if (!shopAddr || !shopAddr.zoneId) return [];
+    // A deactivated shop gets no new marketplace orders.
+    if (!shopAddr || !shopAddr.zoneId || shopAddr.status === false) return [];
 
     const agentShopId = shopAddr.id;
     const agentZone = shopAddr.zoneId;
@@ -767,6 +768,28 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         return result;
     }
 
+    // Slot capacity: hide orders whose pickup / delivery slot has no room left
+    // for this shop (accepting would be refused). One check per distinct slot pair.
+    const { resolveAcceptCapForShop } = require("../../utils/shopAcceptCapacity");
+    const { evaluateShopSlotCapacity } = require("../../utils/shopSlotCapacity");
+    const shopCap = await resolveAcceptCapForShop(agentId);
+    const slotRoomCache = new Map();
+    async function hasSlotRoom(plain) {
+        if (plain.adminAssignedShopId != null) return true; // admin decided
+        const key = [
+            plain.collectionDate, plain.collectionTimeFrom, plain.collectionTimeTo,
+            plain.deliveryDate, plain.deliveryTimeFrom, plain.deliveryTimeTo,
+        ].map((v) => (v instanceof Date ? v.toISOString() : String(v))).join("|");
+        if (!slotRoomCache.has(key)) {
+            const result = await evaluateShopSlotCapacity(agentId, agentShopId, plain, {
+                excludeBookingId: plain.id,
+                cap: shopCap,
+            });
+            slotRoomCache.set(key, result.allowed);
+        }
+        return slotRoomCache.get(key);
+    }
+
     const out = [];
     const excluded = {
         noExpiry: 0,
@@ -774,6 +797,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         expired: 0,
         pickupHours: 0,
         customerExcluded: 0,
+        slotFull: 0,
     };
     for (const row of bookingData) {
         const plain = row.get({ plain: true });
@@ -826,6 +850,11 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             continue;
         }
 
+        if (!(await hasSlotRoom(plain))) {
+            excluded.slotFull += 1;
+            continue;
+        }
+
         if (withDetails) {
             const minutesLeft = getAcceptWindowMinutesRemaining(
                 getAcceptWindowAnchor(plain),
@@ -844,7 +873,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         }
     }
 
-    // Distance from THIS shop to each order's pickup / delivery — then nearest-first.
+    // Distance from THIS shop to each order's pickup / delivery — then least total trip first.
     await attachShopOrderDistances(out, shopHasCoords ? shopLat : null, shopHasCoords ? shopLng : null);
     if (bookingData.length > 0 || out.length > 0) {
         console.log(
@@ -857,48 +886,21 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 }
 
 /**
- * Attach pickup/delivery km from the agent's shop and sort nearest pickup first.
- * Also flags top-3 nearest pickup / delivery ranks in the current list.
+ * Attach pickup/delivery km from the agent's shop and sort least total trip
+ * (pickup + delivery km) first. Also flags top-3 nearest pickup / delivery ranks.
  */
 async function attachShopOrderDistances(rows, shopLat, shopLng) {
     if (!Array.isArray(rows) || !rows.length) return rows;
 
-    const hasShop =
-        Number.isFinite(shopLat) && Number.isFinite(shopLng);
-
+    const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
     for (const row of rows) {
-        let pickupDistanceKm = null;
-        let deliveryDistanceKm = null;
-        if (hasShop) {
-            const pLat = parseFloat(row.pickupAddress?.lat);
-            const pLng = parseFloat(row.pickupAddress?.lng);
-            const dLat = parseFloat(row.dropOffAddress?.lat);
-            const dLng = parseFloat(row.dropOffAddress?.lng);
-            try {
-                if (Number.isFinite(pLat) && Number.isFinite(pLng)) {
-                    pickupDistanceKm = await getdistance(
-                        shopLat,
-                        shopLng,
-                        pLat,
-                        pLng
-                    );
-                }
-            } catch (_) {
-                pickupDistanceKm = null;
-            }
-            try {
-                if (Number.isFinite(dLat) && Number.isFinite(dLng)) {
-                    deliveryDistanceKm = await getdistance(
-                        shopLat,
-                        shopLng,
-                        dLat,
-                        dLng
-                    );
-                }
-            } catch (_) {
-                deliveryDistanceKm = null;
-            }
-        }
+        // Same helper as the new-order broadcast: missing / (0,0) coordinates = unknown.
+        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
+            shopLat,
+            shopLng,
+            row.pickupAddress,
+            row.dropOffAddress
+        );
         row.pickupDistanceKm = pickupDistanceKm;
         row.deliveryDistanceKm = deliveryDistanceKm;
     }
@@ -3760,7 +3762,16 @@ exports.driverReachedForDelivery = async (req, res) => {
 
     syncLiveTrackingSafe(bookingId, 14, { reason: 'delivery_arrived' });
 
-    const recurringGapDays = recurringIntervalDaysFromLabel(bookingCheck.frequency);
+    // A paused / switched-off plan means no return pickup.
+    let recurringPlanActive = true;
+    try {
+        const { findPlanForBooking } = require("../../services/Customer/recurringBookingService");
+        const { plan } = await findPlanForBooking(bookingId);
+        if (plan && plan.status !== "active") recurringPlanActive = false;
+    } catch (_) {
+        /* no plan row: fall back to the frequency */
+    }
+    const recurringGapDays = recurringPlanActive ? recurringIntervalDaysFromLabel(bookingCheck.frequency) : 0;
     const recurringHint = recurringGapDays > 0
         ? {
             recurringEnabled: true,

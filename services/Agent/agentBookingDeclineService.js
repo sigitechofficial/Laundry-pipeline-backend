@@ -197,10 +197,15 @@ class AgentBookingDeclineService {
                     { preferredShopBroadcastDone: true },
                     { where: { id: bookingId } }
                 );
-                const { notifiedCount } = await broadcastBookingToShops(bookingId);
+                const result = await broadcastBookingToShops(bookingId);
+                const { notifiedCount } = result;
                 console.log(
                     `[decline] booking ${bookingId} preferred shop declined → broadcast to ${notifiedCount} agent(s)`
                 );
+                if (!notifiedCount) {
+                    const { alertAdminNoShopOnce } = require('../Customer/customerOrderService');
+                    await alertAdminNoShopOnce(bookingId, bookingRow.zoneId, result).catch(() => {});
+                }
             } catch (broadcastErr) {
                 // Non-fatal: cron will pick it up within 5 minutes
                 console.error('[decline] Phase-2 broadcast failed, cron will retry:', broadcastErr.message);

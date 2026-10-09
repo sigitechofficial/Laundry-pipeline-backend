@@ -7,7 +7,7 @@ const {
     zone,
     sequelize,
 } = require("../../models");
-const { ValidationError, NotFoundError } = require("../../middlewares/universalErrorHandler");
+const { ValidationError, NotFoundError, ConflictError } = require("../../middlewares/universalErrorHandler");
 const { Op } = require("sequelize");
 const {
     COMPLETED,
@@ -57,6 +57,9 @@ class AdminBookingAssignService {
                 "collectionDate",
                 "collectionTimeFrom",
                 "collectionTimeTo",
+                "deliveryDate",
+                "deliveryTimeFrom",
+                "deliveryTimeTo",
                 "pickupAddresId",
             ],
             include: [
@@ -216,12 +219,29 @@ class AdminBookingAssignService {
                     bookingRow.pickupAddress,
                     null
                 );
+            // Room in this order's pickup / delivery slots (info for the admin;
+            // a manual assign is allowed even when full).
+            const { evaluateShopSlotCapacity } = require("../../utils/shopSlotCapacity");
+            const slot = await evaluateShopSlotCapacity(
+                ownerId,
+                shop.id,
+                bookingRow.get({ plain: true }),
+                { excludeBookingId: bookingRow.id }
+            ).catch(() => null);
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
                 zoneId: orderZoneId,
                 zoneName,
                 distanceKm,
+                slotCapacity: slot
+                    ? {
+                          hasRoom: slot.allowed,
+                          mode: slot.mode,
+                          limit: slot.limit,
+                          slots: slot.slots,
+                      }
+                    : null,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,
@@ -337,25 +357,63 @@ class AdminBookingAssignService {
             bookingRow.laundryShopId != null &&
             Number(bookingRow.bookingStatusId) !== 1;
 
-        if (isReassign) {
-            await proofOfDeliveries.destroy({ where: { bookingId } });
-        }
-
         const now = new Date();
         const dateStr = now.toISOString().split("T")[0];
         const timeStr = now.toTimeString().slice(0, 8);
 
-        await booking.update(
+        // Only if nobody changed the order since it was read (an agent accept
+        // or another admin): otherwise the admin would silently overwrite it.
+        const previousDeliveryDriverId = bookingRow.deliveryDriverId;
+        const { Op } = require("sequelize");
+        const [updated] = await booking.update(
             {
                 laundryShopId: shop.id,
                 bookingStatusId: 3,
                 driverId: ownerId || null,
+                // The new shop decides its delivery driver (auto-assign below).
+                deliveryDriverId: null,
                 adminAssignedShopId: null,
                 agentBroadcastHeld: false,
                 agentVisibleAt: null,
             },
-            { where: { id: bookingId } }
+            {
+                where: {
+                    id: bookingId,
+                    bookingStatusId: bookingRow.bookingStatusId,
+                    laundryShopId:
+                        bookingRow.laundryShopId == null
+                            ? { [Op.is]: null }
+                            : bookingRow.laundryShopId,
+                },
+            }
         );
+        if (!updated) {
+            throw new ConflictError(
+                "This order changed while you were assigning it (a shop just accepted it or it was moved). Refresh and try again."
+            );
+        }
+
+        if (isReassign) {
+            await proofOfDeliveries.destroy({ where: { bookingId } });
+        }
+
+        // The old shop's delivery driver no longer has this job.
+        if (previousDeliveryDriverId != null && Number(previousDeliveryDriverId) !== Number(ownerId)) {
+            try {
+                const { notifyStaffAssignmentChange } = require("../../utils/staffAssignmentNotify");
+                await notifyStaffAssignmentChange({
+                    bookingId,
+                    orderTrackId: bookingRow.orderTrackId,
+                    assignmentType: "delivery",
+                    action: "unassign",
+                    fromUserId: previousDeliveryDriverId,
+                    toUserId: null,
+                    shopOwnerUserId: previousOwnerUserId,
+                });
+            } catch (notifyErr) {
+                console.warn("[assignBookingToShop] delivery driver unassign notify skipped:", notifyErr?.message || notifyErr);
+            }
+        }
 
         try {
             const shopAssignmentAuditService = require("./shopAssignmentAuditService");
@@ -427,6 +485,18 @@ class AdminBookingAssignService {
             previousOwnerUserId,
             isReassign,
         });
+
+        // Same as a shop accept: the new shop's default staff get the jobs.
+        try {
+            const autoAssignService = require("../Agent/autoAssignService");
+            await autoAssignService.tryAutoAssignAfterAccept({
+                shopAgentId: ownerId,
+                bookingId: Number(bookingId),
+                actedByUserId,
+            });
+        } catch (autoErr) {
+            console.warn("[assignBookingToShop] auto-assign skipped:", autoErr?.message || autoErr);
+        }
 
         return {
             bookingId,

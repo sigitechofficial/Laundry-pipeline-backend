@@ -71,6 +71,26 @@ function shiftDateByDays(input, days) {
 }
 
 /**
+ * Next cycle's collection / delivery dates: the previous ones plus one interval,
+ * moved on by further intervals until the pickup is at least tomorrow. A paused
+ * plan, a failed run or a late scheduler would otherwise create an order for a
+ * pickup in the past (or later today, after the slot has gone).
+ */
+function nextCycleDates(collectionDate, deliveryDate, intervalDays, now = new Date()) {
+  let collection = shiftDateByDays(collectionDate, intervalDays);
+  let delivery = shiftDateByDays(deliveryDate, intervalDays);
+  if (!collection || !delivery || !(intervalDays > 0)) return { collection, delivery, skippedCycles: 0 };
+  const earliest = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  let skippedCycles = 0;
+  while (collection < earliest && skippedCycles < 520) {
+    collection = shiftDateByDays(collection, intervalDays);
+    delivery = shiftDateByDays(delivery, intervalDays);
+    skippedCycles += 1;
+  }
+  return { collection, delivery, skippedCycles };
+}
+
+/**
  * Map a booking frequency label → the runtime-settings key that holds its
  * test-mode interval (minutes). "Just Once" never auto-generates, so it has
  * no key. Unknown labels fall through to the shared legacy fallback.
@@ -617,6 +637,22 @@ async function applyAssignmentVisibility({
   };
 }
 
+/** Push to the customer: their next recurring order was booked. */
+async function notifyCustomerRecurringCreated(created) {
+  const { sendNotification } = require('../../utils/notification');
+  const day = new Date(created.collectionDate);
+  const dayText = Number.isFinite(day.getTime())
+    ? new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(day)
+    : '';
+  const time = String(created.collectionTimeFrom || '').slice(0, 5);
+  await sendNotification(
+    created.customerId,
+    'Next order booked',
+    `Your ${created.frequency} order is booked for pickup ${dayText}${time ? ` at ${time}` : ''}. You can change or skip it in your orders.`,
+    { bookingId: String(created.id), type: 'recurring_order_created' }
+  );
+}
+
 async function generateNextBookingFromCompleted({
   bookingId,
   actorUserId = null,
@@ -632,6 +668,9 @@ async function generateNextBookingFromCompleted({
   if (!enabled) return { generated: false, reason: 'recurring_disabled' };
 
   const tx = await db.sequelize.transaction();
+  // After commit the transaction is finished: a later error must not roll back.
+  let committed = false;
+  let created = null;
   try {
     const source = await booking.findByPk(sourceBookingId, {
       include: [
@@ -668,8 +707,10 @@ async function generateNextBookingFromCompleted({
       return { generated: false, reason: 'customer_blocked' };
     }
 
+    // paranoid:false — a soft-deleted child still counts as generated (else a
+    // second child of this booking would be created and the chain split).
     const existingChild = source.recurringNextBookingId
-      ? await booking.findByPk(source.recurringNextBookingId, { transaction: tx })
+      ? await booking.findByPk(source.recurringNextBookingId, { transaction: tx, paranoid: false })
       : await booking.findOne({
           where: { recurringSourceBookingId: source.id },
           order: [['id', 'DESC']],
@@ -680,6 +721,7 @@ async function generateNextBookingFromCompleted({
         await source.update({ recurringNextBookingId: existingChild.id }, { transaction: tx });
       }
       await tx.commit();
+      committed = true;
       return {
         generated: false,
         reason: 'already_generated',
@@ -687,12 +729,24 @@ async function generateNextBookingFromCompleted({
       };
     }
 
-    const intervalDays = getRecurringIntervalDays(source.frequency);
-    const nextCollectionDate = shiftDateByDays(source.collectionDate, intervalDays);
-    const nextDeliveryDate = shiftDateByDays(source.deliveryDate, intervalDays);
+    const plan = await ensurePlanForBooking(source.id, tx);
+    if (plan && plan.status !== 'active') {
+      await tx.rollback();
+      return { generated: false, reason: 'plan_not_active' };
+    }
+
+    // The plan's frequency is the source of truth (an admin may have changed
+    // it on an earlier order of the series).
+    const cycleFrequency = plan?.frequency || source.frequency;
+    const intervalDays = getRecurringIntervalDays(cycleFrequency);
+    const { collection: nextCollectionDate, delivery: nextDeliveryDate, skippedCycles } =
+      nextCycleDates(source.collectionDate, source.deliveryDate, intervalDays);
     if (!nextCollectionDate || !nextDeliveryDate) {
       await tx.rollback();
       return { generated: false, reason: 'invalid_source_dates' };
+    }
+    if (skippedCycles) {
+      console.log(`[recurring] source=${source.id} skipped ${skippedCycles} past cycle(s); next pickup ${nextCollectionDate.toISOString().slice(0, 10)}`);
     }
 
     const paymentType = source.paymentType || 'card';
@@ -701,18 +755,13 @@ async function generateNextBookingFromCompleted({
         ? source.paymentMethodId || customerUser?.defaultPaymentMethodId || null
         : null;
 
-    const plan = await ensurePlanForBooking(source.id, tx);
-    if (plan && plan.status !== 'active') {
-      await tx.rollback();
-      return { generated: false, reason: 'plan_not_active' };
-    }
-    const created = await booking.create(
+    created = await booking.create(
       {
         collectionDate: nextCollectionDate,
         collectionTimeFrom: source.collectionTimeFrom,
         collectionTimeTo: source.collectionTimeTo,
         driverInstruction: source.driverInstruction || null,
-        frequency: normalizeFrequencyLabel(source.frequency),
+        frequency: normalizeFrequencyLabel(cycleFrequency),
         deliveryDate: nextDeliveryDate,
         deliveryTimeFrom: source.deliveryTimeFrom,
         deliveryTimeTo: source.deliveryTimeTo,
@@ -764,10 +813,10 @@ async function generateNextBookingFromCompleted({
       // Schedule the FOLLOWING cycle one interval from now (generation time),
       // so the chain keeps rolling on a time-based cadence rather than firing
       // instantly. The scheduler reads this nextRunAt.
-      const followingRunAt = await computeNextRunAt(new Date(), source.frequency);
+      const followingRunAt = await computeNextRunAt(new Date(), cycleFrequency);
       await plan.update(
         {
-          frequency: normalizeFrequencyLabel(source.frequency),
+          frequency: normalizeFrequencyLabel(cycleFrequency),
           status: 'active',
           nextRunAt: followingRunAt,
           lastGeneratedFromBookingId: source.id,
@@ -780,6 +829,10 @@ async function generateNextBookingFromCompleted({
     }
 
     const cloned = await cloneServiceRows(source.id, created.id, created.zoneId || source.zoneId, tx);
+    if (!(cloned.serviceIds || []).length) {
+      // No shop could take an order without services: count as a failure.
+      throw new Error('No services to copy from the previous order');
+    }
 
     const sourceBilling = source.billingDetail
       ? source.billingDetail.get({ plain: true })
@@ -831,6 +884,7 @@ async function generateNextBookingFromCompleted({
     }
 
     await tx.commit();
+    committed = true;
 
     // Automatic promotions only: a code entered on the first booking is not carried over.
     try {
@@ -882,6 +936,17 @@ async function generateNextBookingFromCompleted({
       `[recurring] source=${source.id} generated booking=${created.id} mode=${assignmentResult.mode} clone=${cloned.cloneSource || 'unknown'} paymentMethod=${paymentMethodId ? 'attached' : 'missing'}`
     );
 
+    // Customer: their next order exists. Admins: nobody could be offered it.
+    notifyCustomerRecurringCreated(created).catch(() => {});
+    if (assignmentResult.mode === 'held_no_agents') {
+      try {
+        const { alertAdminNoShopOnce } = require('./customerOrderService');
+        await alertAdminNoShopOnce(created.id, created.zoneId, assignmentResult);
+      } catch (_) {
+        /* best effort */
+      }
+    }
+
     return {
       generated: true,
       sourceBookingId: source.id,
@@ -895,8 +960,17 @@ async function generateNextBookingFromCompleted({
       generatedBy: actorUserId,
     };
   } catch (err) {
-    await tx.rollback();
+    if (!committed) await tx.rollback().catch(() => {});
     console.error('[recurring] generateNextBookingFromCompleted failed:', err?.message || err);
+    if (committed && created) {
+      // The order exists but routing/notify failed: make sure an admin sees it.
+      try {
+        const { alertAdminNoShopOnce } = require('./customerOrderService');
+        await alertAdminNoShopOnce(created.id, created.zoneId, {});
+      } catch (_) {
+        /* best effort */
+      }
+    }
 
     const source = await booking.findByPk(sourceBookingId).catch(() => null);
     if (source?.recurringPlanId) {
@@ -982,8 +1056,13 @@ async function runDueRecurringPlans({ limit = 100 } = {}) {
         ['just_once', 'source_not_found', 'customer_blocked', 'plan_not_active', 'invalid_source_dates']
           .includes(result.reason)
       ) {
-        // Terminal for this plan — stop scheduling to avoid a hot loop.
-        await plan.update({ nextRunAt: null, notes: `stopped: ${result.reason}` });
+        // Terminal for this plan — stop scheduling (paused, with the reason, so
+        // the customer / admin see it is not running and can resume it).
+        await plan.update({
+          ...(plan.status === 'active' ? { status: 'paused' } : {}),
+          nextRunAt: null,
+          notes: `stopped: ${result.reason}`,
+        });
       }
     } catch (err) {
       console.error(`[recurring] scheduler error for plan ${plan.id}:`, err?.message || err);
@@ -1345,6 +1424,7 @@ async function syncPlanAfterFrequencyChange(bookingId, nextFrequency) {
 }
 
 module.exports = {
+  nextCycleDates,
   isRecurringFrequency,
   normalizeFrequencyLabel,
   buildRecurringDeliveryHint,
