@@ -241,6 +241,9 @@ const intilizeSocketFunc = (server) => {
                 try {
                     await acceptOrderForAgent(agentId, bookingId);
                 } catch (acceptError) {
+                    // Slot full: the shop already got shopAcceptCapReached with
+                    // the reason; "taken by another agent" would be wrong.
+                    if (acceptError.errorCode === 'SHOP_SLOT_FULL') return;
                     const message =
                         acceptError.message || 'This order was already taken';
                     await sendEvent(agentId, {
