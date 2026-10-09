@@ -1098,6 +1098,9 @@ router.delete('/campaigns/:id', asyncMiddleware(campaignController.remove));
 const orderPromotionController = require('../controllers/Admin/orderPromotionController');
 router.get('/orderPromotions/:bookingId', asyncMiddleware(orderPromotionController.get));
 router.post('/orderPromotions/:bookingId/remove/:promotionId', asyncMiddleware(orderPromotionController.remove));
+const customerCreditController = require('../controllers/Admin/customerCreditController');
+router.get('/customerCredit/:customerId', asyncMiddleware(customerCreditController.get));
+router.post('/customerCredit/:customerId/adjust', asyncMiddleware(customerCreditController.adjust));
 
 //!-----------------------------------Enterprise Promotions------------------------------------>>>>
 router.get('/promotions', asyncMiddleware(promotionController.list));

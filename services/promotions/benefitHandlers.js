@@ -181,7 +181,7 @@ function computeBenefit(promotion, state, options = {}) {
       ...empty,
       cashbackMinor: cashback,
       label: `${valueLabel} cashback`,
-      description: 'Cashback credit issued after order completion',
+      description: 'Cashback added to your credit after delivery',
     };
   }
 

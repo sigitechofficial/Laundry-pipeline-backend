@@ -54,6 +54,9 @@ const activeEntitlementWhere = (now) => ({
   ],
 });
 
+/** What a redemption costs the campaign: its discount plus its cashback. */
+const campaignCost = (r) => Number(r.discountAmount || 0) + Number(r.cashbackAmount || 0);
+
 /** Committed discounts consume the promotion's campaign budget (reversals give it back). */
 async function adjustCampaignBudget(promotionId, discountAmount, t) {
   const minor = Math.round(Number(discountAmount || 0) * 100);
@@ -219,7 +222,7 @@ async function commitRedemption(redemptionId, bookingId, finalDiscountAmount, tr
       'UPDATE promotions SET globalReservedCount = GREATEST(0, globalReservedCount - 1), globalUsedCount = globalUsedCount + 1 WHERE id = ?',
       { replacements: [redemption.promotionId], transaction: t }
     );
-    await adjustCampaignBudget(redemption.promotionId, redemption.discountAmount, t);
+    await adjustCampaignBudget(redemption.promotionId, campaignCost(redemption), t);
     if (redemption.couponCodeId) {
       await sequelize.query('UPDATE coupon_codes SET usedCount = usedCount + 1 WHERE id = ?', {
         replacements: [redemption.couponCodeId], transaction: t,
@@ -265,7 +268,7 @@ async function reverseRedemption(redemptionId, reason, transaction) {
     await sequelize.query('UPDATE promotions SET globalUsedCount = GREATEST(0, globalUsedCount - 1) WHERE id = ?', {
       replacements: [redemption.promotionId], transaction: t,
     });
-    await adjustCampaignBudget(redemption.promotionId, -Number(redemption.discountAmount || 0), t);
+    await adjustCampaignBudget(redemption.promotionId, -campaignCost(redemption), t);
     if (redemption.couponCodeId) {
       await sequelize.query('UPDATE coupon_codes SET usedCount = GREATEST(0, usedCount - 1) WHERE id = ?', {
         replacements: [redemption.couponCodeId], transaction: t,

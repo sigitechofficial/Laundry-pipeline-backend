@@ -454,7 +454,7 @@ async function main() {
       check('booking', 'coded promotion is held with its code', held.some((r) => r.promotionId === coded.id && r.couponCode === code));
       check('booking', 'automatic promotion with a spend rule is held (spend decided at invoice)', heldIds.includes(auto.id));
       check('booking', 'cash-only promotion is not held for a card booking', !heldIds.includes(cashOnly.id));
-      check('booking', 'cashback is not held (no payout yet)', !heldIds.includes(cashback.id));
+      check('booking', 'cashback promotion is held (credited after delivery)', heldIds.includes(cashback.id));
       const again = await bps.attachAtBooking({ bookingId: open.id, customerId: open.customerId, zoneId: 1, couponCode: code, paymentType: 'card' });
       const heldAgain = await models.promotionRedemption.count({ where: { bookingId: open.id, status: 'RESERVED', promotionId: [coded.id, auto.id] } });
       check('booking', 'attach is idempotent (retry holds nothing twice)', heldAgain === 2 && again.reserved.length === first.reserved.length, `${heldAgain} rows, ${first.reserved.length} vs ${again.reserved.length}`);

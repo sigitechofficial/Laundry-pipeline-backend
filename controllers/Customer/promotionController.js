@@ -9,6 +9,7 @@ const {
   buildOfferLabel,
 } = require('../../services/promotions/promotionEngine');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
+const customerCredit = require('../../services/promotions/customerCreditService');
 
 /** Zone from the request (query/body) or the customer's token; never trusted for anything else. */
 function zoneIdOf(req) {
@@ -70,5 +71,23 @@ module.exports = {
     });
     const result = await evaluatePromotions(context);
     res.json({ success: true, data: toCustomerView(result) });
+  },
+
+  /** GET /customer/credit?page=&limit= — credit balance (cashback) and its history. */
+  async credit(req, res) {
+    const customerId = req.user?.id;
+    const [balance, history] = await Promise.all([
+      customerCredit.getBalance(customerId),
+      customerCredit.getHistory(customerId, { page: req.query?.page, limit: req.query?.limit }),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        ...balance,
+        expiryDays: customerCredit.expiryDays() || null,
+        howItWorks: 'Cashback is added after delivery and used automatically on your next invoice.',
+        history,
+      },
+    });
   },
 };

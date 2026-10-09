@@ -27,7 +27,9 @@
     "ops:logs": "bash scripts/ops.sh stage logs",
     "test:promotions-api": "node tests/promotionsApi.integration.test.js",
     "test:promotions-e2e": "node tests/promotionsCheckout.e2e.test.js",
-    "test:promotions-cases": "node tests/promotionsCases.e2e.test.js"
+    "test:promotions-cases": "node tests/promotionsCases.e2e.test.js",
+    "test:cashback-e2e": "node tests/cashbackCredit.e2e.test.js",
+    "test:credit-db": "node tests/customerCredit.db.test.js"
   },
   "keywords": [],
   "author": "",

@@ -12,12 +12,15 @@
  * coupon_codes goes to Promotions and anything else stays on the legacy path.
  */
 
+const { Op } = require('sequelize');
 const {
   couponCode: CouponCode,
   booking: Booking,
   promotionRedemption: Redemption,
   orderAdjustment: OrderAdjustment,
   promotionAuditLog: AuditLog,
+  customerCreditEntry: CreditEntry,
+  cancelBooking: CancelBooking,
   customerSelectedService: CustomerSelectedService,
   customerSelectedServiceAddOn: CustomerSelectedServiceAddOn,
 } = require('../../models');
@@ -30,7 +33,8 @@ const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHel
 const { effectiveValues, resolveDiscountMode } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
-const { COMPLETED, REFUNDED } = require('../../constants/bookingStatusIds');
+const credit = require('./customerCreditService');
+const { COMPLETED, CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 
 const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 
@@ -199,6 +203,9 @@ async function attachAtBooking({ bookingId, customerId, zoneId, couponCode, paym
 /** Booking did not go ahead (card hold failed, cancelled before payment): give the holds back. */
 async function releaseForBooking(bookingId, reason) {
   if (!bookingId) return 0;
+  await credit.releaseForBooking(bookingId, reason).catch((err) => {
+    console.error(`[credit] booking ${bookingId}: release failed`, err.message);
+  });
   try {
     return await ledger.releaseBookingRedemptions(bookingId, reason);
   } catch (err) {
@@ -319,10 +326,14 @@ async function priceAtInvoice({ bookingId, allowance }) {
   const { applied, totalMinor, capped } = capApplied(result.applied, Math.max(0, toMinor(allowance)));
 
   await ledger.writeOrderAdjustments(bookingId, applied);
-  const byPromotion = new Map(applied.map((a) => [a.promotionId, a.totalSavingMinor]));
+  const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
   for (const h of holds) {
-    const amount = fromMinor(byPromotion.get(h.promotionId) || 0);
-    if (Number(h.discountAmount) !== amount) await h.update({ discountAmount: amount });
+    const a = byPromotion.get(h.promotionId);
+    const amount = fromMinor(a?.totalSavingMinor || 0);
+    const cashback = fromMinor(a?.cashbackMinor || 0);
+    if (Number(h.discountAmount) !== amount || Number(h.cashbackAmount || 0) !== cashback) {
+      await h.update({ discountAmount: amount, cashbackAmount: cashback || null });
+    }
   }
 
   return {
@@ -334,8 +345,47 @@ async function priceAtInvoice({ bookingId, allowance }) {
       name: a.promotionName,
       couponCode: a.couponCode,
       amount: fromMinor(a.totalSavingMinor),
+      cashback: fromMinor(a.cashbackMinor || 0),
     })),
   };
+}
+
+/**
+ * Customer credit on the invoice (docs/CASHBACK_CREDIT_PLAN.md): after promotions, the
+ * customer's credit pays as much of what is still payable as it can. Paid invoices keep
+ * their credit; with the flag off (kill switch) an unpaid invoice uses none.
+ *
+ * @param {{ bookingId: number, allowance: number }} params allowance = payable after discounts
+ * @returns {{ amount: number, previous: number }} previous = credit the stored discount included
+ */
+async function priceCreditAtInvoice({ bookingId, allowance }) {
+  const before = await credit.spentOnBooking(bookingId);
+  if (before.committed) return { amount: before.amount, previous: before.amount };
+  const b = await Booking.findByPk(bookingId, {
+    attributes: ['id', 'customerId', 'zoneId', 'bookingStatusId'],
+    include: [{ association: 'billingDetail', attributes: ['paymentStatus'], required: false }],
+  });
+  if (!b) return { amount: 0, previous: before.amount };
+  // A paid invoice is never re-priced: keep what it was paid with (commit a missed hold).
+  if (b.billingDetail?.paymentStatus === 'Paid') {
+    if (before.amount) await credit.commitForBooking(bookingId);
+    return { amount: before.amount, previous: before.amount };
+  }
+  // Cancelled: by status, or by a cancel record (the agent cancel path sets status 13).
+  if ([CANCELLED, REFUNDED].includes(Number(b.bookingStatusId)) || (await CancelBooking.count({ where: { bookingId } }))) {
+    if (before.amount) await credit.releaseForBooking(bookingId, 'Booking closed');
+    return { amount: 0, previous: before.amount };
+  }
+  try {
+    const amount = isPromotionsCheckoutEnabled(b.zoneId)
+      ? await credit.holdForBooking({ customerId: b.customerId, bookingId, amount: Math.max(0, allowance) })
+      : (before.amount ? (await credit.releaseForBooking(bookingId, 'Credit switched off'), 0) : 0);
+    return { amount, previous: before.amount };
+  } catch (err) {
+    // Lock conflict or similar: keep the previous hold (the transaction rolled back).
+    console.error(`[credit] booking ${bookingId}: pricing failed, keeping £${before.amount}`, err.message);
+    return { amount: before.amount, previous: before.amount };
+  }
 }
 
 // ─── Payment and lifecycle (Phase 4) ────────────────────────────────────────
@@ -352,7 +402,7 @@ async function settleForBooking(bookingId) {
     const holds = await Redemption.findAll({ where: { bookingId, status: 'RESERVED' }, order: [['id', 'ASC']] });
     for (const h of holds) {
       const amount = Number(h.discountAmount) || 0;
-      if (amount > 0) {
+      if (amount > 0 || Number(h.cashbackAmount) > 0) {
         await ledger.commitRedemption(h.id, bookingId, amount);
         out.committed++;
       } else {
@@ -360,6 +410,9 @@ async function settleForBooking(bookingId) {
         out.released++;
       }
     }
+    out.creditCommitted = await credit.commitForBooking(bookingId);
+    // Cash collected at the door can be recorded after the booking is completed.
+    out.cashbackIssued = await issueCashbackForBooking(bookingId);
   } catch (err) {
     console.error(`[promotions] booking ${bookingId}: settle failed`, err.message);
     out.error = err.message;
@@ -370,10 +423,68 @@ async function settleForBooking(bookingId) {
 /** Full refund: reverse the committed promotions (usage and campaign budget come back). */
 async function reverseForBooking(bookingId, reason) {
   if (!bookingId) return 0;
+  const why = reason || 'Booking refunded';
   try {
-    return await ledger.reverseBookingRedemptions(bookingId, reason || 'Booking refunded');
+    await credit.reverseCashbackForBooking(bookingId, why);
+    await credit.restoreSpendForBooking(bookingId, why);
+  } catch (err) {
+    console.error(`[credit] booking ${bookingId}: refund handling failed`, err.message);
+  }
+  try {
+    return await ledger.reverseBookingRedemptions(bookingId, why);
   } catch (err) {
     console.error(`[promotions] booking ${bookingId}: reverse failed`, err.message);
+    return 0;
+  }
+}
+
+/** Push to the customer that cashback reached their credit (fire-and-forget). */
+function notifyCashback(customerId, bookingId, amount) {
+  try {
+    const { sendNotification } = require('../../utils/notification');
+    Promise.resolve(sendNotification(
+      customerId,
+      'Cashback added',
+      `£${amount.toFixed(2)} cashback from your order is now in your credit. It is used automatically on your next order.`,
+      { bookingId: String(bookingId), type: 'cashback_credited' }
+    )).catch((err) => console.warn(`[credit] cashback notification failed for booking ${bookingId}:`, err?.message || err));
+  } catch (err) {
+    console.warn('[credit] cashback notification failed:', err?.message || err);
+  }
+}
+
+/**
+ * Cashback is credited after delivery: the booking is Completed and its invoice is paid
+ * (the cashback promotions are committed). Idempotent; never throws into the caller.
+ * @returns {number} cashback lots created now
+ */
+async function issueCashbackForBooking(bookingId) {
+  if (!bookingId) return 0;
+  try {
+    const b = await Booking.findByPk(bookingId, { attributes: ['id', 'customerId', 'bookingStatusId'] });
+    if (!b || Number(b.bookingStatusId) !== COMPLETED) return 0;
+    const rows = await Redemption.findAll({
+      where: { bookingId, status: 'COMMITTED', cashbackAmount: { [Op.gt]: 0 } },
+      include: [{ association: 'promotion', attributes: ['id', 'name'] }],
+    });
+    let issued = 0;
+    for (const r of rows) {
+      const { created } = await credit.earnCashback({
+        customerId: r.customerId,
+        bookingId,
+        promotionId: r.promotionId,
+        redemptionId: r.id,
+        amount: Number(r.cashbackAmount),
+        description: `Cashback from order #${bookingId}${r.promotion?.name ? ` (${r.promotion.name})` : ''}`,
+      });
+      if (created) {
+        issued++;
+        notifyCashback(r.customerId, bookingId, Number(r.cashbackAmount));
+      }
+    }
+    return issued;
+  } catch (err) {
+    console.error(`[credit] booking ${bookingId}: cashback failed`, err.message);
     return 0;
   }
 }
@@ -400,6 +511,44 @@ async function settleClosedBookings({ limit = 200 } = {}) {
      LIMIT :limit`,
     { replacements: { refunded: REFUNDED, limit } }
   );
+  // Credit: holds of paid bookings to commit, of cancelled/refunded ones to release.
+  const [creditToCommit] = await sequelize.query(
+    `SELECT DISTINCT e.bookingId FROM customer_credit_entries e
+       JOIN billingDetails bd ON bd.bookingId = e.bookingId
+     WHERE e.type = 'SPEND' AND e.status = 'HELD' AND bd.paymentStatus = 'Paid'
+     LIMIT :limit`,
+    { replacements: { limit } }
+  );
+  const [creditToRelease] = await sequelize.query(
+    `SELECT DISTINCT e.bookingId FROM customer_credit_entries e
+       JOIN bookings b ON b.id = e.bookingId
+     WHERE e.type = 'SPEND' AND e.status = 'HELD' AND b.bookingStatusId IN (:closed)
+     LIMIT :limit`,
+    { replacements: { closed: [CANCELLED, REFUNDED], limit } }
+  );
+  // Cashback of completed, paid bookings not credited yet (a hook missed it).
+  const [toCredit] = await sequelize.query(
+    `SELECT DISTINCT r.bookingId FROM promotion_redemptions r
+       JOIN bookings b ON b.id = r.bookingId
+       LEFT JOIN customer_credit_entries e
+         ON e.bookingId = r.bookingId AND e.promotionId = r.promotionId AND e.type = 'EARN'
+     WHERE r.status = 'COMMITTED' AND r.cashbackAmount > 0 AND b.bookingStatusId = :completed AND e.id IS NULL
+     LIMIT :limit`,
+    { replacements: { completed: COMPLETED, limit } }
+  );
+  // Refunded bookings whose cashback/credit was not handled yet.
+  const [creditToRefund] = await sequelize.query(
+    `SELECT DISTINCT e.bookingId FROM customer_credit_entries e
+       JOIN bookings b ON b.id = e.bookingId
+     WHERE b.bookingStatusId = :refunded
+       AND ((e.type = 'EARN' AND e.remainingAmount > 0
+             AND NOT EXISTS (SELECT 1 FROM customer_credit_entries x WHERE x.idempotencyKey = CONCAT('reverse-lot-', e.id)))
+         OR (e.type = 'SPEND' AND e.status = 'COMMITTED'
+             AND NOT EXISTS (SELECT 1 FROM customer_credit_entries x WHERE x.idempotencyKey = CONCAT('restore-spend-', e.id))))
+     LIMIT :limit`,
+    { replacements: { refunded: REFUNDED, limit } }
+  );
+
   let settled = 0;
   let reversed = 0;
   for (const { bookingId } of toSettle) {
@@ -407,7 +556,17 @@ async function settleClosedBookings({ limit = 200 } = {}) {
     settled += r.committed + r.released;
   }
   for (const { bookingId } of toReverse) reversed += await reverseForBooking(bookingId, 'Booking refunded');
-  return { settled, reversed };
+  for (const { bookingId } of creditToCommit) settled += await credit.commitForBooking(bookingId);
+  for (const { bookingId } of creditToRelease) await credit.releaseForBooking(bookingId, 'Booking closed').catch(() => 0);
+  let cashbackIssued = 0;
+  for (const { bookingId } of toCredit) cashbackIssued += await issueCashbackForBooking(bookingId);
+  for (const { bookingId } of creditToRefund) {
+    await credit.reverseCashbackForBooking(bookingId, 'Booking refunded').catch(() => 0);
+    await credit.restoreSpendForBooking(bookingId, 'Booking refunded').catch(() => 0);
+    reversed++;
+  }
+  const creditExpired = await credit.expireLots().catch(() => 0);
+  return { settled, reversed, cashbackIssued, creditExpired };
 }
 
 // ─── Customer view (Phase 6) ────────────────────────────────────────────────
@@ -424,7 +583,7 @@ const CUSTOMER_MESSAGES = {
  * after discount. Hidden/targeted promotions without a code are shown as "Special discount".
  */
 async function customerPromotionSummary(bookingId) {
-  const [holds, adjustments, lines] = await Promise.all([
+  const [holds, adjustments, lines, creditView] = await Promise.all([
     Redemption.findAll({
       where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
       include: [{ association: 'promotion', attributes: ['id', 'name', 'visibility', 'benefitType', 'discountMode', 'discountValue', 'maxDiscountCap', 'minSubtotal', 'benefitConfig', 'currency'] }],
@@ -435,9 +594,12 @@ async function customerPromotionSummary(bookingId) {
       attributes: ['promotionId', 'couponCode', 'lineType', 'lineItemId', 'amount'],
     }),
     invoiceLineItems(bookingId),
+    bookingCreditView(bookingId),
   ]);
   if (!holds.length && !adjustments.length) {
-    return { state: 'none', message: null, total: 0, promotions: [], lines: [] };
+    // A refunded order's holds are reversed, but its cashback story still shows.
+    const cashback = creditView.earned > 0 ? cashbackView([], creditView) : null;
+    return { state: 'none', message: null, total: 0, promotions: [], lines: [], cashback, creditUsed: creditView.creditUsed };
   }
 
   const paid = holds.some((h) => h.status === 'COMMITTED');
@@ -465,6 +627,8 @@ async function customerPromotionSummary(bookingId) {
       couponCode: h.couponCode || null,
       status: h.status === 'COMMITTED' ? 'paid' : 'holding',
       amount: fromMinor(discountByPromotion.get(Number(h.promotionId)) || 0),
+      benefitType: p?.benefitType || null,
+      cashback: Number(h.cashbackAmount) > 0 ? Number(h.cashbackAmount) : 0,
     };
   });
 
@@ -490,7 +654,51 @@ async function customerPromotionSummary(bookingId) {
     };
   });
 
-  return { state, message: CUSTOMER_MESSAGES[state], total: fromMinor(totalMinor), promotions, lines: lineView };
+  const cashbackHolds = holds.filter((h) => h.promotion?.benefitType === 'cashback');
+  const cashback = cashbackHolds.length ? cashbackView(cashbackHolds, creditView) : null;
+  const onlyCashback = cashbackHolds.length === holds.length && !totalMinor;
+  return {
+    state,
+    message: onlyCashback ? cashback.message : CUSTOMER_MESSAGES[state],
+    total: fromMinor(totalMinor),
+    promotions,
+    lines: lineView,
+    cashback,
+    creditUsed: creditView.creditUsed,
+  };
+}
+
+/** Credit movements of one booking: credit used to pay it, cashback it earned. */
+async function bookingCreditView(bookingId) {
+  const rows = await CreditEntry.findAll({ where: { bookingId }, attributes: ['type', 'status', 'amount'] });
+  const sum = (list) => fromMinor(list.reduce((t, e) => t + Math.abs(toMinor(e.amount)), 0));
+  const spends = rows.filter((e) => e.type === 'SPEND' && ['HELD', 'COMMITTED'].includes(e.status));
+  return {
+    creditUsed: spends.length
+      ? { amount: sum(spends), status: spends.some((e) => e.status === 'COMMITTED') ? 'paid' : 'held' }
+      : null,
+    earned: sum(rows.filter((e) => e.type === 'EARN')),
+    takenBack: rows.some((e) => e.type === 'REVERSE'),
+  };
+}
+
+/** Cashback on a booking: pending until delivery, then credited (or taken back on refund). */
+function cashbackView(cashbackHolds, creditView) {
+  const sym = '£';
+  const priced = fromMinor(cashbackHolds.reduce((t, h) => t + toMinor(h.cashbackAmount || 0), 0));
+  if (creditView.takenBack) {
+    return { amount: creditView.earned, status: 'taken_back', message: 'Cashback was taken back because the order was refunded.' };
+  }
+  if (creditView.earned > 0) {
+    return { amount: creditView.earned, status: 'credited', message: `${sym}${creditView.earned.toFixed(2)} cashback was added to your credit.` };
+  }
+  return {
+    amount: priced,
+    status: 'pending',
+    message: priced > 0
+      ? `${sym}${priced.toFixed(2)} cashback will be added to your credit after delivery.`
+      : 'Cashback is worked out on your final invoice and added to your credit after delivery.',
+  };
 }
 
 // ─── Admin (Phase 5) ────────────────────────────────────────────────────────
@@ -530,6 +738,8 @@ module.exports = {
   attachAtBooking,
   releaseForBooking,
   priceAtInvoice,
+  priceCreditAtInvoice,
+  issueCashbackForBooking,
   settleForBooking,
   reverseForBooking,
   settleClosedBookings,

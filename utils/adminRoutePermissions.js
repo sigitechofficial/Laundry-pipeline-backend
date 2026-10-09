@@ -86,6 +86,7 @@ const ROUTE_FEATURE_PREFIXES = [
     ['/addCustomer', K.CUSTOMER_MANAGEMENT],
     ['/deleteCustomer', K.CUSTOMER_MANAGEMENT],
     ['/customers', K.CUSTOMER_MANAGEMENT],
+    ['/customerCredit', K.CUSTOMER_MANAGEMENT],
 
     ['/AddServices', K.SERVICE_MANAGEMENT],
     ['/editServices', K.SERVICE_MANAGEMENT],

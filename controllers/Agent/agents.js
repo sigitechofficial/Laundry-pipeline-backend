@@ -3860,6 +3860,8 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         },
         { where: { id: bookingId } }
     );
+    // Delivered: cashback becomes credit now if the invoice is paid (else when it is).
+    await bookingPromotionService.issueCashbackForBooking(bookingId);
 
     const currentTime = new Date().toLocaleTimeString("en-US", {
         hour: "2-digit",

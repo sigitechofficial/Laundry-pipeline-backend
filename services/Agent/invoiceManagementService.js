@@ -35,6 +35,7 @@ const {
 } = require("../../utils/assertBookingNotCancelledForAgent");
 const couponService = require("../Customer/couponService");
 const bookingPromotionService = require("../promotions/bookingPromotionService");
+const customerCreditService = require("../promotions/customerCreditService");
 const { isPromotionsCheckoutEnabled } = require("../promotions/checkoutFlag");
 const {
     getLineQuantity,
@@ -594,7 +595,9 @@ class AgentInvoiceManagementService {
      */
     async resolveInvoiceDiscount({ bookingId, zoneId, paymentType, servicesSubtotal, storedDiscount, summaryInput }) {
         const previousPromotion = await bookingPromotionService.storedPromotionDiscount(bookingId);
-        const nonPromotion = Math.max(0, parseFloat(((parseFloat(storedDiscount) || 0) - previousPromotion).toFixed(2)));
+        // Customer credit is part of the stored discount too (docs/CASHBACK_CREDIT_PLAN.md).
+        const previousCredit = (await customerCreditService.spentOnBooking(bookingId)).amount;
+        const nonPromotion = Math.max(0, parseFloat(((parseFloat(storedDiscount) || 0) - previousPromotion - previousCredit).toFixed(2)));
         const legacyDiscount = await couponService.resolveBookingDiscount(
             bookingId,
             servicesSubtotal,
@@ -602,18 +605,23 @@ class AgentInvoiceManagementService {
             null,
             zoneId
         );
-        if (!previousPromotion && !isPromotionsCheckoutEnabled(zoneId)) {
-            return { discount: legacyDiscount, legacyDiscount, promotionDiscount: 0, promotions: [] };
+        if (!previousPromotion && !previousCredit && !isPromotionsCheckoutEnabled(zoneId)) {
+            return { discount: legacyDiscount, legacyDiscount, promotionDiscount: 0, creditUsed: 0, promotions: [] };
         }
         const dueBeforeDiscount = buildPaymentSummaryForBooking(paymentType, { ...summaryInput, discount: 0 }).amountDueNow;
         const promo = await bookingPromotionService.priceAtInvoice({
             bookingId,
             allowance: Math.max(0, dueBeforeDiscount - legacyDiscount),
         });
+        const creditPriced = await bookingPromotionService.priceCreditAtInvoice({
+            bookingId,
+            allowance: Math.max(0, parseFloat((dueBeforeDiscount - legacyDiscount - promo.amount).toFixed(2))),
+        });
         return {
-            discount: parseFloat((legacyDiscount + promo.amount).toFixed(2)),
+            discount: parseFloat((legacyDiscount + promo.amount + creditPriced.amount).toFixed(2)),
             legacyDiscount,
             promotionDiscount: promo.amount,
+            creditUsed: creditPriced.amount,
             promotions: promo.applied,
         };
     }
@@ -702,6 +710,7 @@ class AgentInvoiceManagementService {
             paymentSummary,
             existingDiscount,
             promotionDiscount: resolved.promotionDiscount,
+            creditUsed: resolved.creditUsed,
             promotions: resolved.promotions,
             agentCommissionPercent,
             finalAgentEarningAmount: commissionAmounts.agentEarning,
@@ -1059,6 +1068,7 @@ class AgentInvoiceManagementService {
             paymentSummary,
             coupon: couponInfo,
             promotions: resolvedDraft.promotions,
+            creditUsed: resolvedDraft.creditUsed,
             promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
             extraTip: summarizeTips(bookingData.tips || []),
         };

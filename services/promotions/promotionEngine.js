@@ -519,7 +519,7 @@ function bookingStageConditions(conditions = []) {
  * Which promotions a booking may hold, judged on what is known when it is placed:
  * zone, customer, schedule, booking-time conditions, usage limits and budget, plus the
  * code the customer entered. Spend/item rules and the money are decided at invoice.
- * Cashback is skipped until a wallet payout exists.
+ * Cashback is held like a discount and credited after delivery (customerCreditService).
  *
  * @returns {{ eligible: Array<{ promotion, coupon }>, rejected: Array<{ promotion, coupon, reasons }>, couponErrors }}
  */
@@ -540,7 +540,7 @@ async function evaluateBookingEligibility(context) {
     const coupon = couponMap.get(promo.id) || null;
     if (promo.activationType === 'coupon_required' && !coupon) continue;
     const scope = benefitScope(promo.benefitType);
-    if (!scope || scope === 'cashback') {
+    if (!scope) {
       rejected.push({ promotion: promo, coupon, reasons: [reject('UNSUPPORTED', 'This offer is not available yet', 'PROMOTION_UNSUPPORTED')] });
       continue;
     }
@@ -595,7 +595,7 @@ function buildOfferLabel(promo, zoneOverride = null) {
     case 'delivery_discount':
       return `${sym}${money(discountValue)} off delivery${min}`;
     case 'cashback':
-      return `${value} cashback${cap}`;
+      return `${value} cashback${cap}${min}`;
     default:
       return promo.name;
   }
