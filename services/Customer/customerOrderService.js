@@ -89,7 +89,7 @@ const {
     isShopEligibleForBroadcast,
 } = require('../../utils/shopWorkingHours');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
-const { isShopSlotFree } = require('../../utils/shopSlotAvailability');
+const { evaluateShopSlotCapacity } = require('../../utils/shopSlotCapacity');
 const {
     buildNewBookingOfferPayload,
 } = require('../../utils/newBookingOfferPayload');
@@ -272,6 +272,9 @@ async function bookingEventSentCheckTheShops(
     // independent of slot/working-hours availability. Used to detect a service
     // coverage gap (→ notify admin for manual assignment).
     let serviceEligibleShopCount = 0;
+    // Shops that offer the services but have no room in this booking's slot.
+    let slotFullShopCount = 0;
+    let fullSlotExample = null;
 
     for (let shop of getShopsAndOwners) {
         // Skip shops whose owner does not offer ALL of the selected services.
@@ -301,7 +304,11 @@ async function bookingEventSentCheckTheShops(
 
         serviceEligibleShopCount += 1;
 
-        const slotFree = await isShopSlotFree(
+        // Room in this booking's pickup and delivery slots (pickups + deliveries
+        // per slot up to the shop's capacity; one per slot when capacity is off).
+        const ownerId = shop.user?.id || shop.userId;
+        const slotCapacity = await evaluateShopSlotCapacity(
+            ownerId,
             shop.id,
             {
                 collectionDate,
@@ -313,22 +320,12 @@ async function bookingEventSentCheckTheShops(
             },
             { excludeBookingId: bookingId }
         );
-        if (!slotFree) {
+        if (!slotCapacity.allowed) {
+            slotFullShopCount += 1;
+            fullSlotExample = fullSlotExample || slotCapacity.slots.find((x) => x.full) || null;
             console.log(
-                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — slot already taken`
-            );
-            continue;
-        }
-
-        const ownerId = shop.user?.id || shop.userId;
-        const { evaluateShopAcceptCapacity } = require('../../utils/shopAcceptCapacity');
-        const capacity = await evaluateShopAcceptCapacity(ownerId, shop.id, {
-            excludeBookingId: bookingId,
-        });
-        if (!capacity.allowed) {
-            console.log(
-                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — accept capacity ` +
-                    `(${capacity.acceptedInWindow}/${capacity.cap.maxOrders} in ${capacity.cap.windowMinutes}m, ${capacity.reason})`
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — slot capacity ` +
+                    `(${slotCapacity.reason}; ${slotCapacity.slots.map((x) => `${x.leg} ${x.date} ${x.from} ${x.used}/${x.limit}`).join(', ') || slotCapacity.mode})`
             );
             continue;
         }
@@ -489,7 +486,7 @@ async function bookingEventSentCheckTheShops(
         const fcmPromises = [];
         const socketPromises = [];
 
-        // Nearest shop first among eligible (time slot already filtered above).
+        // Nearest shop first among eligible (slot capacity already checked above).
         const shopsWithDistance = [];
         for (const shop of availableShops) {
             const distances = await computeShopOrderDistances(
@@ -500,14 +497,9 @@ async function bookingEventSentCheckTheShops(
             );
             shopsWithDistance.push({ shop, ...distances });
         }
-        shopsWithDistance.sort((a, b) => {
-            const ap = a.pickupDistanceKm ?? Number.POSITIVE_INFINITY;
-            const bp = b.pickupDistanceKm ?? Number.POSITIVE_INFINITY;
-            if (ap !== bp) return ap - bp;
-            const ad = a.deliveryDistanceKm ?? Number.POSITIVE_INFINITY;
-            const bd = b.deliveryDistanceKm ?? Number.POSITIVE_INFINITY;
-            return ad - bd;
-        });
+        // Same rule as the agent's list: least total trip (pickup + delivery km) first.
+        const { compareNearestTrip } = require('../../utils/shopOrderDistanceRank');
+        shopsWithDistance.sort(compareNearestTrip);
 
         for (const { shop, pickupDistanceKm, deliveryDistanceKm } of shopsWithDistance) {
             if (shop.user && shop.user.id) {
@@ -555,6 +547,8 @@ async function bookingEventSentCheckTheShops(
             notifiedCount,
             availableShopCount: availableShops.length,
             serviceEligibleShopCount,
+            slotFullShopCount,
+            fullSlotExample,
             zoneShopCount: getShopsAndOwners.length,
         };
     }
@@ -563,6 +557,8 @@ async function bookingEventSentCheckTheShops(
         notifiedCount: 0,
         availableShopCount: 0,
         serviceEligibleShopCount,
+        slotFullShopCount,
+        fullSlotExample,
         zoneShopCount: getShopsAndOwners.length,
     };
 }
@@ -616,6 +612,45 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
     } catch (err) {
         console.error('[notifyPreferredShopOnly] error:', err?.message || err);
         return false;
+    }
+}
+
+/**
+ * Notify admins when every shop that could do the order has no room left in its
+ * pickup / delivery slot. The booking stays held and is offered again by itself
+ * when a slot frees up (bookingHeldReleaseService); the admin can also assign it.
+ */
+async function notifyAdminSlotsFull(bookingId, zoneId, { slotFullShopCount, fullSlotExample } = {}) {
+    try {
+        const { sendNotificationToAdmin } = require("../Agent/notificationService");
+        const { formatSlotDay } = require("../../utils/shopSlotCapacity");
+        const bookingRecord = await booking.findOne({
+            where: { id: bookingId },
+            attributes: ["id", "orderTrackId"],
+        });
+        const orderLabel = bookingRecord?.orderTrackId || String(bookingId);
+        const slotText = fullSlotExample
+            ? ` (${fullSlotExample.leg === "delivery" ? "delivery" : "pickup"} ${formatSlotDay(fullSlotExample.date)} ${fullSlotExample.from}–${fullSlotExample.to})`
+            : "";
+        await sendNotificationToAdmin(
+            "Order needs manual assignment",
+            `Order #${orderLabel}: all ${slotFullShopCount || ""} shops that offer these services are full for its slot${slotText}. ` +
+                "It will be offered again when a slot frees up, or you can assign it manually.",
+            {
+                bookingId: Number(bookingId),
+                zoneId: zoneId != null ? Number(zoneId) : null,
+                type: "no_shop_capacity_in_slot",
+                alertType: "no_eligible_agent",
+            }
+        );
+        console.log(
+            `[createBooking] admin notified — every eligible shop full for booking ${bookingId} (zone ${zoneId})`
+        );
+    } catch (err) {
+        console.error(
+            `[createBooking] failed to notify admin (slots full) for booking ${bookingId}:`,
+            err?.message || err
+        );
     }
 }
 
@@ -2076,6 +2111,8 @@ class CustomerOrderService {
                 const {
                     notifiedCount,
                     serviceEligibleShopCount,
+                    slotFullShopCount,
+                    fullSlotExample,
                     zoneShopCount,
                 } = await bookingEventSentCheckTheShops(
                     bookingId,
@@ -2109,6 +2146,9 @@ class CustomerOrderService {
                 // the customer's selected services → notify admin for manual assignment.
                 if (zoneShopCount > 0 && serviceEligibleShopCount === 0) {
                     await notifyAdminNoEligibleAgent(bookingId, zoneId);
+                } else if (notifiedCount === 0 && slotFullShopCount > 0) {
+                    // Shops can do it but every one is full in this slot.
+                    await notifyAdminSlotsFull(bookingId, zoneId, { slotFullShopCount, fullSlotExample });
                 }
             }
         }

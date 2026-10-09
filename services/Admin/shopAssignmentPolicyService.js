@@ -159,23 +159,23 @@ class ShopAssignmentPolicyService {
         }
 
         if (acceptCapOverride) {
-            if (acceptWindowMinutes == null) {
-                throw new ValidationError(
-                    'Accept window (minutes) is required when using a shop-specific capacity'
-                );
-            }
-            if (acceptWindowMinutes < 1 || acceptWindowMinutes > 1440) {
+            // Capacity is per booking slot now; the old rolling window is optional
+            // and unused (kept only if an older admin build still sends it).
+            if (
+                acceptWindowMinutes != null &&
+                (acceptWindowMinutes < 1 || acceptWindowMinutes > 1440)
+            ) {
                 throw new ValidationError(
                     'Accept window must be between 1 and 1440 minutes'
                 );
             }
             if (acceptMaxOrders == null) {
                 throw new ValidationError(
-                    'Max accepts is required when using a shop-specific capacity (use 0 for none)'
+                    'Max orders per slot is required when using a shop-specific capacity (use 0 for none)'
                 );
             }
             if (acceptMaxOrders < 0 || acceptMaxOrders > 500) {
-                throw new ValidationError('Max accepts must be between 0 and 500');
+                throw new ValidationError('Max orders per slot must be between 0 and 500');
             }
         } else {
             acceptWindowMinutes = null;

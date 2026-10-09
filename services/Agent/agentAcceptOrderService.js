@@ -3,6 +3,7 @@ const {
     addressDb,
     bookingHistory,
     proofOfDeliveries,
+    sequelize,
 } = require("../../models");
 const { Op } = require("sequelize");
 const {
@@ -43,6 +44,12 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             "bookingStatusId",
             "adminAssignedShopId",
             "customerId",
+            "collectionDate",
+            "collectionTimeFrom",
+            "collectionTimeTo",
+            "deliveryDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
         ],
     });
 
@@ -94,53 +101,70 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
                 "This customer is excluded from your shop and cannot be accepted via marketplace."
             );
         }
-
-        const { evaluateShopAcceptCapacity } = require("../../utils/shopAcceptCapacity");
-        const capacity = await evaluateShopAcceptCapacity(
-            shopOwnerUserId,
-            shopAddress.id,
-            { excludeBookingId: bookingId }
-        );
-        if (!capacity.allowed) {
-            const {
-                getShopAcceptCapacityStatus,
-            } = require("../../utils/shopAcceptCapacity");
-            const {
-                CAPACITY_REACHED_CODE,
-                capacityReachedMessage,
-            } = require("../../utils/shopAcceptCapacityWindow");
-            const {
-                notifyShopAcceptCapacity,
-            } = require("../../utils/shopAcceptCapacityNotify");
-            const status = await getShopAcceptCapacityStatus(shopOwnerUserId);
-            const message = capacityReachedMessage(status);
-            notifyShopAcceptCapacity(shopOwnerUserId, {
-                capacity: status,
-                message,
-                reachedToast: true,
-            });
-            throw new ConflictError(message, {
-                code: CAPACITY_REACHED_CODE,
-                capacity: status,
-            });
-        }
     }
 
-    const [affectedCount] = await booking.update(
-        {
-            bookingStatusId: 3,
-            laundryShopId: shopAddress.id,
-            adminAssignedShopId: null,
-            driverId: agentUserId,
-        },
-        {
-            where: {
-                id: bookingId,
-                laundryShopId: null,
-                bookingStatusId: 1,
-            },
+    // Slot capacity + claim in one transaction, with the shop row locked, so two
+    // devices of the same shop cannot both take the last place in a slot.
+    // Admin-assigned orders bypass capacity (admin decided).
+    const {
+        evaluateShopSlotCapacity,
+        slotFullMessage,
+        SLOT_FULL_CODE,
+    } = require("../../utils/shopSlotCapacity");
+    let slotRefusal = null;
+    const affectedCount = await sequelize.transaction(async (transaction) => {
+        if (bookingRow.adminAssignedShopId == null) {
+            await addressDb.findByPk(shopAddress.id, {
+                attributes: ["id"],
+                lock: transaction.LOCK.UPDATE,
+                transaction,
+            });
+            const slot = await evaluateShopSlotCapacity(
+                shopOwnerUserId,
+                shopAddress.id,
+                bookingRow.get({ plain: true }),
+                { excludeBookingId: bookingId, transaction }
+            );
+            if (!slot.allowed) {
+                slotRefusal = slot;
+                return 0;
+            }
         }
-    );
+        const [count] = await booking.update(
+            {
+                bookingStatusId: 3,
+                laundryShopId: shopAddress.id,
+                adminAssignedShopId: null,
+                driverId: agentUserId,
+            },
+            {
+                where: {
+                    id: bookingId,
+                    laundryShopId: null,
+                    bookingStatusId: 1,
+                },
+                transaction,
+            }
+        );
+        return count;
+    });
+
+    if (slotRefusal) {
+        const { getShopAcceptCapacityStatus } = require("../../utils/shopAcceptCapacity");
+        const { notifyShopAcceptCapacity } = require("../../utils/shopAcceptCapacityNotify");
+        const status = await getShopAcceptCapacityStatus(shopOwnerUserId).catch(() => null);
+        const message = slotFullMessage(slotRefusal);
+        notifyShopAcceptCapacity(shopOwnerUserId, {
+            capacity: status,
+            message,
+            reachedToast: true,
+        });
+        throw new ConflictError(message, {
+            code: SLOT_FULL_CODE,
+            capacity: status,
+            slot: slotRefusal,
+        });
+    }
 
     if (!affectedCount) {
         throw new ConflictError("This order was already taken");

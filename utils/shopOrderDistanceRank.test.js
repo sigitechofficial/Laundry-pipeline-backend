@@ -2,7 +2,8 @@
 
 const assert = require('assert');
 const {
-  sortByPickupThenDelivery,
+  sortNearestTrip,
+  tripKm,
   applyNearestDistanceRanks,
   computeShopOrderDistances,
   sortAssignableShops,
@@ -17,55 +18,64 @@ const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
 // ── Distance rank / top-3 badges ─────────────────────────────────────────────
 {
   const rows = [
-    { id: 10, pickupDistanceKm: 5.2, deliveryDistanceKm: 1.0 },
-    { id: 20, pickupDistanceKm: 0.8, deliveryDistanceKm: 4.0 },
-    { id: 30, pickupDistanceKm: 2.1, deliveryDistanceKm: 0.5 },
-    { id: 40, pickupDistanceKm: 9.0, deliveryDistanceKm: 9.0 },
-    { id: 50, pickupDistanceKm: null, deliveryDistanceKm: 0.2 },
+    { id: 10, pickupDistanceKm: 5.2, deliveryDistanceKm: 1.0 }, // trip 6.2
+    { id: 20, pickupDistanceKm: 0.8, deliveryDistanceKm: 4.0 }, // trip 4.8
+    { id: 30, pickupDistanceKm: 2.1, deliveryDistanceKm: 0.5 }, // trip 2.6
+    { id: 40, pickupDistanceKm: 9.0, deliveryDistanceKm: 9.0 }, // trip 18
+    { id: 50, pickupDistanceKm: null, deliveryDistanceKm: 0.2 }, // unknown pickup → last
   ];
   applyNearestDistanceRanks(rows);
 
-  assert.strictEqual(rows[0].id, 20, 'nearest pickup first');
-  assert.strictEqual(rows[1].id, 30);
-  assert.strictEqual(rows[2].id, 10);
-  assert.strictEqual(rows[0].nearestPickupRank, 1);
-  assert.strictEqual(rows[0].isNearestPickup, true);
-  assert.strictEqual(rows[1].nearestPickupRank, 2);
-  assert.strictEqual(rows[2].nearestPickupRank, 3);
-  assert.strictEqual(rows[3].nearestPickupRank, null, '4th has no top-3 badge');
+  assert.deepStrictEqual(rows.map((r) => r.id), [30, 20, 10, 40, 50], 'least total trip first');
+  assert.strictEqual(rows[0].tripDistanceKm, 2.6);
+  assert.strictEqual(rows[4].tripDistanceKm, null);
+
+  // Pickup badges follow pickup distance, not list order
+  const p = (id) => rows.find((r) => r.id === id);
+  assert.strictEqual(p(20).nearestPickupRank, 1);
+  assert.strictEqual(p(20).isNearestPickup, true);
+  assert.strictEqual(p(30).nearestPickupRank, 2);
+  assert.strictEqual(p(10).nearestPickupRank, 3);
+  assert.strictEqual(p(40).nearestPickupRank, null, '4th has no top-3 badge');
 
   // Delivery ranks independent of list order
-  const d1 = rows.find((r) => r.nearestDeliveryRank === 1);
-  assert.ok(d1);
-  assert.strictEqual(d1.id, 50, 'nearest delivery is closest drop-off');
-  assert.strictEqual(d1.isNearestDelivery, true);
-  assert.strictEqual(
-    rows.filter((r) => r.nearestDeliveryRank != null).length,
-    3
-  );
+  assert.strictEqual(p(50).nearestDeliveryRank, 1, 'nearest delivery is closest drop-off');
+  assert.strictEqual(p(50).isNearestDelivery, true);
+  assert.strictEqual(p(30).nearestDeliveryRank, 2);
+  assert.strictEqual(rows.filter((r) => r.nearestDeliveryRank != null).length, 3);
 }
 
 {
-  // After "accepting" nearest (remove id 20), ranks shift
+  // After "accepting" the first one, ranks shift
   const rows = [
     { id: 20, pickupDistanceKm: 0.8, deliveryDistanceKm: 4.0 },
     { id: 30, pickupDistanceKm: 2.1, deliveryDistanceKm: 0.5 },
     { id: 10, pickupDistanceKm: 5.2, deliveryDistanceKm: 1.0 },
   ];
   applyNearestDistanceRanks(rows);
-  rows.splice(0, 1); // simulate accept nearest 1
+  rows.splice(0, 1); // simulate accept of the top order (30)
   applyNearestDistanceRanks(rows);
-  assert.strictEqual(rows[0].id, 30);
+  assert.deepStrictEqual(rows.map((r) => r.id), [20, 10]);
   assert.strictEqual(rows[0].nearestPickupRank, 1);
-  assert.strictEqual(rows[1].nearestPickupRank, 2);
 }
 
 {
-  const sorted = sortByPickupThenDelivery([
+  const sorted = sortNearestTrip([
     { id: 1, pickupDistanceKm: null, deliveryDistanceKm: 1 },
     { id: 2, pickupDistanceKm: 3, deliveryDistanceKm: 9 },
   ]);
   assert.strictEqual(sorted[0].id, 2, 'known distance before null');
+
+  // Missing drop-off distance counts as the pickup distance (same address)
+  assert.strictEqual(tripKm({ pickupDistanceKm: 2, deliveryDistanceKm: null }), 4);
+
+  // Same trip: nearer pickup first, then the sooner pickup slot
+  const tie = sortNearestTrip([
+    { id: 1, pickupDistanceKm: 3, deliveryDistanceKm: 1, collectionDate: '2026-10-12', collectionTimeFrom: '09:00' },
+    { id: 2, pickupDistanceKm: 1, deliveryDistanceKm: 3, collectionDate: '2026-10-12', collectionTimeFrom: '09:00' },
+    { id: 3, pickupDistanceKm: 1, deliveryDistanceKm: 3, collectionDate: '2026-10-11', collectionTimeFrom: '15:00' },
+  ]);
+  assert.deepStrictEqual(tie.map((r) => r.id), [3, 2, 1]);
 }
 
 // ── Shop → order distances (used when notifying shops of a new booking) ──────

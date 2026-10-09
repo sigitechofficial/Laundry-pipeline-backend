@@ -86,18 +86,18 @@ const DEFINITIONS = {
   },
   shopAcceptCapEnabled: {
     type: "boolean",
-    label: "Shop accept capacity (all shops)",
+    label: "Shop slot capacity (all shops)",
     description:
-      "When on, each shop may only accept a limited number of marketplace orders inside a rolling time window. Shops over the limit are skipped; other shops still receive the offer. Admin manual assign always bypasses. Per-shop overrides live on the shop Order routing card.",
+      "When on, each shop can hold up to \"Max orders per slot\" pickups and deliveries in one booking slot (e.g. 11:00–12:00). A new order needs room in its pickup slot and its delivery slot; other slots, days and future dates have their own room. Shops with a full slot are skipped and the order goes to others; if every shop is full the admin is alerted. When off, each shop takes one order per pickup / delivery slot. Admin manual assign always bypasses. Per-shop overrides live on the shop Order routing card.",
     group: "booking_assignment",
     envKey: "SHOP_ACCEPT_CAP_ENABLED",
     defaultValue: false,
   },
   shopAcceptWindowMinutes: {
     type: "integer",
-    label: "Accept capacity window (minutes)",
+    label: "Accept capacity window (minutes) — not used",
     description:
-      "Rolling window used for the global accept limit (e.g. 60 = last 1 hour). Per-shop overrides can set their own window.",
+      "No longer used: capacity is counted per booking slot, not in a rolling window. Kept so old values stay readable.",
     group: "booking_assignment",
     envKey: "SHOP_ACCEPT_WINDOW_MINUTES",
     defaultValue: 60,
@@ -106,9 +106,9 @@ const DEFINITIONS = {
   },
   shopAcceptMaxOrders: {
     type: "integer",
-    label: "Max accepts per window (all shops)",
+    label: "Max orders per slot (all shops)",
     description:
-      "How many orders a shop may accept inside the window. 0 = no shop may accept via marketplace (admin can still assign). Example: 4 in 60 minutes.",
+      "How many pickups + deliveries one shop can have in one booking slot. Example: 4 = in the 11:00–12:00 slot a shop can have, say, 2 pickups and 2 deliveries. 0 = no shop may accept via marketplace (admin can still assign).",
     group: "booking_assignment",
     envKey: "SHOP_ACCEPT_MAX_ORDERS",
     defaultValue: 4,

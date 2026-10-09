@@ -57,6 +57,9 @@ class AdminBookingAssignService {
                 "collectionDate",
                 "collectionTimeFrom",
                 "collectionTimeTo",
+                "deliveryDate",
+                "deliveryTimeFrom",
+                "deliveryTimeTo",
                 "pickupAddresId",
             ],
             include: [
@@ -216,12 +219,29 @@ class AdminBookingAssignService {
                     bookingRow.pickupAddress,
                     null
                 );
+            // Room in this order's pickup / delivery slots (info for the admin;
+            // a manual assign is allowed even when full).
+            const { evaluateShopSlotCapacity } = require("../../utils/shopSlotCapacity");
+            const slot = await evaluateShopSlotCapacity(
+                ownerId,
+                shop.id,
+                bookingRow.get({ plain: true }),
+                { excludeBookingId: bookingRow.id }
+            ).catch(() => null);
             shopList.push({
                 laundryShopId: shop.id,
                 userId: ownerId,
                 zoneId: orderZoneId,
                 zoneName,
                 distanceKm,
+                slotCapacity: slot
+                    ? {
+                          hasRoom: slot.allowed,
+                          mode: slot.mode,
+                          limit: slot.limit,
+                          slots: slot.slots,
+                      }
+                    : null,
                 shopName: biz?.shopName || `Shop #${shop.id}`,
                 isOpenNow: openNow,
                 canAssign: !isCurrentShop,

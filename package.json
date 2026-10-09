@@ -25,7 +25,8 @@
     "ops:prod": "bash scripts/ops.sh prod",
     "ops:diagnose": "bash scripts/ops.sh stage diagnose",
     "ops:logs": "bash scripts/ops.sh stage logs",
-    "test:promotions-api": "node tests/promotionsApi.integration.test.js"
+    "test:promotions-api": "node tests/promotionsApi.integration.test.js",
+    "test:slot-capacity": "node tests/shopSlotCapacity.e2e.test.js"
   },
   "keywords": [],
   "author": "",
