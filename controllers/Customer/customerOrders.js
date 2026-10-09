@@ -500,7 +500,23 @@ async function cancelCustomerBooking(req, res) {
         resolvedTimeZone
     );
 
-    return ResponseHelper.success(res, "Booking cancelled successfully", result);
+    // Cancelling one order of a recurring series does not stop the series:
+    // say so, and say where to switch it off.
+    let message = "Booking cancelled successfully";
+    try {
+        const recurringBookingService = require('../../services/Customer/recurringBookingService');
+        const { plan } = await recurringBookingService.findPlanForBooking(bookingId, { customerId });
+        if (plan && plan.status === 'active') {
+            message = `Booking cancelled. Your ${plan.frequency} plan is still on, so the next order will still be booked. To stop it, go to Profile → Recurring service.`;
+            if (result && typeof result === 'object') {
+                result.recurringPlan = recurringBookingService.serializeRecurringPlan(plan);
+            }
+        }
+    } catch (_) {
+        /* not recurring */
+    }
+
+    return ResponseHelper.success(res, message, result);
 }
 
 /*

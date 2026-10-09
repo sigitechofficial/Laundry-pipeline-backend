@@ -205,11 +205,13 @@ async function bookingEventSentCheckTheShops(
         where: {
             zoneId: zoneId,
             addressType: "LaundaryShopAddress",
+            // Deactivated shop addresses get no offers (same as preferred routing).
+            status: true,
         },
         include: [
             {
                 model: users,
-                attributes: ["id", "firstName", "email", "lastName"],
+                attributes: ["id", "firstName", "email", "lastName", "status"],
                 required: false,
                 include: [
                     {
@@ -272,6 +274,12 @@ async function bookingEventSentCheckTheShops(
     // independent of slot/working-hours availability. Used to detect a service
     // coverage gap (→ notify admin for manual assignment).
     let serviceEligibleShopCount = 0;
+    // Shops that declined this booking are not offered it again.
+    const { bookingAgentDecline } = require('../../models');
+    const declinedOwnerIds = new Set(
+        (await bookingAgentDecline.findAll({ where: { bookingId }, attributes: ['agentUserId'] }))
+            .map((d) => Number(d.agentUserId))
+    );
     // Shops that offer the services but have no room in this booking's slot.
     let slotFullShopCount = 0;
     let fullSlotExample = null;
@@ -285,6 +293,18 @@ async function bookingEventSentCheckTheShops(
             requiredServiceIds.length > 0 &&
             requiredServiceIds.every((id) => offeredServiceIds.has(id));
         if (!offersAllServices) {
+            continue;
+        }
+
+        // Owner account blocked: cannot work the order.
+        if (shop.user && shop.user.status === false) {
+            continue;
+        }
+
+        if (declinedOwnerIds.has(Number(shop.user?.id || shop.userId))) {
+            console.log(
+                `[broadcast] booking ${bookingId} skipping shop ${shop.id} — declined this order`
+            );
             continue;
         }
 
@@ -613,6 +633,147 @@ async function notifyPreferredShopOnly(bookingId, preferredShop, bookingDetails,
         console.error('[notifyPreferredShopOnly] error:', err?.message || err);
         return false;
     }
+}
+
+/**
+ * Tell admins once (per booking, per day) that a booking reached no shop, with
+ * the real reason: no shop offers the services, every shop is full for its
+ * slot, or no shop could take it (declined / on hold / excluded / closed).
+ * Used by phase 2, held release and the post-decline broadcast.
+ */
+async function alertAdminNoShopOnce(bookingId, zoneId, result = {}) {
+    try {
+        const redis = require('../../redis/redis');
+        if (redis?.isReady) {
+            const first = await redis.set(`admin-alert:no-shop:${bookingId}`, '1', { NX: true, EX: 24 * 60 * 60 });
+            if (first !== 'OK') return false;
+        }
+    } catch (_) {
+        /* no Redis: still alert */
+    }
+    if ((result.zoneShopCount || 0) > 0 && (result.serviceEligibleShopCount || 0) === 0) {
+        await notifyAdminNoEligibleAgent(bookingId, zoneId);
+    } else if ((result.slotFullShopCount || 0) > 0) {
+        await notifyAdminSlotsFull(bookingId, zoneId, result);
+    } else {
+        try {
+            const { sendNotificationToAdmin } = require("../Agent/notificationService");
+            const row = await booking.findOne({ where: { id: bookingId }, attributes: ["id", "orderTrackId"] });
+            await sendNotificationToAdmin(
+                "Order needs manual assignment",
+                `Order #${row?.orderTrackId || bookingId}: no shop can take it right now (shops declined, are on hold, closed, or the customer is excluded). Please assign it manually.`,
+                {
+                    bookingId: Number(bookingId),
+                    zoneId: zoneId != null ? Number(zoneId) : null,
+                    type: "no_shop_available",
+                    alertType: "no_eligible_agent",
+                }
+            );
+        } catch (err) {
+            console.error(`[routing] admin alert failed for booking ${bookingId}:`, err?.message || err);
+        }
+    }
+    return true;
+}
+
+/**
+ * (Re)route a booking that is still waiting for a shop (status 1, no shop):
+ * the customer's preferred shop (admin assignment, else last completed shop)
+ * gets the head-start window; otherwise every eligible shop is offered it.
+ * Used when a held booking is released and when an admin moves the customer.
+ * Visibility fields (agentBroadcastHeld / agentVisibleAt / orderExpireTime)
+ * are the caller's job.
+ *
+ * @returns {Promise<{ mode: 'preferred'|'broadcast'|'none', notifiedCount: number,
+ *   serviceEligibleShopCount?: number, slotFullShopCount?: number, zoneShopCount?: number }>}
+ */
+async function routePendingBooking(bookingId) {
+    const row = await booking.findOne({
+        where: { id: bookingId, bookingStatusId: 1, laundryShopId: null },
+        attributes: [
+            'id', 'customerId', 'zoneId',
+            'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
+            'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
+        ],
+    });
+    if (!row) return { mode: 'none', notifiedCount: 0 };
+
+    const services = (
+        await customerSelectedService.findAll({ where: { bookingId }, attributes: ['serviceId'] })
+    ).map((s) => ({ serviceId: s.serviceId }));
+    const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+    const tz = (await getCountryContextFromZoneId(row.zoneId)).ianaTimeZone;
+
+    const runtimeSettings = require('../Admin/runtimeSettingsService');
+    const { resolvePreferredShop, SKIP_REASONS } = require('../preferredShopResolver');
+    const preferredEnabled = await runtimeSettings.getBoolean('preferredShopEnabled');
+    const windowMins = preferredEnabled ? await runtimeSettings.getInteger('preferredShopWindowMinutes') : 0;
+    const preferred = preferredEnabled
+        ? await resolvePreferredShop({
+              customerId: row.customerId,
+              zoneId: row.zoneId,
+              services,
+              collectionDate: row.collectionDate,
+              collectionTimeFrom: row.collectionTimeFrom,
+              collectionTimeTo: row.collectionTimeTo,
+              deliveryDate: row.deliveryDate,
+              deliveryTimeFrom: row.deliveryTimeFrom,
+              deliveryTimeTo: row.deliveryTimeTo,
+              excludeBookingId: row.id,
+              timeZone: tz,
+          })
+        : { shop: null, skipReason: SKIP_REASONS.DISABLED };
+
+    if (preferred.shop) {
+        await booking.update(
+            {
+                preferredShopAgentId: preferred.shop.user.id,
+                preferredShopExpiresAt: new Date(Date.now() + windowMins * 60 * 1000),
+                preferredShopBroadcastDone: false,
+                preferredShopSkipReason: null,
+            },
+            { where: { id: bookingId } }
+        );
+        const details = await booking.findOne({
+            where: { id: bookingId },
+            include: [
+                { model: users, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'email', 'phoneNum', 'userTypeId', 'image'] },
+                { model: addressDb, as: 'pickupAddress', attributes: ['id', 'streetAddress', 'district', 'province', 'postalcode', 'lat', 'lng', 'addressType'] },
+                { model: addressDb, as: 'dropOffAddress', required: false, attributes: ['id', 'streetAddress', 'district', 'province', 'postalcode', 'lat', 'lng', 'addressType'] },
+                { model: billingDetails, as: 'billingDetail', attributes: ['total', 'serviceCharge', 'categoryCharge'] },
+                { model: zone, attributes: ['id', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'] },
+            ],
+        });
+        const sent = details
+            ? await notifyPreferredShopOnly(
+                  bookingId, preferred.shop, details,
+                  row.collectionDate, row.collectionTimeTo, row.collectionTimeFrom,
+                  row.deliveryDate, row.deliveryTimeTo, row.deliveryTimeFrom,
+                  tz, windowMins
+              )
+            : false;
+        if (sent) {
+            console.log(`[routing] booking ${bookingId} → preferred shop ${preferred.shop.id} (owner ${preferred.shop.user.id}) for ${windowMins}m`);
+            return { mode: 'preferred', notifiedCount: 1 };
+        }
+    }
+
+    await booking.update(
+        {
+            preferredShopAgentId: null,
+            preferredShopExpiresAt: null,
+            preferredShopBroadcastDone: true,
+            preferredShopSkipReason: preferred.shop ? 'notify_failed' : preferred.skipReason || null,
+        },
+        { where: { id: bookingId } }
+    );
+    const result = await bookingEventSentCheckTheShops(
+        bookingId, row.zoneId,
+        row.collectionDate, row.collectionTimeTo, row.collectionTimeFrom,
+        row.deliveryDate, row.deliveryTimeTo, row.deliveryTimeFrom,
+        services, tz
+    );
+    return { mode: 'broadcast', ...result };
 }
 
 /**
@@ -1544,18 +1705,6 @@ class CustomerOrderService {
         const ordertrackingNumber = generateOrderTrackId(bookingData.id);
         await bookingData.update({ orderTrackId: ordertrackingNumber });
 
-        // Prime recurring plan link early for non-"Just Once" bookings so
-        // delivery completion can generate the next cycle idempotently.
-        try {
-            const recurringBookingService = require('./recurringBookingService');
-            await recurringBookingService.ensurePlanForBooking(bookingData.id);
-        } catch (err) {
-            console.warn(
-                `[createBooking] recurring plan bootstrap skipped for booking ${bookingData.id}:`,
-                err?.message || err
-            );
-        }
-
         try {
             await Promise.all([
                 attachNoShowPolicyOnBooking(bookingData.id, zoneId),
@@ -2151,6 +2300,19 @@ class CustomerOrderService {
                     await notifyAdminSlotsFull(bookingId, zoneId, { slotFullShopCount, fullSlotExample });
                 }
             }
+        }
+
+        // Recurring plan only once the booking is fully made (validated, card
+        // hold placed, routed): a failed booking must never leave a live plan
+        // that keeps creating orders.
+        try {
+            const recurringBookingService = require('./recurringBookingService');
+            await recurringBookingService.ensurePlanForBooking(bookingData.id);
+        } catch (err) {
+            console.warn(
+                `[createBooking] recurring plan bootstrap skipped for booking ${bookingData.id}:`,
+                err?.message || err
+            );
         }
 
         // Send booking confirmation email (non-blocking)
@@ -3727,4 +3889,6 @@ const customerOrderService = new CustomerOrderService();
 customerOrderService.bookingEventSentCheckTheShops = bookingEventSentCheckTheShops;
 customerOrderService.findPreferredShopForCustomer = findPreferredShopForCustomer;
 customerOrderService.notifyPreferredShopOnly = notifyPreferredShopOnly;
+customerOrderService.routePendingBooking = routePendingBooking;
+customerOrderService.alertAdminNoShopOnce = alertAdminNoShopOnce;
 module.exports = customerOrderService;

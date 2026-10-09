@@ -238,12 +238,16 @@ async function resolveNaturalReturningShop(customerId, zoneId) {
     SELECT
       b.laundryShopId AS shopAddressId,
       SUM(CASE WHEN b.bookingStatusId = :completedStatus THEN 1 ELSE 0 END) AS completedOrders,
-      MAX(b.updatedAt) AS lastCompletedAt
+      MAX(CASE WHEN b.bookingStatusId = :completedStatus THEN b.updatedAt END) AS lastCompletedAt
     FROM bookings b
     WHERE b.customerId = :customerId
       AND b.zoneId = :zoneId
       AND b.laundryShopId IS NOT NULL
+      AND b.laundryShopId NOT IN (
+        SELECT e.shopAddressId FROM customerShopExclusions e WHERE e.customerId = :customerId
+      )
     GROUP BY b.laundryShopId
+    HAVING completedOrders > 0
     ORDER BY completedOrders DESC, lastCompletedAt DESC
     LIMIT 20
     `,
@@ -457,22 +461,27 @@ async function assignCustomerToShop({
 
   const action = existingActive ? ACTIONS.REASSIGN : ACTIONS.ASSIGN;
 
-  if (existingActive) {
-    await existingActive.update({
-      status: 'unlinked',
-      unlinkedByAdminId: adminId != null ? Number(adminId) : null,
-      unlinkedAt: new Date(),
-    });
-  }
-
-  const created = await customerShopAssignment.create({
-    customerId: cid,
-    shopAddressId,
-    shopUserId,
-    sourceShopAddressId,
-    status: 'active',
-    note: cleanedNote,
-    createdByAdminId: adminId != null ? Number(adminId) : null,
+  // One transaction with the customer row locked: a double submit can never
+  // leave two active assignments (every active row is unlinked first).
+  const created = await sequelize.transaction(async (transaction) => {
+    await users.findByPk(cid, { attributes: ['id'], lock: transaction.LOCK.UPDATE, transaction });
+    await customerShopAssignment.update(
+      {
+        status: 'unlinked',
+        unlinkedByAdminId: adminId != null ? Number(adminId) : null,
+        unlinkedAt: new Date(),
+      },
+      { where: { customerId: cid, status: 'active' }, transaction }
+    );
+    return customerShopAssignment.create({
+      customerId: cid,
+      shopAddressId,
+      shopUserId,
+      sourceShopAddressId,
+      status: 'active',
+      note: cleanedNote,
+      createdByAdminId: adminId != null ? Number(adminId) : null,
+    }, { transaction });
   });
 
   await recordRoutingEvent({
@@ -496,10 +505,40 @@ async function assignCustomerToShop({
   if (mapped && sourceShopAddressId) {
     mapped.sourceShopName = names.get(sourceShopAddressId);
   }
+  // Open orders: waiting ones go to the new shop first; accepted ones elsewhere
+  // are listed for the admin to reassign.
+  if (mapped) {
+    const { applyCustomerShopMove } = require('./customerShopMoveService');
+    mapped.openOrders = await applyCustomerShopMove(cid, { keepShopAddressId: shopAddressId }).catch((err) => {
+      console.warn('[assignCustomerToShop] open-order handling failed:', err?.message || err);
+      return { rerouted: [], stillWithOtherShop: [] };
+    });
+  }
   return mapped;
 }
 
-async function clearOrRelinkAssignment({
+/**
+ * Unlink / relink, then deal with open orders: waiting ones are routed again;
+ * on relink, orders the previous shop already accepted are listed for the admin.
+ */
+async function clearOrRelinkAssignment(args = {}) {
+  const result = await clearOrRelinkAssignmentOnly(args);
+  try {
+    const { applyCustomerShopMove, reroutePendingOrders } = require('./customerShopMoveService');
+    const movedAway = result.mode === 'relink' &&
+      result.previousShopAddressId &&
+      result.activeAssignment?.shopAddressId &&
+      Number(result.activeAssignment.shopAddressId) !== Number(result.previousShopAddressId);
+    result.openOrders = movedAway
+      ? await applyCustomerShopMove(result.customerId, { onlyShopAddressId: result.previousShopAddressId })
+      : { rerouted: await reroutePendingOrders(result.customerId), stillWithOtherShop: [] };
+  } catch (err) {
+    console.warn('[clearOrRelinkAssignment] open-order handling failed:', err?.message || err);
+  }
+  return result;
+}
+
+async function clearOrRelinkAssignmentOnly({
   customerId,
   mode = 'unlink',
   note = null,

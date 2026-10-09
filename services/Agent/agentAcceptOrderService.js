@@ -26,11 +26,14 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             userId: agentUserId,
             addressType: "LaundaryShopAddress",
         },
-        attributes: ["id", "zoneId", "userId"],
+        attributes: ["id", "zoneId", "userId", "status"],
     });
 
     if (!shopAddress) {
         throw new NotFoundError("Agent shop address not found");
+    }
+    if (shopAddress.status === false) {
+        throw new ConflictError("Your shop is deactivated and cannot take new orders. Contact support.");
     }
 
     // Prefer shop owner id for socket room notifications (must match zone owner list).
@@ -50,6 +53,9 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
             "deliveryDate",
             "deliveryTimeFrom",
             "deliveryTimeTo",
+            "preferredShopAgentId",
+            "preferredShopBroadcastDone",
+            "preferredShopExpiresAt",
         ],
     });
 
@@ -75,6 +81,21 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
     ) {
         throw new ConflictError(
             "This order is assigned to another shop by admin"
+        );
+    }
+
+    // Preferred-shop window: only the customer's usual shop may take it until
+    // the window ends (other shops may still hold a stale copy of the order).
+    if (
+        bookingRow.preferredShopAgentId != null &&
+        !bookingRow.preferredShopBroadcastDone &&
+        Number(bookingRow.preferredShopAgentId) !== Number(shopOwnerUserId) &&
+        bookingRow.preferredShopExpiresAt &&
+        new Date(bookingRow.preferredShopExpiresAt).getTime() > Date.now()
+    ) {
+        throw new ConflictError(
+            "This order is offered to the customer's usual shop first. If they do not accept it in a few minutes it opens to all shops.",
+            { code: "PREFERRED_SHOP_WINDOW" }
         );
     }
 

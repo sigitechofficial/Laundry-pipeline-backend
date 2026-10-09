@@ -41,8 +41,9 @@ function compareNearestTrip(a, b) {
   return Number(b?.id || 0) - Number(a?.id || 0);
 }
 
+/** Always a NEW array (callers clear and refill the original in place). */
 function sortNearestTrip(rows) {
-  if (!Array.isArray(rows) || rows.length < 2) return rows || [];
+  if (!Array.isArray(rows)) return [];
   return [...rows].sort(compareNearestTrip);
 }
 

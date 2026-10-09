@@ -60,6 +60,14 @@ const { couponAppliesToZone, parseZoneIds } = require('./couponDiscount');
 }
 
 {
+  // A single order must survive (the list is cleared and refilled in place).
+  const one = [{ id: 7, pickupDistanceKm: 1.2, deliveryDistanceKm: 1.2 }];
+  applyNearestDistanceRanks(one);
+  assert.strictEqual(one.length, 1, 'one order stays in the list');
+  assert.strictEqual(one[0].nearestPickupRank, 1);
+}
+
+{
   const sorted = sortNearestTrip([
     { id: 1, pickupDistanceKm: null, deliveryDistanceKm: 1 },
     { id: 2, pickupDistanceKm: 3, deliveryDistanceKm: 9 },

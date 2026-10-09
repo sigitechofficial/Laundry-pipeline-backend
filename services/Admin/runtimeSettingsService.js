@@ -119,7 +119,7 @@ const DEFINITIONS = {
     type: "boolean",
     label: "Recurring auto-create",
     description:
-      "When on, non-'Just Once' bookings auto-generate the next cycle after delivery completion without customer confirmation.",
+      "When on, recurring plans (Weekly / Every two weeks / Every four weeks) create their next booking by themselves, one interval after the previous booking was created, without customer confirmation. The new pickup is the previous one plus the interval (moved on if it would be in the past). Off: no new cycles are created.",
     group: "booking_assignment",
     envKey: "RECURRING_AUTO_CREATE_ENABLED",
     defaultValue: true,

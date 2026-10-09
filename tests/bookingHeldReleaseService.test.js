@@ -80,6 +80,7 @@ const booking = {
     },
 };
 
+const adminAlerts = [];
 const stubs = {
     '../models': {
         booking,
@@ -109,6 +110,17 @@ const stubs = {
             broadcasts.push(bookingId);
             if (throwOnBroadcast) throw new Error('simulated delivery failure');
             return { notifiedCount: notifyCount };
+        },
+        // Held release now routes like a new booking (preferred shop first);
+        // with no preferred shop that is the same broadcast.
+        async routePendingBooking(bookingId) {
+            broadcasts.push(bookingId);
+            if (throwOnBroadcast) throw new Error('simulated delivery failure');
+            return { mode: 'broadcast', notifiedCount: notifyCount };
+        },
+        async alertAdminNoShopOnce(bookingId) {
+            adminAlerts.push(bookingId);
+            return true;
         },
     },
 };

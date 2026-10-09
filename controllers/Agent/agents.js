@@ -578,9 +578,10 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
 
     const shopAddr = await addressDb.findOne({
         where: { userId: agentId, deletedAt: null },
-        attributes: ["id", "zoneId", "lat", "lng"],
+        attributes: ["id", "zoneId", "lat", "lng", "status"],
     });
-    if (!shopAddr || !shopAddr.zoneId) return [];
+    // A deactivated shop gets no new marketplace orders.
+    if (!shopAddr || !shopAddr.zoneId || shopAddr.status === false) return [];
 
     const agentShopId = shopAddr.id;
     const agentZone = shopAddr.zoneId;
@@ -3756,7 +3757,16 @@ exports.driverReachedForDelivery = async (req, res) => {
 
     syncLiveTrackingSafe(bookingId, 14, { reason: 'delivery_arrived' });
 
-    const recurringGapDays = recurringIntervalDaysFromLabel(bookingCheck.frequency);
+    // A paused / switched-off plan means no return pickup.
+    let recurringPlanActive = true;
+    try {
+        const { findPlanForBooking } = require("../../services/Customer/recurringBookingService");
+        const { plan } = await findPlanForBooking(bookingId);
+        if (plan && plan.status !== "active") recurringPlanActive = false;
+    } catch (_) {
+        /* no plan row: fall back to the frequency */
+    }
+    const recurringGapDays = recurringPlanActive ? recurringIntervalDaysFromLabel(bookingCheck.frequency) : 0;
     const recurringHint = recurringGapDays > 0
         ? {
             recurringEnabled: true,
