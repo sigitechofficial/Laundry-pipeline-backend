@@ -174,7 +174,8 @@ async function main() {
     check('promotion', 'coupon added in edit is saved', d.couponCodes.some((c) => c.code === `${CODE_PREFIX}B`));
     check('promotion', 're-sent coupon keeps its customer + limit', a && a.customerId === CUST_ID && a.usageLimit === 3, JSON.stringify(a));
     const list = await admin('GET', '/promotions?limit=200');
-    check('promotion', 'list count matches rows', list.json.count === list.json.rows.length);
+    // count is the total; rows is one page (at most the limit).
+    check('promotion', 'list count matches rows', list.json.rows.length === Math.min(list.json.count, 200), `${list.json.count} total, ${list.json.rows.length} rows`);
 
     // A code may live in only one system: Promotions (coupon_codes) or Coupons (Legacy) (coupons).
     const legacyBody = { description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 };
