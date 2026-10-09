@@ -1,13 +1,21 @@
 const ResponseHelper = require("../../utils/responseHelper");
 const agentSettlementService = require("../../services/Agent/agentSettlementService");
 
+/** Zone managers are limited to their own zone's shops; platform admins → null (all). */
+const scopedZone = (req) => (req.scopedZoneId != null ? Number(req.scopedZoneId) : null);
+const agentInScope = (req) =>
+    agentSettlementService.assertAgentInZone(parseInt(req.params.agentId, 10), scopedZone(req));
+const shopInScope = (req) => agentSettlementService.assertShopInZone(req.params.shopId, scopedZone(req));
+
 exports.getAgentSettlement = async (req, res) => {
+    await agentInScope(req);
     const agentUserId = parseInt(req.params.agentId, 10);
     const data = await agentSettlementService.getAgentSettlementSummary(agentUserId);
     return ResponseHelper.success(res, "Agent settlement summary", data);
 };
 
 exports.getAgentSettlementDetail = async (req, res) => {
+    await agentInScope(req);
     const agentUserId = parseInt(req.params.agentId, 10);
     const { ledgerPage, ledgerLimit, ordersPage, ordersLimit, ledgerRail, ledgerType } =
         req.query;
@@ -37,6 +45,7 @@ exports.listAgentsWithCashDue = async (req, res) => {
         sortDir,
         export: req.query.export,
         format: req.query.format,
+        zoneId: scopedZone(req),
     });
     return ResponseHelper.success(res, "Agents with cash due", data);
 };
@@ -47,31 +56,37 @@ exports.listPendingRemittances = async (req, res) => {
         page,
         limit,
         agentUserId: agentId ? parseInt(agentId, 10) : undefined,
+        zoneId: scopedZone(req),
     });
     return ResponseHelper.success(res, "Pending cash remittances", data);
 };
 
 exports.confirmCashRemittance = async (req, res) => {
     const remittanceId = parseInt(req.params.remittanceId, 10);
+    await agentSettlementService.assertRemittanceInZone(remittanceId, scopedZone(req));
     const { note } = req.body;
     const data = await agentSettlementService.confirmCashRemittance(
         remittanceId,
-        note
+        note,
+        req.user?.id
     );
     return ResponseHelper.success(res, "Cash remittance confirmed", data);
 };
 
 exports.rejectCashRemittance = async (req, res) => {
     const remittanceId = parseInt(req.params.remittanceId, 10);
+    await agentSettlementService.assertRemittanceInZone(remittanceId, scopedZone(req));
     const { note } = req.body;
     const data = await agentSettlementService.rejectCashRemittance(
         remittanceId,
-        note
+        note,
+        req.user?.id
     );
     return ResponseHelper.success(res, "Cash remittance rejected", data);
 };
 
 exports.recordCashSettlement = async (req, res) => {
+    await agentInScope(req);
     const agentUserId = parseInt(req.params.agentId, 10);
     const { amount, note } = req.body;
     const data = await agentSettlementService.adminRecordCashSettlement(
@@ -82,17 +97,20 @@ exports.recordCashSettlement = async (req, res) => {
 };
 
 exports.recordSettlementAdjustment = async (req, res) => {
+    await agentInScope(req);
     const agentUserId = parseInt(req.params.agentId, 10);
     const { amount, direction, note } = req.body;
     const data = await agentSettlementService.adminRecordAdjustment(agentUserId, {
         amount,
         direction,
         note,
+        adminUserId: req.user?.id,
     });
     return ResponseHelper.success(res, "Settlement adjustment recorded", data);
 };
 
 exports.recordAgentPayout = async (req, res) => {
+    await agentInScope(req);
     const agentUserId = parseInt(req.params.agentId, 10);
     const { amount, note } = req.body;
     const data = await agentSettlementService.recordAgentPayout(agentUserId, {
@@ -113,11 +131,13 @@ exports.syncAgentWalletsFromBookings = async (req, res) => {
 };
 
 exports.getShopSettlement = async (req, res) => {
+    await shopInScope(req);
     const data = await agentSettlementService.getShopSettlementSummary(req.params.shopId);
     return ResponseHelper.success(res, "Shop settlement summary", data);
 };
 
 exports.getShopSettlementDetail = async (req, res) => {
+    await shopInScope(req);
     const { ledgerPage, ledgerLimit, ordersPage, ordersLimit, ledgerRail, ledgerType } =
         req.query;
     const data = await agentSettlementService.getShopSettlementDetail(req.params.shopId, {
@@ -132,6 +152,7 @@ exports.getShopSettlementDetail = async (req, res) => {
 };
 
 exports.recordShopCashSettlement = async (req, res) => {
+    await shopInScope(req);
     const { amount, note } = req.body;
     const data = await agentSettlementService.adminRecordShopCashSettlement(req.params.shopId, {
         amount,
@@ -142,16 +163,19 @@ exports.recordShopCashSettlement = async (req, res) => {
 };
 
 exports.recordShopSettlementAdjustment = async (req, res) => {
+    await shopInScope(req);
     const { amount, direction, note } = req.body;
     const data = await agentSettlementService.adminRecordShopAdjustment(req.params.shopId, {
         amount,
         direction,
         note,
+        adminUserId: req.user?.id,
     });
     return ResponseHelper.success(res, "Settlement adjustment recorded", data);
 };
 
 exports.recordShopPayout = async (req, res) => {
+    await shopInScope(req);
     const { amount, note } = req.body;
     const data = await agentSettlementService.recordShopPayout(req.params.shopId, {
         amount,
@@ -170,12 +194,14 @@ exports.listPendingWithdrawals = async (req, res) => {
         limit,
         agentUserId: agentId ? parseInt(agentId, 10) : undefined,
         shopId,
+        zoneId: scopedZone(req),
     });
     return ResponseHelper.success(res, "Pending withdrawal requests", data);
 };
 
 exports.approveWithdrawal = async (req, res) => {
     const withdrawalId = parseInt(req.params.withdrawalId, 10);
+    await agentSettlementService.assertRemittanceInZone(withdrawalId, scopedZone(req));
     const { note } = req.body || {};
     const data = await agentWithdrawalService.approveWithdrawal(withdrawalId, {
         note,
@@ -186,6 +212,7 @@ exports.approveWithdrawal = async (req, res) => {
 
 exports.rejectWithdrawal = async (req, res) => {
     const withdrawalId = parseInt(req.params.withdrawalId, 10);
+    await agentSettlementService.assertRemittanceInZone(withdrawalId, scopedZone(req));
     const { note } = req.body || {};
     const data = await agentWithdrawalService.rejectWithdrawal(withdrawalId, {
         note,
@@ -195,16 +222,19 @@ exports.rejectWithdrawal = async (req, res) => {
 };
 
 exports.getShopPayoutAccount = async (req, res) => {
+    await shopInScope(req);
     const data = await agentWithdrawalService.getShopPayoutAccount(req.params.shopId);
     return ResponseHelper.success(res, "Shop payout account", data);
 };
 
 exports.ensureShopPayoutAccount = async (req, res) => {
+    await shopInScope(req);
     const data = await agentWithdrawalService.ensureShopConnectAccount(req.params.shopId);
     return ResponseHelper.success(res, "Shop payout account ensured", data);
 };
 
 exports.createShopPayoutOnboardingLink = async (req, res) => {
+    await shopInScope(req);
     const data = await agentWithdrawalService.createShopPayoutOnboardingLink(
         req.params.shopId
     );

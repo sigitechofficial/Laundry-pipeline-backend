@@ -553,6 +553,17 @@ async function listPendingWithdrawals(options = {}) {
         const shop = await resolveShopByShopId(options.shopId);
         where.userId = shop.userId;
     }
+    // Zone managers: only shops in their zone.
+    if (options.zoneId != null) {
+        const zoneShops = await addressDb.findAll({
+            where: { addressType: "LaundaryShopAddress", zoneId: Number(options.zoneId), userId: { [Op.ne]: null } },
+            attributes: ["userId"],
+        });
+        const owners = zoneShops.map((r) => Number(r.userId));
+        where.userId = where.userId != null
+            ? (owners.includes(Number(where.userId)) ? where.userId : -1)
+            : { [Op.in]: owners.length ? owners : [-1] };
+    }
 
     const { count, rows } = await wallet.findAndCountAll({
         where,

@@ -197,6 +197,7 @@ const {
 } = require("../../utils/agentActiveOrders");
 const invoiceManagementService = require("../../services/Agent/invoiceManagementService");
 const bookingPromotionService = require("../../services/promotions/bookingPromotionService");
+const { resolveAgentReportRange } = require("../../utils/agentReportRange");
 const {
     getCustomerDeclaredServices,
     getBookingRepairItems,
@@ -6232,82 +6233,77 @@ exports.getPerformanceDashboard = async (req, res) => {
     const agentId = req.user.id;
     const { startDate, endDate } = req.query;
 
-    // 🕐 Normalize date range
-    let start = startDate ? new Date(startDate) : new Date();
-    let end = endDate ? new Date(endDate) : new Date();
-
-    if (!startDate || !endDate) {
-        start.setHours(0, 0, 0, 0);
-        end.setHours(23, 59, 59, 999);
+    // Range: today by default; picked dates are whole local days (end day included).
+    const parseDay = (v) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ""));
+        return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+    };
+    const start = (startDate && parseDay(startDate)) || new Date();
+    const end = (endDate && parseDay(endDate)) || new Date(start);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    if (start > end) {
+        throw new ValidationError("Start date must be before end date.");
     }
 
-    // 🕐 Compute comparison period
-    const durationInMs = end.getTime() - start.getTime();
-    console.log("durationInMs============>>>>>>>>>>>>>>>>>>", durationInMs)
+    // Comparison = the same number of days just before.
+    const durationInMs = end.getTime() - start.getTime() + 1;
     const compStart = new Date(start.getTime() - durationInMs);
-    console.log("compStart===========================================>>>>>>", compStart)
-    const compEnd = new Date(start.getTime());
-    console.log("compEnd===========================================>>>>>>", compEnd)
+    const compEnd = new Date(start.getTime() - 1);
 
-    // 🔍 Agent Shop Address
     const findAgentShopAddress = await addressDb.findOne({
-        where: { userId: agentId },
+        where: { userId: agentId, addressType: "LaundaryShopAddress" },
     });
-
-    // 🔹 Today's Summary
-    const todaySummaryRaw = await booking.findAll({
-        where: {
-            laundryShopId: findAgentShopAddress.id,
-            createdAt: {
-                [Op.between]: [start, end]
-            }
-        },
-        attributes: [
-            [sequelize.fn('COUNT', sequelize.col('id')), 'pickups'],
-            [sequelize.literal('ROUND(SUM(orderAmount), 2)'), 'earnings']
-        ],
-        raw: true
-    });
-
-    // 🔹 Comparison Period Summary
-    const comparisonSummary = await booking.findAll({
-        where: {
-            laundryShopId: findAgentShopAddress.id,
-            createdAt: {
-                [Op.between]: [compStart, compEnd]
-            }
-        },
-        attributes: [
-            [sequelize.literal('ROUND(SUM(orderAmount), 2)'), 'earnings']
-        ],
-        raw: true
-    });
-
-    console.log("comparisonSummary===========-----+++++++++++++++++++++++", comparisonSummary)
-
-    const earningsNow = parseFloat(todaySummaryRaw[0]?.earnings || 0);
-    const earningsPrev = parseFloat(comparisonSummary[0]?.earnings || 0);
-
-
-    const MAX_CHANGE = 200;
-
-    let earningsDiffPercent = 0;
-    if (earningsPrev > 0) {
-        const rawChange = ((earningsNow - earningsPrev) / earningsPrev) * 100;
-
-        // ✅ Scale it into 1–100 range
-        const scaled = (rawChange / MAX_CHANGE) * 100;
-
-        // Clamp result between 1 and 100
-        earningsDiffPercent = Math.min(Math.max(scaled, 1), 100);
-
-        // Round
-        earningsDiffPercent = parseFloat(earningsDiffPercent.toFixed(2));
+    if (!findAgentShopAddress) {
+        throw new NotFoundError("Agent shop address not found");
     }
+
+    // Earnings = the shop's own earning on paid orders (not the customer's
+    // order amount, not cancelled or refunded orders).
+    const sumEarnings = async (from, to) => {
+        const [row] = await dbModels.sequelize.query(
+            `SELECT COUNT(*) AS orders, ROUND(COALESCE(SUM(bd.agentEarning), 0), 2) AS earnings
+             FROM bookings b JOIN billingDetails bd ON bd.bookingId = b.id
+             WHERE b.laundryShopId = :shopId AND b.deletedAt IS NULL
+               AND b.bookingStatusId NOT IN (19, 21) AND bd.paymentStatus = 'Paid'
+               AND b.createdAt BETWEEN :from AND :to`,
+            { replacements: { shopId: findAgentShopAddress.id, from, to }, type: sequelize.QueryTypes.SELECT }
+        );
+        return { orders: Number(row?.orders || 0), earnings: Number(row?.earnings || 0) };
+    };
+
+    const [pickups, deliveries, current, previous] = await Promise.all([
+        booking.count({
+            where: {
+                laundryShopId: findAgentShopAddress.id,
+                bookingStatusId: { [Op.notIn]: [19, 21] },
+                collectionDate: { [Op.between]: [start, end] },
+            },
+        }),
+        booking.count({
+            where: {
+                laundryShopId: findAgentShopAddress.id,
+                bookingStatusId: { [Op.notIn]: [19, 21] },
+                deliveryDate: { [Op.between]: [start, end] },
+            },
+        }),
+        sumEarnings(start, end),
+        sumEarnings(compStart, compEnd),
+    ]);
+
+    // Signed % change vs the previous period (negative = down). 0 when there is nothing to compare.
+    const earningsDiffPercent = previous.earnings > 0
+        ? parseFloat((((current.earnings - previous.earnings) / previous.earnings) * 100).toFixed(1))
+        : 0;
 
     const todaySummary = {
-        ...todaySummaryRaw[0],
-        earningsComparison: earningsDiffPercent
+        pickups,
+        deliveries,
+        paidOrders: current.orders,
+        earnings: current.earnings,
+        previousEarnings: previous.earnings,
+        earningsComparison: earningsDiffPercent,
+        range: { startDate: start, endDate: end },
     };
 
     // 🔹 Delivery Type Split (Agent Drivers only)
@@ -6383,31 +6379,7 @@ exports.getOrderSummaryDashboard = async (req, res) => {
     const agentId = req.user.id;
     const period = (req.query.period || "today").toLowerCase();
 
-    const supportedPeriods = ["today", "week", "month", "year"];
-    if (!supportedPeriods.includes(period)) {
-        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
-    }
-
-    const now = new Date();
-    const start = new Date(now);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-
-    if (period === "today") {
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "week") {
-        // Monday as week start
-        const day = start.getDay(); // 0=Sunday, 1=Monday...
-        const diffToMonday = day === 0 ? 6 : day - 1;
-        start.setDate(start.getDate() - diffToMonday);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "month") {
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "year") {
-        start.setMonth(0, 1);
-        start.setHours(0, 0, 0, 0);
-    }
+    const { start, end } = resolveAgentReportRange(period, req.query);
 
     const agentShopAddress = await addressDb.findOne({
         where: {
@@ -6491,30 +6463,7 @@ exports.getShopPerformanceDashboard = async (req, res) => {
     const agentId = req.user.id;
     const period = (req.query.period || "today").toLowerCase();
 
-    const supportedPeriods = ["today", "week", "month", "year"];
-    if (!supportedPeriods.includes(period)) {
-        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
-    }
-
-    const now = new Date();
-    const start = new Date(now);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-
-    if (period === "today") {
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "week") {
-        const day = start.getDay();
-        const diffToMonday = day === 0 ? 6 : day - 1;
-        start.setDate(start.getDate() - diffToMonday);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "month") {
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "year") {
-        start.setMonth(0, 1);
-        start.setHours(0, 0, 0, 0);
-    }
+    const { start, end } = resolveAgentReportRange(period, req.query);
 
     const agentShopAddress = await addressDb.findOne({
         where: {
@@ -6702,30 +6651,7 @@ exports.getEarningReportDashboard = async (req, res) => {
     const agentId = req.user.id;
     const period = (req.query.period || "today").toLowerCase();
 
-    const supportedPeriods = ["today", "week", "month", "year"];
-    if (!supportedPeriods.includes(period)) {
-        throw new ValidationError("Invalid period. Use: today, week, month, or year.");
-    }
-
-    const now = new Date();
-    const start = new Date(now);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-
-    if (period === "today") {
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "week") {
-        const day = start.getDay();
-        const diffToMonday = day === 0 ? 6 : day - 1;
-        start.setDate(start.getDate() - diffToMonday);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "month") {
-        start.setDate(1);
-        start.setHours(0, 0, 0, 0);
-    } else if (period === "year") {
-        start.setMonth(0, 1);
-        start.setHours(0, 0, 0, 0);
-    }
+    const { start, end } = resolveAgentReportRange(period, req.query);
 
     const currentRangeMs = end.getTime() - start.getTime();
     const previousEnd = new Date(start.getTime() - 1);
@@ -6742,10 +6668,13 @@ exports.getEarningReportDashboard = async (req, res) => {
         throw new NotFoundError("Agent shop address not found");
     }
 
+    // Earnings = what the shop actually earned: paid orders only, not cancelled
+    // or fully refunded (a partial refund already lowers agentEarning).
     const fetchOrders = async (fromDate, toDate) => {
         return booking.findAll({
             where: {
                 laundryShopId: agentShopAddress.id,
+                bookingStatusId: { [Op.notIn]: [19, 21] },
                 createdAt: {
                     [Op.between]: [fromDate, toDate]
                 }
@@ -6756,7 +6685,8 @@ exports.getEarningReportDashboard = async (req, res) => {
                     model: billingDetails,
                     as: "billingDetail",
                     attributes: ["total", "paymentStatus", "agentEarning"],
-                    required: false
+                    where: { paymentStatus: "Paid" },
+                    required: true
                 },
                 {
                     model: tip,
@@ -6771,24 +6701,10 @@ exports.getEarningReportDashboard = async (req, res) => {
     const currentOrders = await fetchOrders(start, end);
     const previousOrders = await fetchOrders(previousStart, previousEnd);
 
-    const getOrderEarning = (order) => {
-        const storedAgentEarning = Number(order.billingDetail?.agentEarning || 0);
-        if (storedAgentEarning > 0) {
-            return storedAgentEarning;
-        }
-
-        const billingTotal = Number(order.billingDetail?.total || 0);
-        const fallbackAmount = Number(order.orderAmount || 0);
-        const isPaid = order.billingDetail?.paymentStatus === "Paid";
-        const gross =
-            isPaid && billingTotal > 0
-                ? billingTotal
-                : fallbackAmount > 0
-                  ? fallbackAmount
-                  : billingTotal;
-
-        return gross;
-    };
+    // Never the customer's gross amount: that is not the shop's money.
+    const getOrderEarning = (order) => Number(order.billingDetail?.agentEarning || 0);
+    const getOrderValue = (order) =>
+        Number(order.billingDetail?.total || 0) || Number(order.orderAmount || 0);
 
     const currentEarnings = currentOrders.reduce(
         (sum, order) => sum + getOrderEarning(order),
@@ -6803,7 +6719,12 @@ exports.getEarningReportDashboard = async (req, res) => {
         ? Number((((currentEarnings - previousEarnings) / previousEarnings) * 100).toFixed(1))
         : 0;
 
+    // avgOrderValue = what customers paid per order (the app labels it "Avg Order Value");
+    // avgEarningPerOrder = the shop's own earning per order.
     const avgOrderValue = currentOrders.length
+        ? Number((currentOrders.reduce((sum, o) => sum + getOrderValue(o), 0) / currentOrders.length).toFixed(2))
+        : 0;
+    const avgEarningPerOrder = currentOrders.length
         ? Number((currentEarnings / currentOrders.length).toFixed(2))
         : 0;
 
@@ -6821,7 +6742,7 @@ exports.getEarningReportDashboard = async (req, res) => {
     const bucketCount = 7;
 
     const bucketStart = new Date(end);
-    if (period === "today") {
+    if (period === "today" || period === "custom") {
         bucketStart.setDate(bucketStart.getDate() - (bucketCount - 1));
         bucketStart.setHours(0, 0, 0, 0);
     } else if (period === "week") {
@@ -6841,7 +6762,7 @@ exports.getEarningReportDashboard = async (req, res) => {
         const from = new Date(bucketStart);
         const to = new Date(bucketStart);
 
-        if (period === "today") {
+        if (period === "today" || period === "custom") {
             from.setDate(bucketStart.getDate() + i);
             to.setDate(bucketStart.getDate() + i);
             to.setHours(23, 59, 59, 999);
@@ -6887,7 +6808,13 @@ exports.getEarningReportDashboard = async (req, res) => {
         },
         quickMetrics: {
             avgOrderValue,
+            avgEarningPerOrder,
+            paidOrders: currentOrders.length,
             tipsCollected: Number(tipsCollected.toFixed(2))
+        },
+        previousRange: {
+            startDate: previousStart,
+            endDate: previousEnd
         },
         earningsTrend: {
             labels,
@@ -6906,10 +6833,12 @@ exports.getAgentWallet = async (req, res) => {
 
 exports.getAgentWalletTransactions = async (req, res) => {
     const agentId = req.user.id;
-    const { page, limit } = req.query;
+    const { page, limit, scope, type } = req.query;
     const data = await agentWalletService.getWalletTransactions(agentId, {
         page,
         limit,
+        scope,
+        type,
     });
     return ResponseHelper.success(res, "Agent wallet transactions", data);
 };
