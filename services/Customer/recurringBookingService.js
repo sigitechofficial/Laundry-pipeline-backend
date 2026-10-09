@@ -832,6 +832,22 @@ async function generateNextBookingFromCompleted({
 
     await tx.commit();
 
+    // Automatic promotions only: a code entered on the first booking is not carried over.
+    try {
+      const bookingPromotionService = require('../promotions/bookingPromotionService');
+      await bookingPromotionService.attachAtBooking({
+        bookingId: created.id,
+        customerId: created.customerId,
+        zoneId: created.zoneId,
+        couponCode: null,
+        paymentType,
+        collectionDate: created.collectionDate,
+        deliveryDate: created.deliveryDate,
+      });
+    } catch (err) {
+      console.warn(`[recurring] promotions for generated booking ${created.id} failed:`, err?.message || err);
+    }
+
     try {
       const {
         ensureCustomerDeclaredSnapshot,

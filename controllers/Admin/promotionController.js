@@ -76,7 +76,7 @@ module.exports = {
   // ─── Analytics ────────────────────────────────────────────────────────────
 
   async analytics(req, res) {
-    const data = await promoService.getPromotionAnalytics(req.params.id, scopeOf(req));
+    const data = await promoService.getPromotionAnalytics(req.params.id, scopeOf(req), req.query);
     res.json({ success: true, data });
   },
 

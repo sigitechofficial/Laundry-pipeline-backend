@@ -755,7 +755,7 @@ async function getShopRevenue(shopId, rawQuery = {}) {
       balances:
         "Live wallet rails — not filtered by the date chips. Date chips filter the logs and period totals.",
       withdrawn:
-        "Agent Stripe Connect transfer. Admin payout only moves money into the wallet; it is not a bank payment.",
+        "Agent Stripe Connect transfer. Admin payout is an immediate Stripe Connect transfer of card earnings to the shop's connected account; agent withdrawal requests also go to Stripe Connect after admin approval.",
     },
   };
 }

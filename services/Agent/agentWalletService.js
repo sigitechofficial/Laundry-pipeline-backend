@@ -370,10 +370,13 @@ async function resolveCashCollectedAmount(bookingId, bookingRow, options = {}) {
     const totalOrderAmount = Number(
         paymentSummary?.orderSummary?.totalOrderAmount ?? 0
     );
-    if (totalOrderAmount > 0) {
+    // The driver collects the bill net of any discount (coupon / promotions), never the gross.
+    const discount = Number(paymentSummary?.orderSummary?.discount ?? 0);
+    const collected = Math.max(0, totalOrderAmount - (Number.isFinite(discount) ? discount : 0));
+    if (collected > 0) {
         const channel = classifyAgentEarningChannel(bookingRow);
         if (channel === "cash" && normalizePaymentType(bookingRow.paymentType) === "cash") {
-            return parseFloat(totalOrderAmount.toFixed(2));
+            return parseFloat(collected.toFixed(2));
         }
     }
 
@@ -1164,16 +1167,31 @@ async function getWalletTransactions(agentUserId, options = {}) {
 
     const summary = await getWalletSummary(agentUserId);
 
+    // Default (older apps): only money moving to the agent's Stripe account —
+    // admin payouts and withdrawals. scope=all (newer apps): the whole settlement
+    // ledger — cash collected, commission, refunds, remittances, adjustments,
+    // payouts — so the agent can see how "cash due" was reached.
+    const allScope = options.scope === "all";
     const { count, rows } = await wallet.findAndCountAll({
         where: {
             userId: agentUserId,
-            // Agent ledger shows only real wallet movements the agent cares about:
-            // admin payouts released to them (credit) and their withdrawals (debit).
-            // Internal commission / cash-settlement entries are tracked as earnings,
-            // not shown here.
             referenceType: {
-                [Op.in]: [AGENT_PAYOUT_REFERENCE, WITHDRAWAL_REFERENCE],
+                [Op.in]: allScope
+                    ? [
+                          COMMISSION_REFERENCE,
+                          COMMISSION_CLAWBACK_REFERENCE,
+                          CASH_COLLECTED_REFERENCE,
+                          CASH_REFUNDED_REFERENCE,
+                          CASH_REMITTED_REFERENCE,
+                          ADMIN_SETTLEMENT_REFERENCE,
+                          EXTRA_TIP_REFERENCE,
+                          EXTRA_TIP_CLAWBACK_REFERENCE,
+                          AGENT_PAYOUT_REFERENCE,
+                          WITHDRAWAL_REFERENCE,
+                      ]
+                    : [AGENT_PAYOUT_REFERENCE, WITHDRAWAL_REFERENCE],
             },
+            ...(options.type === "credit" || options.type === "debit" ? { type: options.type } : {}),
         },
         order: [["createdAt", "DESC"]],
         limit,

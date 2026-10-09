@@ -298,6 +298,8 @@ async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSumma
         },
         { where: { bookingId: bookingRow.id } }
     );
+    // Paid: lock the promotions the charge was priced with (never throws).
+    await require("../promotions/bookingPromotionService").settleForBooking(bookingRow.id);
 
     const invoiceSuccessUpdate = {
         orderAmount: fullOrderTotal,

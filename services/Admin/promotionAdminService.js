@@ -7,6 +7,7 @@ const {
   promotionCondition: PromotionCondition,
   promotionZoneOverride: PromotionZoneOverride,
   couponCode: CouponCode,
+  coupon: LegacyCoupon,
   promotionAuditLog: AuditLog,
   sequelize,
 } = require('../../models');
@@ -276,6 +277,20 @@ async function assertCodesAvailable(codes, promotionId, transaction) {
     transaction,
   });
   if (taken.length) throw new ValidationError(`Coupon code "${taken[0].code}" is already used by another promotion`);
+  // Only codes new to this promotion, so an old overlap does not block unrelated edits.
+  const own = promotionId
+    ? (await CouponCode.findAll({ where: { promotionId }, attributes: ['code'], transaction })).map((c) => c.code)
+    : [];
+  const added = codes.filter((c) => !own.includes(c));
+  if (added.length) await assertNotLegacyCoupon(added, transaction);
+}
+
+/** Legacy coupons (coupons table) share the customer's code box, so a code may live in only one system. */
+async function assertNotLegacyCoupon(codes, transaction) {
+  const legacy = await LegacyCoupon.findOne({ where: { code: codes }, attributes: ['code'], transaction });
+  if (legacy) {
+    throw new ValidationError(`Code "${legacy.code}" is already used in Coupons (Legacy). Please use a different code.`);
+  }
 }
 
 /** Zone staff: promotion can only target their own zone. */
@@ -540,6 +555,7 @@ async function addCouponCode(promotionId, payload, adminUserId, scope) {
   validatePromotion({ ...rowData(promo), couponCodes: [cc] });
   const existing = await CouponCode.findOne({ where: { code: cc.code } });
   if (existing) throw new ValidationError(`Coupon code "${cc.code}" already exists`);
+  await assertNotLegacyCoupon([cc.code]);
 
   const row = await CouponCode.create({ promotionId, ...cc, isActive: true, createdBy: adminUserId });
   await audit(Number(promotionId), 'coupon_added', adminUserId, { newValue: { code: row.code } });
@@ -584,7 +600,7 @@ async function clonePromotion(id, adminUserId, scope) {
 
 // ─── Analytics (basic) ──────────────────────────────────────────────────────
 
-async function getPromotionAnalytics(id, scope) {
+async function getPromotionAnalytics(id, scope, query = {}) {
   const { promotionRedemption: Redemption } = require('../../models');
   const promo = await Promotion.findByPk(id);
   if (!promo) throw new NotFoundError('Promotion not found');
@@ -614,6 +630,14 @@ async function getPromotionAnalytics(id, scope) {
     uniqueCustomers,
     globalUsedCount: promo.globalUsedCount,
     globalUsageLimit: promo.globalUsageLimit,
+    // Full report (Phase 5): by zone / day / code, recent uses, refunds, holds.
+    report: await require('../promotions/promotionReportService').promotionReport(id, {
+      from: query.from,
+      to: query.to,
+      inRange: query.inRange,
+      recentLimit: query.recentLimit,
+      restrictedZoneId: restrictedZoneOf(scope),
+    }),
   };
 }
 

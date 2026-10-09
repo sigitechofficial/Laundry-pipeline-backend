@@ -49,9 +49,13 @@ const LAUNDRY = `COALESCE(
   NULLIF(bd.categoryCharge, 0),
   GREATEST(0, ${ORDER_TOTAL} - COALESCE(bd.serviceCharge, 0) - ${BOOKING_TIP})
 )`;
-// Card bookings pay minimum + fee + tip at pickup; that credit is what makes
-// `bd.total` smaller than the invoice value.
-const PAID_AT_BOOKING = `GREATEST(0, ${ORDER_TOTAL} - COALESCE(bd.discount, 0) - COALESCE(bd.total, 0))`;
+// Card bookings pay minimum + fee + booking tip at pickup (upfront capture).
+// Cash bookings pay nothing at booking. (The old formula used bd.total, which
+// holds the full order value once the invoice is paid, so it was always £0.)
+const PAID_AT_BOOKING = `(CASE WHEN COALESCE(b.paymentType, 'card') = 'cash' THEN 0
+  ELSE LEAST(${ORDER_TOTAL},
+    COALESCE(bd.upfrontAmount, 0) + COALESCE(bd.serviceCharge, 0) + COALESCE(bd.prepaidTipAmount, 0))
+  END)`;
 const DRIVER_PAY =
   "(COALESCE(bd.pickupDriverEarning, 0) + COALESCE(bd.deliveryDriverEarning, 0))";
 const SHOP_NET = `(CASE

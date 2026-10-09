@@ -995,6 +995,10 @@ router.get('/reports/customers', asyncMiddleware(reportsController.getCustomersR
 router.get('/reports/drivers', asyncMiddleware(reportsController.getDriversReport))
 // 16. Overdue pickup / delivery (current SLA snapshot)
 router.get('/reports/overdue', asyncMiddleware(reportsController.getOverdueReport))
+// 17. Promotions — spend per promotion (discount + cashback), ranked
+router.get('/reports/promotions', asyncMiddleware(reportsController.getPromotionsReport))
+// 18. Campaigns — spend and budget per campaign
+router.get('/reports/campaigns', asyncMiddleware(reportsController.getCampaignsReport))
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))
@@ -1091,7 +1095,16 @@ router.get('/campaigns', asyncMiddleware(campaignController.list));
 router.get('/campaigns/:id', asyncMiddleware(campaignController.getById));
 router.post('/campaigns', asyncMiddleware(campaignController.create));
 router.put('/campaigns/:id', asyncMiddleware(campaignController.update));
+router.get('/campaigns/:id/report', asyncMiddleware(campaignController.report));
 router.delete('/campaigns/:id', asyncMiddleware(campaignController.remove));
+
+// Promotions on one order (order management permission): view, and remove from an unpaid order.
+const orderPromotionController = require('../controllers/Admin/orderPromotionController');
+router.get('/orderPromotions/:bookingId', asyncMiddleware(orderPromotionController.get));
+router.post('/orderPromotions/:bookingId/remove/:promotionId', asyncMiddleware(orderPromotionController.remove));
+const customerCreditController = require('../controllers/Admin/customerCreditController');
+router.get('/customerCredit/:customerId', asyncMiddleware(customerCreditController.get));
+router.post('/customerCredit/:customerId/adjust', asyncMiddleware(customerCreditController.adjust));
 
 //!-----------------------------------Enterprise Promotions------------------------------------>>>>
 router.get('/promotions', asyncMiddleware(promotionController.list));

@@ -1,6 +1,6 @@
 'use strict';
 
-const { coupon, couponRedemption, users, booking, zone } = require('../../models');
+const { coupon, couponRedemption, couponCode, users, booking, zone } = require('../../models');
 const { getCouponLifecycle } = require('../../utils/couponValidity');
 const { parseZoneIds, couponAppliesToZone } = require('../../utils/couponDiscount');
 const { Op } = require('sequelize');
@@ -9,6 +9,14 @@ const {
     NotFoundError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
+
+/** Promotion codes (coupon_codes) share the customer's code box, so a code may live in only one system. */
+async function assertNotPromotionCode(upperCode) {
+    const promoCode = await couponCode.findOne({ where: { code: upperCode }, attributes: ['id'] });
+    if (promoCode) {
+        throw new ConflictError(`Code "${upperCode}" is already used in Promotions. Please use a different code.`);
+    }
+}
 
 function normalizeZoneIdsInput(raw) {
     const ids = parseZoneIds(raw);
@@ -90,6 +98,7 @@ class AdminCouponService {
         if (existing) {
             throw new ConflictError(`Coupon code "${upperCode}" already exists`);
         }
+        await assertNotPromotionCode(upperCode);
 
         const newCoupon = await coupon.create({
             code: upperCode,
@@ -243,6 +252,7 @@ class AdminCouponService {
             if (existing) {
                 throw new ConflictError(`Coupon code "${upperCode}" already exists`);
             }
+            if (upperCode !== couponData.code) await assertNotPromotionCode(upperCode);
             couponData.code = upperCode;
         }
 

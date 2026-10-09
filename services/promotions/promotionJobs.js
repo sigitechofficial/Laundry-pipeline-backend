@@ -5,6 +5,8 @@
  *  - scheduled → active when startDate is reached
  *  - active/scheduled/paused → expired when endDate has passed
  *  - release checkout reservations whose TTL expired (frees usage counters)
+ *  - safety net for bookings: settle holds of paid/completed bookings, reverse
+ *    promotions of fully refunded ones (bookingPromotionService.settleClosedBookings)
  * Safe to run on several instances: status updates are conditional and
  * releases lock each redemption row.
  */
@@ -55,8 +57,10 @@ function startPromotionJobs() {
     try {
       const lifecycle = await runPromotionLifecycle();
       const cleanup = await cleanupExpiredReservations();
-      if (lifecycle.activated || lifecycle.expired || cleanup.cleaned) {
-        console.log(`[promotionJobs] activated=${lifecycle.activated} expired=${lifecycle.expired} releasedReservations=${cleanup.cleaned}`);
+      const { settleClosedBookings } = require('./bookingPromotionService');
+      const bookings = await settleClosedBookings();
+      if (lifecycle.activated || lifecycle.expired || cleanup.cleaned || bookings.settled || bookings.reversed) {
+        console.log(`[promotionJobs] activated=${lifecycle.activated} expired=${lifecycle.expired} releasedReservations=${cleanup.cleaned} settled=${bookings.settled} reversed=${bookings.reversed}`);
       }
     } catch (err) {
       console.error('[promotionJobs] failed:', err.message);

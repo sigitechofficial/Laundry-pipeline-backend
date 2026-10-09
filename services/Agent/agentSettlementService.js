@@ -99,6 +99,90 @@ async function resolveShopForSettlement(shopId) {
     };
 }
 
+/**
+ * One money action per shop at a time. Locks the shop row (the same row agent
+ * withdrawals lock), so the summary read after the lock already includes any
+ * remittance / cash record / payout another request just wrote. Two clicks, two
+ * admins or an app retry can no longer both pass the "amount ≤ due" check.
+ */
+async function withShopMoneyLock(agentUserId, work) {
+    return sequelize.transaction(async (transaction) => {
+        await addressDb.findOne({
+            where: { userId: agentUserId, addressType: SHOP_ADDRESS_TYPE },
+            attributes: ["id"],
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+        });
+        return work(transaction);
+    });
+}
+
+/** Same shop, same kind of entry, same amount within the last `seconds` (a retry or a double click). */
+async function findRecentSameAmount(agentUserId, { referenceType, type, statuses, amount, seconds }, transaction) {
+    return wallet.findOne({
+        where: {
+            userId: agentUserId,
+            referenceType,
+            type,
+            status: { [Op.in]: statuses },
+            amount: parseFloat(Number(amount).toFixed(2)),
+            createdAt: { [Op.gte]: new Date(Date.now() - seconds * 1000) },
+        },
+        order: [["id", "DESC"]],
+        transaction,
+    });
+}
+
+/**
+ * Zone managers only see and act on shops in their own zone (platform admins:
+ * zoneId null = every shop). Unknown or other-zone shop → 404, like a missing id.
+ */
+async function assertAgentInZone(agentUserId, zoneId) {
+    if (zoneId == null) return;
+    const shop = await addressDb.findOne({
+        where: { userId: agentUserId, addressType: SHOP_ADDRESS_TYPE },
+        attributes: ["id", "zoneId"],
+    });
+    if (!shop || Number(shop.zoneId) !== Number(zoneId)) {
+        throw new NotFoundError("Shop not found");
+    }
+}
+
+async function assertShopInZone(shopId, zoneId) {
+    if (zoneId == null) return;
+    const shop = await resolveShopForSettlement(shopId);
+    await assertAgentInZone(shop.userId, zoneId);
+}
+
+async function assertRemittanceInZone(remittanceId, zoneId) {
+    if (zoneId == null) return;
+    const entry = await wallet.findByPk(remittanceId, { attributes: ["id", "userId"] });
+    if (!entry) throw new NotFoundError("Pending remittance not found");
+    await assertAgentInZone(entry.userId, zoneId);
+}
+
+/** Owner user ids of the shops in a zone (null = no zone filter). */
+async function ownerIdsInZone(zoneId) {
+    if (zoneId == null) return null;
+    const shops = await addressDb.findAll({
+        where: { addressType: SHOP_ADDRESS_TYPE, zoneId: Number(zoneId), userId: { [Op.ne]: null } },
+        attributes: ["userId"],
+    });
+    return shops.map((s) => Number(s.userId));
+}
+
+/** Split "Cash remittance (pending): note — completed: admin note" into its parts. */
+function splitRemittanceNotes(plain) {
+    const desc = String(plain.description || "");
+    const base = desc.split(" — ")[0];
+    const agentNote = base.includes("): ") ? base.slice(base.indexOf("): ") + 3).trim() : null;
+    return {
+        note: agentNote || null,
+        adminNote: plain.adminNote || null,
+        reviewedAt: plain.reviewedAt || null,
+    };
+}
+
 /** Map owner userId → public shop id (business id; address id only if no business row). */
 async function shopIdsByOwnerUserIds(userIds) {
     const ids = [...new Set((userIds || []).filter(Boolean).map((id) => Number(id)))];
@@ -133,41 +217,63 @@ async function submitCashRemittance(agentUserId, { amount, note }) {
     }
 
     await resolveAgentShop(agentUserId);
-    const summary = await agentWalletService.getWalletSummary(agentUserId);
-    const availableToRemit = parseFloat(
-        (summary.cashDueToPlatform - summary.pendingCashRemittance).toFixed(2)
-    );
+    return withShopMoneyLock(agentUserId, async (transaction) => {
+        // The app retries a POST whose answer was lost: the same amount again
+        // within two minutes is that retry — answer with the first one.
+        const recent = await findRecentSameAmount(agentUserId, {
+            referenceType: CASH_REMITTED_REFERENCE,
+            type: "credit",
+            statuses: ["pending"],
+            amount: parsedAmount,
+            seconds: 120,
+        }, transaction);
+        const summary = await agentWalletService.getWalletSummary(agentUserId);
+        if (recent) {
+            return {
+                remittanceId: recent.id,
+                amount: parseFloat(recent.amount),
+                status: recent.status,
+                currency: recent.currency,
+                cashDueToPlatform: summary.cashDueToPlatform,
+                duplicate: true,
+            };
+        }
 
-    if (availableToRemit <= 0) {
-        throw new ValidationError("No cash balance is available to remit");
-    }
-
-    if (parsedAmount > availableToRemit + 0.02) {
-        throw new ValidationError(
-            `Remittance amount exceeds available cash due (${availableToRemit.toFixed(2)})`
+        const availableToRemit = parseFloat(
+            (summary.cashDueToPlatform - summary.pendingCashRemittance).toFixed(2)
         );
-    }
 
-    const entry = await wallet.create({
-        userId: agentUserId,
-        bookingId: null,
-        referenceType: CASH_REMITTED_REFERENCE,
-        amount: parseFloat(parsedAmount.toFixed(2)),
-        currency: summary.currency || DEFAULT_CURRENCY,
-        type: "credit",
-        status: "pending",
-        description: note
-            ? `Cash remittance (pending): ${note}`
-            : "Cash remittance submitted (pending admin confirmation)",
+        if (availableToRemit <= 0) {
+            throw new ValidationError("No cash balance is available to remit");
+        }
+
+        if (parsedAmount > availableToRemit + 0.02) {
+            throw new ValidationError(
+                `Remittance amount exceeds available cash due (${availableToRemit.toFixed(2)})`
+            );
+        }
+
+        const entry = await wallet.create({
+            userId: agentUserId,
+            bookingId: null,
+            referenceType: CASH_REMITTED_REFERENCE,
+            amount: parseFloat(parsedAmount.toFixed(2)),
+            currency: summary.currency || DEFAULT_CURRENCY,
+            type: "credit",
+            status: "pending",
+            description: note
+                ? `Cash remittance (pending): ${note}`.slice(0, 255)
+                : "Cash remittance submitted (pending admin confirmation)",
+        }, { transaction });
+
+        return {
+            remittanceId: entry.id,
+            amount: parseFloat(entry.amount),
+            status: entry.status,
+            currency: entry.currency,
+            cashDueToPlatform: summary.cashDueToPlatform,
+        };
     });
-
-    return {
-        remittanceId: entry.id,
-        amount: parseFloat(entry.amount),
-        status: entry.status,
-        currency: entry.currency,
-        cashDueToPlatform: summary.cashDueToPlatform,
-    };
 }
 
 /**
@@ -206,6 +312,8 @@ async function listAgentRemittances(agentUserId, options = {}) {
             status: plain.status, // pending | completed | failed
             statusLabel: STATUS_LABEL[plain.status] || plain.status,
             description: plain.description || null,
+            // Separate fields so the app never shows the admin's reason as the agent's own note.
+            ...splitRemittanceNotes(plain),
             createdAt: plain.createdAt,
             updatedAt: plain.updatedAt,
         };
@@ -237,6 +345,12 @@ async function listPendingRemittances(options = {}) {
     };
     if (options.agentUserId) {
         where.userId = options.agentUserId;
+    }
+    const zoneOwners = await ownerIdsInZone(options.zoneId);
+    if (zoneOwners) {
+        where.userId = options.agentUserId
+            ? (zoneOwners.includes(Number(options.agentUserId)) ? options.agentUserId : -1)
+            : { [Op.in]: zoneOwners.length ? zoneOwners : [-1] };
     }
 
     const { count, rows } = await wallet.findAndCountAll({
@@ -271,6 +385,7 @@ async function listPendingRemittances(options = {}) {
                 amount: parseFloat(plain.amount || 0),
                 currency: plain.currency,
                 description: plain.description,
+                ...splitRemittanceNotes(plain),
                 status: plain.status,
                 createdAt: plain.createdAt,
             };
@@ -286,7 +401,7 @@ async function listPendingRemittances(options = {}) {
     };
 }
 
-async function updateRemittanceStatus(remittanceId, status, adminNote) {
+async function updateRemittanceStatus(remittanceId, status, adminNote, adminUserId = null) {
     const entry = await wallet.findOne({
         where: {
             id: remittanceId,
@@ -304,10 +419,21 @@ async function updateRemittanceStatus(remittanceId, status, adminNote) {
         ? `${entry.description} — ${status}: ${adminNote}`
         : `${entry.description} — ${status}`;
 
-    await entry.update({
-        status,
-        description,
-    });
+    // Only a still-pending row changes: two admins confirming at once → one wins.
+    const [changed] = await wallet.update(
+        {
+            status,
+            description: description.slice(0, 255),
+            adminNote: adminNote ? String(adminNote).slice(0, 500) : null,
+            reviewedByAdminId: adminUserId || null,
+            reviewedAt: new Date(),
+        },
+        { where: { id: entry.id, status: "pending" } }
+    );
+    if (!changed) {
+        throw new ValidationError("This remittance was already reviewed. Refresh the list.");
+    }
+    await entry.reload();
 
     const summary = await agentWalletService.getWalletSummary(entry.userId);
 
@@ -350,12 +476,12 @@ async function updateRemittanceStatus(remittanceId, status, adminNote) {
     };
 }
 
-async function confirmCashRemittance(remittanceId, adminNote) {
-    return updateRemittanceStatus(remittanceId, "completed", adminNote);
+async function confirmCashRemittance(remittanceId, adminNote, adminUserId) {
+    return updateRemittanceStatus(remittanceId, "completed", adminNote, adminUserId);
 }
 
-async function rejectCashRemittance(remittanceId, adminNote) {
-    return updateRemittanceStatus(remittanceId, "failed", adminNote);
+async function rejectCashRemittance(remittanceId, adminNote, adminUserId) {
+    return updateRemittanceStatus(remittanceId, "failed", adminNote, adminUserId);
 }
 
 /**
@@ -368,13 +494,30 @@ async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserI
     }
 
     await resolveAgentShop(agentUserId);
+    const entry = await withShopMoneyLock(agentUserId, async (transaction) => {
+    const recent = await findRecentSameAmount(agentUserId, {
+        referenceType: CASH_REMITTED_REFERENCE,
+        type: "credit",
+        statuses: ["completed"],
+        amount: parsedAmount,
+        seconds: 60,
+    }, transaction);
+    if (recent && String(recent.description || "").startsWith("Cash settlement recorded by admin")) {
+        throw new ValidationError(
+            "The same amount was recorded for this shop a moment ago. Refresh the page before recording it again."
+        );
+    }
     const summary = await agentWalletService.getWalletSummary(agentUserId);
     const availableToCollect = parseFloat(
         (summary.cashDueToPlatform - (summary.pendingCashRemittance || 0)).toFixed(2)
     );
 
     if (availableToCollect <= 0) {
-        throw new ValidationError("No cash is currently due from this agent");
+        throw new ValidationError(
+            summary.pendingCashRemittance > 0
+                ? "The cash still due is already submitted by the shop and waiting in Pending remittances — confirm it there instead."
+                : "No cash is currently due from this agent"
+        );
     }
 
     if (parsedAmount > availableToCollect + 0.02) {
@@ -384,7 +527,7 @@ async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserI
     }
 
     const adminSuffix = adminUserId ? ` (admin #${adminUserId})` : "";
-    const entry = await wallet.create({
+    return wallet.create({
         userId: agentUserId,
         bookingId: null,
         referenceType: CASH_REMITTED_REFERENCE,
@@ -393,8 +536,12 @@ async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserI
         type: "credit",
         status: "completed",
         description: note
-            ? `Cash settlement recorded by admin${adminSuffix}: ${note}`
+            ? `Cash settlement recorded by admin${adminSuffix}: ${note}`.slice(0, 255)
             : `Cash settlement recorded by admin${adminSuffix}`,
+        reviewedByAdminId: adminUserId || null,
+        reviewedAt: new Date(),
+        adminNote: note ? String(note).slice(0, 500) : null,
+    }, { transaction });
     });
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
@@ -409,12 +556,15 @@ async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserI
 /**
  * Admin manual adjustment (e.g. correction, bonus, penalty).
  */
-async function adminRecordAdjustment(agentUserId, { amount, direction, note }) {
+async function adminRecordAdjustment(agentUserId, { amount, direction, note, adminUserId }) {
     const parsedAmount = parseFloat(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         throw new ValidationError("amount must be a positive number");
     }
 
+    if (!String(note || "").trim()) {
+        throw new ValidationError("A reason is required for a settlement adjustment");
+    }
     const normalizedDirection = String(direction || "credit").toLowerCase();
     if (normalizedDirection !== "credit" && normalizedDirection !== "debit") {
         throw new ValidationError("direction must be 'credit' or 'debit'");
@@ -431,7 +581,10 @@ async function adminRecordAdjustment(agentUserId, { amount, direction, note }) {
         currency: summary.currency || DEFAULT_CURRENCY,
         type: normalizedDirection,
         status: "completed",
-        description: note || "Admin settlement adjustment",
+        description: `Admin settlement adjustment${adminUserId ? ` (admin #${adminUserId})` : ""}: ${String(note || "").trim()}`.slice(0, 255),
+        reviewedByAdminId: adminUserId || null,
+        reviewedAt: new Date(),
+        adminNote: String(note || "").trim().slice(0, 500) || null,
     });
 
     const updatedSummary = await agentWalletService.getWalletSummary(agentUserId);
@@ -456,31 +609,47 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
     }
 
     await resolveAgentShop(agentUserId);
-    const summary = await agentWalletService.getWalletSummary(agentUserId);
+    // Check + reserve under the shop lock: a second click / second admin waits,
+    // then sees this payout as in-flight and cannot send the same money again.
+    const { credit, currency } = await withShopMoneyLock(agentUserId, async (transaction) => {
+        const recent = await findRecentSameAmount(agentUserId, {
+            referenceType: "agent_payout",
+            type: "credit",
+            statuses: ["pending", "completed"],
+            amount: parsedAmount,
+            seconds: 60,
+        }, transaction);
+        if (recent) {
+            throw new ValidationError(
+                "A payout of this amount was just sent to this shop. Refresh the page before sending another."
+            );
+        }
+        const summary = await agentWalletService.getWalletSummary(agentUserId);
 
-    if (summary.platformOwesAgent <= 0) {
-        throw new ValidationError("No earnings available to pay out to this agent");
-    }
+        if (summary.platformOwesAgent <= 0) {
+            throw new ValidationError("No earnings available to pay out to this agent");
+        }
 
-    if (parsedAmount > summary.platformOwesAgent + 0.02) {
-        throw new ValidationError(
-            `Payout exceeds payable balance (${summary.platformOwesAgent.toFixed(2)})`
-        );
-    }
+        if (parsedAmount > summary.platformOwesAgent + 0.02) {
+            throw new ValidationError(
+                `Payout exceeds payable balance (${summary.platformOwesAgent.toFixed(2)})`
+            );
+        }
 
-    const currency = summary.currency || DEFAULT_CURRENCY;
-    const pendingPair = buildAdminConnectPayoutLedger({
-        userId: agentUserId,
-        amount: parsedAmount,
-        currency,
-        note,
-        adminUserId,
-        stripeTransferId: null,
-    });
-
-    const credit = await wallet.create({
-        ...pendingPair.credit,
-        status: "pending",
+        const currencyCode = summary.currency || DEFAULT_CURRENCY;
+        const pendingPair = buildAdminConnectPayoutLedger({
+            userId: agentUserId,
+            amount: parsedAmount,
+            currency: currencyCode,
+            note,
+            adminUserId,
+            stripeTransferId: null,
+        });
+        const row = await wallet.create({
+            ...pendingPair.credit,
+            status: "pending",
+        }, { transaction });
+        return { credit: row, currency: currencyCode };
     });
 
     let transfer;
@@ -773,6 +942,7 @@ async function listAgentsWithCashDue(options = {}) {
         where: {
             addressType: "LaundaryShopAddress",
             userId: { [Op.ne]: null },
+            ...(options.zoneId != null ? { zoneId: Number(options.zoneId) } : {}),
         },
         attributes: ["id", "userId", "streetAddress", "district"],
         include: [
@@ -877,4 +1047,7 @@ module.exports = {
     listAgentsWithCashDue,
     syncAgentWalletsFromBookings,
     resolveShopForSettlement,
+    assertAgentInZone,
+    assertShopInZone,
+    assertRemittanceInZone,
 };

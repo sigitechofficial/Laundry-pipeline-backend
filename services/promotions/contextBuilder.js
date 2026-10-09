@@ -27,18 +27,27 @@ const { PAYMENT_METHODS } = require('./conditionEvaluator');
 const INACTIVE_AFTER_DAYS = 90;
 const MAX_ITEMS = 200;
 
-/** Customer facts used by eligibility rules. */
-async function loadCustomerFacts(customerId) {
+/**
+ * Customer facts used by eligibility rules.
+ * @param {object} [asOf] facts as they were when a booking was placed:
+ *   excludeBookingId — never count the booking being priced as a previous order;
+ *   before — only bookings created before this moment (the booking's own createdAt at invoice).
+ */
+async function loadCustomerFacts(customerId, asOf = {}) {
   if (!customerId) return { id: null, orderCount: 0, isFirstOrder: true, type: 'new', segments: [] };
   const where = { customerId, bookingStatusId: { [Op.ne]: CANCELLED } };
+  if (asOf.excludeBookingId) where.id = { [Op.ne]: Number(asOf.excludeBookingId) };
+  const before = toDate(asOf.before);
+  if (before) where.createdAt = { [Op.lt]: before };
   const [orderCount, last] = await Promise.all([
     Booking.count({ where }),
     Booking.findOne({ where, attributes: ['createdAt'], order: [['createdAt', 'DESC']] }),
   ]);
+  const reference = before ? before.getTime() : Date.now();
   let type = 'new';
   if (orderCount > 0) {
-    const lastAt = last?.createdAt ? new Date(last.createdAt).getTime() : Date.now();
-    type = Date.now() - lastAt > INACTIVE_AFTER_DAYS * 86400000 ? 'inactive' : 'returning';
+    const lastAt = last?.createdAt ? new Date(last.createdAt).getTime() : reference;
+    type = reference - lastAt > INACTIVE_AFTER_DAYS * 86400000 ? 'inactive' : 'returning';
   }
   // No segment system exists yet; CUSTOMER_SEGMENT rules never match until one does.
   return { id: Number(customerId), orderCount, isFirstOrder: orderCount === 0, type, segments: [] };
@@ -47,14 +56,15 @@ async function loadCustomerFacts(customerId) {
 async function loadZoneFacts(zoneId) {
   const id = Number(zoneId);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('zoneId is required');
-  const row = await Zone.findByPk(id, { attributes: ['id', 'serviceCharge'] });
+  const row = await Zone.findByPk(id, { attributes: ['id'] });
   if (!row) throw new ValidationError('Zone not found');
   const country = await getCountryContextFromZoneId(id).catch(() => null);
   return {
     id,
     timezone: resolveTimeZone(country?.ianaTimeZone),
-    // The per-booking zone service charge is what "free delivery" waives.
-    serviceCharge: toDecimal(row.serviceCharge),
+    // Delivery is free today (home config "Free 24h"), so delivery promotions save £0.
+    // zone.serviceCharge is the service fee, not a delivery fee: never waive it here.
+    deliveryFee: 0,
   };
 }
 
@@ -116,10 +126,10 @@ function normalizeCoupons(couponCodes) {
  */
 async function buildPromotionContext(input = {}) {
   const zone = await loadZoneFacts(input.zoneId);
-  const customer = await loadCustomerFacts(input.customerId);
+  const customer = await loadCustomerFacts(input.customerId, input.customerAsOf || {});
 
   let lineItems;
-  let deliveryFee = zone.serviceCharge;
+  let deliveryFee = zone.deliveryFee;
   if (Array.isArray(input.items) && input.items.length) {
     lineItems = await priceItems(zone.id, input.items);
   } else if (input.allowRawBasket && input.basket) {
@@ -146,6 +156,8 @@ async function buildPromotionContext(input = {}) {
 
   return {
     customer,
+    // The booking being priced (if any): its own holds are not counted as earlier usage.
+    bookingId: input.customerAsOf?.excludeBookingId ? Number(input.customerAsOf.excludeBookingId) : null,
     zone: { id: zone.id, timezone: zone.timezone },
     basket: {
       subtotal: rawSubtotal != null ? rawSubtotal : fromMinor(subtotalMinor),

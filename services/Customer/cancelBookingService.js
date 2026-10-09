@@ -368,6 +368,8 @@ class CancelBookingService {
             cancelPayload.cancellationPolicyId = activeCancellationPolicy.id;
         }
         await booking.update(cancelPayload, { where: { id: bookingId } });
+        // Give back the promotions this booking held (never throws).
+        await require('../promotions/bookingPromotionService').releaseForBooking(bookingId, 'Cancelled by customer');
 
         // Close any active live-tracking session (non-blocking)
         try {

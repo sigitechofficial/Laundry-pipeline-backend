@@ -1002,9 +1002,20 @@ async function applyCoupon(req, res) {
         }
     }
 
-    const result = await couponService.validateCoupon(code, laundry, userId, {
-        zoneId: zoneId ?? req.body?.zone?.id,
-    });
+    const resolvedZoneId = zoneId ?? req.body?.zone?.id;
+    // One code box: a Promotions code (flag on for the zone) answers in the legacy shape below.
+    const bookingPromotionService = require('../../services/promotions/bookingPromotionService');
+    await bookingPromotionService.assertLegacyCodeAllowed(code, resolvedZoneId);
+    const result = (await bookingPromotionService.usesPromotionCode(code, resolvedZoneId))
+        ? await bookingPromotionService.validateCodeForCheckout({
+              code,
+              customerId: userId,
+              zoneId: resolvedZoneId,
+              laundryCartAmount: laundry,
+          })
+        : await couponService.validateCoupon(code, laundry, userId, {
+              zoneId: resolvedZoneId,
+          });
 
     return ResponseHelper.success(res, result.customerMessage || 'Coupon reserved', {
         couponId: result.couponId,
@@ -1022,6 +1033,8 @@ async function applyCoupon(req, res) {
         zoneScope: result.zoneScope,
         zoneIds: result.zoneIds,
         customerMessage: result.customerMessage,
+        // Promotions code only (new optional field): ready badge text, e.g. "20% OFF (up to £10.00)".
+        offerLabel: result.offerLabel,
     });
 }
 

@@ -74,6 +74,26 @@ async function loadCandidatePromotions(zoneId, now = new Date()) {
   return rows.filter((p) => zoneInScope(p, zoneId) && !BLOCKING_CAMPAIGN_STATUSES.includes(p.campaign?.status));
 }
 
+/** Statuses in which a promotion held by a booking is still honoured (expiry after booking is fine). */
+const HELD_HONOURED_STATUSES = ['active', 'expired'];
+
+/**
+ * Promotions a booking holds, loaded for invoice pricing. Honoured even if they expired
+ * after the booking; dropped if an admin paused/archived them or their campaign.
+ */
+async function loadHeldPromotions(promotionIds, zoneId) {
+  if (!promotionIds.length) return [];
+  const rows = await Promotion.findAll({
+    where: { id: promotionIds, status: HELD_HONOURED_STATUSES },
+    include: [
+      { model: PromotionCondition, as: 'conditions' },
+      { model: PromotionZoneOverride, as: 'zoneOverrides' },
+      { model: Campaign, as: 'campaign', attributes: ['id', 'status', 'budgetMinor', 'usedBudgetMinor'] },
+    ],
+  });
+  return rows.filter((p) => zoneInScope(p, zoneId) && !BLOCKING_CAMPAIGN_STATUSES.includes(p.campaign?.status));
+}
+
 /** Recurring weekday / time window, in the zone's timezone. Overnight windows supported. */
 function matchesRecurringSchedule(promo, context) {
   const { day, hhmm } = localClock(context.currentTime, context.zone?.timezone);
@@ -91,12 +111,17 @@ function holdsEntitlement(r, now) {
   return r.status === 'RESERVED' && (!r.reservationExpiresAt || new Date(r.reservationExpiresAt) > now);
 }
 
+/** Rows held by the booking being priced are its own entitlement, not earlier usage. */
+const notThisBooking = (bookingId) => (bookingId
+  ? { [Op.or]: [{ bookingId: null }, { bookingId: { [Op.ne]: Number(bookingId) } }] }
+  : {});
+
 /** Map promotionId → { total, lastDay, lastWeek } for one customer. */
-async function loadCustomerUsage(promotionIds, customerId, now) {
+async function loadCustomerUsage(promotionIds, customerId, now, excludeBookingId = null) {
   const usage = new Map();
   if (!customerId || !promotionIds.length) return usage;
   const rows = await Redemption.findAll({
-    where: { customerId, promotionId: promotionIds, status: { [Op.in]: ['RESERVED', 'COMMITTED'] } },
+    where: { customerId, promotionId: promotionIds, status: { [Op.in]: ['RESERVED', 'COMMITTED'] }, ...notThisBooking(excludeBookingId) },
     attributes: ['promotionId', 'status', 'reservationExpiresAt', 'reservedAt', 'committedAt', 'createdAt'],
   });
   for (const r of rows) {
@@ -121,7 +146,7 @@ function couponError(code, error, message) {
  * Validate coupon codes against live promotions.
  * Returns valid: Map promotionId → couponCode row, errors: [{ code, error, message }]
  */
-async function validateCouponCodes(codes = [], { customerId, zoneId, now = new Date() } = {}) {
+async function validateCouponCodes(codes = [], { customerId, zoneId, now = new Date(), excludeBookingId = null } = {}) {
   const list = (Array.isArray(codes) ? codes : [codes]).map((c) => String(c ?? '').trim()).filter(Boolean);
   const errors = [];
   const valid = new Map();
@@ -160,7 +185,7 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
     }
 
     const activeReservations = await Redemption.count({
-      where: { couponCodeId: row.id, status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now } },
+      where: { couponCodeId: row.id, status: 'RESERVED', reservationExpiresAt: { [Op.gt]: now }, ...notThisBooking(excludeBookingId) },
     });
     if (row.usageLimit != null && row.usedCount + activeReservations >= row.usageLimit) {
       errors.push(couponError(code, 'USAGE_EXHAUSTED', `Coupon "${code}" has been fully redeemed`));
@@ -168,7 +193,7 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
     }
     if (row.perCustomerLimit != null && customerId) {
       const mine = await Redemption.findAll({
-        where: { couponCodeId: row.id, customerId, status: { [Op.in]: ['RESERVED', 'COMMITTED'] } },
+        where: { couponCodeId: row.id, customerId, status: { [Op.in]: ['RESERVED', 'COMMITTED'] }, ...notThisBooking(excludeBookingId) },
         attributes: ['status', 'reservationExpiresAt'],
       });
       if (mine.filter((r) => holdsEntitlement(r, now)).length >= row.perCustomerLimit) {
@@ -194,7 +219,7 @@ function reject(type, reason, code, meta) {
  * spend/quantity limits, first-order benefit types and usage limits.
  * @returns {object|null} failing reason, or null when all pass
  */
-function builtInCheck(promo, context, zoneOverride, usage) {
+function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = false } = {}) {
   const subtotal = toDecimal(context.basket?.subtotal);
   const sym = currencySymbol(promo.currency);
   const { minSubtotal } = effectiveValues(promo, zoneOverride);
@@ -222,12 +247,13 @@ function builtInCheck(promo, context, zoneOverride, usage) {
     }
   }
 
-  if (promo.globalUsageLimit != null && (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0) >= promo.globalUsageLimit) {
-    return reject('USAGE_LIMIT', 'This offer has been fully redeemed', 'PROMOTION_USAGE_EXHAUSTED');
-  }
   const campaign = promo.campaign;
   if (campaign && campaign.budgetMinor != null && Number(campaign.usedBudgetMinor || 0) >= Number(campaign.budgetMinor)) {
     return reject('BUDGET', 'This offer is no longer available', 'PROMOTION_BUDGET_EXHAUSTED');
+  }
+  if (skipUsageLimits) return null; // a booking's hold already secured its place in the limits
+  if (promo.globalUsageLimit != null && (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0) >= promo.globalUsageLimit) {
+    return reject('USAGE_LIMIT', 'This offer has been fully redeemed', 'PROMOTION_USAGE_EXHAUSTED');
   }
   const u = usage.get(promo.id) || { total: 0, lastDay: 0, lastWeek: 0 };
   if (promo.perCustomerLimit != null && u.total >= promo.perCustomerLimit) {
@@ -248,15 +274,25 @@ function builtInCheck(promo, context, zoneOverride, usage) {
  * Evaluate all promotions for a server-built PromotionContext.
  * Money fields ending in Minor are integers (pence); the decimal twins are for display.
  */
-async function evaluatePromotions(context) {
+/**
+ * @param {object} context PromotionContext
+ * @param {object} [held] invoice pricing of a booking's holds:
+ *   promotions — the held promotions (instead of every live one);
+ *   coupons — Map promotionId → { id, code } taken from the holds (codes are not re-validated);
+ *   usage limits are secured by the hold, so they are not counted again (budget still is).
+ */
+async function evaluatePromotions(context, held = null) {
   const now = context.currentTime instanceof Date ? context.currentTime : new Date();
   context = { ...context, currentTime: now };
   const zoneId = context.zone?.id;
   const customerId = context.customer?.id;
 
-  const candidates = await loadCandidatePromotions(zoneId, now);
-  const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now });
-  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now);
+  const candidates = held ? held.promotions : await loadCandidatePromotions(zoneId, now);
+  const bookingId = context.bookingId || null;
+  const { valid: couponMap, errors: couponErrors } = held
+    ? { valid: held.coupons || new Map(), errors: [] }
+    : await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
+  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now, bookingId);
 
   const eligible = [];
   const rejected = [];
@@ -278,7 +314,7 @@ async function evaluatePromotions(context) {
       rejected.push({ promotion: promo, coupon, reasons: [reject('SCHEDULE', 'Not available at this time', 'PROMOTION_OUTSIDE_SCHEDULE')] });
       continue;
     }
-    const builtIn = builtInCheck(promo, context, zoneOverride, usage);
+    const builtIn = builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits: Boolean(held) });
     if (builtIn) {
       rejected.push({ promotion: promo, coupon, reasons: [builtIn] });
       continue;
@@ -462,6 +498,76 @@ async function getCustomerOffers(context) {
   return offers;
 }
 
+/** Rules that need the real laundry items, which are only known when the shop builds the invoice. */
+const BASKET_CONDITIONS = [
+  'MINIMUM_SUBTOTAL', 'MAXIMUM_SUBTOTAL', 'MINIMUM_QUANTITY', 'MAXIMUM_QUANTITY',
+  'SERVICE', 'CATEGORY', 'PRODUCT', 'ADDON',
+];
+
+/**
+ * Booking-time conditions only. Basket rules wait for the invoice; an ANY group that
+ * contains a basket rule waits too, since that rule may still pass once items are known.
+ */
+function bookingStageConditions(conditions = []) {
+  const all = conditions.filter((c) => c.logicGroup !== 'ANY');
+  const any = conditions.filter((c) => c.logicGroup === 'ANY');
+  const deferAny = any.some((c) => BASKET_CONDITIONS.includes(c.conditionType));
+  return [...all.filter((c) => !BASKET_CONDITIONS.includes(c.conditionType)), ...(deferAny ? [] : any)];
+}
+
+/**
+ * Which promotions a booking may hold, judged on what is known when it is placed:
+ * zone, customer, schedule, booking-time conditions, usage limits and budget, plus the
+ * code the customer entered. Spend/item rules and the money are decided at invoice.
+ * Cashback is held like a discount and credited after delivery (customerCreditService).
+ *
+ * @returns {{ eligible: Array<{ promotion, coupon }>, rejected: Array<{ promotion, coupon, reasons }>, couponErrors }}
+ */
+async function evaluateBookingEligibility(context) {
+  const now = context.currentTime instanceof Date ? context.currentTime : new Date();
+  context = { ...context, currentTime: now };
+  const zoneId = context.zone?.id;
+  const customerId = context.customer?.id;
+
+  const candidates = await loadCandidatePromotions(zoneId, now);
+  const bookingId = context.bookingId || null;
+  const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
+  const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now, bookingId);
+
+  const eligible = [];
+  const rejected = [];
+  for (const promo of candidates) {
+    const coupon = couponMap.get(promo.id) || null;
+    if (promo.activationType === 'coupon_required' && !coupon) continue;
+    const scope = benefitScope(promo.benefitType);
+    if (!scope) {
+      rejected.push({ promotion: promo, coupon, reasons: [reject('UNSUPPORTED', 'This offer is not available yet', 'PROMOTION_UNSUPPORTED')] });
+      continue;
+    }
+    if (!matchesRecurringSchedule(promo, context)) {
+      rejected.push({ promotion: promo, coupon, reasons: [reject('SCHEDULE', 'Not available at this time', 'PROMOTION_OUTSIDE_SCHEDULE')] });
+      continue;
+    }
+    const limits = builtInCheck(
+      { ...promo.get({ plain: true }), campaign: promo.campaign, minSubtotal: null, maxSubtotal: null, minQuantity: null },
+      { ...context, basket: { subtotal: 0, itemCount: 0 } },
+      null,
+      usage
+    );
+    if (limits) {
+      rejected.push({ promotion: promo, coupon, reasons: [limits] });
+      continue;
+    }
+    const evaluation = evaluateConditions(bookingStageConditions(promo.conditions || []), context);
+    if (!evaluation.eligible) {
+      rejected.push({ promotion: promo, coupon, reasons: evaluation.results.filter((r) => !r.pass) });
+      continue;
+    }
+    eligible.push({ promotion: promo, coupon });
+  }
+  return { eligible, rejected, couponErrors };
+}
+
 function buildOfferLabel(promo, zoneOverride = null) {
   const { discountValue, maxDiscountCap, minSubtotal, currency } = effectiveValues(promo, zoneOverride);
   const sym = currencySymbol(currency);
@@ -489,7 +595,7 @@ function buildOfferLabel(promo, zoneOverride = null) {
     case 'delivery_discount':
       return `${sym}${money(discountValue)} off delivery${min}`;
     case 'cashback':
-      return `${value} cashback${cap}`;
+      return `${value} cashback${cap}${min}`;
     default:
       return promo.name;
   }
@@ -507,4 +613,8 @@ module.exports = {
   zoneInScope,
   holdsEntitlement,
   builtInCheck,
+  evaluateBookingEligibility,
+  bookingStageConditions,
+  BASKET_CONDITIONS,
+  loadHeldPromotions,
 };

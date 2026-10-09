@@ -250,6 +250,7 @@ router.post('/applyCoupon', validateAccessToken, asyncMiddleware(customerOtherCo
 //!----------------------------Enterprise Promotions (Customer)---------------------//
 // Context (customer history, prices, clock) is built server-side; see services/promotions/contextBuilder.js
 router.get('/promotions/offers', validateAccessToken, asyncMiddleware(customerPromotionController.offers))
+router.get('/credit', validateAccessToken, asyncMiddleware(customerPromotionController.credit))
 router.post('/promotions/validate-code', validateAccessToken, promoCodeRateLimit, asyncMiddleware(customerPromotionController.validateCode))
 router.post('/promotions/evaluate', validateAccessToken, promoEvaluateRateLimit, asyncMiddleware(customerPromotionController.evaluate))
 
