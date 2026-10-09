@@ -995,6 +995,10 @@ router.get('/reports/customers', asyncMiddleware(reportsController.getCustomersR
 router.get('/reports/drivers', asyncMiddleware(reportsController.getDriversReport))
 // 16. Overdue pickup / delivery (current SLA snapshot)
 router.get('/reports/overdue', asyncMiddleware(reportsController.getOverdueReport))
+// 17. Promotions — spend per promotion (discount + cashback), ranked
+router.get('/reports/promotions', asyncMiddleware(reportsController.getPromotionsReport))
+// 18. Campaigns — spend and budget per campaign
+router.get('/reports/campaigns', asyncMiddleware(reportsController.getCampaignsReport))
 
 //!-----------------------------------Notify / Call Logs (Twilio + push)------------------------------------>>>>
 router.get('/notify-logs', asyncMiddleware(notifyLogsController.getNotifyLogs))

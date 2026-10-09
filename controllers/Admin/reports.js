@@ -113,6 +113,27 @@ async function getDriversReport(req, res) {
     return ResponseHelper.success(res, 'Drivers Report', data);
 }
 
+/** Promotions / Campaigns spend reports: query filters are validated in the service. */
+function promotionReportArgs(req) {
+    const { restrictedZoneOf } = require('../../services/Admin/promotionAdminService');
+    return [
+        { ...req.query, zoneId: zoneIdFromRequest(req) },
+        { restrictedZoneId: restrictedZoneOf(req.adminAuthz || null) },
+    ];
+}
+
+async function getPromotionsReport(req, res) {
+    const { promotionPerformance } = require('../../services/promotions/promotionPerformanceService');
+    const data = await promotionPerformance(...promotionReportArgs(req));
+    return ResponseHelper.success(res, 'Promotions Report', data);
+}
+
+async function getCampaignsReport(req, res) {
+    const { campaignPerformance } = require('../../services/promotions/promotionPerformanceService');
+    const data = await campaignPerformance(...promotionReportArgs(req));
+    return ResponseHelper.success(res, 'Campaigns Report', data);
+}
+
 async function getOverdueReport(req, res) {
     const data = await reportService.getOverdueReport(extractFilters(req));
     return ResponseHelper.success(res, 'Overdue Report', data);
@@ -135,4 +156,6 @@ module.exports = {
     getCustomersReport,
     getDriversReport,
     getOverdueReport,
+    getPromotionsReport,
+    getCampaignsReport,
 };

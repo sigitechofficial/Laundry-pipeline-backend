@@ -38,20 +38,36 @@ function scopeSql(alias, restrictedZoneId, replacements) {
 
 const q = (sql, replacements) => sequelize.query(sql, { replacements, type: QueryTypes.SELECT });
 
+/**
+ * " AND <col> BETWEEN …" when the report is limited to its date range (inRange),
+ * '' for all-time figures (the default, as before).
+ */
+function periodSql(period, column, replacements) {
+  if (!period?.start) return '';
+  replacements.periodStart = period.start;
+  replacements.periodEnd = period.end;
+  return ` AND ${column} BETWEEN :periodStart AND :periodEnd`;
+}
+
 /** Ledger totals for a set of promotions. */
-async function ledgerSummary(promotionIds, restrictedZoneId) {
+async function ledgerSummary(promotionIds, restrictedZoneId, period = null) {
   const rep = { ids: promotionIds, now: new Date() };
   const zone = scopeSql('r', restrictedZoneId, rep);
+  // In-range mode: uses on their paid date, refunds on their refund date, releases on theirs.
+  const paid = `r.status = 'COMMITTED'${periodSql(period, 'r.committedAt', rep)}`;
+  const reversed = `r.status = 'REVERSED'${periodSql(period, 'r.reversedAt', rep)}`;
+  const released = `r.status = 'RELEASED'${periodSql(period, 'r.releasedAt', rep)}`;
   const [row] = await q(
     `SELECT
-       SUM(r.status = 'COMMITTED') AS uses,
-       COALESCE(SUM(CASE WHEN r.status = 'COMMITTED' THEN r.discountAmount END), 0) AS discount,
-       COUNT(DISTINCT CASE WHEN r.status = 'COMMITTED' THEN r.customerId END) AS customers,
+       SUM(${paid}) AS uses,
+       COALESCE(SUM(CASE WHEN ${paid} THEN r.discountAmount END), 0) AS discount,
+       COUNT(DISTINCT CASE WHEN ${paid} THEN r.customerId END) AS customers,
        SUM(r.status = 'RESERVED' AND r.reservationExpiresAt > :now) AS holding,
-       SUM(r.status = 'RELEASED') AS released,
-       SUM(r.status = 'REVERSED') AS refunded,
-       COALESCE(SUM(CASE WHEN r.status = 'REVERSED' THEN r.discountAmount END), 0) AS refundedDiscount,
-       COALESCE(SUM(CASE WHEN r.status = 'COMMITTED' THEN r.cashbackAmount END), 0) AS cashback
+       SUM(${released}) AS released,
+       SUM(${reversed}) AS refunded,
+       COALESCE(SUM(CASE WHEN ${reversed} THEN r.discountAmount END), 0) AS refundedDiscount,
+       COALESCE(SUM(CASE WHEN ${reversed} THEN r.cashbackAmount END), 0) AS refundedCashback,
+       COALESCE(SUM(CASE WHEN ${paid} THEN r.cashbackAmount END), 0) AS cashback
      FROM promotion_redemptions r
      WHERE r.promotionId IN (:ids)${zone}`,
     rep
@@ -60,7 +76,7 @@ async function ledgerSummary(promotionIds, restrictedZoneId) {
   const [credited] = await q(
     `SELECT COALESCE(SUM(e.amount), 0) AS credited
      FROM customer_credit_entries e JOIN promotion_redemptions r ON r.id = e.redemptionId
-     WHERE e.type = 'EARN' AND r.promotionId IN (:ids) AND r.status = 'COMMITTED'${zone}`,
+     WHERE e.type = 'EARN' AND r.promotionId IN (:ids) AND r.status = 'COMMITTED'${zone}${periodSql(period, 'r.committedAt', rep)}`,
     rep
   );
   const uses = Number(row?.uses || 0);
@@ -74,15 +90,16 @@ async function ledgerSummary(promotionIds, restrictedZoneId) {
     released: Number(row?.released || 0),
     refunded: Number(row?.refunded || 0),
     refundedDiscount: money(row?.refundedDiscount),
+    refundedCashback: money(row?.refundedCashback),
     totalCashback: money(row?.cashback),
     cashbackCredited: money(credited?.credited),
     cashbackPending: money(Math.max(0, Number(row?.cashback || 0) - Number(credited?.credited || 0))),
   };
 }
 
-async function byZone(promotionIds, restrictedZoneId) {
+async function byZone(promotionIds, restrictedZoneId, period = null) {
   const rep = { ids: promotionIds };
-  const zone = scopeSql('r', restrictedZoneId, rep);
+  const zone = scopeSql('r', restrictedZoneId, rep) + periodSql(period, 'r.committedAt', rep);
   const rows = await q(
     `SELECT r.zoneId, z.name AS zoneName, COUNT(*) AS uses, COALESCE(SUM(r.discountAmount), 0) AS discount,
             COALESCE(SUM(r.cashbackAmount), 0) AS cashback, COUNT(DISTINCT r.customerId) AS customers
@@ -124,9 +141,9 @@ async function byDay(promotionIds, restrictedZoneId, range) {
   return days;
 }
 
-async function byCode(promotionIds, restrictedZoneId) {
+async function byCode(promotionIds, restrictedZoneId, period = null) {
   const rep = { ids: promotionIds };
-  const zone = scopeSql('r', restrictedZoneId, rep);
+  const zone = scopeSql('r', restrictedZoneId, rep) + periodSql(period, 'r.committedAt', rep);
   const rows = await q(
     `SELECT r.couponCode AS code, COUNT(*) AS uses, COALESCE(SUM(r.discountAmount), 0) AS discount,
             COALESCE(SUM(r.cashbackAmount), 0) AS cashback
@@ -138,12 +155,14 @@ async function byCode(promotionIds, restrictedZoneId) {
   return rows.map((r) => ({ code: r.code, uses: Number(r.uses), discount: money(r.discount), cashback: money(r.cashback) }));
 }
 
-async function recentUses(promotionIds, restrictedZoneId, limit = 20) {
+async function recentUses(promotionIds, restrictedZoneId, limit = 20, period = null) {
   const rep = { ids: promotionIds, limit };
-  const zone = scopeSql('r', restrictedZoneId, rep);
+  const zone = scopeSql('r', restrictedZoneId, rep) + periodSql(period, 'r.committedAt', rep);
   const rows = await q(
-    `SELECT r.id, r.bookingId, b.orderTrackId, r.customerId, r.couponCode, r.discountAmount, r.cashbackAmount, r.committedAt, r.zoneId, r.promotionId
+    `SELECT r.id, r.bookingId, b.orderTrackId, r.customerId, r.couponCode, r.discountAmount, r.cashbackAmount, r.committedAt, r.zoneId, r.promotionId,
+            TRIM(CONCAT(COALESCE(u.firstName, ''), ' ', COALESCE(u.lastName, ''))) AS customerName, z.name AS zoneName
      FROM promotion_redemptions r LEFT JOIN bookings b ON b.id = r.bookingId
+     LEFT JOIN users u ON u.id = r.customerId LEFT JOIN zones z ON z.id = r.zoneId
      WHERE r.promotionId IN (:ids) AND r.status = 'COMMITTED'${zone}
      ORDER BY r.committedAt DESC LIMIT :limit`,
     rep
@@ -154,28 +173,41 @@ async function recentUses(promotionIds, restrictedZoneId, limit = 20) {
     bookingId: r.bookingId != null ? Number(r.bookingId) : null,
     orderTrackId: r.orderTrackId || null,
     customerId: r.customerId != null ? Number(r.customerId) : null,
+    customerName: r.customerName || null,
     couponCode: r.couponCode || null,
     discount: money(r.discountAmount),
     cashback: money(r.cashbackAmount),
     paidAt: r.committedAt,
     zoneId: r.zoneId != null ? Number(r.zoneId) : null,
+    zoneName: r.zoneName || null,
   }));
 }
 
+/** inRange / recentLimit options shared by the promotion and campaign reports. */
+function reportOptions(range, { inRange = false, recentLimit } = {}) {
+  const on = inRange === true || inRange === '1' || inRange === 'true';
+  const n = parseInt(recentLimit, 10);
+  return {
+    period: on && range.start ? { start: range.start, end: range.end } : null,
+    recentLimit: Number.isFinite(n) && n > 0 ? Math.min(5000, n) : 20,
+  };
+}
+
 /** Full report for one promotion (caller has already checked the admin may see it). */
-async function promotionReport(promotionId, { from, to, restrictedZoneId = null } = {}) {
+async function promotionReport(promotionId, { from, to, restrictedZoneId = null, inRange, recentLimit } = {}) {
   const promo = await Promotion.findByPk(promotionId, {
     attributes: ['id', 'name', 'status', 'benefitType', 'globalUsageLimit', 'globalUsedCount', 'globalReservedCount', 'campaignId', 'startDate', 'endDate'],
   });
   if (!promo) throw new NotFoundError('Promotion not found');
   const ids = [promo.id];
   const range = dateRange({ from, to });
+  const opt = reportOptions(range, { inRange, recentLimit });
   const [summary, zones, days, codes, recent] = await Promise.all([
-    ledgerSummary(ids, restrictedZoneId),
-    byZone(ids, restrictedZoneId),
+    ledgerSummary(ids, restrictedZoneId, opt.period),
+    byZone(ids, restrictedZoneId, opt.period),
     byDay(ids, restrictedZoneId, range),
-    byCode(ids, restrictedZoneId),
-    recentUses(ids, restrictedZoneId),
+    byCode(ids, restrictedZoneId, opt.period),
+    recentUses(ids, restrictedZoneId, opt.recentLimit, opt.period),
   ]);
   return {
     promotion: {
@@ -191,6 +223,8 @@ async function promotionReport(promotionId, { from, to, restrictedZoneId = null 
         : null,
     },
     range: { from: range.start, to: range.end },
+    // true: every figure is for the range; false: summary/zones/codes are all time, byDay is the range.
+    inRange: Boolean(opt.period),
     summary,
     byZone: zones,
     byDay: days,
@@ -200,7 +234,7 @@ async function promotionReport(promotionId, { from, to, restrictedZoneId = null 
 }
 
 /** Campaign: budget, spent, remaining, and each promotion's share. */
-async function campaignReport(campaignId, { from, to, restrictedZoneId = null } = {}) {
+async function campaignReport(campaignId, { from, to, restrictedZoneId = null, inRange } = {}) {
   const camp = await Campaign.findByPk(campaignId);
   if (!camp) throw new NotFoundError('Campaign not found');
   const promos = await Promotion.findAll({ where: { campaignId: camp.id }, attributes: ['id', 'name', 'status', 'benefitType'], order: [['id', 'ASC']] });
@@ -228,8 +262,9 @@ async function campaignReport(campaignId, { from, to, restrictedZoneId = null } 
   if (!ids.length) return { ...base, summary: await ledgerSummary([0], restrictedZoneId), promotions: [], byZone: [], byDay: [] };
 
   const range = dateRange({ from, to });
+  const opt = reportOptions(range, { inRange });
   const rep = { ids };
-  const zone = scopeSql('r', restrictedZoneId, rep);
+  const zone = scopeSql('r', restrictedZoneId, rep) + periodSql(opt.period, 'r.committedAt', rep);
   const perPromo = await q(
     `SELECT r.promotionId, SUM(r.status = 'COMMITTED') AS uses,
             COALESCE(SUM(CASE WHEN r.status = 'COMMITTED' THEN r.discountAmount END), 0) AS discount,
@@ -239,13 +274,14 @@ async function campaignReport(campaignId, { from, to, restrictedZoneId = null } 
   );
   const stats = new Map(perPromo.map((r) => [Number(r.promotionId), r]));
   const [summary, zones, days] = await Promise.all([
-    ledgerSummary(ids, restrictedZoneId),
-    byZone(ids, restrictedZoneId),
+    ledgerSummary(ids, restrictedZoneId, opt.period),
+    byZone(ids, restrictedZoneId, opt.period),
     byDay(ids, restrictedZoneId, range),
   ]);
   return {
     ...base,
     range: { from: range.start, to: range.end },
+    inRange: Boolean(opt.period),
     summary,
     promotions: promos.map((p) => ({
       id: p.id,
@@ -261,6 +297,23 @@ async function campaignReport(campaignId, { from, to, restrictedZoneId = null } 
   };
 }
 
+/** "subCategory:12" / "addon:3" → catalog name, for the order's discount lines. */
+async function lineItemNames(lines) {
+  const ids = { subCategory: new Set(), addon: new Set() };
+  for (const l of lines) {
+    if (l.lineItemId != null && ids[l.lineType]) ids[l.lineType].add(Number(l.lineItemId));
+  }
+  const names = new Map();
+  const models = require('../../models');
+  const [items, addons] = await Promise.all([
+    ids.subCategory.size ? models.subCategories.findAll({ where: { id: [...ids.subCategory] }, attributes: ['id', 'name'], paranoid: false }) : [],
+    ids.addon.size ? models.addOnServices.findAll({ where: { id: [...ids.addon] }, attributes: ['id', 'name'], paranoid: false }) : [],
+  ]);
+  for (const r of items) names.set(`subCategory:${r.id}`, r.name);
+  for (const r of addons) names.set(`addon:${r.id}`, r.name);
+  return names;
+}
+
 /**
  * Promotions on one order, for the admin order detail: the discount lines now on the
  * invoice and every hold/use the booking has in the ledger.
@@ -269,7 +322,7 @@ async function bookingPromotions(bookingId) {
   const [lines, ledger, creditRows] = await Promise.all([
     OrderAdjustment.findAll({
       where: { bookingId, appliedBy: 'system', reversedAt: null },
-      attributes: ['promotionId', 'couponCode', 'lineType', 'amount', 'label'],
+      attributes: ['promotionId', 'couponCode', 'lineType', 'lineItemId', 'amount', 'label', 'description'],
       order: [['id', 'ASC']],
     }),
     Redemption.findAll({
@@ -279,11 +332,23 @@ async function bookingPromotions(bookingId) {
     }),
     CreditEntry.findAll({ where: { bookingId }, order: [['id', 'ASC']] }),
   ]);
+  const itemNames = await lineItemNames(lines);
   const applied = new Map();
   for (const l of lines) {
     const key = Number(l.promotionId);
-    const row = applied.get(key) || { promotionId: key, couponCode: l.couponCode || null, label: l.label, amount: 0 };
-    row.amount = money(row.amount + Math.abs(Number(l.amount) || 0));
+    const row = applied.get(key) || { promotionId: key, couponCode: l.couponCode || null, label: l.label, amount: 0, lines: [] };
+    const amount = money(Math.abs(Number(l.amount) || 0));
+    row.amount = money(row.amount + amount);
+    // Where the discount landed: each item / add-on, the delivery fee or the whole basket.
+    row.lines.push({
+      lineType: l.lineType,
+      lineItemId: l.lineItemId != null ? Number(l.lineItemId) : null,
+      item: l.lineType === 'delivery' ? 'Delivery fee'
+        : l.lineType === 'basket' ? 'Whole order'
+        : itemNames.get(`${l.lineType}:${l.lineItemId}`) || `${l.lineType} #${l.lineItemId}`,
+      label: l.label || l.description || null,
+      amount,
+    });
     applied.set(key, row);
   }
   const names = new Map(ledger.map((r) => [Number(r.promotionId), r.promotion?.name]));

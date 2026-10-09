@@ -634,6 +634,8 @@ async function getPromotionAnalytics(id, scope, query = {}) {
     report: await require('../promotions/promotionReportService').promotionReport(id, {
       from: query.from,
       to: query.to,
+      inRange: query.inRange,
+      recentLimit: query.recentLimit,
       restrictedZoneId: restrictedZoneOf(scope),
     }),
   };

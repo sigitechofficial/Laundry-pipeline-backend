@@ -23,13 +23,14 @@ module.exports = {
     res.json({ success: true, data: row });
   },
 
-  /** GET /admin/campaigns/:id/report?from=&to= — budget, spent, remaining, per promotion, by zone/day. */
+  /** GET /admin/campaigns/:id/report?from=&to=&inRange=1 — budget, spent, remaining, per promotion, by zone/day. */
   async report(req, res) {
     const { restrictedZoneOf } = require('../../services/Admin/promotionAdminService');
     const { campaignReport } = require('../../services/promotions/promotionReportService');
     const data = await campaignReport(req.params.id, {
       from: req.query.from,
       to: req.query.to,
+      inRange: req.query.inRange,
       restrictedZoneId: restrictedZoneOf(req.adminAuthz || null),
     });
     res.json({ success: true, data });
