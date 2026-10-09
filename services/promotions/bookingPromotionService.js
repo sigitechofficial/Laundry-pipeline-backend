@@ -78,6 +78,43 @@ function zoneIdsOf(promo) {
   return (list || []).map(Number).filter(Boolean);
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const listOf = (items) => {
+  const xs = items.filter(Boolean);
+  return xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`;
+};
+
+/**
+ * Why a code cannot be used, in words a customer understands. Built-in rules (limits,
+ * budget, first order, schedule) already carry a customer message; condition rules only
+ * carry a technical one, so they are rewritten from the promotion's own condition.
+ */
+function customerReason(reason, promo) {
+  if (!reason) return null;
+  if (reason.code) return reason.reason;
+  const cond = (promo?.conditions || []).find((c) => c.conditionType === reason.type);
+  const values = Array.isArray(cond?.value) ? cond.value : [];
+  switch (reason.type) {
+    case 'PAYMENT_METHOD':
+      return `This offer is only for ${listOf(values)} payments.`;
+    case 'COLLECTION_DAY':
+      return `This offer is only for collections on ${listOf(values.map((d) => DAY_NAMES[Number(d)]))}.`;
+    case 'DELIVERY_DAY':
+      return `This offer is only for deliveries on ${listOf(values.map((d) => DAY_NAMES[Number(d)]))}.`;
+    case 'FIRST_ORDER':
+      return 'This offer is only for your first order.';
+    case 'ZONE':
+      return 'This offer is not valid in your area.';
+    case 'SCHEDULE':
+    case 'BOOKING_TIME':
+      return 'This offer is not available at this time.';
+    case 'COUPON':
+      return 'This code cannot be used with this offer.';
+    default:
+      return 'This offer is not available for your account.';
+  }
+}
+
 /**
  * Checkout code check for a Promotions code. Returns the same shape as the legacy
  * couponService.validateCoupon, so POST /customer/applyCoupon and installed apps keep
@@ -95,7 +132,7 @@ async function validateCodeForCheckout({ code, customerId, zoneId, laundryCartAm
   const hit = eligible.find((e) => e.coupon && normalizeCode(e.coupon.code) === normalized);
   if (!hit) {
     const why = rejected.find((r) => r.coupon && normalizeCode(r.coupon.code) === normalized);
-    throw new ValidationError(why?.reasons?.[0]?.reason || 'This code cannot be used for this booking');
+    throw new ValidationError(customerReason(why?.reasons?.[0], why?.promotion) || 'This offer is not available right now.');
   }
 
   const promo = hit.promotion;

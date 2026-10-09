@@ -1884,7 +1884,18 @@ class CustomerOrderService {
         );
 
         if (paymentType === "card" && paymentMethodId && stripeCustomerId) {
-            await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
+            try {
+                await attachPaymentMethodToCustomer(stripeCustomerId, paymentMethodId);
+            } catch (attachErr) {
+                // Same as a failed hold below: the booking did not go ahead, so it must not stay
+                // open (status 1) holding promotions; cancel it and give the holds back.
+                console.error(`❌ Card attach failed for booking ${bookingData.id}:`, attachErr.message);
+                await booking.update({ bookingStatusId: 19 }, { where: { id: bookingData.id } });
+                await bookingPromotionService.releaseForBooking(bookingData.id, 'Card authorization failed');
+                throw new ValidationError(
+                    `Card authorization failed: ${String(attachErr.message || "unable to use this card").trim()}`
+                );
+            }
 
             const holdAmount = getPickupChargeAmount(
                 parsedUpfront,
