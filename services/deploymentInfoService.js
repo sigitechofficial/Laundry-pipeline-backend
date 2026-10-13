@@ -131,6 +131,7 @@ function getDeploymentInfo() {
       nodeEnv: process.env.NODE_ENV || null,
       port: process.env.PORT || null
     },
+    promotionsCheckout: require('./promotions/checkoutFlag').promotionsCheckoutStatus(),
     serverTime: new Date().toISOString(),
     sources: {
       releaseJson: Boolean(releaseJson),

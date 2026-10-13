@@ -232,6 +232,27 @@ async function bannersSchemaInfo(req, res) {
 }
 
 /**
+ * GET /health/promotions
+ * Kill-switch fingerprint (no secrets). Deploy smoke for promotions checkout.
+ */
+async function promotionsCheckoutInfo(req, res) {
+  const meta = requestMeta(req);
+  const { promotionsCheckoutStatus } = require('../services/promotions/checkoutFlag');
+  const flag = promotionsCheckoutStatus();
+  logLine('info', 'promotions.checkout', { ...meta, enabled: flag.enabled });
+  return res.status(200).json({
+    status: '1',
+    message: flag.note,
+    data: {
+      ...flag,
+      deploy: getDeploymentInfo(),
+      serverTime: new Date().toISOString(),
+      request: meta,
+    },
+  });
+}
+
+/**
  * GET /health/:dependency
  * dependency = mysql | redis | firebase | stripe | zeptomail
  */
@@ -276,5 +297,6 @@ module.exports = {
   complianceCatalogSchemaInfo,
   catalogResolverInfo,
   bannersSchemaInfo,
+  promotionsCheckoutInfo,
   singleDependency
 };

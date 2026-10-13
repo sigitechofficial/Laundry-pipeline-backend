@@ -377,6 +377,43 @@ else
   echo "OPS_CONTROL_TOKEN not set in deploy env — /ops stays disabled unless already on server"
 fi
 
+# Stage: turn on promotions checkout so booking holds + invoice pricing run.
+# Prod stays off until ops sets PROMOTIONS_CHECKOUT_ENABLED=true (Phase 8.3).
+# Idempotent upsert — never clears an existing ZONE_IDS allowlist.
+upsert_env_kv() {
+  local key="$1"
+  local val="$2"
+  local envf="$LIVE_PATH/.env"
+  if [ ! -f "$envf" ]; then
+    printf '%s=%s\n' "$key" "$val" > "$envf"
+    chmod 600 "$envf" 2>/dev/null || true
+    return 0
+  fi
+  if grep -q "^${key}=" "$envf"; then
+    awk -v k="$key" -v v="$val" '
+      BEGIN { done=0 }
+      index($0, k "=") == 1 {
+        print k "=" v
+        done=1
+        next
+      }
+      { print }
+      END { if (!done) print k "=" v }
+    ' "$envf" > "$envf.promo-tmp" && mv "$envf.promo-tmp" "$envf"
+    chmod 600 "$envf" 2>/dev/null || true
+  else
+    printf '\n%s=%s\n' "$key" "$val" >> "$envf"
+  fi
+}
+
+STAGE_HINT="${PM2_APP_NAME:-}${LIVE_PATH:-}${APP_URL:-}"
+if echo "$STAGE_HINT" | grep -qiE 'stage|stagelaundry'; then
+  echo "Stage host detected — ensuring PROMOTIONS_CHECKOUT_ENABLED=true"
+  upsert_env_kv "PROMOTIONS_CHECKOUT_ENABLED" "true"
+else
+  echo "Non-stage host — leaving PROMOTIONS_CHECKOUT_ENABLED unchanged (prod rollout is manual)"
+fi
+
 echo "Reloading PM2..."
 if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
   pm2 reload "$PM2_APP_NAME" --update-env

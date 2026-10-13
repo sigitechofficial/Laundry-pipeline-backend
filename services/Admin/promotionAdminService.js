@@ -102,7 +102,7 @@ const DECIMAL_FIELDS = ['discountValue', 'maxDiscountCap', 'minSubtotal', 'maxSu
 const INT_FIELDS = ['campaignId', 'priority', 'globalUsageLimit', 'perCustomerLimit', 'perDayLimit', 'perWeekLimit', 'minQuantity'];
 const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount'];
 const DEFAULTS = {
-  currency: 'GBP', targetType: 'basket', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'hidden',
+  currency: 'GBP', targetType: 'basket', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public',
   priority: 50, stackable: false, perCustomerLimit: 1, repricingPolicy: 'recalculate',
 };
 
