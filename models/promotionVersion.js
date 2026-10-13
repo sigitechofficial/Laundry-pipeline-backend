@@ -1,5 +1,6 @@
 'use strict';
 const { Model } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 
 module.exports = (sequelize, DataTypes) => {
   class promotionVersion extends Model {
@@ -12,7 +13,7 @@ module.exports = (sequelize, DataTypes) => {
     {
       promotionId: { type: DataTypes.INTEGER, allowNull: false },
       versionNumber: { type: DataTypes.INTEGER, allowNull: false },
-      configSnapshot: { type: DataTypes.JSON, allowNull: false },
+      configSnapshot: jsonColumn(DataTypes, 'configSnapshot', { allowNull: false }),
       publishedAt: { type: DataTypes.DATE, allowNull: true },
       publishedBy: { type: DataTypes.INTEGER, allowNull: true },
       reason: { type: DataTypes.STRING(500), allowNull: true },

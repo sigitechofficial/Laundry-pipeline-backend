@@ -1,5 +1,6 @@
 'use strict';
 const { Model } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 
 module.exports = (sequelize, DataTypes) => {
   class promotion extends Model {
@@ -42,7 +43,7 @@ module.exports = (sequelize, DataTypes) => {
 
       discountValue: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       discountMode: { type: DataTypes.ENUM('percent', 'amount'), allowNull: true },
-      benefitConfig: { type: DataTypes.JSON, allowNull: true },
+      benefitConfig: jsonColumn(DataTypes, 'benefitConfig', { allowNull: true }),
       maxDiscountCap: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
 
@@ -51,18 +52,18 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 'basket',
       },
-      targetIds: { type: DataTypes.JSON, allowNull: true },
+      targetIds: jsonColumn(DataTypes, 'targetIds', { allowNull: true }),
 
       zoneScopeMode: {
         type: DataTypes.ENUM('all', 'selected', 'excluded'),
         allowNull: false,
         defaultValue: 'all',
       },
-      zoneIds: { type: DataTypes.JSON, allowNull: true },
+      zoneIds: jsonColumn(DataTypes, 'zoneIds', { allowNull: true }),
 
       startDate: { type: DataTypes.DATE, allowNull: true },
       endDate: { type: DataTypes.DATE, allowNull: true },
-      recurringDays: { type: DataTypes.JSON, allowNull: true },
+      recurringDays: jsonColumn(DataTypes, 'recurringDays', { allowNull: true }),
       recurringStartTime: { type: DataTypes.TIME, allowNull: true },
       recurringEndTime: { type: DataTypes.TIME, allowNull: true },
 
@@ -107,7 +108,7 @@ module.exports = (sequelize, DataTypes) => {
       },
 
       currentVersionId: { type: DataTypes.INTEGER, allowNull: true },
-      tags: { type: DataTypes.JSON, allowNull: true },
+      tags: jsonColumn(DataTypes, 'tags', { allowNull: true }),
       createdBy: { type: DataTypes.INTEGER, allowNull: true },
       updatedBy: { type: DataTypes.INTEGER, allowNull: true },
     },

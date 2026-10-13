@@ -1,5 +1,6 @@
 'use strict';
 const { Model } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 
 module.exports = (sequelize, DataTypes) => {
   class promotionCondition extends Model {
@@ -29,7 +30,7 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'equals',
       },
 
-      value: { type: DataTypes.JSON, allowNull: false },
+      value: jsonColumn(DataTypes, 'value', { allowNull: false }),
 
       logicGroup: {
         type: DataTypes.ENUM('ALL', 'ANY'),

@@ -1,5 +1,6 @@
 'use strict';
 const { Model } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 
 module.exports = (sequelize, DataTypes) => {
   class promotionAuditLog extends Model {
@@ -18,8 +19,8 @@ module.exports = (sequelize, DataTypes) => {
       actorId: { type: DataTypes.INTEGER, allowNull: true },
       actorType: { type: DataTypes.STRING(20), allowNull: true },
 
-      oldValue: { type: DataTypes.JSON, allowNull: true },
-      newValue: { type: DataTypes.JSON, allowNull: true },
+      oldValue: jsonColumn(DataTypes, 'oldValue', { allowNull: true }),
+      newValue: jsonColumn(DataTypes, 'newValue', { allowNull: true }),
 
       reason: { type: DataTypes.STRING(500), allowNull: true },
       correlationId: { type: DataTypes.STRING(100), allowNull: true },
