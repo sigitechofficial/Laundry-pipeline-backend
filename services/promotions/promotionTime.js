@@ -63,7 +63,29 @@ function localDay(value, timeZone) {
   return d ? moment(d).tz(resolveTimeZone(timeZone)).day() : null;
 }
 
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Promotion start/end are calendar days in the business timezone, whichever timezone the
+ * admin's browser is in. A date-only value becomes the first / last moment of that day
+ * there; a full timestamp (older admin builds) is kept as sent.
+ */
+function businessDayBound(value, bound) {
+  if (typeof value !== 'string' || !DAY_ONLY.test(value.trim())) return value;
+  const m = moment.tz(value.trim(), 'YYYY-MM-DD', true, DEFAULT_PROMOTION_TIME_ZONE);
+  if (!m.isValid()) return value;
+  return (bound === 'end' ? m.endOf('day').milliseconds(0) : m.startOf('day')).toDate();
+}
+
+/** The business-timezone calendar day ('YYYY-MM-DD') a stored moment falls on, or null. */
+function businessDay(value) {
+  const d = toDate(value);
+  return d ? moment(d).tz(DEFAULT_PROMOTION_TIME_ZONE).format('YYYY-MM-DD') : null;
+}
+
 module.exports = {
+  businessDayBound,
+  businessDay,
   DEFAULT_PROMOTION_TIME_ZONE,
   resolveTimeZone,
   toDate,

@@ -128,7 +128,8 @@ function _validateCampaign(p) {
   const start = blankToNull(p.startDate) ? new Date(p.startDate) : null;
   const end = blankToNull(p.endDate) ? new Date(p.endDate) : null;
   if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) throw new ValidationError('Invalid start or end date');
-  if (start && end && end <= start) throw new ValidationError('End date must be after the start date');
+  // Calendar days (DATEONLY): a campaign may start and end on the same day.
+  if (start && end && end < start) throw new ValidationError('End date must be on or after the start date');
 }
 
 module.exports = {

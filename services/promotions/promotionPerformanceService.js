@@ -96,12 +96,15 @@ function creditedSubquery(range, zoneSql) {
     GROUP BY r.promotionId`;
 }
 
-/** Promotions a zone manager may see: those that run in their zone. */
+/**
+ * Promotions a zone manager may see: those that run in their zone.
+ * :visibleZone is the zone id as JSON text ('25'). No CAST(... AS JSON): MariaDB has none.
+ */
 function promotionZoneVisibilitySql(alias, restrictedZoneId) {
   if (restrictedZoneId == null) return '';
   return ` AND (${alias}.zoneScopeMode = 'all'
-    OR (${alias}.zoneScopeMode = 'selected' AND JSON_CONTAINS(${alias}.zoneIds, CAST(:visibleZone AS JSON)))
-    OR (${alias}.zoneScopeMode = 'excluded' AND NOT JSON_CONTAINS(COALESCE(${alias}.zoneIds, JSON_ARRAY()), CAST(:visibleZone AS JSON))))`;
+    OR (${alias}.zoneScopeMode = 'selected' AND JSON_CONTAINS(${alias}.zoneIds, :visibleZone))
+    OR (${alias}.zoneScopeMode = 'excluded' AND NOT JSON_CONTAINS(COALESCE(${alias}.zoneIds, JSON_ARRAY()), :visibleZone)))`;
 }
 
 const PROMOTION_SORTS = {

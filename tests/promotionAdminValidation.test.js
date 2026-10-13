@@ -10,7 +10,9 @@ const assert = require('assert');
 // Isolate from live Sequelize / gitignored config.json (CI has no config.json).
 require('./stubSequelizeModels').install();
 
-const { normalizePayload, validatePromotion, TRANSITIONS, restrictedZoneOf } = require('../services/Admin/promotionAdminService');
+const {
+  normalizePayload, validatePromotion, TRANSITIONS, restrictedZoneOf, typeRuleFields, assertNoOrderHistoryCondition,
+} = require('../services/Admin/promotionAdminService');
 
 const base = {
   name: 'Test', benefitType: 'percentage_discount', discountValue: 10, zoneScopeMode: 'all',
@@ -59,6 +61,28 @@ bad({ ...base, couponCodes: [{ code: 'A' }] }, /3–50/);
 bad({ ...base, activationType: 'coupon_required', couponCodes: [] }, /at least one coupon/);
 bad({ ...base, couponCodes: [{ code: 'VIP123', codeType: 'customer_bound' }] }, /no customer/);
 bad({ ...base, zoneOverrides: [{ zoneId: 1 }, { zoneId: 1 }] }, /one override/);
+
+// Dates: a calendar day is the whole UK day, a full timestamp is kept
+{
+  const n = normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-15' });
+  assert.strictEqual(n.startDate.toISOString(), '2026-10-12T23:00:00.000Z');
+  assert.strictEqual(n.endDate.toISOString(), '2026-10-15T22:59:59.000Z');
+  assert.strictEqual(normalizePayload({ startDate: '2026-10-12T19:00:00.000Z' }).startDate, '2026-10-12T19:00:00.000Z');
+  ok({ ...base, ...normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-13' }) });
+}
+
+// The type decides these limits, whatever was sent
+assert.deepStrictEqual(typeRuleFields({ benefitType: 'first_order_discount', perCustomerLimit: 5, perDayLimit: 20 }), { perCustomerLimit: 1, perDayLimit: null, perWeekLimit: null });
+assert.deepStrictEqual(typeRuleFields({ benefitType: 'first_x_orders_discount', benefitConfig: { firstOrders: 3 }, perCustomerLimit: 1 }), { perCustomerLimit: 3 });
+assert.deepStrictEqual(typeRuleFields({ benefitType: 'first_x_orders_discount', benefitConfig: null }), {}, 'a missing N is left for validation');
+assert.deepStrictEqual(typeRuleFields({ benefitType: 'basket_discount', perCustomerLimit: 5 }), {}, 'other types keep what the admin chose');
+
+// A first-order type does not take an order-history condition as well
+assert.throws(() => assertNoOrderHistoryCondition('first_order_discount', [{ conditionType: 'FIRST_ORDER' }]), /first order\. Remove the "First order" condition/);
+assert.throws(() => assertNoOrderHistoryCondition('first_x_orders_discount', [{ conditionType: 'PAYMENT_METHOD' }, { conditionType: 'ORDER_COUNT' }]), /Previous order count/);
+assert.doesNotThrow(() => assertNoOrderHistoryCondition('first_order_discount', [{ conditionType: 'PAYMENT_METHOD' }]));
+assert.doesNotThrow(() => assertNoOrderHistoryCondition('basket_discount', [{ conditionType: 'FIRST_ORDER' }]), 'other types may target by order history');
+assert.doesNotThrow(() => assertNoOrderHistoryCondition('first_order_discount', null));
 
 // Lifecycle: active/scheduled only reachable through publish
 assert.ok(!Object.values(TRANSITIONS).some((targets) => targets.includes('active') || targets.includes('scheduled')));

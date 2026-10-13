@@ -1,5 +1,6 @@
 'use strict';
 const { Model } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 
 module.exports = (sequelize, DataTypes) => {
   class serviceDiscount extends Model {
@@ -37,22 +38,20 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: null,
         comment: 'Legacy single target; prefer targetIds for multi-select',
       },
-      targetIds: {
-        type: DataTypes.JSON,
+      targetIds: jsonColumn(DataTypes, 'targetIds', {
         allowNull: true,
         defaultValue: null,
         comment: 'Array of service/category/subCategory/addon IDs (same targetType)',
-      },
+      }),
       zoneMode: {
         type: DataTypes.ENUM('all', 'specific'),
         allowNull: false,
         defaultValue: 'all',
       },
-      zoneIds: {
-        type: DataTypes.JSON,
+      zoneIds: jsonColumn(DataTypes, 'zoneIds', {
         allowNull: true,
         defaultValue: null,
-      },
+      }),
       validFrom: {
         type: DataTypes.DATE,
         allowNull: true,

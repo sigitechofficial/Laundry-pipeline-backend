@@ -14,7 +14,7 @@ const {
 const { ValidationError, NotFoundError, ForbiddenError } = require('../../middlewares/universalErrorHandler');
 const { SUPPORTED_BENEFIT_TYPES, resolveDiscountMode } = require('../promotions/benefitHandlers');
 const { validateCondition } = require('../promotions/conditionEvaluator');
-const { normalizeHHMM } = require('../promotions/promotionTime');
+const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime');
 
 // ─── Audit helper ────────────────────────────────────────────────────────────
 
@@ -108,6 +108,33 @@ const DEFAULTS = {
 
 const blank = (v) => v === '' || v === undefined;
 
+// ─── What the benefit type already decides ──────────────────────────────────
+
+const FIRST_ORDER_TYPES = ['first_order_discount', 'first_x_orders_discount'];
+const ORDER_HISTORY_CONDITIONS = { FIRST_ORDER: 'First order', CUSTOMER_TYPE: 'Customer type', ORDER_COUNT: 'Previous order count' };
+
+/**
+ * Limits the type fixes, whatever the caller sent: a first-order promotion is used once
+ * per customer; a first-N-orders one N times (a lower limit would stop it before order N).
+ */
+function typeRuleFields(p) {
+  if (p.benefitType === 'first_order_discount') return { perCustomerLimit: 1, perDayLimit: null, perWeekLimit: null };
+  if (p.benefitType === 'first_x_orders_discount') {
+    const n = Number(p.benefitConfig?.firstOrders);
+    return Number.isInteger(n) && n >= 1 ? { perCustomerLimit: n } : {};
+  }
+  return {};
+}
+
+/** A first-order type already says who qualifies: an order-history condition repeats or contradicts it. */
+function assertNoOrderHistoryCondition(benefitType, conditions) {
+  if (!FIRST_ORDER_TYPES.includes(benefitType)) return;
+  const clash = (conditions || []).find((c) => ORDER_HISTORY_CONDITIONS[c.conditionType]);
+  if (!clash) return;
+  const scope = benefitType === 'first_order_discount' ? "a customer's first order" : "a customer's first orders";
+  throw new ValidationError(`This promotion type is already limited to ${scope}. Remove the "${ORDER_HISTORY_CONDITIONS[clash.conditionType]}" condition.`);
+}
+
 /** JSON id lists may arrive as numbers, numeric strings, or a JSON string — normalize to unique positive ints. */
 function asIntIdList(value) {
   let arr = value;
@@ -135,6 +162,8 @@ function normalizePayload(payload = {}) {
     if (key === 'name' && v != null) v = String(v).trim();
     if (key === 'stackGroup' && v != null) v = String(v).trim() || null;
     if ((key === 'recurringStartTime' || key === 'recurringEndTime') && v != null) v = normalizeHHMM(v) || '__invalid__';
+    if (key === 'startDate' && v != null) v = businessDayBound(v, 'start');
+    if (key === 'endDate' && v != null) v = businessDayBound(v, 'end');
     if (key === 'targetIds' || key === 'zoneIds' || key === 'recurringDays') {
       if (v == null) {
         out[key] = null;
@@ -397,6 +426,8 @@ async function writeChildren(promotionId, data, adminUserId, t, { replace }) {
 async function createPromotion(payload, adminUserId, scope) {
   const data = applyZoneRestriction({ ...DEFAULTS, ...normalizePayload(payload) }, scope);
   if (data.discountMode == null && data.benefitType !== 'free_delivery') data.discountMode = resolveDiscountMode(data);
+  Object.assign(data, typeRuleFields(data));
+  assertNoOrderHistoryCondition(data.benefitType, data.conditions);
   validatePromotion(data);
 
   const promoId = await sequelize.transaction(async (t) => {
@@ -482,6 +513,16 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   if (incoming.benefitType && incoming.discountMode === undefined && incoming.benefitType !== 'free_delivery') {
     incoming.discountMode = resolveDiscountMode({ ...stored, ...incoming, discountMode: stored.discountMode });
   }
+  // Orders may already hold a published promotion under its type: the type stays.
+  if (incoming.benefitType && incoming.benefitType !== promo.benefitType && promo.currentVersionId) {
+    throw new ValidationError('The type of a promotion cannot be changed after it has been published. Create a new promotion for a different type.');
+  }
+  Object.assign(incoming, typeRuleFields({ ...stored, ...incoming }));
+  // A new type is checked against the stored conditions too, when none are re-sent.
+  assertNoOrderHistoryCondition(
+    incoming.benefitType || stored.benefitType,
+    incoming.conditions || (incoming.benefitType ? stored.conditions : null)
+  );
   // Conditions/overrides are validated only when sent; coupons always (coupon_required needs one)
   validatePromotion({ ...stored, conditions: undefined, zoneOverrides: undefined, ...incoming });
 
@@ -700,5 +741,7 @@ module.exports = {
   // exported for tests
   normalizePayload,
   validatePromotion,
+  typeRuleFields,
+  assertNoOrderHistoryCondition,
   TRANSITIONS,
 };

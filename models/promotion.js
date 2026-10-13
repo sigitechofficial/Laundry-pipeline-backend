@@ -1,6 +1,7 @@
 'use strict';
 const { Model } = require('sequelize');
 const { jsonColumn } = require('../utils/jsonColumn');
+const { businessDay } = require('../services/promotions/promotionTime');
 
 module.exports = (sequelize, DataTypes) => {
   class promotion extends Model {
@@ -63,6 +64,9 @@ module.exports = (sequelize, DataTypes) => {
 
       startDate: { type: DataTypes.DATE, allowNull: true },
       endDate: { type: DataTypes.DATE, allowNull: true },
+      // The UK calendar days the promotion runs from / to — what the admin picked.
+      startDay: { type: DataTypes.VIRTUAL, get() { return businessDay(this.getDataValue('startDate')); } },
+      endDay: { type: DataTypes.VIRTUAL, get() { return businessDay(this.getDataValue('endDate')); } },
       recurringDays: jsonColumn(DataTypes, 'recurringDays', { allowNull: true }),
       recurringStartTime: { type: DataTypes.TIME, allowNull: true },
       recurringEndTime: { type: DataTypes.TIME, allowNull: true },
