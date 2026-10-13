@@ -2315,6 +2315,10 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         attributes: ["id", "firstName", "lastName", "email"],
     });
 
+    const promotions = await bookingPromotionService
+        .stripePromoSnapshot(bookingId)
+        .catch(() => null);
+
     const stripePresentation = buildStripeChargePresentation({
         chargeType: "pickup",
         bookingId,
@@ -2331,6 +2335,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         },
         zoneId: bookingfind.zoneId,
         laundryShopId: bookingfind.laundryShopId,
+        promotions,
     });
 
     let paymentIntent = null;
@@ -2920,6 +2925,10 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         attributes: ["id", "firstName", "lastName", "email"],
     });
 
+    const promotions = await bookingPromotionService
+        .stripePromoSnapshot(bookingId)
+        .catch(() => null);
+
     const stripePresentation = buildStripeChargePresentation({
         chargeType: "delivery_balance",
         bookingId,
@@ -2934,6 +2943,7 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         },
         zoneId: bookingRow.zoneId,
         laundryShopId: bookingRow.laundryShopId,
+        promotions,
     });
 
     const paymentIntent = await chargeOffSession(

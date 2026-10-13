@@ -55,7 +55,68 @@ function roundMoneyString(value) {
 }
 
 /**
+ * Compact promotion / discount fields for Stripe PaymentIntent metadata + description.
+ * Values are truncated to Stripe limits by sanitizeStripeMetadata at charge time.
+ *
+ * @param {object|null|undefined} promotions
+ * @returns {{ metadata: object, descriptionSuffix: string }}
+ */
+function buildPromotionTrackingFields(promotions) {
+    if (!promotions || typeof promotions !== "object") {
+        return { metadata: {}, descriptionSuffix: "" };
+    }
+
+    const hasPromotion =
+        promotions.hasPromotion === true ||
+        promotions.hasPromotion === "yes" ||
+        Number(promotions.discountAmount) > 0 ||
+        Number(promotions.cashbackAmount) > 0 ||
+        Number(promotions.creditUsed) > 0 ||
+        Boolean(promotions.promotionIds) ||
+        Boolean(promotions.couponCodes);
+
+    if (!hasPromotion) {
+        return {
+            metadata: { hasPromotion: "no" },
+            descriptionSuffix: "",
+        };
+    }
+
+    const discountStr = roundMoneyString(promotions.discountAmount || 0);
+    const cashbackStr = roundMoneyString(promotions.cashbackAmount || 0);
+    const creditStr = roundMoneyString(promotions.creditUsed || 0);
+    const codes = String(promotions.couponCodes || "").trim();
+    const names = String(promotions.promotionNames || "").trim();
+    const ids = String(promotions.promotionIds || "").trim();
+    const status = String(promotions.promotionStatus || "").trim();
+
+    const metadata = {
+        hasPromotion: "yes",
+        promotionIds: ids,
+        promotionNames: names,
+        couponCodes: codes,
+        discountAmount: discountStr,
+        cashbackAmount: cashbackStr,
+        creditUsed: creditStr,
+        promotionStatus: status,
+    };
+
+    const suffixParts = [];
+    if (codes) suffixParts.push(`Promo ${codes}`);
+    else if (names) suffixParts.push(`Promo ${names}`);
+    if (Number(discountStr) > 0) suffixParts.push(`discount £${discountStr}`);
+    if (Number(creditStr) > 0) suffixParts.push(`credit £${creditStr}`);
+    if (Number(cashbackStr) > 0) suffixParts.push(`cashback £${cashbackStr}`);
+
+    return {
+        metadata,
+        descriptionSuffix: suffixParts.join(", "),
+    };
+}
+
+/**
  * @param {object} params
+ * @param {object} [params.promotions] - from bookingPromotionService.stripePromoSnapshot
  * @returns {{ description: string, metadata: object, statementDescriptorSuffix: string }}
  */
 function buildStripeChargePresentation({
@@ -70,6 +131,7 @@ function buildStripeChargePresentation({
     billing = {},
     zoneId = null,
     laundryShopId = null,
+    promotions = null,
     extra = {},
 }) {
     const orderLabel = orderTrackId || (bookingId != null ? String(bookingId) : "");
@@ -88,6 +150,11 @@ function buildStripeChargePresentation({
     }
     if (customerName) {
         descriptionParts.push(customerName);
+    }
+
+    const promoTracking = buildPromotionTrackingFields(promotions);
+    if (promoTracking.descriptionSuffix) {
+        descriptionParts.push(promoTracking.descriptionSuffix);
     }
     const description = descriptionParts.join(" - ");
 
@@ -109,6 +176,7 @@ function buildStripeChargePresentation({
         agentName,
         agentDisplay: formatPersonDisplay(agent, "Agent"),
         agentEmail: agent.email || "",
+        ...promoTracking.metadata,
     };
 
     if (zoneId != null && zoneId !== "") {
@@ -240,5 +308,6 @@ function buildStripeRefundPresentation({
 module.exports = {
     buildStripeChargePresentation,
     buildStripeRefundPresentation,
+    buildPromotionTrackingFields,
     formatPersonName,
 };

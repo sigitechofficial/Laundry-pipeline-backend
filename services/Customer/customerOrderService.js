@@ -2097,6 +2097,10 @@ class CustomerOrderService {
                 attributes: ["id", "firstName", "lastName", "email"],
             });
 
+            const promotions = await bookingPromotionService
+                .stripePromoSnapshot(bookingData.id)
+                .catch(() => null);
+
             const stripePresentation = buildStripeChargePresentation({
                 chargeType: "booking_auth_hold",
                 bookingId: bookingData.id,
@@ -2112,6 +2116,7 @@ class CustomerOrderService {
                     driverTip: parsedTip,
                 },
                 zoneId,
+                promotions,
             });
 
             try {

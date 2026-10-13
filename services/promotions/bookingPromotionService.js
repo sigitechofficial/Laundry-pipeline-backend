@@ -711,6 +711,84 @@ function cashbackView(cashbackHolds, creditView) {
   };
 }
 
+/**
+ * Compact promotion snapshot for Stripe PaymentIntent description / metadata.
+ * Safe to call on every charge path; returns hasPromotion=false when none apply.
+ */
+async function stripePromoSnapshot(bookingId) {
+  const empty = {
+    hasPromotion: false,
+    promotionIds: '',
+    promotionNames: '',
+    couponCodes: '',
+    discountAmount: 0,
+    cashbackAmount: 0,
+    creditUsed: 0,
+    promotionStatus: '',
+  };
+  if (!bookingId) return empty;
+  try {
+    const [holds, discountAmount, creditView] = await Promise.all([
+      Redemption.findAll({
+        where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
+        include: [{ association: 'promotion', attributes: ['id', 'name', 'visibility'] }],
+        order: [['id', 'ASC']],
+        attributes: ['promotionId', 'couponCode', 'discountAmount', 'cashbackAmount', 'status'],
+      }),
+      storedPromotionDiscount(bookingId),
+      bookingCreditView(bookingId),
+    ]);
+    if (!holds.length && !(discountAmount > 0) && !(creditView.creditUsed > 0)) {
+      return empty;
+    }
+
+    const ids = [];
+    const names = [];
+    const codes = [];
+    let cashbackAmount = 0;
+    let hasCommitted = false;
+    let hasReserved = false;
+    for (const h of holds) {
+      const id = Number(h.promotionId);
+      if (Number.isFinite(id) && !ids.includes(id)) ids.push(id);
+      const shown =
+        h.promotion &&
+        (h.couponCode || ['public', 'private_code'].includes(h.promotion.visibility));
+      const name = shown ? h.promotion.name : h.promotion ? 'Special discount' : null;
+      if (name && !names.includes(name)) names.push(name);
+      const code = normalizeCode(h.couponCode);
+      if (code && !codes.includes(code)) codes.push(code);
+      cashbackAmount += Number(h.cashbackAmount) || 0;
+      if (h.status === 'COMMITTED') hasCommitted = true;
+      if (h.status === 'RESERVED') hasReserved = true;
+    }
+
+    const promotionStatus = hasCommitted
+      ? 'committed'
+      : hasReserved
+        ? discountAmount > 0
+          ? 'applied'
+          : 'holding'
+        : discountAmount > 0 || creditView.creditUsed > 0
+          ? 'applied'
+          : '';
+
+    return {
+      hasPromotion: true,
+      promotionIds: ids.join(','),
+      promotionNames: names.join(' | ').slice(0, 480),
+      couponCodes: codes.join(','),
+      discountAmount: roundMoney(discountAmount),
+      cashbackAmount: roundMoney(cashbackAmount),
+      creditUsed: roundMoney(creditView.creditUsed || 0),
+      promotionStatus,
+    };
+  } catch (err) {
+    console.error(`[promotions] stripePromoSnapshot booking ${bookingId} failed:`, err.message);
+    return empty;
+  }
+}
+
 // ─── Admin (Phase 5) ────────────────────────────────────────────────────────
 
 /**
@@ -756,4 +834,5 @@ module.exports = {
   storedPromotionDiscount,
   invoiceLineItems,
   capApplied,
+  stripePromoSnapshot,
 };
