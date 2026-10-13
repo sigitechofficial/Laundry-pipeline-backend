@@ -581,6 +581,10 @@ async function attemptInvoiceCardCharge(bookingId, options = {}) {
         `booking_${bookingId}_${attemptType}_${attemptNumber}`;
 
     try {
+        const promotions = await require("../promotions/bookingPromotionService")
+            .stripePromoSnapshot(bookingId)
+            .catch(() => null);
+
         const stripePresentation = buildStripeChargePresentation({
             chargeType: "delivery_balance",
             bookingId,
@@ -595,6 +599,7 @@ async function attemptInvoiceCardCharge(bookingId, options = {}) {
             },
             zoneId: bookingRow.zoneId,
             laundryShopId: bookingRow.laundryShopId,
+            promotions,
             extra: {
                 auto_charge_attempt: String(attemptNumber),
                 auto_charge_type: attemptType,
