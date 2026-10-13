@@ -108,6 +108,21 @@ const DEFAULTS = {
 
 const blank = (v) => v === '' || v === undefined;
 
+/** JSON id lists may arrive as numbers, numeric strings, or a JSON string — normalize to unique positive ints. */
+function asIntIdList(value) {
+  let arr = value;
+  if (arr == null || arr === '') return [];
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return [...new Set(arr.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0))];
+}
+
 /** Keep only known fields; "" → null; numbers parsed; codes/times normalised. */
 function normalizePayload(payload = {}) {
   const out = {};
@@ -120,7 +135,13 @@ function normalizePayload(payload = {}) {
     if (key === 'name' && v != null) v = String(v).trim();
     if (key === 'stackGroup' && v != null) v = String(v).trim() || null;
     if ((key === 'recurringStartTime' || key === 'recurringEndTime') && v != null) v = normalizeHHMM(v) || '__invalid__';
-    if ((key === 'targetIds' || key === 'zoneIds' || key === 'recurringDays') && Array.isArray(v)) v = [...new Set(v.map(Number))];
+    if (key === 'targetIds' || key === 'zoneIds' || key === 'recurringDays') {
+      if (v == null) {
+        out[key] = null;
+        continue;
+      }
+      v = asIntIdList(v);
+    }
     out[key] = v;
   }
   if (Array.isArray(payload.conditions)) {
@@ -214,8 +235,13 @@ function validatePromotion(p) {
   }
 
   if (!['all', 'selected', 'excluded'].includes(p.zoneScopeMode)) throw new ValidationError('Invalid zoneScopeMode');
-  if (p.zoneScopeMode !== 'all' && (!Array.isArray(p.zoneIds) || !p.zoneIds.length || p.zoneIds.some((z) => !Number.isInteger(z) || z <= 0))) {
-    throw new ValidationError('Select at least one zone');
+  if (p.zoneScopeMode !== 'all') {
+    // Coerce string/JSON zone ids (common after admin UI round-trips) before rejecting.
+    const zoneIds = asIntIdList(p.zoneIds);
+    p.zoneIds = zoneIds.length ? zoneIds : p.zoneIds;
+    if (!zoneIds.length) {
+      throw new ValidationError('Select at least one zone');
+    }
   }
   if (!['automatic', 'coupon_required'].includes(p.activationType)) throw new ValidationError('Invalid activationType');
   if (!['public', 'private_code', 'targeted', 'hidden'].includes(p.visibility)) throw new ValidationError('Invalid visibility');
@@ -310,6 +336,9 @@ function rowData(row) {
   const o = row.toJSON();
   const num = (v) => (v == null ? null : Number(v));
   for (const key of DECIMAL_FIELDS) o[key] = num(o[key]);
+  o.zoneIds = o.zoneIds == null ? null : asIntIdList(o.zoneIds);
+  o.targetIds = o.targetIds == null ? null : asIntIdList(o.targetIds);
+  o.recurringDays = o.recurringDays == null ? null : asIntIdList(o.recurringDays);
   if (Array.isArray(o.zoneOverrides)) {
     o.zoneOverrides = o.zoneOverrides.map((zo) => ({
       zoneId: Number(zo.zoneId), discountValue: num(zo.discountValue), maxDiscountCap: num(zo.maxDiscountCap), minSubtotal: num(zo.minSubtotal), currency: zo.currency,
