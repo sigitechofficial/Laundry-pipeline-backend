@@ -377,8 +377,9 @@ else
   echo "OPS_CONTROL_TOKEN not set in deploy env — /ops stays disabled unless already on server"
 fi
 
-# Stage: turn on promotions checkout so booking holds + invoice pricing run.
-# Prod stays off until ops sets PROMOTIONS_CHECKOUT_ENABLED=true (Phase 8.3).
+# Promotions checkout on stage + prod: booking holds + invoice pricing.
+# Kill-switch allowlist (PROMOTIONS_CHECKOUT_ZONE_IDS) stays blank = every zone.
+# Per-promo "all / selected / excluded" zone scope still applies in the engine.
 # Idempotent upsert — never clears an existing ZONE_IDS allowlist.
 upsert_env_kv() {
   local key="$1"
@@ -406,12 +407,12 @@ upsert_env_kv() {
   fi
 }
 
-STAGE_HINT="${PM2_APP_NAME:-}${LIVE_PATH:-}${APP_URL:-}"
-if echo "$STAGE_HINT" | grep -qiE 'stage|stagelaundry'; then
-  echo "Stage host detected — ensuring PROMOTIONS_CHECKOUT_ENABLED=true"
+HOST_HINT="${PM2_APP_NAME:-}${LIVE_PATH:-}${APP_URL:-}"
+if echo "$HOST_HINT" | grep -qiE 'stage|stagelaundry|prodlaundry|laundary-prod|laundry-api-prod'; then
+  echo "Laundry API host detected — ensuring PROMOTIONS_CHECKOUT_ENABLED=true (all zones; promo zoneScope still applies)"
   upsert_env_kv "PROMOTIONS_CHECKOUT_ENABLED" "true"
 else
-  echo "Non-stage host — leaving PROMOTIONS_CHECKOUT_ENABLED unchanged (prod rollout is manual)"
+  echo "Unknown host ($HOST_HINT) — leaving PROMOTIONS_CHECKOUT_ENABLED unchanged"
 fi
 
 echo "Reloading PM2..."

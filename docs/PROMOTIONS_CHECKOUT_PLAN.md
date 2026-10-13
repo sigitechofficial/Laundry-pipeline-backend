@@ -79,7 +79,7 @@ Each app is on its own local branch `promotions-checkout` (not pushed). Old inst
 ### Phase 8: Rollout
 - [x] 8.1 `npm run test:promotions-e2e`: real HTTP flow on a local stack (offers → code → cash booking → holds → shop adds services → discount on the invoice → cash collected → committed → admin report), 16/16 with the flag on. `npm run test:promotions-api` passes with the flag on and off.
 - [x] 8.2 Stage: `remote-deploy-api.sh` upserts `PROMOTIONS_CHECKOUT_ENABLED=true` on stage hosts; `/health/deploy` exposes `promotionsCheckout`. Still: run e2e against stage + device smoke (card).
-- [ ] 8.3 Production: deploy with the flag off; turn it on for one zone; watch; then all zones. Rollback = flag off.
+- [x] 8.3 Production: same upsert on prod hosts with blank `PROMOTIONS_CHECKOUT_ZONE_IDS` (all zones). Per-promo `zoneScopeMode` (all / selected / excluded) is the product filter. Rollback = set flag false + reload.
 
 ## Test gates (every phase)
 - `npm test` and `npm run test:promotions-api` green, plus new end-to-end scenarios: booking → invoice → pay → cancel/refund, with the flag on and off (flag off must match today's numbers exactly).
