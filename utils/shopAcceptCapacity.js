@@ -4,7 +4,10 @@
  * Shop accept capacity settings.
  *
  * Global: runtime settings shopAcceptCapEnabled / shopAcceptMaxOrders.
- * Per shop: shopAssignmentPolicies.acceptCapOverride + acceptMaxOrders.
+ * Per shop: shopAssignmentPolicies.acceptCapOverride + acceptMaxOrders, used only
+ * while the all-shops switch is on. Switched off, there is no slot limit: every
+ * shop takes as many orders per slot as it likes; a shop's own setting is kept
+ * (ownSettingIgnored) for when it is on again.
  * The limit is applied per booking slot (pickups + deliveries in that hour) by
  * utils/shopSlotCapacity.js. The rolling-window helpers below (countRecentAccepts,
  * evaluateShopAcceptCapacity) are no longer used for routing or accepting.
@@ -24,7 +27,8 @@ function clampInt(value, min, max, fallback) {
 
 /**
  * Resolve effective cap for a shop owner user id.
- * @returns {Promise<{enabled:boolean, windowMinutes:number, maxOrders:number|null, source:string}>}
+ * @returns {Promise<{enabled:boolean, windowMinutes:number, maxOrders:number|null, source:string,
+ *   ownSettingIgnored:boolean}>} ownSettingIgnored: the shop has its own capacity, unused while off
  */
 async function resolveAcceptCapForShop(shopUserId) {
   const runtimeSettings = require('../services/Admin/runtimeSettingsService');
@@ -51,6 +55,16 @@ async function resolveAcceptCapForShop(shopUserId) {
     policy = null;
   }
 
+  if (!globalEnabled) {
+    return {
+      enabled: false,
+      windowMinutes: globalWindow,
+      maxOrders: null,
+      source: 'off',
+      ownSettingIgnored: Boolean(policy?.acceptCapOverride),
+    };
+  }
+
   if (policy?.acceptCapOverride) {
     const windowMinutes = clampInt(
       policy.acceptWindowMinutes,
@@ -64,15 +78,7 @@ async function resolveAcceptCapForShop(shopUserId) {
       windowMinutes,
       maxOrders,
       source: 'shop',
-    };
-  }
-
-  if (!globalEnabled) {
-    return {
-      enabled: false,
-      windowMinutes: globalWindow,
-      maxOrders: null,
-      source: 'off',
+      ownSettingIgnored: false,
     };
   }
 
@@ -81,6 +87,7 @@ async function resolveAcceptCapForShop(shopUserId) {
     windowMinutes: globalWindow,
     maxOrders: globalMax,
     source: 'global',
+    ownSettingIgnored: false,
   };
 }
 
@@ -252,14 +259,7 @@ async function getShopAcceptCapacityStatus(shopUserId) {
   const { addressDb } = require('../models');
 
   const cap = await resolveAcceptCapForShop(shopUserId);
-  const limit = cap.enabled ? Number(cap.maxOrders) || 0 : 1;
-  const shopAddress = await addressDb.findOne({
-    where: { userId: shopUserId, addressType: 'LaundaryShopAddress' },
-    attributes: ['id'],
-  });
-  const upcoming = shopAddress ? await listUpcomingSlotLoad(shopAddress.id) : [];
-
-  return {
+  const off = {
     enabled: false,
     limit: null,
     used: 0,
@@ -268,16 +268,37 @@ async function getShopAcceptCapacityStatus(shopUserId) {
     atCapacity: false,
     resetsAt: null,
     resetsInSeconds: null,
+  };
+  if (!cap.enabled) {
+    // No limit per slot. slotCapacity stays null so installed agent apps hide the
+    // capacity banner (they would print "Up to null"); admin reads the flags below.
+    return {
+      ...off,
+      slotCapacity: null,
+      slotCapacityEnabled: false,
+      ownSettingIgnored: Boolean(cap.ownSettingIgnored),
+    };
+  }
+
+  const limit = Number(cap.maxOrders) || 0;
+  const shopAddress = await addressDb.findOne({
+    where: { userId: shopUserId, addressType: 'LaundaryShopAddress' },
+    attributes: ['id'],
+  });
+  const upcoming = shopAddress ? await listUpcomingSlotLoad(shopAddress.id) : [];
+
+  return {
+    ...off,
+    slotCapacityEnabled: true,
+    ownSettingIgnored: false,
     slotCapacity: {
-      enabled: cap.enabled,
-      mode: cap.enabled ? 'slot' : 'single',
+      enabled: true,
+      mode: 'slot',
       limit,
       source: cap.source,
-      summary: cap.enabled
-        ? limit === 0
-          ? 'Capacity 0: no marketplace orders (admin can still assign).'
-          : `Up to ${limit} pickups and deliveries per slot.`
-        : 'One order per pickup / delivery slot.',
+      summary: limit === 0
+        ? 'Capacity 0: no marketplace orders (admin can still assign).'
+        : `Up to ${limit} pickups and deliveries per slot.`,
       upcoming: upcoming.map((r) => ({ ...r, limit, full: r.used >= limit })),
     },
   };

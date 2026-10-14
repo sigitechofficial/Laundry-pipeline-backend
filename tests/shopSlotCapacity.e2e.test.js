@@ -101,6 +101,9 @@ async function newListIds() {
 }
 
 let policyBefore;
+let globalBefore;
+let globalMaxBefore;
+const setAllShops = (on, max) => admin('PUT', '/runtimeSettings', { shopAcceptCapEnabled: on, ...(max != null ? { shopAcceptMaxOrders: max } : {}) });
 
 async function main() {
   assert.strictEqual(process.env.NODE_ENV, 'development', 'NODE_ENV must be development');
@@ -120,6 +123,12 @@ async function main() {
   assert.strictEqual(Number(zoneId), Number(shop.zoneId), 'shop must serve the address zone');
 
   policyBefore = (await admin('GET', `/shopAssignmentPolicy/${AGENT_ID}`)).json?.data || {};
+  const settingsBefore = (await admin('GET', '/runtimeSettings')).json?.data?.settings || {};
+  globalBefore = settingsBefore.shopAcceptCapEnabled?.value;
+  globalMaxBefore = settingsBefore.shopAcceptMaxOrders?.value;
+  // A shop's own capacity is used only while slot capacity is on for all shops.
+  const on = await setAllShops(true);
+  check('setup', 'slot capacity switched on for all shops', on.status === 200, `${on.status} ${on.message}`);
 
   // Pickups on Tue/Wed/Thu (shops are open), far from other test data; each run
   // moves a week so earlier runs' bookings never share its slots.
@@ -212,22 +221,42 @@ async function main() {
   check('accept', 'capacity 0 → refused with a clear message', rz.status === 409 && /capacity set to 0/.test(rz.message), rz.message);
   check('list', 'capacity 0 → nothing new in the list', !(await newListIds()).includes(z));
 
-  // ── Capacity off for this shop (and globally off) → one per slot ──
+  // ── All-shops number: a shop without its own setting takes the Runtime checks number ──
   await setCap({ acceptCapOverride: false });
-  const offStatus = (await agent('GET', '/acceptCapacity')).json?.data?.capacity?.slotCapacity;
-  if (offStatus?.enabled === false) {
-    const o1 = await book('O1 off', { pDay: dayPlus(base + 2), pFrom: '18:00', pTo: '19:00', dDay: dayPlus(base + 8), dFrom: '18:00', dTo: '19:00' });
-    const o2 = await book('O2 off', { pDay: dayPlus(base + 2), pFrom: '18:00', pTo: '19:00', dDay: dayPlus(base + 8), dFrom: '20:00', dTo: '21:00' });
-    const r1 = await accept(o1);
-    const r2 = await accept(o2);
-    check('off', 'capacity off: first order in a pickup slot accepted', r1.status === 200, `${r1.status} ${r1.message}`);
-    check('off', 'capacity off: second order in the same pickup slot refused (old 1-per-slot rule)', r2.status === 409 && /already have an order in this pickup or delivery slot/.test(r2.message), r2.message);
-  } else {
-    console.log(`SKIP [off] global capacity is ON (limit ${offStatus?.limit}); one-per-slot fallback not testable here`);
+  const five = await setAllShops(true, 5);
+  const fiveStatus = (await agent('GET', '/acceptCapacity')).json?.data?.capacity?.slotCapacity;
+  check('global', 'all-shops number 5 → this shop: up to 5 per slot', five.status === 200 && fiveStatus?.limit === 5 && fiveStatus.source === 'global', JSON.stringify({ limit: fiveStatus?.limit, source: fiveStatus?.source }));
+
+  // ── All-shops switch off: no limit per slot; this shop's own capacity (4) is kept but not used ──
+  await setCap({ acceptCapOverride: true, acceptMaxOrders: 4 });
+  const listOn = (await admin('GET', '/runtimeSettings/shopCapacityOverrides')).json?.data;
+  const mineOn = listOn?.shops?.find((x) => x.shopUserId === AGENT_ID);
+  check('list', 'Runtime checks lists this shop with its own capacity (4, in use)', mineOn?.maxOrdersPerSlot === 4 && mineOn.inUse === true, JSON.stringify(mineOn));
+  const off = await setAllShops(false);
+  check('off', 'slot capacity switched off for all shops', off.status === 200, `${off.status} ${off.message}`);
+  const offCap = (await agent('GET', '/acceptCapacity')).json?.data?.capacity;
+  check('off', 'agent status: no slot limit (banner hidden on installed apps), own setting reported as not used',
+    offCap?.slotCapacity === null && offCap.slotCapacityEnabled === false && offCap.ownSettingIgnored === true && offCap.enabled === false,
+    JSON.stringify({ slotCapacity: offCap?.slotCapacity, slotCapacityEnabled: offCap?.slotCapacityEnabled, ownSettingIgnored: offCap?.ownSettingIgnored }));
+  const listOff = (await admin('GET', '/runtimeSettings/shopCapacityOverrides')).json?.data;
+  const mineOff = listOff?.shops?.find((x) => x.shopUserId === AGENT_ID);
+  check('list', 'switched off: the shop is still listed, marked not in use', listOff?.allShopsEnabled === false && mineOff?.inUse === false && mineOff.maxOrdersPerSlot === 4, JSON.stringify(mineOff));
+  const policyKept = (await admin('GET', `/shopAssignmentPolicy/${AGENT_ID}`)).json?.data;
+  check('off', "the shop's own setting is kept (not erased)", policyKept?.acceptCapOverride === true && policyKept.acceptMaxOrders === 4);
+  // Six orders in one pickup slot: more than the shop's own 4 and the all-shops 5.
+  const offIds = [];
+  for (let i = 1; i <= 6; i += 1) {
+    offIds.push(await book(`O${i} off`, { pDay: dayPlus(base + 2), pFrom: '18:00', pTo: '19:00', dDay: dayPlus(base + 8), dFrom: '18:00', dTo: '19:00' }));
   }
+  const offList = await newListIds();
+  check('off', 'switched off: all six orders for one slot show in the agent list', offIds.every((id) => offList.includes(id)));
+  const offResults = [];
+  for (const id of offIds) offResults.push(await accept(id));
+  check('off', 'switched off: all six accepted in the same slot (no limit)', offResults.every((r) => r.status === 200), offResults.map((r) => r.status).join(','));
 }
 
 async function cleanup() {
+  if (globalBefore !== undefined) await setAllShops(Boolean(globalBefore), globalMaxBefore).catch(() => {});
   if (policyBefore) {
     await setCap({
       acceptCapOverride: Boolean(policyBefore.acceptCapOverride),

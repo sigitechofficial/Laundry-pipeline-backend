@@ -9,15 +9,15 @@
  * override. A new booking needs room in its pickup slot AND its delivery slot,
  * so bookings for other slots, days or future dates never use each other's room.
  *
- * Capacity switched off (no global setting, no shop override) keeps the old rule:
- * one booking per pickup / delivery window (shopSlotAvailability.isShopSlotFree).
+ * Capacity switched off for all shops (runtime setting): no limit per slot for any
+ * shop, own settings included.
  * Admin manual assign bypasses this (callers skip the check).
  */
 
 const { Op, fn, col, where: sqlWhere } = require('sequelize');
 const { booking } = require('../models');
 const { SLOT_RELEASING } = require('../constants/bookingStatusIds');
-const { toDateOnly, toTimeOnly, isShopSlotFree } = require('./shopSlotAvailability');
+const { toDateOnly, toTimeOnly } = require('./shopSlotAvailability');
 const { resolveAcceptCapForShop } = require('./shopAcceptCapacity');
 
 const SLOT_FULL_CODE = 'SHOP_SLOT_FULL';
@@ -83,15 +83,14 @@ async function countJobsInSlot(shopAddressId, slot, options = {}) {
  * @param {object} request collectionDate/TimeFrom/TimeTo + deliveryDate/TimeFrom/TimeTo
  * @param {{ excludeBookingId?: number, transaction?: object, cap?: object }} [options]
  *   cap: an already resolved resolveAcceptCapForShop() result (lists check many orders)
- * @returns {Promise<{ allowed: boolean, mode: 'slot'|'single', reason: string|null,
+ * @returns {Promise<{ allowed: boolean, mode: 'slot'|'off', reason: string|null,
  *   limit: number|null, source: string, slots: Array<{ leg, date, from, to, used, limit, full }> }>}
  */
 async function evaluateShopSlotCapacity(shopUserId, shopAddressId, request = {}, options = {}) {
   const cap = options.cap || (await resolveAcceptCapForShop(shopUserId));
 
   if (!cap.enabled) {
-    const free = await isShopSlotFree(shopAddressId, request, { excludeBookingId: options.excludeBookingId });
-    return { allowed: free, mode: 'single', reason: free ? null : 'slot_taken', limit: 1, source: cap.source, slots: [] };
+    return { allowed: true, mode: 'off', reason: null, limit: null, source: cap.source, slots: [] };
   }
 
   const limit = Number(cap.maxOrders) || 0;
@@ -139,9 +138,6 @@ function slotFullMessage(result) {
   if (!result || result.allowed) return null;
   if (result.reason === 'accept_cap_zero') {
     return 'Your shop cannot accept marketplace orders right now (capacity set to 0). Contact support.';
-  }
-  if (result.reason === 'slot_taken') {
-    return 'You already have an order in this pickup or delivery slot. Choose another order.';
   }
   const fullSlot = result.slots.find((s) => s.full);
   if (!fullSlot) return 'This slot is full for your shop.';

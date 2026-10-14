@@ -88,7 +88,7 @@ const DEFINITIONS = {
     type: "boolean",
     label: "Shop slot capacity (all shops)",
     description:
-      "When on, each shop can hold up to \"Max orders per slot\" pickups and deliveries in one booking slot (e.g. 11:00–12:00). A new order needs room in its pickup slot and its delivery slot; other slots, days and future dates have their own room. Shops with a full slot are skipped and the order goes to others; if every shop is full the admin is alerted. When off, each shop takes one order per pickup / delivery slot. Admin manual assign always bypasses. Per-shop overrides live on the shop Order routing card.",
+      "When on, each shop can take up to \"Max orders per slot\" pickups + deliveries in one booking slot (e.g. 11:00–12:00); every slot, day and date has its own room. A shop with a full slot is skipped; if every shop is full, admins are alerted. When off, there is no limit per slot, and shops' own capacity settings are kept but not used. Admin manual assign always bypasses.",
     group: "booking_assignment",
     envKey: "SHOP_ACCEPT_CAP_ENABLED",
     defaultValue: false,
@@ -108,7 +108,7 @@ const DEFINITIONS = {
     type: "integer",
     label: "Max orders per slot (all shops)",
     description:
-      "How many pickups + deliveries one shop can have in one booking slot. Example: 4 = in the 11:00–12:00 slot a shop can have, say, 2 pickups and 2 deliveries. 0 = no shop may accept via marketplace (admin can still assign).",
+      "How many pickups + deliveries each shop can have in one booking slot while slot capacity is on. Default 4: in the 11:00–12:00 slot a shop can have, say, 2 pickups and 2 deliveries. 0 = no shop may accept via marketplace (admin can still assign).",
     group: "booking_assignment",
     envKey: "SHOP_ACCEPT_MAX_ORDERS",
     defaultValue: 4,
@@ -228,6 +228,12 @@ function serializeValue(def, value) {
   return String(value);
 }
 
+// Column sizes of platformRuntimeSettings (label VARCHAR(160), description VARCHAR(500)):
+// a longer text made every save of that setting fail on a strict database.
+const LABEL_MAX = 160;
+const DESCRIPTION_MAX = 500;
+const fitColumn = (text, max) => (text == null ? null : String(text).slice(0, max));
+
 function invalidateCache() {
   cache = { at: 0, byKey: null };
 }
@@ -269,8 +275,8 @@ async function ensureDefaults() {
           settingKey,
           settingValue: serializeValue(def, value),
           valueType: def.type,
-          label: def.label,
-          description: def.description,
+          label: fitColumn(def.label, LABEL_MAX),
+          description: fitColumn(def.description, DESCRIPTION_MAX),
           settingGroup: def.group,
           envKey: def.envKey,
           createdAt: now,
@@ -381,8 +387,8 @@ async function updateSettings(patch = {}, updatedBy = null) {
         settingKey,
         settingValue: serializeValue(def, value),
         valueType: def.type,
-        label: def.label,
-        description: def.description,
+        label: fitColumn(def.label, LABEL_MAX),
+        description: fitColumn(def.description, DESCRIPTION_MAX),
         settingGroup: def.group,
         envKey: def.envKey,
         updatedBy,
@@ -391,8 +397,8 @@ async function updateSettings(patch = {}, updatedBy = null) {
     await row.update({
       settingValue: serializeValue(def, value),
       valueType: def.type,
-      label: def.label,
-      description: def.description,
+      label: fitColumn(def.label, LABEL_MAX),
+      description: fitColumn(def.description, DESCRIPTION_MAX),
       settingGroup: def.group,
       envKey: def.envKey,
       updatedBy,
@@ -420,6 +426,8 @@ async function updateSettings(patch = {}, updatedBy = null) {
 
 module.exports = {
   DEFINITIONS,
+  LABEL_MAX,
+  DESCRIPTION_MAX,
   getAll,
   getValue,
   getBoolean,

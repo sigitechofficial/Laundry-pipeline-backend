@@ -245,6 +245,10 @@ router.get(
     '/runtimeSettings',
     asyncMiddleware(runtimeSettingsController.getRuntimeSettings)
 )
+router.get(
+    '/runtimeSettings/shopCapacityOverrides',
+    asyncMiddleware(runtimeSettingsController.getShopCapacityOverrides)
+)
 router.put(
     '/runtimeSettings',
     asyncMiddleware(runtimeSettingsController.updateRuntimeSettings)

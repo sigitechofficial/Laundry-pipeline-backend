@@ -301,6 +301,51 @@ class ShopAssignmentPolicyService {
         });
         return row?.userId ?? null;
     }
+
+    /**
+     * Shops with their own slot capacity switched on (Runtime checks list). They are
+     * listed whether or not the all-shops switch is on; while it is off they are not used.
+     */
+    async listCapacityOverrides() {
+        const rows = await shopAssignmentPolicy.findAll({
+            where: { acceptCapOverride: true },
+            attributes: ['shopUserId', 'acceptMaxOrders', 'updatedAt'],
+            order: [['updatedAt', 'DESC']],
+        });
+        if (!rows.length) return [];
+        const ownerIds = rows.map((r) => Number(r.shopUserId));
+        const { bussinessInformation, zone } = require('../../models');
+        const [owners, shops, businesses] = await Promise.all([
+            users.findAll({ where: { id: ownerIds }, attributes: ['id', 'firstName', 'lastName', 'email'] }),
+            addressDb.findAll({
+                where: { userId: ownerIds, addressType: 'LaundaryShopAddress' },
+                attributes: ['id', 'userId', 'zoneId'],
+            }),
+            bussinessInformation.findAll({ where: { agentId: ownerIds }, attributes: ['id', 'agentId', 'shopName'] }),
+        ]);
+        const zoneIds = [...new Set(shops.map((a) => Number(a.zoneId)).filter(Boolean))];
+        const zones = zoneIds.length ? await zone.findAll({ where: { id: zoneIds }, attributes: ['id', 'name'] }) : [];
+        const ownerById = new Map(owners.map((u) => [Number(u.id), u]));
+        const shopByOwner = new Map(shops.map((a) => [Number(a.userId), a]));
+        const bizByOwner = new Map(businesses.map((b) => [Number(b.agentId), b]));
+        const zoneName = new Map(zones.map((z) => [Number(z.id), z.name]));
+        return rows.map((r) => {
+            const ownerId = Number(r.shopUserId);
+            const owner = ownerById.get(ownerId);
+            const shop = shopByOwner.get(ownerId);
+            const biz = bizByOwner.get(ownerId);
+            const ownerName = owner ? [owner.firstName, owner.lastName].filter(Boolean).join(' ').trim() : '';
+            return {
+                shopUserId: ownerId,
+                businessId: biz ? Number(biz.id) : null,
+                shopName: biz?.shopName || ownerName || `Shop #${ownerId}`,
+                email: owner?.email || null,
+                zoneName: shop?.zoneId ? zoneName.get(Number(shop.zoneId)) || null : null,
+                maxOrdersPerSlot: r.acceptMaxOrders == null ? null : Number(r.acceptMaxOrders),
+                updatedAt: r.updatedAt,
+            };
+        });
+    }
 }
 
 module.exports = new ShopAssignmentPolicyService();
