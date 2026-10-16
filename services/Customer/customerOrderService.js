@@ -75,6 +75,7 @@ const {
     getBookingRepairItems,
 } = require('../Agent/customerDeclaredServicesService');
 const { buildPaymentSummary, buildPaymentSummaryForBooking, normalizePaymentType, enrichPaymentSummary } = require('../../utils/invoicePaymentSummary');
+const { attachInvoiceBill } = require('../../utils/invoiceBill');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
@@ -3043,6 +3044,8 @@ class CustomerOrderService {
                 billingPaymentStatus: billing.paymentStatus,
             }
         );
+
+        await attachInvoiceBill(paymentSummary, bookingPlain.id);
 
         const failureCode = bookingPlain.lastPaymentFailureCode || null;
         const failureMessage = bookingPlain.lastPaymentFailureMessage || null;

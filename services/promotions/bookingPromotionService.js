@@ -327,12 +327,14 @@ async function priceAtInvoice({ bookingId, allowance }) {
 
   await ledger.writeOrderAdjustments(bookingId, applied);
   const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
+  const fullByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.totalSavingMinor || 0]));
   for (const h of holds) {
     const a = byPromotion.get(h.promotionId);
     const amount = fromMinor(a?.totalSavingMinor || 0);
+    const full = fromMinor(fullByPromotion.get(h.promotionId) || 0);
     const cashback = fromMinor(a?.cashbackMinor || 0);
-    if (Number(h.discountAmount) !== amount || Number(h.cashbackAmount || 0) !== cashback) {
-      await h.update({ discountAmount: amount, cashbackAmount: cashback || null });
+    if (Number(h.discountAmount) !== amount || Number(h.fullDiscountAmount) !== full || Number(h.cashbackAmount || 0) !== cashback) {
+      await h.update({ discountAmount: amount, fullDiscountAmount: full, cashbackAmount: cashback || null });
     }
   }
 

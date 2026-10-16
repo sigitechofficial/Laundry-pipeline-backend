@@ -46,6 +46,7 @@ const {
     computePhysicalTotalItems,
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
+const { attachInvoiceBill } = require("../../utils/invoiceBill");
 const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
@@ -685,6 +686,8 @@ class AgentInvoiceManagementService {
             }
         );
 
+        await attachInvoiceBill(paymentSummary, bookingId);
+
         const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
         const amountDueNow = paymentSummary.amountDueNow;
 
@@ -1052,10 +1055,13 @@ class AgentInvoiceManagementService {
             /* non-fatal */
         }
 
-        const paymentSummary = buildPaymentSummaryForBooking(bookingData.paymentType, {
-            ...draftSummaryInput,
-            discount: resolvedDiscount,
-        });
+        const paymentSummary = await attachInvoiceBill(
+            buildPaymentSummaryForBooking(bookingData.paymentType, {
+                ...draftSummaryInput,
+                discount: resolvedDiscount,
+            }),
+            bookingId
+        );
 
         return {
             bookingId,
