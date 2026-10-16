@@ -275,6 +275,24 @@ function calculateBenefit(promotion, context, options = {}) {
   };
 }
 
+/**
+ * What the spend / quantity limits are measured on. Item, category and service
+ * discounts count only the items they target (a £100 maximum on Wash & Iron is not
+ * broken by adding other services); every other type counts the whole basket.
+ */
+function limitBasket(promo, context) {
+  const basket = context.basket || {};
+  if (benefitScope(promo.benefitType) !== 'item') {
+    return { subtotal: toDecimal(basket.subtotal), itemCount: basket.itemCount || 0, offerItemsOnly: false };
+  }
+  const lines = (basket.lineItems || []).filter((li) => lineMatchesTarget(promo, li));
+  return {
+    subtotal: fromMinor(lines.reduce((s, li) => s + toMinor(li.price) * (li.qty || 0), 0)),
+    itemCount: lines.reduce((s, li) => s + (li.qty || 0), 0),
+    offerItemsOnly: true,
+  };
+}
+
 module.exports = {
   SUPPORTED_BENEFIT_TYPES,
   calculateBenefit,
@@ -288,4 +306,5 @@ module.exports = {
   effectiveValues,
   currencySymbol,
   lineMatchesTarget,
+  limitBasket,
 };

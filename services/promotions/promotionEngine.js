@@ -23,7 +23,7 @@ const {
 } = require('../../models');
 
 const { evaluateConditions } = require('./conditionEvaluator');
-const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol } = require('./benefitHandlers');
+const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket } = require('./benefitHandlers');
 const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
@@ -220,20 +220,24 @@ function reject(type, reason, code, meta) {
  * @returns {object|null} failing reason, or null when all pass
  */
 function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = false } = {}) {
-  const subtotal = toDecimal(context.basket?.subtotal);
+  const { subtotal, itemCount, offerItemsOnly } = limitBasket(promo, context);
   const sym = currencySymbol(promo.currency);
   const { minSubtotal } = effectiveValues(promo, zoneOverride);
   if (minSubtotal != null && minSubtotal > 0 && subtotal < minSubtotal) {
     const short = fromMinor(toMinor(minSubtotal) - toMinor(subtotal));
-    return reject('MINIMUM_SUBTOTAL', `Spend ${sym}${money(short)} more to use this offer`, 'PROMOTION_MIN_SPEND_NOT_MET', {
+    const where = offerItemsOnly ? ' on the items in this offer' : '';
+    return reject('MINIMUM_SUBTOTAL', `Spend ${sym}${money(short)} more${where} to use this offer`, 'PROMOTION_MIN_SPEND_NOT_MET', {
       requiredMinor: toMinor(minSubtotal), currentMinor: toMinor(subtotal), currency: promo.currency || 'GBP',
     });
   }
   if (promo.maxSubtotal != null && toDecimal(promo.maxSubtotal) > 0 && subtotal > toDecimal(promo.maxSubtotal)) {
-    return reject('MAXIMUM_SUBTOTAL', `Order above ${sym}${money(promo.maxSubtotal)} is not eligible`, 'PROMOTION_MAX_SPEND_EXCEEDED');
+    const max = `${sym}${money(promo.maxSubtotal)}`;
+    const reason = offerItemsOnly ? `Items in this offer above ${max} are not eligible` : `Order above ${max} is not eligible`;
+    return reject('MAXIMUM_SUBTOTAL', reason, 'PROMOTION_MAX_SPEND_EXCEEDED');
   }
-  if (promo.minQuantity != null && Number(promo.minQuantity) > 0 && (context.basket?.itemCount || 0) < Number(promo.minQuantity)) {
-    return reject('MINIMUM_QUANTITY', `Add at least ${promo.minQuantity} items`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
+  if (promo.minQuantity != null && Number(promo.minQuantity) > 0 && itemCount < Number(promo.minQuantity)) {
+    const from = offerItemsOnly ? ' from this offer' : '';
+    return reject('MINIMUM_QUANTITY', `Add at least ${promo.minQuantity} items${from}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
   }
 
   const orderCount = Number(context.customer?.orderCount ?? 0);
@@ -587,7 +591,9 @@ function buildOfferLabel(promo, zoneOverride = null) {
     case 'item_discount':
     case 'category_discount':
     case 'service_discount':
-      return mode === 'percent' ? `${value} OFF selected items${cap}` : `${value} OFF each selected item`;
+      return mode === 'percent'
+        ? `${value} OFF selected items${cap}`
+        : `${value} OFF each selected item${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} in total)` : ''}`;
     case 'fixed_price':
       return `Special price ${sym}${money(discountValue)}`;
     case 'free_delivery':

@@ -635,11 +635,18 @@ async function customerPromotionSummary(bookingId) {
   });
 
   // Group the invoice lines by item so each item shows original → after discount.
+  // Every invoice line is listed (items without a discount too), so the list adds up to
+  // the laundry total. A line priced for a whole service (no item, e.g. an un-itemised
+  // alteration) is listed as lineType "service" with the service id; older apps only show
+  // lines with a discount, so the extra lines do not change them.
   const itemOriginal = new Map();
   for (const li of lines) {
-    const key = li.addonId ? `addon:${li.addonId}` : li.subCategoryId ? `subCategory:${li.subCategoryId}` : null;
+    const key = li.addonId ? `addon:${li.addonId}`
+      : li.subCategoryId ? `subCategory:${li.subCategoryId}`
+      : li.serviceId ? `service:${li.serviceId}` : null;
     if (!key) continue;
-    const row = itemOriginal.get(key) || { lineType: li.addonId ? 'addon' : 'item', itemId: li.addonId || li.subCategoryId, qty: 0, originalMinor: 0 };
+    const lineType = li.addonId ? 'addon' : li.subCategoryId ? 'item' : 'service';
+    const row = itemOriginal.get(key) || { lineType, itemId: li.addonId || li.subCategoryId || li.serviceId, qty: 0, originalMinor: 0 };
     row.qty += li.qty;
     row.originalMinor += toMinor(li.price) * li.qty;
     itemOriginal.set(key, row);
