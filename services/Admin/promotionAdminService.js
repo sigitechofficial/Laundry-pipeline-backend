@@ -100,7 +100,9 @@ const SCALAR_FIELDS = [
 ];
 const DECIMAL_FIELDS = ['discountValue', 'maxDiscountCap', 'minSubtotal', 'maxSubtotal'];
 const INT_FIELDS = ['campaignId', 'priority', 'globalUsageLimit', 'perCustomerLimit', 'perDayLimit', 'perWeekLimit', 'minQuantity'];
-const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount'];
+const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount', 'bundle'];
+/** Item / add-on / category / service / all — chosen by targetType. */
+const TARGET_TYPE_PICKED = ['item_discount', 'bundle'];
 const DEFAULTS = {
   currency: 'GBP', targetType: 'basket', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public',
   priority: 50, stackable: false, perCustomerLimit: 1, repricingPolicy: 'recalculate',
@@ -150,6 +152,18 @@ function asIntIdList(value) {
   return [...new Set(arr.map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0))];
 }
 
+/** benefitConfig may arrive as a JSON string; a Bulk price group size typed in a form arrives as text. */
+function normalizeBenefitConfig(value) {
+  let config = value;
+  if (typeof config === 'string') {
+    try { config = JSON.parse(config); } catch { return null; }
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  if (!('bundleQuantity' in config)) return config;
+  const n = config.bundleQuantity;
+  return { ...config, bundleQuantity: blank(n) || n == null ? null : Number(n) };
+}
+
 /** Keep only known fields; "" → null; numbers parsed; codes/times normalised. */
 function normalizePayload(payload = {}) {
   const out = {};
@@ -161,6 +175,7 @@ function normalizePayload(payload = {}) {
     if (v != null && INT_FIELDS.includes(key)) v = Number(v);
     if (key === 'name' && v != null) v = String(v).trim();
     if (key === 'stackGroup' && v != null) v = String(v).trim() || null;
+    if (key === 'benefitConfig' && v != null) v = normalizeBenefitConfig(v);
     if ((key === 'recurringStartTime' || key === 'recurringEndTime') && v != null) v = normalizeHHMM(v) || '__invalid__';
     if (key === 'startDate' && v != null) v = businessDayBound(v, 'start');
     if (key === 'endDate' && v != null) v = businessDayBound(v, 'end');
@@ -253,11 +268,18 @@ function validatePromotion(p) {
     const n = Number(p.benefitConfig?.firstOrders);
     if (!Number.isInteger(n) || n < 1) throw new ValidationError('first_x_orders_discount needs benefitConfig.firstOrders ≥ 1');
   }
-  if (ITEM_TYPES.includes(p.benefitType)) {
-    if (p.benefitType === 'item_discount' && !['all', 'subCategory', 'addon', 'category', 'service'].includes(p.targetType)) {
-      throw new ValidationError('Item discount needs a target type (item, add-on, category, service or all)');
+  if (p.benefitType === 'bundle') {
+    const n = Number(p.benefitConfig?.bundleQuantity);
+    if (!Number.isInteger(n) || n < 2 || n > 1000) {
+      throw new ValidationError('Bulk price needs how many pieces are in the deal (a whole number from 2 to 1000)');
     }
-    const needsIds = !(p.benefitType === 'item_discount' && p.targetType === 'all');
+  }
+  if (ITEM_TYPES.includes(p.benefitType)) {
+    if (TARGET_TYPE_PICKED.includes(p.benefitType) && !['all', 'subCategory', 'addon', 'category', 'service'].includes(p.targetType)) {
+      const what = p.benefitType === 'bundle' ? 'Bulk price' : 'Item discount';
+      throw new ValidationError(`${what} needs a target type (item, add-on, category, service or all)`);
+    }
+    const needsIds = !(TARGET_TYPE_PICKED.includes(p.benefitType) && p.targetType === 'all');
     if (needsIds && (!Array.isArray(p.targetIds) || !p.targetIds.length || p.targetIds.some((x) => !Number.isInteger(x) || x <= 0))) {
       throw new ValidationError('Choose at least one target for this discount');
     }

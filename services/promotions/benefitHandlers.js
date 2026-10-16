@@ -13,14 +13,15 @@
  *   percent → % of the remaining amount (capped by maxDiscountCap for the whole promotion)
  *   amount  → basket scope: £ off the basket; item scope: £ off each matching unit
  *   fixed_price → discountValue is the price the remaining basket is sold for
+ *   bundle (Bulk price) → discountValue is the price of benefitConfig.bundleQuantity pieces
  */
 
 const { toDecimal, toMinor, fromMinor, money, percentOfMinor, allocateMinor } = require('./moneyUtils');
 
 const PERCENT_ONLY = ['percentage_discount', 'first_order_discount', 'first_x_orders_discount'];
-const AMOUNT_ONLY = ['fixed_amount_discount', 'delivery_discount', 'fixed_price'];
+const AMOUNT_ONLY = ['fixed_amount_discount', 'delivery_discount', 'fixed_price', 'bundle'];
 const DELIVERY_TYPES = ['free_delivery', 'delivery_discount'];
-const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount'];
+const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount', 'bundle'];
 const BASKET_TYPES = [
   'percentage_discount', 'fixed_amount_discount', 'basket_discount', 'fixed_price',
   'first_order_discount', 'first_x_orders_discount',
@@ -115,6 +116,16 @@ function lineMatchesTarget(promotion, line) {
   }
 }
 
+/** Pieces in one Bulk price group ("10 for £25" → 10). 0 when not set. */
+function bundleQuantity(promotion) {
+  let config = promotion.benefitConfig;
+  if (typeof config === 'string') {
+    try { config = JSON.parse(config); } catch { config = null; }
+  }
+  const n = Number(config?.bundleQuantity);
+  return Number.isInteger(n) && n >= 2 ? n : 0;
+}
+
 /** Can this item promotion still touch the line? (stacking on the same line) */
 function lineOpenForItemPromotion(promotion, line) {
   if (line.balanceMinor <= 0) return false;
@@ -123,6 +134,32 @@ function lineOpenForItemPromotion(promotion, line) {
 }
 
 // ─── Compute (pure) ─────────────────────────────────────────────────────────
+
+/**
+ * Bulk price: every full group of `size` pieces of the chosen items costs `priceMinor`;
+ * pieces left over pay the normal price. Pieces of all chosen items count together and
+ * the cheapest are grouped first. A group is never made dearer than its normal price.
+ * @returns {number[]} discount per line (minor units)
+ */
+function bundleLineSavings(promotion, state, size, priceMinor) {
+  const out = state.lines.map(() => 0);
+  if (!size) return out;
+  const pieces = [];
+  state.lines.forEach((line, i) => {
+    if (!lineMatchesTarget(promotion, line) || !lineOpenForItemPromotion(promotion, line)) return;
+    const each = Math.floor(line.balanceMinor / line.qty);
+    const spare = line.balanceMinor - each * line.qty;
+    for (let k = 0; k < line.qty; k += 1) pieces.push({ i, value: each + (k < spare ? 1 : 0) });
+  });
+  pieces.sort((a, b) => a.value - b.value || a.i - b.i);
+  for (let start = 0; start + size <= pieces.length; start += size) {
+    const group = pieces.slice(start, start + size);
+    const normal = group.reduce((s, p) => s + p.value, 0);
+    const shares = allocateMinor(Math.max(0, normal - priceMinor), group.map((p) => p.value));
+    group.forEach((p, k) => { out[p.i] += shares[k]; });
+  }
+  return out;
+}
 
 /**
  * What the promotion would take off right now. Does not mutate state.
@@ -152,22 +189,27 @@ function computeBenefit(promotion, state, options = {}) {
   }
 
   if (scope === 'item') {
-    const raw = state.lines.map((line) => {
-      if (!lineMatchesTarget(promotion, line) || !lineOpenForItemPromotion(promotion, line)) return 0;
-      const want = mode === 'percent'
-        ? percentOfMinor(line.balanceMinor, discountValue)
-        : toMinor(discountValue) * line.qty;
-      return Math.max(0, Math.min(want, line.balanceMinor));
-    });
+    const isBundle = promotion.benefitType === 'bundle';
+    const raw = isBundle
+      ? bundleLineSavings(promotion, state, bundleQuantity(promotion), toMinor(discountValue))
+      : state.lines.map((line) => {
+        if (!lineMatchesTarget(promotion, line) || !lineOpenForItemPromotion(promotion, line)) return 0;
+        const want = mode === 'percent'
+          ? percentOfMinor(line.balanceMinor, discountValue)
+          : toMinor(discountValue) * line.qty;
+        return Math.max(0, Math.min(want, line.balanceMinor));
+      });
     const total = raw.reduce((s, v) => s + v, 0);
     const lineMinor = capMinor != null && total > capMinor ? allocateMinor(capMinor, raw) : raw;
     const saving = lineMinor.reduce((s, v) => s + v, 0);
+    const kind = isBundle ? 'Bulk price'
+      : `${promotion.benefitType === 'item_discount' ? 'Item' : promotion.benefitType === 'category_discount' ? 'Category' : 'Service'} discount`;
     return {
       ...empty,
       lineMinor,
       totalSavingMinor: saving,
-      label: mode === 'percent' ? `${valueLabel} OFF` : `${valueLabel} OFF each`,
-      description: `${promotion.benefitType === 'item_discount' ? 'Item' : promotion.benefitType === 'category_discount' ? 'Category' : 'Service'} discount${capMinor != null ? ` (max ${sym}${money(maxDiscountCap)})` : ''}`,
+      label: isBundle ? `${bundleQuantity(promotion)} for ${valueLabel}` : mode === 'percent' ? `${valueLabel} OFF` : `${valueLabel} OFF each`,
+      description: `${kind}${capMinor != null ? ` (max ${sym}${money(maxDiscountCap)})` : ''}`,
     };
   }
 
@@ -307,4 +349,5 @@ module.exports = {
   currencySymbol,
   lineMatchesTarget,
   limitBasket,
+  bundleQuantity,
 };

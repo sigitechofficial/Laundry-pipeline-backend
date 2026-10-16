@@ -23,7 +23,7 @@ const {
 } = require('../../models');
 
 const { evaluateConditions } = require('./conditionEvaluator');
-const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket } = require('./benefitHandlers');
+const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket, bundleQuantity } = require('./benefitHandlers');
 const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
@@ -238,6 +238,13 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
   if (promo.minQuantity != null && Number(promo.minQuantity) > 0 && itemCount < Number(promo.minQuantity)) {
     const from = offerItemsOnly ? ' from this offer' : '';
     return reject('MINIMUM_QUANTITY', `Add at least ${promo.minQuantity} items${from}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
+  }
+  // Bulk price needs one full group; judged only once the real items are known (invoice).
+  const groupSize = promo.benefitType === 'bundle' ? bundleQuantity(promo) : 0;
+  if (groupSize && Array.isArray(context.basket?.lineItems) && itemCount < groupSize) {
+    const price = `${sym}${money(effectiveValues(promo, zoneOverride).discountValue)}`;
+    const short = groupSize - itemCount;
+    return reject('MINIMUM_QUANTITY', `Add ${short} more item${short === 1 ? '' : 's'} from this offer to get ${groupSize} for ${price}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
   }
 
   const orderCount = Number(context.customer?.orderCount ?? 0);
@@ -594,6 +601,8 @@ function buildOfferLabel(promo, zoneOverride = null) {
       return mode === 'percent'
         ? `${value} OFF selected items${cap}`
         : `${value} OFF each selected item${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} in total)` : ''}`;
+    case 'bundle':
+      return `${bundleQuantity(promo)} for ${sym}${money(discountValue)} on selected items${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} off in total)` : ''}`;
     case 'fixed_price':
       return `Special price ${sym}${money(discountValue)}`;
     case 'free_delivery':

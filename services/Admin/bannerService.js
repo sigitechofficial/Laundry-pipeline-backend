@@ -175,13 +175,13 @@ class BannerService {
 
   /**
    * Banner badge from a linked promotion, in the fields installed apps already read.
-   * null when the promotion has no simple badge (fixed price offer): the banner's own is kept.
+   * null when the promotion has no simple badge (fixed price, bulk price, cashback): the banner's own is kept.
    */
   offerFromPromotion(promo) {
     const { resolveDiscountMode } = require('../promotions/benefitHandlers');
     const value = promo.discountValue != null ? parseFloat(promo.discountValue) : null;
     if (promo.benefitType === 'free_delivery') return { offerType: 'free_delivery', discountValue: null, maxDiscountCap: null };
-    if (promo.benefitType === 'fixed_price' || promo.benefitType === 'cashback') return null;
+    if (['fixed_price', 'bundle', 'cashback'].includes(promo.benefitType)) return null;
     if (resolveDiscountMode(promo) === 'percent') {
       const cap = promo.maxDiscountCap != null ? parseFloat(promo.maxDiscountCap) : null;
       return { offerType: 'percentage', discountValue: value, maxDiscountCap: cap && cap > 0 ? cap : null };

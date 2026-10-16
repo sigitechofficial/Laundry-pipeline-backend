@@ -364,7 +364,7 @@ async function reverseBookingRedemptions(bookingId, reason, transaction) {
 
 function classifyAdjustment(benefitType, lineType) {
   if (lineType === 'delivery') return 'DELIVERY_PROMOTION';
-  if (['item_discount', 'category_discount', 'service_discount'].includes(benefitType)) return 'ITEM_PROMOTION';
+  if (['item_discount', 'category_discount', 'service_discount', 'bundle'].includes(benefitType)) return 'ITEM_PROMOTION';
   return 'BASKET_PROMOTION';
 }
 
