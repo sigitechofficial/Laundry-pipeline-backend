@@ -63,8 +63,17 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
         throw new NotFoundError("Booking not found");
     }
 
+    // A second tap, or HTTP plus the socket accept, arrives after this shop
+    // already took the order. That is a success, not "not available".
+    const alreadyOurs = await acceptedByThisShop(bookingRow, shopAddress.id);
+    if (alreadyOurs) return alreadyOurs;
+
     if (Number(bookingRow.bookingStatusId) !== 1) {
-        throw new ConflictError("This order is not available to accept");
+        throw new ConflictError(
+            bookingRow.laundryShopId != null
+                ? "This order was already taken"
+                : "This order is not available to accept"
+        );
     }
 
     if (bookingRow.laundryShopId != null && bookingRow.laundryShopId !== "") {
@@ -188,6 +197,11 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
     }
 
     if (!affectedCount) {
+        const latest = await booking.findByPk(bookingId, {
+            attributes: ["id", "laundryShopId", "bookingStatusId"],
+        });
+        const wonByUs = latest && (await acceptedByThisShop(latest, shopAddress.id));
+        if (wonByUs) return wonByUs;
         throw new ConflictError("This order was already taken");
     }
 
@@ -279,6 +293,22 @@ async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
     };
 }
 
+/** This shop already holds the order (a repeat accept). Null when it does not. */
+async function acceptedByThisShop(bookingRow, shopAddressId) {
+    if (bookingRow.laundryShopId == null || bookingRow.laundryShopId === "") return null;
+    if (Number(bookingRow.laundryShopId) !== Number(shopAddressId)) return null;
+    const status = Number(bookingRow.bookingStatusId);
+    // 1 is still open. 2 and 3 are the statuses accept writes.
+    if (status === 1 || !Number.isInteger(status)) return null;
+    return {
+        bookingId: Number(bookingRow.id),
+        laundryShopId: Number(shopAddressId),
+        bookingStatusId: status,
+        alreadyAccepted: true,
+    };
+}
+
 module.exports = {
     acceptOrderForAgent,
+    acceptedByThisShop,
 };
