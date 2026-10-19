@@ -20,6 +20,10 @@ const {
   promotionRedemption: Redemption,
   couponCode: CouponCode,
   campaign: Campaign,
+  service: Service,
+  categories: Categories,
+  subCategories: SubCategories,
+  addOnServices: AddOnServices,
 } = require('../../models');
 
 const { evaluateConditions } = require('./conditionEvaluator');
@@ -471,6 +475,7 @@ async function getCustomerOffers(context) {
   const candidates = await loadCandidatePromotions(context.zone?.id, now);
   const usage = await loadCustomerUsage(candidates.map((p) => p.id), context.customer?.id, now);
 
+  const targetNames = await targetNamesByPromotion(candidates);
   const offers = [];
   for (const p of candidates) {
     if (p.activationType === 'coupon_required') continue;
@@ -503,7 +508,7 @@ async function getCustomerOffers(context) {
       minSubtotal: values.minSubtotal,
       endDate: p.endDate,
       recurring: Boolean((p.recurringDays && p.recurringDays.length) || p.recurringStartTime),
-      label: buildOfferLabel(p, zoneOverride),
+      label: buildOfferLabel(p, zoneOverride, targetNames.get(Number(p.id))),
     });
   }
   return offers;
@@ -579,13 +584,85 @@ async function evaluateBookingEligibility(context) {
   return { eligible, rejected, couponErrors };
 }
 
-function buildOfferLabel(promo, zoneOverride = null) {
+/** Catalog kind a service / category / item promotion is priced against, or null. */
+function targetKind(promo) {
+  if (promo.benefitType === 'category_discount') return 'category';
+  if (promo.benefitType === 'service_discount') return 'service';
+  if (promo.benefitType === 'item_discount' || promo.benefitType === 'bundle') {
+    if (['service', 'category', 'subCategory', 'addon'].includes(promo.targetType)) return promo.targetType;
+  }
+  return null;
+}
+
+const TARGET_MODELS = {
+  service: Service,
+  category: Categories,
+  subCategory: SubCategories,
+  addon: AddOnServices,
+};
+
+/**
+ * promotionId → catalog names the offer applies to, in the order the ids were saved.
+ * Missing rows are skipped; a failed lookup leaves the generic label in place.
+ */
+async function targetNamesByPromotion(promos) {
+  const out = new Map();
+  const idsByKind = { service: new Set(), category: new Set(), subCategory: new Set(), addon: new Set() };
+  for (const promo of promos || []) {
+    const kind = targetKind(promo);
+    if (!kind) continue;
+    for (const id of Array.isArray(promo.targetIds) ? promo.targetIds : []) {
+      const n = Number(id);
+      if (Number.isInteger(n) && n > 0) idsByKind[kind].add(n);
+    }
+  }
+  const maps = {};
+  await Promise.all(Object.entries(TARGET_MODELS).map(async ([kind, Model]) => {
+    const ids = [...idsByKind[kind]];
+    maps[kind] = new Map();
+    if (!ids.length || !Model) return;
+    const rows = await Model.findAll({ where: { id: ids }, attributes: ['id', 'name'] });
+    for (const row of rows) maps[kind].set(Number(row.id), row.name);
+  }));
+  for (const promo of promos || []) {
+    const kind = targetKind(promo);
+    if (!kind || promo.id == null) continue;
+    const names = (Array.isArray(promo.targetIds) ? promo.targetIds : [])
+      .map((id) => maps[kind].get(Number(id)))
+      .filter(Boolean);
+    out.set(Number(promo.id), names);
+  }
+  return out;
+}
+
+function nameList(names) {
+  const clean = (names || []).map((n) => String(n).trim()).filter(Boolean);
+  if (!clean.length) return null;
+  if (clean.length <= 3) return clean.join(', ');
+  return `${clean.slice(0, 3).join(', ')} +${clean.length - 3}`;
+}
+
+/** What the saving is taken off, in customer words. Names when we have them. */
+function offerSubject(promo, targetNames) {
+  const named = nameList(targetNames);
+  if (promo.benefitType === 'category_discount' || promo.targetType === 'category') return named || 'selected categories';
+  if (promo.benefitType === 'service_discount' || promo.targetType === 'service') return named || 'selected services';
+  if (promo.targetType === 'addon') return named || 'selected add-ons';
+  if (promo.targetType === 'all') return 'all items';
+  return named || 'selected items';
+}
+
+function buildOfferLabel(promo, zoneOverride = null, targetNames = null) {
   const { discountValue, maxDiscountCap, minSubtotal, currency } = effectiveValues(promo, zoneOverride);
   const sym = currencySymbol(currency);
   const mode = resolveDiscountMode(promo);
   const value = mode === 'percent' ? `${discountValue}%` : `${sym}${money(discountValue)}`;
   const cap = mode === 'percent' && maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)})` : '';
   const min = minSubtotal ? ` on orders over ${sym}${money(minSubtotal)}` : '';
+  const subject = offerSubject(promo, targetNames);
+  const amountCap = maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} in total)` : '';
+  const onCategoryOrService = promo.benefitType === 'category_discount' || promo.benefitType === 'service_discount'
+    || promo.targetType === 'category' || promo.targetType === 'service';
   switch (promo.benefitType) {
     case 'percentage_discount':
     case 'fixed_amount_discount':
@@ -598,11 +675,12 @@ function buildOfferLabel(promo, zoneOverride = null) {
     case 'item_discount':
     case 'category_discount':
     case 'service_discount':
-      return mode === 'percent'
-        ? `${value} OFF selected items${cap}`
-        : `${value} OFF each selected item${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} in total)` : ''}`;
+      if (mode === 'percent') return `${value} OFF ${subject}${cap}`;
+      if (onCategoryOrService) return `${value} OFF each item in ${subject}${amountCap}`;
+      if (promo.targetType === 'all') return `${value} OFF each item${amountCap}`;
+      return targetNames?.length ? `${value} OFF each ${subject}${amountCap}` : `${value} OFF each selected item${amountCap}`;
     case 'bundle':
-      return `${bundleQuantity(promo)} for ${sym}${money(discountValue)} on selected items${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} off in total)` : ''}`;
+      return `${bundleQuantity(promo)} for ${sym}${money(discountValue)} on ${subject}${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} off in total)` : ''}`;
     case 'fixed_price':
       return `Special price ${sym}${money(discountValue)}`;
     case 'free_delivery':
@@ -632,4 +710,5 @@ module.exports = {
   bookingStageConditions,
   BASKET_CONDITIONS,
   loadHeldPromotions,
+  targetNamesByPromotion,
 };

@@ -297,21 +297,32 @@ async function campaignReport(campaignId, { from, to, restrictedZoneId = null, i
   };
 }
 
-/** "subCategory:12" / "addon:3" → catalog name, for the order's discount lines. */
+/** "subCategory:12" / "addon:3" / "service:2" → catalog name, for the order's discount lines. */
 async function lineItemNames(lines) {
-  const ids = { subCategory: new Set(), addon: new Set() };
+  const ids = { subCategory: new Set(), addon: new Set(), service: new Set() };
   for (const l of lines) {
     if (l.lineItemId != null && ids[l.lineType]) ids[l.lineType].add(Number(l.lineItemId));
   }
   const names = new Map();
   const models = require('../../models');
-  const [items, addons] = await Promise.all([
+  const [items, addons, services] = await Promise.all([
     ids.subCategory.size ? models.subCategories.findAll({ where: { id: [...ids.subCategory] }, attributes: ['id', 'name'], paranoid: false }) : [],
     ids.addon.size ? models.addOnServices.findAll({ where: { id: [...ids.addon] }, attributes: ['id', 'name'], paranoid: false }) : [],
+    ids.service.size ? models.service.findAll({ where: { id: [...ids.service] }, attributes: ['id', 'name'], paranoid: false }) : [],
   ]);
   for (const r of items) names.set(`subCategory:${r.id}`, r.name);
   for (const r of addons) names.set(`addon:${r.id}`, r.name);
+  for (const r of services) names.set(`service:${r.id}`, r.name);
   return names;
+}
+
+/** Customer-facing name of one discount line. */
+function displayLineName(lineType, lineItemId, names) {
+  if (lineType === 'delivery') return 'Delivery fee';
+  if (lineType === 'basket' || lineItemId == null) return 'Whole order';
+  const stored = lineType === 'item' ? 'subCategory' : lineType;
+  return names.get(`${stored}:${lineItemId}`)
+    || (lineType === 'service' ? 'Service' : lineType === 'addon' ? 'Add-on' : 'Item');
 }
 
 /**
@@ -343,9 +354,7 @@ async function bookingPromotions(bookingId) {
     row.lines.push({
       lineType: l.lineType,
       lineItemId: l.lineItemId != null ? Number(l.lineItemId) : null,
-      item: l.lineType === 'delivery' ? 'Delivery fee'
-        : l.lineType === 'basket' ? 'Whole order'
-        : itemNames.get(`${l.lineType}:${l.lineItemId}`) || `${l.lineType} #${l.lineItemId}`,
+      item: displayLineName(l.lineType, l.lineItemId, itemNames),
       label: l.label || l.description || null,
       amount,
     });
@@ -387,4 +396,4 @@ async function bookingPromotions(bookingId) {
   };
 }
 
-module.exports = { promotionReport, campaignReport, bookingPromotions };
+module.exports = { promotionReport, campaignReport, bookingPromotions, lineItemNames, displayLineName };

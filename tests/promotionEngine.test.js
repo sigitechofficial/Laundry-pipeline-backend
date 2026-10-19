@@ -162,6 +162,27 @@ const basket60 = {
   assert.strictEqual(r.adjustments.length, 2, 'spread over the two matching lines');
 }
 {
+  const withAddon = {
+    basket: {
+      lineItems: [
+        { subCategoryId: 1, categoryId: 10, serviceId: 100, price: 20, qty: 1 },
+        { addonId: 9, categoryId: 10, serviceId: 100, price: 5, qty: 1 },
+        { subCategoryId: 3, categoryId: 11, serviceId: 101, price: 10, qty: 1 },
+      ],
+    },
+  };
+  const cat = calculateBenefit({ benefitType: 'category_discount', discountValue: 50, targetIds: [10] }, withAddon);
+  assert.strictEqual(cat.totalSaving, 10, 'category discount is 50% of the £20 garment, not the add-on or the other category');
+  assert.deepStrictEqual(cat.adjustments.map((a) => a.lineItemId), [1]);
+  const svc = calculateBenefit({ benefitType: 'service_discount', discountValue: 10, targetIds: [100] }, withAddon);
+  assert.strictEqual(svc.totalSaving, 2, 'service discount skips add-ons that only inherited the service id');
+  const whole = calculateBenefit({ benefitType: 'service_discount', discountValue: 10, targetIds: [7] }, {
+    basket: { lineItems: [{ serviceId: 7, price: 25, qty: 1 }] },
+  });
+  assert.strictEqual(whole.adjustments[0].lineType, 'service', 'a service priced as one line is not a basket line');
+  assert.strictEqual(whole.adjustments[0].lineItemId, 7);
+}
+{
   const r = calculateBenefit({ benefitType: 'item_discount', discountValue: 50, targetType: 'category', targetIds: [10] }, basket60);
   assert.strictEqual(r.totalSaving, 20, 'item_discount can target a category');
   const each = calculateBenefit({ benefitType: 'item_discount', discountMode: 'amount', discountValue: 1.5, targetType: 'subCategory', targetIds: [3] }, basket60);
@@ -197,6 +218,18 @@ const basket60 = {
 }
 
 console.log('✅ Benefit handlers: all passed');
+
+{
+  const { displayLineName } = require('../services/promotions/promotionReportService');
+  const names = new Map([['service:7', 'Alteration & Repair'], ['subCategory:1', 'Shirt Folded'], ['addon:4', 'Hanger']]);
+  assert.strictEqual(displayLineName('service', 7, names), 'Alteration & Repair');
+  assert.strictEqual(displayLineName('item', 1, names), 'Shirt Folded', 'public line type "item" uses the subcategory name');
+  assert.strictEqual(displayLineName('addon', 4, names), 'Hanger');
+  assert.strictEqual(displayLineName('service', 9, names), 'Service');
+  assert.strictEqual(displayLineName('basket', null, names), 'Whole order');
+  assert.strictEqual(displayLineName('delivery', null, names), 'Delivery fee');
+  console.log('✅ Invoice line names: all passed');
+}
 
 // ─── Stacking resolver ──────────────────────────────────────────────────────
 

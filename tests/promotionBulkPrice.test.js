@@ -125,6 +125,11 @@ assert.deepStrictEqual(
 }
 
 // Customer offer label.
+assert.strictEqual(buildOfferLabel({ benefitType: 'category_discount', discountValue: 20, discountMode: 'percent', targetIds: [4] }), '20% OFF selected categories');
+assert.strictEqual(buildOfferLabel({ benefitType: 'service_discount', discountValue: 20, discountMode: 'percent', targetIds: [2] }), '20% OFF selected services');
+assert.strictEqual(buildOfferLabel({ benefitType: 'category_discount', discountValue: 20, discountMode: 'percent' }, null, ['Shirts']), '20% OFF Shirts');
+assert.strictEqual(buildOfferLabel({ benefitType: 'service_discount', discountMode: 'amount', discountValue: 2, targetIds: [2] }, null, ['Wash & Iron']), '£2.00 OFF each item in Wash & Iron');
+assert.strictEqual(buildOfferLabel({ benefitType: 'item_discount', discountMode: 'percent', discountValue: 15, targetType: 'subCategory' }, null, ['Shirt']), '15% OFF Shirt');
 assert.strictEqual(buildOfferLabel(bulk()), '10 for £25.00 on selected items');
 assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00 on selected items (up to £5.00 off in total)');
 

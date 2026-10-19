@@ -102,16 +102,27 @@ function remainingSubtotalMinor(state) {
   return state.lines.reduce((s, l) => s + l.balanceMinor, 0);
 }
 
+/**
+ * Add-ons are their own catalog. A category or service discount applies to the
+ * garments (and a service priced as one line) in that category or service.
+ * An add-on on the same invoice row keeps the parent ids for display, but it is
+ * not part of the category or service unless the promotion targets add-ons.
+ */
 function lineMatchesTarget(promotion, line) {
   const ids = Array.isArray(promotion.targetIds) ? promotion.targetIds.map(Number) : [];
-  if (promotion.benefitType === 'category_discount') return line.categoryId != null && ids.includes(line.categoryId);
-  if (promotion.benefitType === 'service_discount') return line.serviceId != null && ids.includes(line.serviceId);
+  const isAddon = line.addonId != null;
+  if (promotion.benefitType === 'category_discount') {
+    return !isAddon && line.categoryId != null && ids.includes(line.categoryId);
+  }
+  if (promotion.benefitType === 'service_discount') {
+    return !isAddon && line.serviceId != null && ids.includes(line.serviceId);
+  }
   switch (promotion.targetType) {
     case 'all': return true;
-    case 'subCategory': return line.addonId == null && line.subCategoryId != null && ids.includes(line.subCategoryId);
-    case 'addon': return line.addonId != null && ids.includes(line.addonId);
-    case 'category': return line.categoryId != null && ids.includes(line.categoryId);
-    case 'service': return line.serviceId != null && ids.includes(line.serviceId);
+    case 'subCategory': return !isAddon && line.subCategoryId != null && ids.includes(line.subCategoryId);
+    case 'addon': return isAddon && ids.includes(line.addonId);
+    case 'category': return !isAddon && line.categoryId != null && ids.includes(line.categoryId);
+    case 'service': return !isAddon && line.serviceId != null && ids.includes(line.serviceId);
     default: return false;
   }
 }
@@ -272,9 +283,16 @@ function toAdjustments(state, benefit) {
   benefit.lineMinor.forEach((amount, i) => {
     if (amount <= 0) return;
     const line = state.lines[i];
+    const placed = line.addonId != null
+      ? { lineType: 'addon', lineItemId: line.addonId }
+      : line.subCategoryId != null
+        ? { lineType: 'subCategory', lineItemId: line.subCategoryId }
+        : line.serviceId != null
+          ? { lineType: 'service', lineItemId: line.serviceId }
+          : { lineType: 'basket', lineItemId: null };
     rows.push({
-      lineType: line.addonId != null ? 'addon' : line.subCategoryId != null ? 'subCategory' : 'basket',
-      lineItemId: line.addonId != null ? line.addonId : line.subCategoryId,
+      lineType: placed.lineType,
+      lineItemId: placed.lineItemId,
       amountMinor: -amount,
       amount: -fromMinor(amount),
       label: benefit.label,

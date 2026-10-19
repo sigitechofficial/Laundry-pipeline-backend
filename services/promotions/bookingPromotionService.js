@@ -29,12 +29,13 @@ const { CUSTOMER_RESERVE_MESSAGE } = require('../../utils/couponDiscount');
 const { normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { isPromotionsCheckoutEnabled } = require('./checkoutFlag');
 const { buildPromotionContext } = require('./contextBuilder');
-const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHeldPromotions } = require('./promotionEngine');
+const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHeldPromotions, targetNamesByPromotion } = require('./promotionEngine');
 const { effectiveValues, resolveDiscountMode } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
 const credit = require('./customerCreditService');
 const { COMPLETED, CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
+const { lineItemNames, displayLineName } = require('./promotionReportService');
 
 const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 
@@ -143,7 +144,8 @@ async function validateCodeForCheckout({ code, customerId, zoneId, laundryCartAm
   const zoneOverride = zoneOverrideOf(promo, zoneId);
   const values = effectiveValues(promo, zoneOverride);
   const ids = zoneIdsOf(promo);
-  const label = buildOfferLabel(promo, zoneOverride);
+  const names = await targetNamesByPromotion([promo]);
+  const label = buildOfferLabel(promo, zoneOverride, names.get(Number(promo.id)));
   const laundry = Number(laundryCartAmount) || 0;
   return {
     couponId: promo.id,
@@ -612,33 +614,39 @@ async function customerPromotionSummary(bookingId) {
     const minor = Math.abs(toMinor(a.amount));
     totalMinor += minor;
     discountByPromotion.set(Number(a.promotionId), (discountByPromotion.get(Number(a.promotionId)) || 0) + minor);
-    if (a.lineItemId != null && ['subCategory', 'addon'].includes(a.lineType)) {
+    if (a.lineItemId != null && ['subCategory', 'addon', 'service'].includes(a.lineType)) {
       const key = `${a.lineType}:${a.lineItemId}`;
       discountByLine.set(key, (discountByLine.get(key) || 0) + minor);
     }
   }
   const state = paid ? 'paid' : totalMinor > 0 ? 'applied' : 'holding';
 
+  const ITEM_BENEFITS = ['item_discount', 'category_discount', 'service_discount', 'bundle'];
+  const nameMap = await targetNamesByPromotion(holds.map((h) => h.promotion).filter(Boolean));
   const promotions = holds.map((h) => {
     const p = h.promotion;
     const shown = p && (h.couponCode || ['public', 'private_code'].includes(p.visibility));
+    const benefitType = p?.benefitType || null;
     return {
       promotionId: Number(h.promotionId),
       name: shown ? p.name : 'Special discount',
-      label: shown && p ? buildOfferLabel(p) : null,
+      label: p ? buildOfferLabel(p, null, nameMap.get(Number(p.id))) : null,
       couponCode: h.couponCode || null,
       status: h.status === 'COMMITTED' ? 'paid' : 'holding',
       amount: fromMinor(discountByPromotion.get(Number(h.promotionId)) || 0),
-      benefitType: p?.benefitType || null,
+      benefitType,
+      scope: benefitType === 'cashback' ? 'cashback'
+        : ITEM_BENEFITS.includes(benefitType) ? 'item'
+        : benefitType === 'free_delivery' || benefitType === 'delivery_discount' ? 'delivery'
+        : 'basket',
       cashback: Number(h.cashbackAmount) > 0 ? Number(h.cashbackAmount) : 0,
     };
   });
 
   // Group the invoice lines by item so each item shows original → after discount.
-  // Every invoice line is listed (items without a discount too), so the list adds up to
-  // the laundry total. A line priced for a whole service (no item, e.g. an un-itemised
-  // alteration) is listed as lineType "service" with the service id; older apps only show
-  // lines with a discount, so the extra lines do not change them.
+  // A basket offer lists every line (the saving is shared across the order). A service,
+  // category or item offer lists only the lines it changed. A line priced for a whole
+  // service (no item, e.g. an un-itemised alteration) is lineType "service".
   const itemOriginal = new Map();
   for (const li of lines) {
     const key = li.addonId ? `addon:${li.addonId}`
@@ -651,17 +659,28 @@ async function customerPromotionSummary(bookingId) {
     row.originalMinor += toMinor(li.price) * li.qty;
     itemOriginal.set(key, row);
   }
+  const catalogNames = await lineItemNames([...itemOriginal.keys()].map((key) => {
+    const split = key.indexOf(':');
+    return { lineType: key.slice(0, split), lineItemId: Number(key.slice(split + 1)) };
+  }));
   const lineView = [...itemOriginal.entries()].map(([key, r]) => {
     const discountMinor = Math.min(discountByLine.get(key) || 0, r.originalMinor);
+    const split = key.indexOf(':');
     return {
       lineType: r.lineType,
       itemId: r.itemId,
+      name: displayLineName(key.slice(0, split), r.itemId, catalogNames),
       quantity: r.qty,
       originalAmount: fromMinor(r.originalMinor),
       discount: fromMinor(discountMinor),
       finalAmount: fromMinor(r.originalMinor - discountMinor),
     };
   });
+  // A service, category or item offer only changed some lines. Listing the
+  // untouched lines makes it look like the whole order was discounted.
+  const moneyPromos = promotions.filter((p) => p.scope !== 'cashback' && p.amount > 0);
+  const targetedOnly = moneyPromos.length > 0 && moneyPromos.every((p) => p.scope === 'item');
+  const shownLines = targetedOnly ? lineView.filter((l) => l.discount > 0) : lineView;
 
   const cashbackHolds = holds.filter((h) => h.promotion?.benefitType === 'cashback');
   const cashback = cashbackHolds.length ? cashbackView(cashbackHolds, creditView) : null;
@@ -671,7 +690,8 @@ async function customerPromotionSummary(bookingId) {
     message: onlyCashback ? cashback.message : CUSTOMER_MESSAGES[state],
     total: fromMinor(totalMinor),
     promotions,
-    lines: lineView,
+    lines: shownLines,
+    linesNote: targetedOnly ? 'Only these items. The rest of the order is full price.' : null,
     cashback,
     creditUsed: creditView.creditUsed,
   };
