@@ -352,6 +352,9 @@ exports.agentAddressAdd = async (req, res) => {
         addressType,
     });
 
+    const revenueRampService = require("../../services/Admin/revenueRampService");
+    await revenueRampService.markNewShopIfCovered(registerShop);
+
     return ResponseHelper.success(res, "Laundary Shhop Address Added", { registerShop });
 }
 

@@ -60,6 +60,7 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require('../../utils/agentCommission');
+const { rampCommissionBase } = require('../../utils/revenueRamp');
 const { bookingTipAmountFromTips, summarizeTips, splitTips } = require('../../utils/bookingTips');
 const { lockPrepaidTipAmount } = require('../../utils/invoicePaymentSummary');
 const { ensureOrderTrackId, ensureOrderTrackIds } = require('../../utils/orderTrackId');
@@ -968,10 +969,14 @@ class OrderService {
         try {
             const servicesSubtotal = await sumActiveBookingServicesSubtotal(orderId);
             const tipAmount = bookingTipAmountFromTips(plain.tips);
-            const commissionBase = resolveAgentCommissionBase(
-                servicesSubtotal,
-                plain.commercialTerms.zoneMinimumAmount,
-                plain.paymentType
+            const commissionBase = rampCommissionBase(
+                resolveAgentCommissionBase(
+                    servicesSubtotal,
+                    plain.commercialTerms.zoneMinimumAmount,
+                    plain.paymentType
+                ),
+                plain.billingDetail?.discount,
+                plain.commercialTerms.revenueRampStep
             );
             const commissionAmounts = calculateAgentCommissionAmounts(
                 commissionBase,

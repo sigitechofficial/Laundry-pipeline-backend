@@ -196,6 +196,7 @@ const ROUTE_FEATURE_PREFIXES = [
     ['/failAttemptReasons', K.POLICIES_MANAGEMENT],
     ['/compliance', K.POLICIES_MANAGEMENT],
     ['/runtimeSettings', K.POLICIES_MANAGEMENT],
+    ['/revenueRampPolicy', K.POLICIES_MANAGEMENT],
     ['/platformOperationalHours', K.POLICIES_MANAGEMENT],
     ['/addCancellationPolicy', K.POLICIES_MANAGEMENT],
     ['/getCancellationPolicy', K.POLICIES_MANAGEMENT],
