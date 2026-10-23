@@ -15,6 +15,15 @@ const COOLDOWN_PREFIX = "cooldown:pc:addr:";
 const CACHE_TTL_SEC = 14 * 24 * 60 * 60; // 2 weeks
 const COOLDOWN_SEC = 30; // seconds between paid address searches (per user)
 
+// Free postcode suggestions (postcodes.io) — cached so typing doesn't re-query it.
+const AUTOCOMPLETE_CACHE_PREFIX = "pc:ac:v1:";
+const AUTOCOMPLETE_CACHE_TTL_SEC = 24 * 60 * 60; // 1 day
+const AUTOCOMPLETE_EMPTY_CACHE_TTL_SEC = 60 * 60; // 1 hour for "no suggestions"
+// Whether an outcode (NW11, SW1A…) exists — practically permanent, so cached for long.
+const OUTCODE_CACHE_PREFIX = "pc:oc:v1:";
+const OUTCODE_CACHE_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
+const OUTCODE_CHECK_BATCH = 20; // postcodes.io requests in flight at once
+
 class CustomerPostcodeService {
     normalizePostcode(postcode) {
         return postcode.trim().replace(/\s+/g, "").toUpperCase();
@@ -158,26 +167,48 @@ class CustomerPostcodeService {
         return (query || "").trim().replace(/\s+/g, "").toUpperCase();
     }
 
+    /**
+     * Does this outcode (e.g. "NW11", "SW1A") exist? Asks postcodes.io (free) and
+     * remembers the answer in Redis for OUTCODE_CACHE_TTL_SEC, because outcodes almost
+     * never change and a single area lookup can check dozens of them.
+     * Network errors are not cached (the next request simply tries again).
+     */
     async verifyOutcodeExists(outcode) {
+        const key = `${OUTCODE_CACHE_PREFIX}${outcode}`;
+        const cached = await this.safeRedisGet(key);
+        if (cached === "1" || cached === "0") {
+            return cached === "1";
+        }
         try {
             const response = await axios.get(
                 `https://api.postcodes.io/outcodes/${encodeURIComponent(outcode)}`,
                 { timeout: 3000, validateStatus: (status) => status < 500 }
             );
-            return response.status === 200 && response.data?.status === 200;
+            const exists = response.status === 200 && response.data?.status === 200;
+            await this.safeRedisSetEx(key, OUTCODE_CACHE_TTL_SEC, exists ? "1" : "0");
+            return exists;
         } catch {
             return false;
         }
     }
 
+    /**
+     * Keep only the candidates that really exist, in their original order.
+     * Checked in small batches so a 100-candidate area list doesn't fire
+     * 100 parallel requests at postcodes.io (results are cached, see above).
+     */
     async resolveExistingOutcodes(candidates, limit = 15) {
-        const checks = await Promise.all(
-            candidates.map(async (outcode) =>
-                (await this.verifyOutcodeExists(outcode)) ? outcode : null
-            )
-        );
-
-        return checks.filter(Boolean).slice(0, limit);
+        const found = [];
+        for (let i = 0; i < candidates.length && found.length < limit; i += OUTCODE_CHECK_BATCH) {
+            const batch = candidates.slice(i, i + OUTCODE_CHECK_BATCH);
+            const checks = await Promise.all(
+                batch.map(async (outcode) =>
+                    (await this.verifyOutcodeExists(outcode)) ? outcode : null
+                )
+            );
+            found.push(...checks.filter(Boolean));
+        }
+        return found.slice(0, limit);
     }
 
     buildOutcodeCandidates(compact) {
@@ -190,7 +221,10 @@ class CustomerPostcodeService {
         const candidates = [];
 
         if (!digits) {
-            for (let d = 1; d <= 20; d += 1) {
+            // Districts run from 0 (e.g. HA0, CM0) up to 99 (e.g. B99, DN40).
+            // Unverified guesses used to include ones that don't exist (NW12) and
+            // miss real ones (HA0, N22); callers now verify with resolveExistingOutcodes.
+            for (let d = 0; d <= 99; d += 1) {
                 candidates.push(`${area}${d}`);
             }
             return candidates;
@@ -285,12 +319,38 @@ class CustomerPostcodeService {
         return Array.isArray(response.data?.result) ? response.data.result : [];
     }
 
+    /**
+     * Postcode suggestions while the customer types (free, postcodes.io).
+     * Results are cached in Redis per query (AUTOCOMPLETE_CACHE_TTL_SEC) so repeated
+     * keystrokes from everyone are answered without calling postcodes.io again.
+     * Empty results are cached for a shorter time in case it was a temporary gap.
+     */
     async autocompletePostcode(query) {
         const compact = this.compactPostcodeQuery(query);
         if (compact.length < 2) {
             return { suggestions: [], suggestionType: "postcode" };
         }
 
+        const cacheKey = `${AUTOCOMPLETE_CACHE_PREFIX}${compact}`;
+        const cached = await this.safeRedisGet(cacheKey);
+        if (cached) {
+            try {
+                return JSON.parse(cached);
+            } catch {
+                // corrupt entry: fall through and rebuild it
+            }
+        }
+
+        const result = await this.autocompletePostcodeUncached(compact);
+        await this.safeRedisSetEx(
+            cacheKey,
+            result.suggestions.length ? AUTOCOMPLETE_CACHE_TTL_SEC : AUTOCOMPLETE_EMPTY_CACHE_TTL_SEC,
+            JSON.stringify(result)
+        );
+        return result;
+    }
+
+    async autocompletePostcodeUncached(compact) {
         try {
             // Full postcode e.g. SW1A1AA or partial incode e.g. SW1A1
             if (POSTCODE_REGEX.test(compact) || /^[A-Z]{1,2}\d{1,2}[A-Z]\d/.test(compact)) {
@@ -306,9 +366,10 @@ class CustomerPostcodeService {
                 return { suggestions, suggestionType: "postcode" };
             }
 
-            // Area only e.g. SW -> postcode districts (SW1, SW2); not valid outcodes on their own
+            // Area only e.g. SW -> postcode districts (SW1, SW2); not valid outcodes on their own.
+            // Only districts that really exist are offered (checked + cached, see verifyOutcodeExists).
             if (/^[A-Z]{1,2}$/.test(compact)) {
-                const raw = this.buildOutcodeCandidates(compact).slice(0, 15);
+                const raw = await this.resolveExistingOutcodes(this.buildOutcodeCandidates(compact), 30);
                 const suggestions = this.rankOutcodeSuggestions(compact, raw);
                 return { suggestions, suggestionType: "outcode" };
             }
@@ -318,7 +379,16 @@ class CustomerPostcodeService {
                 const candidates = this.buildOutcodeCandidates(compact);
                 const raw = await this.resolveExistingOutcodes(candidates, 15);
                 const suggestions = this.rankOutcodeSuggestions(compact, raw);
-                return { suggestions, suggestionType: "outcode" };
+                if (suggestions.length) {
+                    return { suggestions, suggestionType: "outcode" };
+                }
+                // Most districts (HA0, NW11, E16) have no lettered sub-districts:
+                // offer the district's full postcodes instead of an empty list.
+                const full = await this.fetchFullPostcodeAutocomplete(compact);
+                return {
+                    suggestions: this.rankPostcodeSuggestions(compact, full),
+                    suggestionType: "postcode",
+                };
             }
 
             const raw = await this.fetchFullPostcodeAutocomplete(compact);

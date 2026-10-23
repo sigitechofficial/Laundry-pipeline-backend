@@ -1542,7 +1542,7 @@ class CustomerOrderService {
             preferencesArray,
             setupIntentId,
             paymentMethodId,
-            stripeCustomerId,
+            stripeCustomerId: clientStripeCustomerId,
             tipAmount,
             timeZone,
             clientTimeZone,
@@ -1553,9 +1553,21 @@ class CustomerOrderService {
 
         const paymentType = normalizePaymentType(rawPaymentType);
 
-        const customerRow = await users.findByPk(userId, { attributes: ['id', 'status'] });
+        const customerRow = await users.findByPk(userId, { attributes: ['id', 'status', 'stripeCustomerId'] });
         if (!customerRow || isUserBlocked(customerRow.status)) {
             throw new ForbiddenError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
+        }
+
+        // Stripe customer = the signed-in user's own, as in createIntentUsingStripe (which
+        // saves the card to it). The client-sent stripeCustomerId could be stale (another
+        // account in the same browser, a new account) and made Stripe refuse the hold:
+        // "The PaymentMethod ... does not belong to the Customer you supplied".
+        // The client value is only a fallback for an account that has none stored yet.
+        const stripeCustomerId = customerRow.stripeCustomerId || clientStripeCustomerId || null;
+        if (clientStripeCustomerId && customerRow.stripeCustomerId && clientStripeCustomerId !== customerRow.stripeCustomerId) {
+            console.warn(
+                `[createBooking] user ${userId}: ignoring client stripeCustomerId ${clientStripeCustomerId}, using ${customerRow.stripeCustomerId}`
+            );
         }
 
         console.log("stripeCustomerId==============>>>", stripeCustomerId);
