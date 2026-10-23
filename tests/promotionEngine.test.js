@@ -220,7 +220,7 @@ const basket60 = {
 console.log('✅ Benefit handlers: all passed');
 
 {
-  const { displayLineName } = require('../services/promotions/promotionReportService');
+  const { displayLineName } = require('../services/promotions/lineNames');
   const names = new Map([['service:7', 'Alteration & Repair'], ['subCategory:1', 'Shirt Folded'], ['addon:4', 'Hanger']]);
   assert.strictEqual(displayLineName('service', 7, names), 'Alteration & Repair');
   assert.strictEqual(displayLineName('item', 1, names), 'Shirt Folded', 'public line type "item" uses the subcategory name');
