@@ -18,6 +18,7 @@ const {
   customerCreditEntry: CreditEntry,
 } = require('../../models');
 const { NotFoundError } = require('../../middlewares/universalErrorHandler');
+const { displayLineName } = require('./lineNames');
 
 const money = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const MAX_RANGE_DAYS = 366;
@@ -314,15 +315,6 @@ async function lineItemNames(lines) {
   for (const r of addons) names.set(`addon:${r.id}`, r.name);
   for (const r of services) names.set(`service:${r.id}`, r.name);
   return names;
-}
-
-/** Customer-facing name of one discount line. */
-function displayLineName(lineType, lineItemId, names) {
-  if (lineType === 'delivery') return 'Delivery fee';
-  if (lineType === 'basket' || lineItemId == null) return 'Whole order';
-  const stored = lineType === 'item' ? 'subCategory' : lineType;
-  return names.get(`${stored}:${lineItemId}`)
-    || (lineType === 'service' ? 'Service' : lineType === 'addon' ? 'Add-on' : 'Item');
 }
 
 /**
