@@ -496,6 +496,11 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: true,
     comment: "accepted | assigned | backfill",
   },
+  revenueRampStep: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: "New-shop ramp step frozen at accept. Null means normal commission.",
+  },
   }, {
     sequelize,
     modelName: 'booking',

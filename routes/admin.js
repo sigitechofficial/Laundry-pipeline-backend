@@ -24,6 +24,7 @@ const notifyLogsController = require('../controllers/Admin/notifyLogsController'
 const adminPushNotificationController = require('../controllers/Admin/adminPushNotificationController');
 const adminAlertPreferencesController = require('../controllers/Admin/adminAlertPreferencesController');
 const runtimeSettingsController = require('../controllers/Admin/runtimeSettingsController');
+const revenueRampController = require('../controllers/Admin/revenueRampController');
 const serviceComparisonController = require('../controllers/Admin/serviceComparisonController');
 const shopReviewController = require('../controllers/Admin/shopReviewController');
 const mapsGeocodeController = require('../controllers/Admin/mapsGeocodeController');
@@ -252,6 +253,14 @@ router.get(
 router.put(
     '/runtimeSettings',
     asyncMiddleware(runtimeSettingsController.updateRuntimeSettings)
+)
+router.get(
+    '/revenueRampPolicy',
+    asyncMiddleware(revenueRampController.getRevenueRampPolicy)
+)
+router.put(
+    '/revenueRampPolicy',
+    asyncMiddleware(revenueRampController.updateRevenueRampPolicy)
 )
 
 const agentComplianceController = require('../controllers/Admin/agentComplianceController');

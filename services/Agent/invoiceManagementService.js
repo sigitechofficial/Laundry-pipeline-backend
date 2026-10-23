@@ -51,6 +51,7 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require("../../utils/agentCommission");
+const { rampCommissionBase } = require("../../utils/revenueRamp");
 const { bookingTipAmountFromTips, summarizeTips } = require("../../utils/bookingTips");
 const {
     ensureRateSnapshotOnBooking,
@@ -691,10 +692,14 @@ class AgentInvoiceManagementService {
         const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
         const amountDueNow = paymentSummary.amountDueNow;
 
-        const commissionBase = resolveAgentCommissionBase(
-            servicesSubtotal,
-            parsedZoneMinimum,
-            bookingRow.paymentType
+        const commissionBase = rampCommissionBase(
+            resolveAgentCommissionBase(
+                servicesSubtotal,
+                parsedZoneMinimum,
+                bookingRow.paymentType
+            ),
+            existingDiscount,
+            terms.revenueRampStep
         );
         const commissionAmounts = calculateAgentCommissionAmounts(
             commissionBase,
