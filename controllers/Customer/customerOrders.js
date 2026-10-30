@@ -102,6 +102,7 @@ async function createBooking(req, res) {
         clientTimeZone,
         paymentType,
         repairItems,
+        collectionImageUrls,
     } = req.body;
 
     const userId = req.user.id;
@@ -140,6 +141,7 @@ async function createBooking(req, res) {
         clientTimeZone,
         paymentType,
         repairItems,
+        collectionImageUrls,
     }, userId);
 
     // Return response using ResponseHelper success method
@@ -463,6 +465,26 @@ async function uploadRepairImages(req, res) {
     });
 
     return ResponseHelper.success(res, 'Repair images uploaded successfully', {
+        imageUrls,
+    });
+}
+
+/*
+ * Upload "Collect from Outside" pickup location photos (returns relative Public paths)
+ */
+async function uploadCollectionImages(req, res) {
+    const files = req.files || [];
+    if (!Array.isArray(files) || files.length === 0) {
+        return ResponseHelper.error(res, 'At least one image is required', 'NO_FILES', 400);
+    }
+
+    const imageUrls = files.map((file) => {
+        const normalized = String(file.path || '').replace(/\\/g, '/');
+        const publicIdx = normalized.indexOf('Public/');
+        return publicIdx >= 0 ? normalized.slice(publicIdx) : normalized;
+    });
+
+    return ResponseHelper.success(res, 'Collection images uploaded successfully', {
         imageUrls,
     });
 }
@@ -1090,6 +1112,7 @@ module.exports = {
     getAllServiceWithPreferenceDetails,
     getRepairCatalog,
     uploadRepairImages,
+    uploadCollectionImages,
     getAllOrderStatus,
     cancelCustomerBooking,
     updateCustomerRecurringPlan,

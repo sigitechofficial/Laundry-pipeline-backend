@@ -57,6 +57,11 @@ const {
     hydrateRepairItemsForBooking,
 } = require('../../utils/repairBookingInclude');
 const {
+    isCollectFromOutside,
+    saveCollectionImages,
+    getCollectionImagesSafe,
+} = require('../../utils/bookingCollectionImages');
+const {
     replaceServiceLinesForSelectedService,
 } = require('../../utils/invoiceLineTotals');
 const { sendEvent } = require('../../socket_io');
@@ -1549,6 +1554,7 @@ class CustomerOrderService {
             couponCode,
             paymentType: rawPaymentType,
             repairItems,
+            collectionImageUrls,
         } = data;
 
         const paymentType = normalizePaymentType(rawPaymentType);
@@ -1733,6 +1739,18 @@ class CustomerOrderService {
 
         const ordertrackingNumber = generateOrderTrackId(bookingData.id);
         await bookingData.update({ orderTrackId: ordertrackingNumber });
+
+        // Optional: older customer apps never send collectionImageUrls.
+        if (isCollectFromOutside(driverInstructionOptions)) {
+            try {
+                await saveCollectionImages(bookingData.id, collectionImageUrls);
+            } catch (collectionImagesErr) {
+                console.warn(
+                    `[createBooking] collection images save failed for booking ${bookingData.id}:`,
+                    collectionImagesErr?.message || collectionImagesErr
+                );
+            }
+        }
 
         try {
             await Promise.all([
@@ -3164,6 +3182,7 @@ class CustomerOrderService {
 
         const resultData = {
             ...bookingPlain,
+            collectionImages: await getCollectionImagesSafe(bookingPlain.id, 'bookingDetailsById'),
             servicesSubtotal,
             invoiceGenerated: hasInvoiceTotals,
             customerDeclaredServices,

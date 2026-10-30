@@ -9,6 +9,7 @@ const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
 const multer=require('multer')
 const path=require('path')
+const crypto=require('crypto')
 const validateAccessToken=require('../middlewares/accessToken')
 const customerPromotionController = require('../controllers/Customer/promotionController')
 const { promoCodeRateLimit, promoEvaluateRateLimit } = require('../middlewares/promotionRateLimit')
@@ -47,31 +48,51 @@ const uploadRepairImageStorage = multer.diskStorage({
     },
 })
 
+const CUSTOMER_IMAGE_EXTS = new Set([
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.heic',
+    '.heif',
+])
+
+const customerImageFileFilter = (req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase()
+    const ext = path.extname(file.originalname || '').toLowerCase()
+    const isImageMime = mime.startsWith('image/')
+    // GetConnect defaults MultipartFile contentType to application/octet-stream
+    const isLikelyImageBinary =
+        (mime === 'application/octet-stream' || !mime) &&
+        (CUSTOMER_IMAGE_EXTS.has(ext) || !ext)
+    if (!isImageMime && !isLikelyImageBinary) {
+        return cb(new Error('Only image uploads are allowed'))
+    }
+    cb(null, true)
+}
+
 const uploadRepairImages = multer({
     storage: uploadRepairImageStorage,
     limits: { fileSize: 8 * 1024 * 1024, files: 5 },
-    fileFilter: (req, file, cb) => {
-        const mime = String(file.mimetype || '').toLowerCase()
-        const ext = path.extname(file.originalname || '').toLowerCase()
-        const imageExts = new Set([
-            '.jpg',
-            '.jpeg',
-            '.png',
-            '.webp',
-            '.gif',
-            '.heic',
-            '.heif',
-        ])
-        const isImageMime = mime.startsWith('image/')
-        // GetConnect defaults MultipartFile contentType to application/octet-stream
-        const isLikelyImageBinary =
-            (mime === 'application/octet-stream' || !mime) &&
-            (imageExts.has(ext) || !ext)
-        if (!isImageMime && !isLikelyImageBinary) {
-            return cb(new Error('Only image uploads are allowed'))
-        }
-        cb(null, true)
+    fileFilter: customerImageFileFilter,
+})
+
+// "Collect from Outside" pickup location photos. Random names so URLs can't be guessed.
+const uploadCollectionImageStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        createDestinationDirectory('./Public/collectionImages', cb)
     },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname || '').toLowerCase()
+        cb(null, `${crypto.randomUUID()}${CUSTOMER_IMAGE_EXTS.has(ext) ? ext : '.jpg'}`)
+    },
+})
+
+const uploadCollectionImages = multer({
+    storage: uploadCollectionImageStorage,
+    limits: { fileSize: 8 * 1024 * 1024, files: 3 },
+    fileFilter: customerImageFileFilter,
 })
 
 
@@ -214,6 +235,13 @@ router.post(
     validateAccessToken,
     uploadRepairImages.array('images', 5),
     asyncMiddleware(customerOtherController.uploadRepairImages)
+);
+// Upload "Collect from Outside" pickup location photos (paths go in createBooking.collectionImageUrls)
+router.post(
+    '/uploadCollectionImages',
+    validateAccessToken,
+    uploadCollectionImages.array('images', 3),
+    asyncMiddleware(customerOtherController.uploadCollectionImages)
 );
 //Get All Order Status
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
