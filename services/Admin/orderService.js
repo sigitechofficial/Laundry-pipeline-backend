@@ -49,6 +49,7 @@ const {
 } = require('../../utils/orderListSort');
 const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
 const { EXPORT_MAX_ROWS } = require('../../utils/listQuery');
+const { getCollectionImagesSafe } = require('../../utils/bookingCollectionImages');
 const {
     serviceLineHasAddOnPayload,
     sumActiveBookingServicesSubtotal,
@@ -1006,6 +1007,7 @@ class OrderService {
             agentDeclines.length
         );
         enriched.agentDeclines = agentDeclines;
+        enriched.collectionImages = await getCollectionImagesSafe(orderId, 'getOrderForEdit');
 
         try {
             enriched.paymentSummary =

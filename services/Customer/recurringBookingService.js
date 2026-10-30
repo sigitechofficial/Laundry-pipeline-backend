@@ -28,6 +28,11 @@ const {
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const {
+  isCollectFromOutside,
+  saveCollectionImages,
+  getCollectionImages,
+} = require('../../utils/bookingCollectionImages');
+const {
   isAnyShopOpenInZone,
   isPlatformOpenNow,
 } = require('../../utils/shopWorkingHours');
@@ -800,6 +805,23 @@ async function generateNextBookingFromCompleted({
       { orderTrackId: `${created.id}-${makeOrderTrackSuffix()}` },
       { transaction: tx }
     );
+
+    // Same pickup spot each cycle: carry over the "Collect from Outside" photos.
+    if (isCollectFromOutside(source.driverInstructionOptions)) {
+      try {
+        const sourceImages = await getCollectionImages(source.id);
+        await saveCollectionImages(
+          created.id,
+          sourceImages.map((img) => img.imageUrl),
+          { transaction: tx }
+        );
+      } catch (collectionImagesErr) {
+        console.warn(
+          `[recurring] collection images copy failed source=${source.id}:`,
+          collectionImagesErr?.message || collectionImagesErr
+        );
+      }
+    }
 
     await source.update(
       {
