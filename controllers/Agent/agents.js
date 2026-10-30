@@ -191,7 +191,10 @@ const {
     buildCollectPaymentFlags,
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
-const { getCollectionImagesSafe } = require('../../utils/bookingCollectionImages');
+const {
+    getCollectionImagesSafe,
+    attachCollectionImages,
+} = require('../../utils/bookingCollectionImages');
 const {
     countActiveAssignedOrders,
     listActiveAssignedOrders,
@@ -1736,6 +1739,7 @@ exports.agentBookingFilters = async (req, res) => {
                 }
             })
         );
+        await attachCollectionImages(plains, 'agentBookingFilters');
         return plains;
     };
 
@@ -7285,6 +7289,7 @@ const getSlotBookings = async (laundryShopId, filterDate, staffScope = null) => 
                 };
                 return plain;
             });
+            await attachCollectionImages(enrichedBookings, 'getSlotBookings');
 
             return {
                 slot: `${slotFrom} - ${slotTo}`,
