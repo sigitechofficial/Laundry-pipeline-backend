@@ -66,7 +66,45 @@ async function getCollectionImagesSafe(bookingId, logTag = 'collectionImages') {
     }
 }
 
+/**
+ * Adds `collectionImages` to each plain booking in a list with one query.
+ * Never throws: on error every booking just gets an empty list.
+ */
+async function attachCollectionImages(plainBookings, logTag = 'collectionImages') {
+    const list = Array.isArray(plainBookings) ? plainBookings.filter(Boolean) : [];
+    list.forEach((b) => {
+        b.collectionImages = [];
+    });
+    const ids = [...new Set(list.map((b) => b.id).filter((id) => id != null))];
+    if (ids.length === 0) return list;
+    try {
+        const { bookingCollectionImage } = require('../models');
+        const rows = await bookingCollectionImage.findAll({
+            where: { bookingId: ids },
+            attributes: ['id', 'bookingId', 'imageUrl', 'sortOrder'],
+            order: [['sortOrder', 'ASC'], ['id', 'ASC']],
+            raw: true,
+        });
+        const byBooking = new Map();
+        for (const row of rows) {
+            if (!byBooking.has(row.bookingId)) byBooking.set(row.bookingId, []);
+            byBooking.get(row.bookingId).push({
+                id: row.id,
+                imageUrl: row.imageUrl,
+                sortOrder: row.sortOrder,
+            });
+        }
+        list.forEach((b) => {
+            b.collectionImages = byBooking.get(b.id) || [];
+        });
+    } catch (err) {
+        console.warn(`[${logTag}] collection images skipped for list:`, err?.message || err);
+    }
+    return list;
+}
+
 module.exports = {
+    attachCollectionImages,
     COLLECT_FROM_OUTSIDE,
     COLLECTION_IMAGE_DIR,
     MAX_COLLECTION_IMAGES,
