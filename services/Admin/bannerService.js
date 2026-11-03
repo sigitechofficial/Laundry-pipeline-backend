@@ -12,6 +12,9 @@ const {
   emptyToNull,
   normalizeZoneIds,
   zoneIdsApplyTo,
+  normalizePlacement,
+  normalizePlatform,
+  placementIncludes,
   isMissingTableError,
 } = require('../../utils/bannerPayload');
 
@@ -26,6 +29,8 @@ class BannerService {
       title: plain.title,
       description: plain.description,
       bannerImage: plain.bannerImage,
+      webImage: plain.webImage ?? null,
+      placement: normalizePlacement(plain.placement) || 'mobile',
       offerType: plain.offerType,
       discountValue: plain.discountValue != null ? parseFloat(plain.discountValue) : null,
       maxDiscountCap: plain.maxDiscountCap != null ? parseFloat(plain.maxDiscountCap) : null,
@@ -47,16 +52,22 @@ class BannerService {
   async ensureBannersTable() {
     const sequelize = banner.sequelize;
     const qi = sequelize.getQueryInterface();
-    if (await tableExists(qi, 'banners')) return;
-    const migration = require('../../migrations/20260513100000-create-banners');
-    await migration.up(qi, sequelize.constructor);
+    if (!(await tableExists(qi, 'banners'))) {
+      const migration = require('../../migrations/20260513100000-create-banners');
+      await migration.up(qi, sequelize.constructor);
+    }
+    // Idempotent: adds placement / webImage if this DB missed that migration.
+    const webPlacement = require('../../migrations/20261103100000-banners-web-placement');
+    await webPlacement.up(qi, sequelize.constructor);
   }
 
   async withBannersTable(work) {
     try {
       return await work();
     } catch (err) {
-      if (!isMissingTableError(err)) throw err;
+      const msg = `${err?.message || ''} ${err?.original?.message || ''}`;
+      const missingWebColumn = /Unknown column .*(placement|webImage)/i.test(msg);
+      if (!isMissingTableError(err) && !missingWebColumn) throw err;
       await this.ensureBannersTable();
       return work();
     }
@@ -224,6 +235,21 @@ class BannerService {
     return out;
   }
 
+  /** Placement from the form; omitted = mobile (old clients), anything else must be valid. */
+  parsePlacement(value, fallback = 'mobile') {
+    if (value === undefined || value === null || value === '') return fallback;
+    const placement = normalizePlacement(value);
+    if (!placement) throw new ValidationError('placement must be mobile, web, or both');
+    return placement;
+  }
+
+  /** A banner shown on the website needs its website image. */
+  validatePlacementImages(placement, webImage) {
+    if (placementIncludes(placement, 'web') && !webImage) {
+      throw new ValidationError('Upload a website image for a banner shown on the website');
+    }
+  }
+
   validateDates(startDate, endDate) {
     if (startDate && endDate && endDate < startDate) {
       throw new ValidationError('endDate must be greater than or equal to startDate');
@@ -297,12 +323,17 @@ class BannerService {
     const normalizedZoneIds = this.normalizeZoneIds(zoneIds);
     await this.validateZoneIds(normalizedZoneIds);
     this.validateDates(startDate || null, endDate || null);
+    const placement = this.parsePlacement(data.placement);
+    const webImage = emptyToNull(data.webImage);
+    this.validatePlacementImages(placement, webImage);
 
     const created = await this.withBannersTable(() =>
       banner.create({
         title: String(title).trim().slice(0, 200),
         description: emptyToNull(description),
         bannerImage: emptyToNull(bannerImage),
+        webImage,
+        placement,
         offerType: fromPromotion ? fromPromotion.offerType : offerType,
         discountValue: dv,
         maxDiscountCap: cap,
@@ -424,6 +455,13 @@ class BannerService {
     if (data.bannerImage !== undefined && data.bannerImage !== '') {
       row.bannerImage = emptyToNull(data.bannerImage);
     }
+    if (data.webImage !== undefined && data.webImage !== '') {
+      row.webImage = emptyToNull(data.webImage);
+    }
+    if (data.placement !== undefined) {
+      row.placement = this.parsePlacement(data.placement, row.placement);
+    }
+    this.validatePlacementImages(row.placement, row.webImage);
 
     const targetType = data.targetType !== undefined ? data.targetType : row.targetType;
     const targetId =
@@ -482,7 +520,9 @@ class BannerService {
 
   /**
    * Customer-facing: get active banners for today, filtered by zone if provided.
-   * @param {Object} query - { zoneId, showOnHome }
+   * `platform=web` returns website banners; anything else is the mobile app, as before.
+   * Every banner carries `image`: the website image on web, else `bannerImage`.
+   * @param {Object} query - { zoneId, showOnHome, platform }
    */
   async getActiveBannersForCustomer(query = {}) {
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -515,16 +555,20 @@ class BannerService {
       return { message: 'Banners fetched successfully', data: { banners: [] } };
     }
 
+    const platform = normalizePlatform(query.platform);
     const zoneIdFilter = query.zoneId ? parseInt(query.zoneId, 10) : null;
-    let filtered = rows;
+    let filtered = rows.filter(
+      (row) => placementIncludes(row.placement, platform) && (platform !== 'web' || row.webImage)
+    );
     if (zoneIdFilter && !Number.isNaN(zoneIdFilter)) {
-      filtered = rows.filter((row) => zoneIdsApplyTo(row.zoneIds, zoneIdFilter));
+      filtered = filtered.filter((row) => zoneIdsApplyTo(row.zoneIds, zoneIdFilter));
     }
 
     const formatted = await Promise.all(
       filtered.map(async (row) => {
         const target = await this.resolveTarget(row.targetType, row.targetId);
-        return this.formatBanner(row, { target });
+        const image = platform === 'web' ? row.webImage : row.bannerImage;
+        return this.formatBanner(row, { target, image: image || null });
       })
     );
     let banners = formatted;
@@ -558,8 +602,8 @@ class BannerService {
         ok: true,
         table: 'banners',
         count,
-        customer: 'GET /customer/getBanners?zoneId=&showOnHome=true',
-        adminCreate: 'POST /admin/createBanner (multipart image or bannerImage)',
+        customer: 'GET /customer/getBanners?zoneId=&showOnHome=true&platform=web|mobile',
+        adminCreate: 'POST /admin/createBanner (multipart image or bannerImage; webImage for the website)',
         home: 'GET /customer/getHomeConfig includes data.banners'
       };
     } catch (err) {

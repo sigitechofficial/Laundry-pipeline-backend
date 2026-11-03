@@ -7,13 +7,14 @@ const { StatusCodes } = require('http-status-codes');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const {
   pickBannerUpload,
+  pickWebBannerUpload,
   publicPathFromMulterFile,
 } = require('../../utils/bannerPayload');
 
 const ALLOWED_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 
-function resolveUploadedImage(req) {
-  const file = pickBannerUpload(req);
+function resolveUploadedImage(req, pick = pickBannerUpload) {
+  const file = pick(req);
   if (!file) return undefined;
 
   const ext = path.extname(file.originalname || file.filename || '').toLowerCase();
@@ -29,11 +30,17 @@ function resolveUploadedImage(req) {
 
 function payloadFromRequest(req, { includeExistingImage = true } = {}) {
   const uploaded = resolveUploadedImage(req);
+  const uploadedWeb = resolveUploadedImage(req, pickWebBannerUpload);
   const payload = { ...req.body };
   if (uploaded) {
     payload.bannerImage = uploaded;
   } else if (!includeExistingImage) {
     delete payload.bannerImage;
+  }
+  if (uploadedWeb) {
+    payload.webImage = uploadedWeb;
+  } else if (!includeExistingImage) {
+    delete payload.webImage;
   }
   return payload;
 }

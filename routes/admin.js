@@ -175,6 +175,7 @@ function acceptBannerImage(req, res, next) {
     uploadBannerImage.fields([
         { name: 'image', maxCount: 1 },
         { name: 'bannerImage', maxCount: 1 },
+        { name: 'webImage', maxCount: 1 },
     ])(req, res, (err) => {
         if (!err) return next();
         if (err.code === 'LIMIT_FILE_SIZE') {
@@ -182,7 +183,7 @@ function acceptBannerImage(req, res, next) {
         }
         if (err.code === 'LIMIT_UNEXPECTED_FILE') {
             return next(new ValidationError(
-                `Unexpected file field "${err.field}". Use "image" or "bannerImage".`
+                `Unexpected file field "${err.field}". Use "image" or "bannerImage", and "webImage" for the website.`
             ));
         }
         return next(new ValidationError(err.message || 'Invalid banner image upload'));
@@ -1079,7 +1080,7 @@ router.get('/maps/geocode', asyncMiddleware(mapsGeocodeController.geocode));
 router.post('/gemini/generate', asyncMiddleware(geminiController.generate));
 
 //!-----------------------------------Banner & Offers------------------------------------>>>>
-// Create / update accept multipart with field name `image` or `bannerImage`.
+// Create / update accept multipart with field name `image` or `bannerImage` (mobile) and `webImage` (website).
 router.post(
     '/createBanner',
     acceptBannerImage,
