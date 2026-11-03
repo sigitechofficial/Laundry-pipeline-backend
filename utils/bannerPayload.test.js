@@ -8,6 +8,10 @@ const {
   zoneIdsApplyTo,
   publicPathFromMulterFile,
   pickBannerUpload,
+  pickWebBannerUpload,
+  normalizePlacement,
+  normalizePlatform,
+  placementIncludes,
   isMissingTableError,
 } = require('./bannerPayload');
 
@@ -49,6 +53,29 @@ assert.strictEqual(
   pickBannerUpload({ files: { image: [{ filename: 'y.jpg' }] } }).filename,
   'y.jpg'
 );
+assert.strictEqual(
+  pickWebBannerUpload({ files: { webImage: [{ filename: 'w.jpg' }], image: [{ filename: 'm.jpg' }] } }).filename,
+  'w.jpg'
+);
+assert.strictEqual(pickWebBannerUpload({ files: { image: [{ filename: 'm.jpg' }] } }), null);
+assert.strictEqual(
+  pickBannerUpload({ files: { webImage: [{ filename: 'w.jpg' }] } }),
+  null
+);
+
+assert.strictEqual(normalizePlacement('Web'), 'web');
+assert.strictEqual(normalizePlacement('both'), 'both');
+assert.strictEqual(normalizePlacement('tv'), null);
+assert.strictEqual(normalizePlacement(undefined), null);
+assert.strictEqual(normalizePlatform(undefined), 'mobile');
+assert.strictEqual(normalizePlatform('WEB'), 'web');
+assert.strictEqual(normalizePlatform('ios'), 'mobile');
+assert.strictEqual(placementIncludes(null, 'mobile'), true);
+assert.strictEqual(placementIncludes(null, 'web'), false);
+assert.strictEqual(placementIncludes('web', 'mobile'), false);
+assert.strictEqual(placementIncludes('web', 'web'), true);
+assert.strictEqual(placementIncludes('both', 'web'), true);
+assert.strictEqual(placementIncludes('both', undefined), true);
 
 assert.strictEqual(
   isMissingTableError({ message: "Table 'laundry.banners' doesn't exist" }),

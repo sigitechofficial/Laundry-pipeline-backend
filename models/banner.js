@@ -21,6 +21,15 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING(500),
         allowNull: true
       },
+      webImage: {
+        type: DataTypes.STRING(500),
+        allowNull: true
+      },
+      placement: {
+        type: DataTypes.STRING(10),
+        allowNull: false,
+        defaultValue: 'mobile'
+      },
       offerType: {
         type: DataTypes.ENUM('percentage', 'flat', 'free_delivery'),
         allowNull: false

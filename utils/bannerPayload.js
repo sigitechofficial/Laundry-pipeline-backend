@@ -81,6 +81,31 @@ function pickBannerUpload(req) {
   return files.image?.[0] || files.bannerImage?.[0] || null;
 }
 
+/** The website image comes in its own multipart field, `webImage`. */
+function pickWebBannerUpload(req) {
+  const files = req?.files;
+  if (!files || Array.isArray(files)) return null;
+  return files.webImage?.[0] || null;
+}
+
+/** Where a banner shows. Rows from before placement existed are mobile-only. */
+const BANNER_PLACEMENTS = ['mobile', 'web', 'both'];
+
+function normalizePlacement(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return BANNER_PLACEMENTS.includes(normalized) ? normalized : null;
+}
+
+/** Customer requests are for the mobile app unless they ask for `platform=web`. */
+function normalizePlatform(value) {
+  return String(value ?? '').trim().toLowerCase() === 'web' ? 'web' : 'mobile';
+}
+
+function placementIncludes(placement, platform) {
+  const p = normalizePlacement(placement) || 'mobile';
+  return p === 'both' || p === normalizePlatform(platform);
+}
+
 function isMissingTableError(err) {
   const msg = `${err?.message || ''} ${err?.original?.message || ''} ${err?.parent?.message || ''}`;
   return /ER_NO_SUCH_TABLE|doesn't exist|Unknown table|no such table/i.test(msg);
@@ -93,5 +118,10 @@ module.exports = {
   zoneIdsApplyTo,
   publicPathFromMulterFile,
   pickBannerUpload,
+  pickWebBannerUpload,
+  BANNER_PLACEMENTS,
+  normalizePlacement,
+  normalizePlatform,
+  placementIncludes,
   isMissingTableError,
 };
