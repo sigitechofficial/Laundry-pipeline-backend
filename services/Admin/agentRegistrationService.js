@@ -598,6 +598,9 @@ class AgentRegistrationService {
             addressType: addressType || "LaundaryShopAddress",
         });
 
+        const revenueRampService = require("./revenueRampService");
+        await revenueRampService.markNewShopIfCovered(registerShop);
+
         return {
             addressId: registerShop.id,
             address: registerShop

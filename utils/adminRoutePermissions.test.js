@@ -75,6 +75,10 @@ function run() {
         resolveAdminFeatureKey({ path: '/getAllBanners' }),
         ADMIN_FEATURE_KEYS.PROMOTION
     );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/revenueRampPolicy' }),
+        ADMIN_FEATURE_KEYS.POLICIES_MANAGEMENT
+    );
     assert.strictEqual(resolveAdminFeatureKey({ path: '/signOut' }), null);
     assert.strictEqual(resolveAdminFeatureKey({ path: '/not-a-real-admin-route' }), null);
 

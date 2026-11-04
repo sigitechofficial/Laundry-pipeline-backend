@@ -66,6 +66,23 @@ function runTests() {
     );
     assert.strictEqual(sameAsLive.differsFromLiveZone, false);
 
+    const rampOrder = toCommercialTermsPayload(
+        resolveCommercialTerms(
+            {
+                rateSnapshotLockedAt: "2026-10-22T10:00:00.000Z",
+                rateSnapshotSource: "accepted",
+                appliedZoneMinimum: 15,
+                appliedServiceCharge: 5,
+                appliedAgentCommissionPercent: 0,
+                appliedPlatformCommissionPercent: 100,
+                revenueRampStep: 1,
+            },
+            liveZone
+        )
+    );
+    assert.strictEqual(rampOrder.revenueRampStep, 1);
+    assert.strictEqual(rampOrder.differsFromLiveZone, false);
+
     const fromPlatformOnly = liveZoneTerms({
         zoneMinimumAmount: 10,
         serviceCharge: 2,
