@@ -18,6 +18,7 @@ const RATE_SNAPSHOT_ATTRIBUTES = [
     "appliedPlatformCommissionPercent",
     "rateSnapshotLockedAt",
     "rateSnapshotSource",
+    "revenueRampStep",
     "laundryShopId",
 ];
 
@@ -47,6 +48,19 @@ function isBookingAccepted(bookingPlain) {
 
 function isRateSnapshotLocked(bookingPlain) {
     return Boolean(bookingPlain?.rateSnapshotLockedAt);
+}
+
+function rampStepFrom(bookingPlain) {
+    if (bookingPlain?.revenueRampStep == null || bookingPlain.revenueRampStep === "") {
+        return null;
+    }
+    const n = Number(bookingPlain.revenueRampStep);
+    return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function isMissingRampColumn(err) {
+    const msg = `${err?.message || ""} ${err?.parent?.message || ""} ${err?.original?.message || ""}`;
+    return /Unknown column|ER_BAD_FIELD_ERROR|revenueRamp/i.test(msg);
 }
 
 function liveZoneTerms(zoneRow) {
@@ -79,6 +93,7 @@ function resolveCommercialTerms(bookingPlain, liveZone) {
                 agentPct != null ? agentPct : live.agentCommissionPercent,
             platformCommissionPercent:
                 platformPct != null ? platformPct : live.platformCommissionPercent,
+            revenueRampStep: rampStepFrom(bookingPlain),
             live,
         };
     }
@@ -86,6 +101,7 @@ function resolveCommercialTerms(bookingPlain, liveZone) {
         locked: false,
         source: "live",
         lockedAt: null,
+        revenueRampStep: rampStepFrom(bookingPlain),
         ...live,
         live,
     };
@@ -93,15 +109,18 @@ function resolveCommercialTerms(bookingPlain, liveZone) {
 
 function toCommercialTermsPayload(terms) {
     const live = terms?.live || null;
+    const rampSplit = [1, 2, 3].includes(Number(terms?.revenueRampStep));
     const differsFromLiveZone = Boolean(
         terms?.locked &&
             live &&
             (money(live.zoneMinimumAmount) !== money(terms.zoneMinimumAmount) ||
                 money(live.serviceCharge) !== money(terms.serviceCharge) ||
-                Number(live.agentCommissionPercent) !==
-                    Number(terms.agentCommissionPercent) ||
-                Number(live.platformCommissionPercent) !==
-                    Number(terms.platformCommissionPercent))
+                (!rampSplit &&
+                    Number(live.agentCommissionPercent) !==
+                        Number(terms.agentCommissionPercent)) ||
+                (!rampSplit &&
+                    Number(live.platformCommissionPercent) !==
+                        Number(terms.platformCommissionPercent)))
     );
     return {
         locked: Boolean(terms?.locked),
@@ -111,6 +130,7 @@ function toCommercialTermsPayload(terms) {
         serviceCharge: money(terms?.serviceCharge),
         agentCommissionPercent: Number(terms?.agentCommissionPercent) || 0,
         platformCommissionPercent: Number(terms?.platformCommissionPercent) || 0,
+        revenueRampStep: terms?.revenueRampStep ?? null,
         liveZone: terms?.locked ? live : null,
         differsFromLiveZone,
     };
@@ -127,14 +147,31 @@ function applyTermsToBookingInstance(bookingRow, terms) {
         appliedPlatformCommissionPercent: terms.platformCommissionPercent,
         rateSnapshotLockedAt: terms.lockedAt,
         rateSnapshotSource: terms.source,
+        revenueRampStep: terms.revenueRampStep ?? null,
     });
 }
 
 /**
  * Write-once freeze from the current zone row.
  */
-async function lockBookingRateSnapshot(bookingId, { source = "accepted" } = {}) {
+async function reloadCommercialTerms(bookingId) {
     const { booking, zone } = require("../models");
+    const fresh = await booking.findByPk(bookingId, {
+        include: [
+            {
+                model: zone,
+                attributes: ZONE_COMMERCIAL_ATTRIBUTES,
+                required: false,
+            },
+        ],
+    });
+    if (!fresh) return null;
+    return resolveCommercialTerms(toPlain(fresh), fresh.zone);
+}
+
+async function lockBookingRateSnapshot(bookingId, { source = "accepted" } = {}) {
+    const { booking, zone, sequelize } = require("../models");
+    const revenueRampService = require("../services/Admin/revenueRampService");
     const row = await booking.findByPk(bookingId, {
         include: [
             {
@@ -156,33 +193,56 @@ async function lockBookingRateSnapshot(bookingId, { source = "accepted" } = {}) 
 
     const live = liveZoneTerms(row.zone);
     const lockedAt = new Date();
-    await booking.update(
-        {
-            appliedZoneMinimum: live.zoneMinimumAmount,
-            appliedServiceCharge: live.serviceCharge,
-            appliedAgentCommissionPercent: live.agentCommissionPercent,
-            appliedPlatformCommissionPercent: live.platformCommissionPercent,
-            rateSnapshotLockedAt: lockedAt,
-            rateSnapshotSource: source,
-        },
-        {
-            where: {
-                id: bookingId,
-                rateSnapshotLockedAt: null,
-            },
-        }
-    );
+    const basePayload = {
+        appliedZoneMinimum: live.zoneMinimumAmount,
+        appliedServiceCharge: live.serviceCharge,
+        appliedAgentCommissionPercent: live.agentCommissionPercent,
+        appliedPlatformCommissionPercent: live.platformCommissionPercent,
+        rateSnapshotLockedAt: lockedAt,
+        rateSnapshotSource: source,
+    };
 
-    const fresh = await booking.findByPk(bookingId, {
-        include: [
-            {
-                model: zone,
-                attributes: ZONE_COMMERCIAL_ATTRIBUTES,
-                required: false,
-            },
-        ],
-    });
-    return resolveCommercialTerms(toPlain(fresh), fresh?.zone);
+    try {
+        await sequelize.transaction(async (transaction) => {
+            const split = await revenueRampService.claimSplit({
+                transaction,
+                laundryShopId: plain.laundryShopId,
+                zoneId: plain.zoneId || row.zone.id,
+                live,
+            });
+            const [affected] = await booking.update(
+                {
+                    ...basePayload,
+                    appliedAgentCommissionPercent: split.agentCommissionPercent,
+                    appliedPlatformCommissionPercent: split.platformCommissionPercent,
+                    revenueRampStep: split.revenueRampStep,
+                },
+                {
+                    where: { id: bookingId, rateSnapshotLockedAt: null },
+                    transaction,
+                }
+            );
+            if (!affected) {
+                const race = new Error("snapshot-race");
+                race.code = "SNAPSHOT_RACE";
+                throw race;
+            }
+        });
+    } catch (err) {
+        if (err?.code === "SNAPSHOT_RACE") {
+            return reloadCommercialTerms(bookingId);
+        }
+        if (!isMissingRampColumn(err)) throw err;
+        console.warn(
+            "[revenueRamp] snapshot written without ramp columns:",
+            err?.message || err
+        );
+        await booking.update(basePayload, {
+            where: { id: bookingId, rateSnapshotLockedAt: null },
+        });
+    }
+
+    return reloadCommercialTerms(bookingId);
 }
 
 /**

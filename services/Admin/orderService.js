@@ -49,6 +49,7 @@ const {
 } = require('../../utils/orderListSort');
 const { clampListLimit, clampPage, DEFAULT_MAX_LIST_LIMIT } = require('../../utils/listLimit');
 const { EXPORT_MAX_ROWS } = require('../../utils/listQuery');
+const { getCollectionImagesSafe } = require('../../utils/bookingCollectionImages');
 const {
     serviceLineHasAddOnPayload,
     sumActiveBookingServicesSubtotal,
@@ -60,6 +61,7 @@ const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
 } = require('../../utils/agentCommission');
+const { rampCommissionBase } = require('../../utils/revenueRamp');
 const { bookingTipAmountFromTips, summarizeTips, splitTips } = require('../../utils/bookingTips');
 const { lockPrepaidTipAmount } = require('../../utils/invoicePaymentSummary');
 const { ensureOrderTrackId, ensureOrderTrackIds } = require('../../utils/orderTrackId');
@@ -968,10 +970,14 @@ class OrderService {
         try {
             const servicesSubtotal = await sumActiveBookingServicesSubtotal(orderId);
             const tipAmount = bookingTipAmountFromTips(plain.tips);
-            const commissionBase = resolveAgentCommissionBase(
-                servicesSubtotal,
-                plain.commercialTerms.zoneMinimumAmount,
-                plain.paymentType
+            const commissionBase = rampCommissionBase(
+                resolveAgentCommissionBase(
+                    servicesSubtotal,
+                    plain.commercialTerms.zoneMinimumAmount,
+                    plain.paymentType
+                ),
+                plain.billingDetail?.discount,
+                plain.commercialTerms.revenueRampStep
             );
             const commissionAmounts = calculateAgentCommissionAmounts(
                 commissionBase,
@@ -1006,6 +1012,7 @@ class OrderService {
             agentDeclines.length
         );
         enriched.agentDeclines = agentDeclines;
+        enriched.collectionImages = await getCollectionImagesSafe(orderId, 'getOrderForEdit');
 
         try {
             enriched.paymentSummary =

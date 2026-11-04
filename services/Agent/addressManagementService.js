@@ -83,6 +83,9 @@ class AgentAddressManagementService {
             addressType,
         });
 
+        const revenueRampService = require("../Admin/revenueRampService");
+        await revenueRampService.markNewShopIfCovered(registerShop);
+
         return {
             registerShop,
         };

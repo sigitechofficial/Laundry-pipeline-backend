@@ -192,6 +192,10 @@ const {
 } = require("../../utils/invoicePaymentSummary");
 const ResponseHelper = require('../../utils/responseHelper');
 const {
+    getCollectionImagesSafe,
+    attachCollectionImages,
+} = require('../../utils/bookingCollectionImages');
+const {
     countActiveAssignedOrders,
     listActiveAssignedOrders,
 } = require("../../utils/agentActiveOrders");
@@ -351,6 +355,9 @@ exports.agentAddressAdd = async (req, res) => {
         zoneId: fetchZones[0].id,
         addressType,
     });
+
+    const revenueRampService = require("../../services/Admin/revenueRampService");
+    await revenueRampService.markNewShopIfCovered(registerShop);
 
     return ResponseHelper.success(res, "Laundary Shhop Address Added", { registerShop });
 }
@@ -1446,9 +1453,15 @@ exports.orderDetailsById = async (req, res) => {
         );
     }
 
+    const collectionImages = await getCollectionImagesSafe(bookingfind.id, 'orderDetailsById');
+
     if (bookingfind.bookingStatusId === 5) {
         const paymentType = normalizePaymentType(bookingfind.paymentType);
-        const payload = { bookingfind, shopReview };
+        const bookingPlain = bookingfind.toJSON ? bookingfind.toJSON() : bookingfind;
+        const payload = {
+            bookingfind: { ...bookingPlain, collectionImages },
+            shopReview,
+        };
         if (paymentType === "card") {
             payload.oneHourLater = moment().add(1, "hours").format("HH:mm A");
             payload.invoicePaymentWindowApplies = true;
@@ -1466,7 +1479,7 @@ exports.orderDetailsById = async (req, res) => {
     return ResponseHelper.success(
         res,
         `Order Details for ${Object.keys(whereCondition)[0]}: ${Object.values(whereCondition)[0]}`,
-        { ...plain, shopReview }
+        { ...plain, collectionImages, shopReview }
     );
 }
 
@@ -1729,6 +1742,7 @@ exports.agentBookingFilters = async (req, res) => {
                 }
             })
         );
+        await attachCollectionImages(plains, 'agentBookingFilters');
         return plains;
     };
 
@@ -4613,6 +4627,9 @@ exports.invoiceCreation = async (req, res) => {
 
     // Flatten invoiceDetails and deduplicate servicePreferences
     const bookingData = invoiceDetails[0]?.toJSON();
+    if (bookingData) {
+        bookingData.collectionImages = await getCollectionImagesSafe(bookingData.id, 'invoiceCreation');
+    }
     if (!req.isPlatformAdminRequest) {
         const shopAddress = await addressDb.findOne({
             where: {
@@ -7275,6 +7292,7 @@ const getSlotBookings = async (laundryShopId, filterDate, staffScope = null) => 
                 };
                 return plain;
             });
+            await attachCollectionImages(enrichedBookings, 'getSlotBookings');
 
             return {
                 slot: `${slotFrom} - ${slotTo}`,
