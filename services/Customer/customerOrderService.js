@@ -3712,16 +3712,39 @@ class CustomerOrderService {
                     attributes: ['id', 'name', 'price', 'unitCount']
                 }
             ],
-            attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems']
+            attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems', 'serviceId', 'subCategoryId']
         });
 
         if (!onHoldBookings || onHoldBookings.length === 0) {
             throw new NotFoundError("No on-hold bookings found");
         }
 
+        // Show the price the shop charged on this invoice, not the catalog
+        // price (the shop can price an item differently).
+        const invoiceLines = await customerSelectedService.findAll({
+            where: { bookingId, status: true },
+            attributes: ["serviceId", "subCategoryId", "categoryPrice"],
+        });
+        const unitPriceByKey = new Map();
+        for (const line of invoiceLines) {
+            const price = Number(line.categoryPrice);
+            const key = `${line.serviceId}:${line.subCategoryId}`;
+            if (Number.isFinite(price) && price > 0 && !unitPriceByKey.has(key)) {
+                unitPriceByKey.set(key, price);
+            }
+        }
+        const rows = onHoldBookings.map((row) => {
+            const json = row.toJSON();
+            const price = unitPriceByKey.get(`${row.serviceId}:${row.subCategoryId}`);
+            if (price != null && json.subCategory) {
+                json.subCategory.price = price.toFixed(2);
+            }
+            return json;
+        });
+
         return {
             message: "On-hold bookings retrieved successfully",
-            data: { onHoldBookings }
+            data: { onHoldBookings: rows }
         };
     }
 
