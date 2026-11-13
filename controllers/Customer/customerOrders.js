@@ -190,7 +190,8 @@ async function customerResponseUpdate(req, res) {
     const result = await customerOrderService.customerResponseUpdate({
         bookingId,
         customerResponse,
-        timeZone: resolvedTimeZone
+        timeZone: resolvedTimeZone,
+        customerId: req.user.id
     });
 
     // Return response using ResponseHelper success method
@@ -371,7 +372,8 @@ async function getOnHoldBookings(req, res) {
 
     // Call service to handle business logic
     const result = await customerOrderService.getOnHoldBookings({
-        bookingId
+        bookingId,
+        customerId: req.user.id
     });
 
     // Return response using ResponseHelper success method
@@ -391,7 +393,8 @@ async function updateCustomerResponseForOnHoldBooking(req, res) {
     const result = await customerOrderService.updateCustomerResponseForOnHoldBooking({
         responses,
         bookingId,
-        timeZone: resolvedTimeZone
+        timeZone: resolvedTimeZone,
+        customerId: req.user.id
     });
 
     // Return response using ResponseHelper success method

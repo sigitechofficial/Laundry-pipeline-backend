@@ -2542,7 +2542,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object
      */
     async customerResponseUpdate(data) {
-        const { bookingId, customerResponse, timeZone } = data;
+        const { bookingId, customerResponse, timeZone, customerId } = data;
 
         const bookingFind = await booking.findOne({
             where: {
@@ -2562,17 +2562,23 @@ class CustomerOrderService {
                 },
             ],
         });
-        console.log(
-            "🚀 ~ customerResponseUpdate ~ bookingFind:",
-            bookingFind.laundryShop.user.id
-        );
-        const userId = bookingFind.laundryShop.user.id;
+        if (!bookingFind || Number(bookingFind.customerId) !== Number(customerId)) {
+            throw new NotFoundError("Booking not found");
+        }
+        if (Number(bookingFind.bookingStatusId) !== 18) {
+            throw new ValidationError("This order is not waiting for your answer");
+        }
+        if (typeof customerResponse !== "boolean") {
+            throw new ValidationError("customerResponse must be boolean");
+        }
+        const userId = bookingFind.laundryShop?.user?.id;
 
         await OnHoldConfirmation.update(
             {
                 customerResponse: customerResponse,
+                responseConformation: true,
             },
-            { where: { bookingId: bookingId } }
+            { where: { bookingId: bookingId, deleted: false } }
         );
 
         const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
@@ -2599,7 +2605,7 @@ class CustomerOrderService {
             },
         };
 
-        sendEvent(userId, eventData);
+        if (userId) sendEvent(userId, eventData);
 
         return { message: "Customer Response" };
     }
@@ -3675,15 +3681,26 @@ class CustomerOrderService {
      * @returns {Object} - Result object with on-hold bookings data
      */
     async getOnHoldBookings(data) {
-        const { bookingId } = data;
+        const { bookingId, customerId } = data;
 
         if (!bookingId) {
             throw new ValidationError("Booking ID is required");
         }
 
+        const bookingRow = await booking.findByPk(bookingId, {
+            attributes: ["id", "customerId"],
+        });
+        if (!bookingRow || Number(bookingRow.customerId) !== Number(customerId)) {
+            throw new NotFoundError("No on-hold bookings found");
+        }
+
+        // Only the items still waiting for the customer's answer (an earlier
+        // hold on the same order is already answered or handled).
         const onHoldBookings = await OnHoldConfirmation.findAll({
             where: {
                 bookingId: bookingId,
+                responseConformation: false,
+                deleted: false,
             },
             include: [
                 {
@@ -3695,7 +3712,7 @@ class CustomerOrderService {
                     attributes: ['id', 'name', 'price', 'unitCount']
                 }
             ],
-            attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+            attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems']
         });
 
         if (!onHoldBookings || onHoldBookings.length === 0) {
@@ -3712,11 +3729,13 @@ class CustomerOrderService {
      * Update Customer Response for On Hold Booking
      * @param {Object} data - Request data
      * @param {Array} data.responses - Array of response objects
+     *   ({ onHoldId, customerResponse: true = keep / false = remove, note? })
      * @param {string} data.bookingId - Booking ID
+     * @param {number} data.customerId - Logged-in customer
      * @returns {Object} - Result object with updated responses
      */
     async updateCustomerResponseForOnHoldBooking(data) {
-        const { responses, bookingId, timeZone } = data;
+        const { responses, bookingId, timeZone, customerId } = data;
 
         if (!Number.isInteger(bookingId)) {
             throw new ValidationError("bookingId must be an integer");
@@ -3740,6 +3759,23 @@ class CustomerOrderService {
             }
         }
 
+        const bookingFind = await booking.findOne({
+            where: { id: bookingId },
+            include: [
+                {
+                    model: addressDb,
+                    as: "laundryShop",
+                    attributes: ["id", "userId"],
+                },
+            ],
+        });
+        if (!bookingFind || Number(bookingFind.customerId) !== Number(customerId)) {
+            throw new NotFoundError("Booking not found");
+        }
+        if (Number(bookingFind.bookingStatusId) !== 18) {
+            throw new ValidationError("This order is not waiting for your answer");
+        }
+
         const updatedResponses = [];
 
         for (const { customerResponse, onHoldId, note } of responses) {
@@ -3750,16 +3786,21 @@ class CustomerOrderService {
             if (!onHoldBooking) {
                 throw new NotFoundError(`On-hold booking not found for onHoldId: ${onHoldId}`);
             }
+            // Already handled by the shop in an earlier hold: leave it as it is.
+            if (onHoldBooking.deleted) {
+                continue;
+            }
 
-            onHoldBooking.customerResponse = customerResponse;   // can be true or false
+            onHoldBooking.customerResponse = customerResponse;   // true = keep, false = remove
             onHoldBooking.responseConformation = true;
 
             const trimmedNote = typeof note === "string" ? note.trim() : "";
             if (trimmedNote) {
                 const customerNote = `Customer: ${trimmedNote}`;
-                onHoldBooking.description = onHoldBooking.description
+                // description is a VARCHAR(255)
+                onHoldBooking.description = (onHoldBooking.description
                     ? `${onHoldBooking.description}\n${customerNote}`
-                    : customerNote;
+                    : customerNote).slice(0, 255);
             }
 
             await onHoldBooking.save();
@@ -3770,6 +3811,20 @@ class CustomerOrderService {
                 customerResponse: onHoldBooking.customerResponse,
                 updatedAt: onHoldBooking.updatedAt
             });
+        }
+
+        // The order goes back to the shop only when every on-hold item is answered.
+        const stillWaiting = await OnHoldConfirmation.count({
+            where: { bookingId, responseConformation: false, deleted: false },
+        });
+        if (stillWaiting > 0) {
+            return {
+                message: "Response saved. Please answer the remaining on-hold item(s)",
+                data: {
+                    updatedResponses,
+                    bookingStatusId: 18
+                }
+            };
         }
 
         // Mark booking as customer-responded so agentIssueResolved can proceed.
@@ -3786,6 +3841,18 @@ class CustomerOrderService {
             date: currentDate,
             time: currentTime
         });
+
+        // Let the shop know the order is back with them.
+        const shopUserId = bookingFind.laundryShop?.userId;
+        if (shopUserId) {
+            const { sendNotification } = require('../../utils/notification');
+            sendNotification(
+                shopUserId,
+                "Customer answered on-hold items",
+                `Order ${bookingFind.orderTrackId || bookingId}: the customer has answered the on-hold item(s)`,
+                { bookingId: String(bookingId), type: "on_hold_response" }
+            );
+        }
 
         return {
             message: "Customer responses updated successfully",
@@ -3818,7 +3885,8 @@ class CustomerOrderService {
                 {
                     model: OnHoldConfirmation,
                     required: false,
-                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse']
+                    where: { responseConformation: false, deleted: false },
+                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems']
                 }
             ],
             attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],

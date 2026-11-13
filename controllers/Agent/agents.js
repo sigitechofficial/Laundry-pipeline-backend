@@ -210,6 +210,7 @@ const agentServiceManagementService = require("../../services/Agent/serviceManag
 const serviceManagementService = require("../../services/Admin/serviceManagementService");
 const zoneCatalogService = require("../../services/Admin/zoneCatalogService");
 const { sendNotification } = require("../../utils/notification");
+const onHoldRemovalService = require("../../services/Agent/onHoldRemovalService");
 const {
     assertBookingNotCancelledForAgent,
 } = require("../../utils/assertBookingNotCancelledForAgent");
@@ -4259,18 +4260,9 @@ exports.driverAddSerivces = async (req, res) => {
  *  Agent Update Invoice
  */
 exports.agentUpdateInvoice = async (req, res) => {
-    const { bookingId, total, services, timeZone, clientTimeZone } = req.body
-
-    console.log("Req.body--------------------->", req.body)
+    const { bookingId, services } = req.body;
 
     const bookings = await booking.findByPk(bookingId);
-    const wasStatus22 = Number(bookings?.bookingStatusId) === 22;
-    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-        timeZone,
-        clientTimeZone
-    );
-    console.log("Update invoice history timestamp (tz-aware):", currentDate, currentTime);
-
     if (!bookings) {
         return res.status(404).json({
             status: "0",
@@ -4280,91 +4272,39 @@ exports.agentUpdateInvoice = async (req, res) => {
         });
     }
 
-    for (let service of services) {
-        const { categoryId, serviceId, subCategoryId } = service;
-
-
-        const updatedService = await customerSelectedService.update(
-            {
-                status: false
-            },
-            {
-                where: {
-                    serviceId: serviceId,
-                    bookingId: bookingId,
-                    subCategoryId: subCategoryId
-
-                }
-            }
+    if (Number(bookings.bookingStatusId) !== 22) {
+        throw new ValidationError(
+            "The invoice can only be updated after the customer has answered the on-hold items"
         );
-
-        await OnHoldConfirmation.update(
-            {
-                deleted: true
-            },
-            {
-                where: {
-                    serviceId: serviceId,
-                    bookingId: bookingId,
-                    subCategoryId: subCategoryId
-
-                }
-            }
-        )
-
-        await billingDetails.update(
-            {
-                total,
-                discount: 0,
-                paymentStatus: "Pending",
-            },
-            { where: { bookingId: bookingId } }
-        );
-
-
-
-
-
-        // if (updatedService[0] === 0) {
-        //     return res.status(400).json({
-        //         status: "0",
-        //         message: "Service update failed",
-        //         data: {},
-        //         error: "No matching service found or no updates were made"
-        //     });
-        // }
-
-
     }
-    await booking.update({
-        orderAmount: total,
-        bookingStatusId: 22
-    }, { where: { id: bookingId } });
 
-    // Avoid duplicate status-22 history entries when booking is already 22.
-    if (!wasStatus22) {
-        await bookingHistory.create({
-            date: currentDate,
-            time: currentTime,
+    const keys = (Array.isArray(services) ? services : [])
+        .filter((s) => s && s.serviceId != null && s.subCategoryId != null)
+        .map((s) => onHoldRemovalService.onHoldKey(s.serviceId, s.subCategoryId));
+    if (keys.length === 0) {
+        throw new ValidationError("Select the item(s) to remove");
+    }
+
+    // Only what the customer asked to remove comes off; the server works out the
+    // pieces and the new totals (the app's `total` is not trusted).
+    await onHoldRemovalService.acknowledgeKeptRows(bookingId, keys);
+    const { changed } = await onHoldRemovalService.applyCustomerRemovals(bookingId, { keys });
+
+    if (changed) {
+        const customerId = bookings.customerId;
+        let title = "Agent/Driver Updated Invoice";
+        let body = "Your agent/driver has updated invoice";
+        let data = {
             bookingId: bookingId,
-            bookingStatusId: 22,
-        });
+            driverId: bookings.driverId,
+        }
+        sendNotification(customerId, title, body, data);
     }
-
-    const customerId = bookings.customerId;
-    let title = "Agent/Driver Updated Invoice";
-    let body = "Your agent/driver has updated invoice";
-    let data = {
-        bookingId: bookingId,
-        driverId: bookings.driverId,
-    }
-    sendNotification(customerId, title, body, data);
-
 
     return res.status(200).json({
         status: "1",
         message: "Booking services updated successfully",
-        data: booking,
+        data: {},
         error: ""
     });
 
@@ -4564,7 +4504,11 @@ exports.invoiceCreation = async (req, res) => {
             {
                 model: OnHoldConfirmation,
                 required: false,
-                attributes: ["id", "description", "serviceId", "subCategoryId", "bookingId", "onHoldImg", "customerResponse"]
+                attributes: ["id", "description", "serviceId", "subCategoryId", "bookingId", "onHoldImg", "customerResponse", "responseConformation", "deleted", "noOfItems"],
+                include: [
+                    { model: service, attributes: ["id", "name"] },
+                    { model: subCategories, attributes: ["id", "name", "price"] },
+                ],
             },
             {
                 model: billingDetails,
@@ -4696,18 +4640,16 @@ exports.invoiceCreation = async (req, res) => {
         await getCustomerDeclaredServices(bookingId);
     bookingData.repairItems = await getBookingRepairItems(bookingId);
 
-    // Determine customer response status from OnHoldConfirmations
+    // null = nothing on hold; false = the customer still has items to answer;
+    // true = every on-hold item is answered (customerResponse alone can't tell,
+    // it defaults to false before the customer replies).
     let customerHasResponded = null;
 
     if (bookingData.OnHoldConfirmations && bookingData.OnHoldConfirmations.length > 0) {
-        // Check if any OnHoldConfirmation has customerResponse === true
-        const hasConfirmed = bookingData.OnHoldConfirmations.some(
-            item => item.customerResponse === true
+        customerHasResponded = !bookingData.OnHoldConfirmations.some(
+            onHoldRemovalService.isAwaitingCustomer
         );
-
-        customerHasResponded = hasConfirmed ? true : false;
     }
-    // If no OnHoldConfirmation records exist, customerHasResponded remains null
 
     const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
     bookingData.servicesSubtotal = servicesSubtotal;
@@ -5034,66 +4976,133 @@ exports.customerServices = async (req, res) => {
 /*
  * on Hold Conformation
  */
-exports.onHoldConformation = async (req, res) => {
-    let records = [];
+// Shop can raise an on-hold while the order is being processed (services added / invoiced).
+const ON_HOLD_ALLOWED_STATUS_IDS = [9, 10, 11];
+// OnHoldConfirmation.description is a VARCHAR(255).
+const ON_HOLD_DESCRIPTION_MAX = 255;
 
+exports.onHoldConformation = async (req, res) => {
     // Parse incoming records safely
     if (!req.body.records) {
-        throw new Error("Missing 'records' in request body.");
+        throw new ValidationError("Missing 'records' in request body.");
     }
-    records = JSON.parse(req.body.records);
-    console.log("records===============================>>>>>>>>", records);
+    let records;
+    try {
+        records = JSON.parse(req.body.records);
+    } catch (e) {
+        throw new ValidationError("records must be valid JSON");
+    }
+    if (!Array.isArray(records) || records.length === 0) {
+        throw new ValidationError("Add at least one on-hold item");
+    }
 
+    const bookingId = Number(records[0]?.bookingId);
+    if (!Number.isInteger(bookingId) || bookingId <= 0) {
+        throw new ValidationError("bookingId is required for every on-hold item");
+    }
+
+    // One photo per record, matched by index.
+    const images = req.files?.onHoldImg || [];
+    if (images.length !== records.length) {
+        throw new ValidationError("Each on-hold item needs one photo");
+    }
+
+    const requestedByKey = new Map();
+    const cleanRecords = records.map((record) => {
+        const serviceId = Number(record?.serviceId);
+        const subCategoryId = Number(record?.subCategoryId);
+        const noOfItems = Number(record?.noOfItems);
+        if (Number(record?.bookingId) !== bookingId) {
+            throw new ValidationError("All on-hold items must belong to the same order");
+        }
+        if (!Number.isInteger(serviceId) || serviceId <= 0 ||
+            !Number.isInteger(subCategoryId) || subCategoryId <= 0) {
+            throw new ValidationError("Select the service and item for every on-hold item");
+        }
+        if (!Number.isInteger(noOfItems) || noOfItems < 1) {
+            throw new ValidationError("Enter how many pieces are on hold for every item");
+        }
+        const key = onHoldRemovalService.onHoldKey(serviceId, subCategoryId);
+        requestedByKey.set(key, (requestedByKey.get(key) || 0) + noOfItems);
+        const description = typeof record?.description === "string"
+            ? record.description.trim().slice(0, ON_HOLD_DESCRIPTION_MAX)
+            : "";
+        return { serviceId, subCategoryId, noOfItems, description };
+    });
+
+    const bookingRow = await booking.findByPk(bookingId, {
+        attributes: ["id", "bookingStatusId", "customerId", "driverId", "orderTrackId"],
+    });
+    if (!bookingRow) {
+        throw new NotFoundError("Booking not found");
+    }
+    if (!ON_HOLD_ALLOWED_STATUS_IDS.includes(Number(bookingRow.bookingStatusId))) {
+        throw new ValidationError(
+            "Items can only be put on hold while the order is being processed at the shop"
+        );
+    }
+
+    // Every flagged item must be on the invoice, with enough pieces.
+    const activeLines = await customerSelectedService.findAll({
+        where: { bookingId, status: true },
+        attributes: ["serviceId", "subCategoryId", "items"],
+    });
+    const piecesByKey = new Map();
+    for (const line of activeLines) {
+        const key = onHoldRemovalService.onHoldKey(line.serviceId, line.subCategoryId);
+        piecesByKey.set(key, (piecesByKey.get(key) || 0) + (Number(line.items) || 0));
+    }
+    for (const [key, requested] of requestedByKey) {
+        const available = piecesByKey.get(key) || 0;
+        if (available === 0) {
+            throw new ValidationError("An on-hold item is not on this order's invoice");
+        }
+        if (requested > available) {
+            throw new ValidationError(
+                `Only ${available} piece(s) of this item are on the invoice`
+            );
+        }
+    }
 
     const { date: currentDate, time: currentTime } = agentWallClockDateTime(
         req.body?.timeZone,
         req.body?.clientTimeZone
     );
-    console.log("Current Date:", currentDate);
 
     const responseData = [];
-
-    for (let i = 0; i < records.length; i++) {
-        const { serviceId, subCategoryId, bookingId, noOfItems, description } = records[i];
-
-        // Match the uploaded image by index, not from records[i].onHoldImg
-        let onHoldImg = "";
-        if (req.files?.onHoldImg?.[i]) {
-            console.log("Images get ==========================================>>>>")
-            onHoldImg = req.files.onHoldImg[i].path.replace(/\\/g, "/");
-        }
-
-        console.log("onHoldImg for record", i, "==>", onHoldImg);
-
-        // Store in DB
+    for (let i = 0; i < cleanRecords.length; i++) {
         const createConformation = await OnHoldConfirmation.create({
-            serviceId,
-            subCategoryId,
+            ...cleanRecords[i],
             bookingId,
-            noOfItems,
-            description,
-            onHoldImg,
+            onHoldImg: images[i].path.replace(/\\/g, "/"),
         });
-
-        console.log("createConformation record #", i, ":", createConformation?.dataValues);
-
-        await booking.update(
-            { bookingStatusId: 18 },
-            { where: { id: bookingId } }
-        );
-
-        await bookingHistory.create({
-            date: currentDate,
-            time: currentTime,
-            bookingId,
-            bookingStatusId: 18,
-        });
-
         responseData.push({
             message: "Hold Confirmation Submitted",
             record: createConformation,
         });
     }
+
+    await booking.update(
+        { bookingStatusId: 18 },
+        { where: { id: bookingId } }
+    );
+
+    await bookingHistory.create({
+        date: currentDate,
+        time: currentTime,
+        bookingId,
+        bookingStatusId: 18,
+    });
+
+    // Tell the customer there is something to answer (the app opens the
+    // on-hold review sheet from `type`).
+    const piecesOnHold = cleanRecords.reduce((sum, r) => sum + r.noOfItems, 0);
+    sendNotification(
+        bookingRow.customerId,
+        "Items on hold",
+        `${piecesOnHold} item(s) in your order${bookingRow.orderTrackId ? ` #${bookingRow.orderTrackId}` : ""} are on hold. Please review and tell us what to do.`,
+        { bookingId: bookingId, driverId: bookingRow.driverId, type: "ORDER_ON_HOLD" }
+    );
 
     return ResponseHelper.success(res, "Hold Confirmation Submitted for All Records", { responseData });
 }
@@ -5104,7 +5113,7 @@ exports.onHoldConformation = async (req, res) => {
 exports.rejectedServiceItems = async (req, res) => {
     const { bookingId } = req.params
 
-
+    // All rows; the app decides what is still pending (see onHoldRemovalService).
     const rejectedItems = await OnHoldConfirmation.findAll({
         where: {
             bookingId: bookingId,
@@ -5119,15 +5128,8 @@ exports.rejectedServiceItems = async (req, res) => {
                 attributes: ['id', 'name', 'price', 'unitCount']
             }
         ],
-        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'deleted']
+        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'responseConformation', 'deleted']
     })
-
-    console.log("rejectedItems======================....", rejectedItems[0].customerResponse)
-
-    if (rejectedItems[0].customerResponse === true && rejectedItems[0].deleted === true) {
-        return ResponseHelper.success(res, "Rejected Services Items", {})
-    }
-
 
     return ResponseHelper.success(res, "Rejected Services Items", { rejectedItems })
 
@@ -5146,9 +5148,19 @@ exports.agentIssueResolved = async (req, res) => {
         },
     });
 
+    if (!bookingCheck) {
+        throw new NotFoundError("Booking not found");
+    }
+
     if (bookingCheck.bookingStatusId !== 22) {
         throw new ValidationError("Booking customer Response is not confirmed");
     }
+
+    // Anything the customer asked to remove that the shop hasn't taken off yet
+    // comes off now, so the customer's answer always reaches the invoice.
+    // (Status 22 is only set once every item is answered; an unanswered row
+    // from an order raised before that rule is left on the invoice.)
+    const { changed } = await onHoldRemovalService.applyCustomerRemovals(bookingId);
 
     await booking.update(
         {
@@ -5157,22 +5169,22 @@ exports.agentIssueResolved = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    const currentTime = new Date().toLocaleTimeString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
+    const { date, time } = agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone);
+    await bookingHistory.create({
+        date,
+        time,
+        bookingId: bookingId,
+        bookingStatusId: 11,
     });
 
-    const currentDate = new Date().toISOString().split("T")[0];
-
-    const statusId = [11, 19];
-    const bookinghistories = statusId.map(statusId => ({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
-        bookingId: bookingId,
-        bookingStatusId: statusId
-    }))
-    await bookingHistory.bulkCreate(bookinghistories);
+    if (changed) {
+        sendNotification(
+            bookingCheck.customerId,
+            "Agent/Driver Updated Invoice",
+            "Your agent/driver has updated invoice",
+            { bookingId: bookingId, driverId: bookingCheck.driverId }
+        );
+    }
 
     return ResponseHelper.success(res, "Booking Status Updated Issue Resolved", {});
 }
@@ -6233,16 +6245,25 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
         let existingService = acc.find(service => service.service.id === currentService.service.id);
 
         // Only process if subCategory exists (it can be null)
+        const lineItems = Number(currentService.items) || 0;
         const subCategoryData = currentService.subCategory ? {
             id: currentService.subCategory.id,
             name: currentService.subCategory.name,
-            price: currentService.subCategory.price
+            price: currentService.subCategory.price,
+            // Pieces of this item on the invoice (the most that can go on hold).
+            items: lineItems
         } : null;
 
         if (existingService) {
+            existingService.items = (Number(existingService.items) || 0) + lineItems;
             // If the service exists, add the subCategory to the subCategories list (if it exists)
             if (subCategoryData) {
-                existingService.subCategories.push(subCategoryData);
+                const sameItem = existingService.subCategories.find(sub => sub.id === subCategoryData.id);
+                if (sameItem) {
+                    sameItem.items += lineItems;
+                } else {
+                    existingService.subCategories.push(subCategoryData);
+                }
             }
         } else {
             // If the service doesn't exist, create a new entry
