@@ -17,6 +17,7 @@ const money = (sym, n) => `${sym}${round(n).toFixed(2)}`;
  * @param {number|null} [facts.offerWorth] what the promotions were worth before the
  *   "never more than is still to pay" limit (null = not known for this order)
  * @param {number} [facts.promotionDiscount] what the promotions actually took off
+ * @param {boolean} [facts.closed] the order was cancelled or refunded
  * @returns {{ currency: string, currencySymbol: string, lines: Array<{ key: string,
  *   label: string, amount: number, sign: '+'|'-'|null, strong: boolean }>,
  *   leftToPay: number, nothingToPay: boolean, status: string, note: string|null,
@@ -89,7 +90,8 @@ function buildInvoiceBill(ps = {}, facts = {}) {
       );
     }
   }
-  if (!isCash && paidAtBooking > totalAfter + 0.01) {
+  // Not on a cancelled/refunded order: the cancellation decides what is refunded.
+  if (!isCash && !facts.closed && paidAtBooking > totalAfter + 0.01) {
     notes.push(
       `${money(sym, paidAtBooking)} was paid at booking, more than the ${money(sym, totalAfter)} total: ` +
       `the minimum order (${money(sym, paid.minimumOrderPayment)}) is the least an order costs, so the difference is not refunded.`
@@ -115,15 +117,20 @@ function buildInvoiceBill(ps = {}, facts = {}) {
 async function attachInvoiceBill(paymentSummary, bookingId) {
   if (!paymentSummary || !bookingId) return paymentSummary;
   try {
-    const { promotionRedemption: Redemption } = require('../models');
+    const { promotionRedemption: Redemption, booking: Booking, cancelBooking: CancelBooking } = require('../models');
+    const { CANCELLED, REFUNDED } = require('../constants/bookingStatusIds');
     const credit = require('../services/promotions/customerCreditService');
-    const [holds, spent] = await Promise.all([
+    const [holds, spent, bookingRow, cancelCount] = await Promise.all([
       Redemption.findAll({
         where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
         attributes: ['discountAmount', 'fullDiscountAmount'],
       }),
       credit.spentOnBooking(bookingId),
+      Booking.findByPk(bookingId, { attributes: ['id', 'bookingStatusId'] }),
+      CancelBooking.count({ where: { bookingId } }),
     ]);
+    // Cancelled: by status, or by a cancel record (the agent cancel path sets status 13).
+    const closed = [CANCELLED, REFUNDED].includes(Number(bookingRow?.bookingStatusId)) || cancelCount > 0;
     const priced = holds.filter((h) => h.discountAmount != null);
     const promotionDiscount = priced.reduce((s, h) => s + Number(h.discountAmount || 0), 0);
     // Worth is only known when every priced hold has it (priced after the column existed).
@@ -134,6 +141,7 @@ async function attachInvoiceBill(paymentSummary, bookingId) {
       creditUsed: Number(spent?.amount) || 0,
       offerWorth,
       promotionDiscount,
+      closed,
     });
   } catch (err) {
     console.warn(`[invoiceBill] booking ${bookingId}: bill skipped`, err?.message || err);

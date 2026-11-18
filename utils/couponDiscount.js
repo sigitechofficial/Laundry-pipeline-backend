@@ -123,6 +123,10 @@ function evaluateCouponAgainstLaundry({
 const CUSTOMER_RESERVE_MESSAGE =
     'Promo saved. Your discount applies when the invoice is ready after inspection — Pay Now is unchanged.';
 
+/** A cashback code gives credit after delivery, not a discount on the invoice. */
+const CASHBACK_RESERVE_MESSAGE =
+    'Promo saved. Your cashback is added to your credit after delivery — Pay Now is unchanged.';
+
 module.exports = {
     roundMoney,
     calcDiscount,
@@ -130,4 +134,5 @@ module.exports = {
     parseZoneIds,
     couponAppliesToZone,
     CUSTOMER_RESERVE_MESSAGE,
+    CASHBACK_RESERVE_MESSAGE,
 };

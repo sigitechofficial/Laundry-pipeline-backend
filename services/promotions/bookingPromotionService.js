@@ -25,7 +25,7 @@ const {
   customerSelectedServiceAddOn: CustomerSelectedServiceAddOn,
 } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
-const { CUSTOMER_RESERVE_MESSAGE } = require('../../utils/couponDiscount');
+const { CUSTOMER_RESERVE_MESSAGE, CASHBACK_RESERVE_MESSAGE } = require('../../utils/couponDiscount');
 const { normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { isPromotionsCheckoutEnabled } = require('./checkoutFlag');
 const { buildPromotionContext } = require('./contextBuilder');
@@ -161,7 +161,8 @@ async function validateCodeForCheckout({ code, customerId, zoneId, laundryCartAm
     zoneScope: promo.zoneScopeMode === 'all' || !ids.length ? 'all' : 'specific',
     zoneIds: ids,
     offerLabel: label,
-    customerMessage: `${label}. ${CUSTOMER_RESERVE_MESSAGE}`,
+    benefitType: promo.benefitType,
+    customerMessage: `${label}. ${promo.benefitType === 'cashback' ? CASHBACK_RESERVE_MESSAGE : CUSTOMER_RESERVE_MESSAGE}`,
     couponData: {
       code: hit.coupon.code,
       discountType: resolveDiscountMode(promo) === 'percent' ? 'percentage' : 'flat',
@@ -590,7 +591,7 @@ async function customerPromotionSummary(bookingId) {
   const [holds, adjustments, lines, creditView] = await Promise.all([
     Redemption.findAll({
       where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
-      include: [{ association: 'promotion', attributes: ['id', 'name', 'visibility', 'benefitType', 'discountMode', 'discountValue', 'maxDiscountCap', 'minSubtotal', 'benefitConfig', 'currency'] }],
+      include: [{ association: 'promotion', attributes: ['id', 'name', 'visibility', 'benefitType', 'discountMode', 'discountValue', 'maxDiscountCap', 'minSubtotal', 'benefitConfig', 'currency', 'targetType', 'targetIds'] }],
       order: [['id', 'ASC']],
     }),
     OrderAdjustment.findAll({
