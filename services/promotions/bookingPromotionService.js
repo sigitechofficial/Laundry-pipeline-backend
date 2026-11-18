@@ -416,7 +416,10 @@ async function settleForBooking(bookingId) {
     const holds = await Redemption.findAll({ where: { bookingId, status: 'RESERVED' }, order: [['id', 'ASC']] });
     for (const h of holds) {
       const amount = Number(h.discountAmount) || 0;
-      if (amount > 0 || Number(h.cashbackAmount) > 0) {
+      // The offer still counts when the invoice could not take it (already paid at booking):
+      // its unused part becomes credit at completion (issueDiscountCreditForBooking).
+      const unusedMinor = toMinor(h.fullDiscountAmount) - toMinor(amount);
+      if (amount > 0 || Number(h.cashbackAmount) > 0 || (h.fullDiscountAmount != null && unusedMinor > 0)) {
         await ledger.commitRedemption(h.id, bookingId, amount);
         out.committed++;
       } else {
