@@ -114,6 +114,8 @@ router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.veri
 router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
 //logout user and destroy the Token in redis
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
+// App reports its current push token (start + token refresh)
+router.post('/deviceToken',validateAccessToken,asyncMiddleware(customerAuthControllers.updateDeviceToken))
 // Delete own customer account
 router.post('/deleteAccount',validateAccessToken,asyncMiddleware(customerAuthControllers.deleteAccount))
 //Session Api (registered customer or guest JWT)

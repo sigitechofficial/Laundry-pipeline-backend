@@ -48,7 +48,7 @@ Status: in progress (started 2026-10-08). Done: Phases 0-7 and the local end-to-
 - [x] 3.2 Cap to the payable balance (decision above).
 - [x] 3.3 Freeze once paid: no re-pricing after the balance is charged/collected.
 - [x] 3.4 `agentUpdateInvoice` (on-hold removal) still writes discount 0 with the app's total (legacy handler, left as is), but every later pricing and every charge recomputes through `calculateInvoiceTotals`, which re-applies the promotions. Verified by the invoice tests.
-- Rules at invoice: held promotions are honoured even if they expired after the booking; dropped if an admin paused/archived them or their campaign. Usage limits are not re-counted (the hold secured them); campaign budget is re-checked. Customer facts and the clock are taken as of the booking. Repricing policy: every policy recalculates on the final lines (nothing is priced at booking to lock).
+- Rules at invoice: held promotions are honoured even if they expired, were paused or archived, or their campaign was stopped after the booking (stopping a promotion stops new orders only). Usage limits are not re-counted (the hold secured them); campaign budget is re-checked. Customer facts and the clock are taken as of the booking. Repricing policy: every policy recalculates on the final lines (nothing is priced at booking to lock).
 
 ### Phase 4: Payment and lifecycle
 - [x] 4.1 Commit redemptions with final amounts on payment success (card charge, cash recorded, nothing due); campaign budget moves then.

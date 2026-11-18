@@ -10,6 +10,8 @@ const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
+const { detachFromOtherUsers, saveCurrentToken } = require('../../utils/deviceTokenStore')
+const { isValidFcmRegistrationToken } = require('../../utils/fcmToken')
 const path = require('path')
 const { stat } = require('fs')
 const stripe = require('../stripe')
@@ -181,6 +183,7 @@ async function registerCustomer(req, res) {
         ]
     })
 
+    if (dvToken) await detachFromOtherUsers(userfind.id, dvToken);
     await deviceToken.create(({
         tokenId: dvToken,
         status: true,
@@ -354,9 +357,11 @@ async function resendOTP(req, res) {
 */
 async function logout(req, res) {
     //return res.json(req.user);
-    // removing the device token from DB
+    // removing the device token from DB: the one signed in with, and the app's current one
+    // (newer apps send it; it differs when the push token changed after sign-in).
+    const currentToken = typeof req.query?.dvToken === 'string' ? req.query.dvToken.trim() : '';
     deviceToken.destroy({
-        where: { tokenId: req.user.dvToken, userId: req.user.id },
+        where: { tokenId: [req.user.dvToken, currentToken].filter(Boolean), userId: req.user.id },
     });
     // removing from redis
     redisCli
@@ -618,6 +623,19 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
 
 
 
+/**
+ * POST /customer/deviceToken { dvToken } — the app reports its current push token (on start
+ * and whenever Firebase gives it a new one), so pushes reach the phone after a token change.
+ */
+async function updateDeviceToken(req, res) {
+    const token = typeof req.body?.dvToken === 'string' ? req.body.dvToken.trim() : '';
+    if (!isValidFcmRegistrationToken(token)) {
+        return res.status(400).json({ status: "0", message: "A valid device token is required", data: {}, error: "INVALID_DEVICE_TOKEN" });
+    }
+    const { created } = await saveCurrentToken(req.user.id, token);
+    return res.json({ status: "1", message: "Device token saved", data: { created }, error: "" });
+}
+
 //!--------------------------Exports------------------------------------//
 
 module.exports = {
@@ -629,6 +647,7 @@ module.exports = {
     verifyOTPforPassword,
     changePasswordOTP,
     logout,
+    updateDeviceToken,
     getUserProfile,
     updateUserProfile,
     deleteAccount,

@@ -30,6 +30,7 @@ const keys = {
   reverse: (lotId) => `reverse-lot-${lotId}`,
   restore: (spendId) => `restore-spend-${spendId}`,
   expire: (lotId) => `expire-lot-${lotId}`,
+  discountCredit: (bookingId, promotionId) => `discount-credit-booking-${bookingId}-promo-${promotionId}`,
 };
 
 /** Days until new credit expires: CUSTOMER_CREDIT_EXPIRY_DAYS, 0 = never. */
@@ -67,6 +68,22 @@ async function lockLots(customerId, t, now = new Date()) {
   });
 }
 
+/**
+ * Lock every credit lot of the customer (spent or not) for this transaction. Credit changes of
+ * one customer then run one at a time: a parallel re-pricing of the same invoice waits here
+ * instead of acting on rows it read before the other one committed (that lost credit).
+ */
+async function lockCustomerLots(customerId, t) {
+  if (!customerId) return;
+  await Entry.findAll({
+    where: { customerId, type: LOT_TYPES },
+    attributes: ['id'],
+    order: [['id', 'ASC']],
+    lock: t.LOCK.UPDATE,
+    transaction: t,
+  });
+}
+
 /** Take up to amountMinor from the lots (FIFO), recording allocations against entry. */
 async function allocateFromLots(lots, entry, amountMinor, t) {
   let left = amountMinor;
@@ -84,7 +101,8 @@ async function allocateFromLots(lots, entry, amountMinor, t) {
 
 /** Put a spend's allocations back into their lots. */
 async function restoreAllocations(entry, t) {
-  const allocations = await Allocation.findAll({ where: { spendEntryId: entry.id }, transaction: t });
+  // Locking read: always the latest rows, never an older snapshot of this transaction.
+  const allocations = await Allocation.findAll({ where: { spendEntryId: entry.id }, lock: t.LOCK.UPDATE, transaction: t });
   for (const a of allocations) {
     const lot = await Entry.findByPk(a.lotEntryId, { lock: t.LOCK.UPDATE, transaction: t });
     if (!lot) continue;
@@ -144,7 +162,9 @@ async function getHistory(customerId, { page = 1, limit = 20 } = {}) {
       id: e.id,
       type: e.type,
       status: e.status,
-      title: e.type === 'SPEND' && e.status === 'HELD' ? 'Held for order' : HISTORY_TEXT[e.type],
+      title: e.type === 'SPEND' && e.status === 'HELD' ? 'Held for order'
+        : isDiscountCredit(e) ? 'Discount credit'
+          : HISTORY_TEXT[e.type],
       description: e.description || null,
       amount: Number(e.amount),
       remainingAmount: e.remainingAmount != null ? Number(e.remainingAmount) : null,
@@ -201,28 +221,68 @@ async function earnCashback({ customerId, bookingId, promotionId, redemptionId =
   }, transaction);
 }
 
+/**
+ * Credit the part of a promotion's discount the invoice could not take (a card order already
+ * paid at booking covered the bill). A system ADJUST lot, so cashback reports stay cashback only.
+ * Idempotent per booking + promotion. Taken back on a full refund, like cashback.
+ * @returns {{ entry: object|null, created: boolean }}
+ */
+async function creditUnusedDiscount({ customerId, bookingId, promotionId, amount, description }, transaction) {
+  const amountMinor = toMinor(amount);
+  if (!customerId || !bookingId || amountMinor <= 0) return { entry: null, created: false };
+  return inTransaction(async (t) => {
+    const idempotencyKey = keys.discountCredit(bookingId, promotionId);
+    const existing = await Entry.findOne({ where: { idempotencyKey }, transaction: t });
+    if (existing) return { entry: existing, created: false };
+    const entry = await Entry.create({
+      customerId,
+      type: 'ADJUST',
+      status: 'POSTED',
+      amount: fromMinor(amountMinor),
+      remainingAmount: fromMinor(amountMinor),
+      expiresAt: expiresAtFrom(),
+      bookingId,
+      promotionId,
+      idempotencyKey,
+      description: description || `Unused discount from order #${bookingId}`,
+      actorType: 'system',
+    }, { transaction: t });
+    return { entry, created: true };
+  }, transaction);
+}
+
+const isDiscountCredit = (e) => String(e?.idempotencyKey || '').startsWith('discount-credit-');
+
 // ─── Spend on an invoice ────────────────────────────────────────────────────
 
 /**
  * Hold up to `amount` of the customer's credit against a booking's unpaid invoice.
- * Re-pricing replaces the previous hold. A paid (committed) spend is frozen and returned as is.
+ * The hold is min(amount, credit available incl. this hold); an unchanged hold is kept as is,
+ * a changed one is replaced. A paid (committed) spend is frozen and returned as is.
  * @returns {number} the credit now held (£)
  */
 async function holdForBooking({ customerId, bookingId, amount }, transaction) {
   return inTransaction(async (t) => {
-    const committed = await Entry.findOne({ where: { bookingId, type: 'SPEND', status: 'COMMITTED' }, transaction: t });
+    await lockCustomerLots(customerId, t);
+    const committed = await Entry.findOne({ where: { bookingId, type: 'SPEND', status: 'COMMITTED' }, lock: t.LOCK.UPDATE, transaction: t });
     if (committed) return Math.abs(Number(committed.amount));
 
     const existing = await Entry.findOne({ where: { bookingId, type: 'SPEND', status: 'HELD' }, lock: t.LOCK.UPDATE, transaction: t });
+    const existingMinor = existing ? toMinor(Math.abs(Number(existing.amount))) : 0;
     const wantMinor = Math.max(0, toMinor(amount));
-    if (existing && toMinor(Math.abs(Number(existing.amount))) === wantMinor) return fromMinor(wantMinor);
+    const live = customerId ? await lockLots(customerId, t) : [];
+    const targetMinor = customerId
+      ? Math.min(wantMinor, live.reduce((s, l) => s + toMinor(l.remainingAmount), 0) + existingMinor)
+      : 0;
+    // Same hold as before: nothing moves (re-pricing used to release and re-hold every time).
+    if (existing && existingMinor === targetMinor) return fromMinor(targetMinor);
     if (existing) await releaseEntry(existing, 'Invoice re-priced', t);
-    if (wantMinor <= 0 || !customerId) return 0;
+    if (targetMinor <= 0) return 0;
 
-    // Locked after the release above, which may have refilled them.
+    // Read again after the release above, which may have refilled them.
     const fresh = await lockLots(customerId, t);
     const availableMinor = fresh.reduce((s, l) => s + toMinor(l.remainingAmount), 0);
-    const takeMinor = Math.min(wantMinor, availableMinor);
+    const takeMinor = Math.min(targetMinor, availableMinor);
     if (takeMinor <= 0) return 0;
 
     const entry = await Entry.create({
@@ -254,6 +314,9 @@ async function releaseEntry(entry, reason, t) {
 async function releaseForBooking(bookingId, reason, transaction) {
   if (!bookingId) return 0;
   return inTransaction(async (t) => {
+    // Same lock order as holdForBooking: the customer's lots first, then the spend rows.
+    const owners = await Entry.findAll({ where: { bookingId, type: 'SPEND', status: 'HELD' }, attributes: ['customerId'], transaction: t });
+    for (const customerId of [...new Set(owners.map((o) => o.customerId))]) await lockCustomerLots(customerId, t);
     const held = await Entry.findAll({ where: { bookingId, type: 'SPEND', status: 'HELD' }, lock: t.LOCK.UPDATE, transaction: t });
     for (const e of held) await releaseEntry(e, reason || 'Booking cancelled', t);
     return held.length;
@@ -279,7 +342,9 @@ async function commitForBooking(bookingId, transaction) {
 async function reverseCashbackForBooking(bookingId, reason, transaction) {
   if (!bookingId) return 0;
   return inTransaction(async (t) => {
-    const lots = await Entry.findAll({ where: { bookingId, type: 'EARN' }, lock: t.LOCK.UPDATE, transaction: t });
+    // Cashback lots and unused-discount credit of this order.
+    const lots = (await Entry.findAll({ where: { bookingId, type: ['EARN', 'ADJUST'] }, lock: t.LOCK.UPDATE, transaction: t }))
+      .filter((lot) => lot.type === 'EARN' || isDiscountCredit(lot));
     let reversedMinor = 0;
     for (const lot of lots) {
       const idempotencyKey = keys.reverse(lot.id);
@@ -294,7 +359,9 @@ async function reverseCashbackForBooking(bookingId, reason, transaction) {
         promotionId: lot.promotionId,
         sourceEntryId: lot.id,
         idempotencyKey,
-        description: `Cashback from order #${bookingId} taken back (order refunded)`,
+        description: isDiscountCredit(lot)
+          ? `Discount credit from order #${bookingId} taken back (order refunded)`
+          : `Cashback from order #${bookingId} taken back (order refunded)`,
         reason: reason || 'Booking refunded',
         actorType: 'system',
       }, { transaction: t });
@@ -437,6 +504,7 @@ module.exports = {
   getHistory,
   spentOnBooking,
   earnCashback,
+  creditUnusedDiscount,
   holdForBooking,
   releaseForBooking,
   commitForBooking,

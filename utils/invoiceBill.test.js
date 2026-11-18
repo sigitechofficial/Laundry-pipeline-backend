@@ -27,7 +27,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
   assert.strictEqual(bill.status, 'Nothing more to pay');
   assert.strictEqual(
     bill.note,
-    'This offer was worth £89.00. A discount can only take off what is still to pay: £30.00 was paid at booking (minimum order £20.00 + service fee £10.00), so the discount is £69.00.'
+    'This offer was worth £89.00. A discount can only take off what is still to pay: £30.00 was paid at booking (minimum order £20.00 + service fee £10.00), so the discount is £69.00. The other £20.00 goes to your credit when the order is completed.'
   );
   assert.deepStrictEqual(bill.offer, { worth: 89, applied: 69 });
 }
@@ -68,7 +68,10 @@ const keys = (bill) => bill.lines.map((l) => l.key);
   const ps = buildPaymentSummaryForBooking('cash', { laundrySubtotal: 30, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 40 });
   const bill = buildInvoiceBill(ps, { offerWorth: 60, promotionDiscount: 40 });
   assert.strictEqual(bill.leftToPay, 0);
-  assert.strictEqual(bill.note, 'This offer was worth £60.00, more than this bill, so the discount is £40.00 and covers what was left to pay.');
+  assert.strictEqual(bill.note, 'This offer was worth £60.00, more than this bill, so the discount is £40.00 and covers what was left to pay. The other £20.00 goes to your credit when the order is completed.');
+  // A cancelled/refunded order is never completed: no credit promised.
+  const closed = buildInvoiceBill(ps, { offerWorth: 60, promotionDiscount: 40, closed: true });
+  assert.strictEqual(closed.note, 'This offer was worth £60.00, more than this bill, so the discount is £40.00 and covers what was left to pay.');
 }
 
 // Card laundry below the minimum: paid at booking is more than the total

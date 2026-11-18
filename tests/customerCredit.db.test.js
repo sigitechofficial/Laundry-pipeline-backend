@@ -202,6 +202,55 @@ const bal = async (c) => (await credit.getBalance(c)).balance;
     assert.strictEqual(Math.round((g.balance + g.held) * 100), 1000, 'balance + held = 10');
   });
 
+  // Production case (#1898): the invoice is priced twice in the same second while it already
+  // holds the cashback. The second pricing used to release the hold without giving it back.
+  await check('concurrent re-pricing of the same invoice never loses credit', async () => {
+    for (let round = 0; round < 15; round++) {
+      const c = customer();
+      await credit.earnCashback({ customerId: c, bookingId: booking(), promotionId: 1, amount: 4 });
+      const b = booking();
+      assert.strictEqual(await credit.holdForBooking({ customerId: c, bookingId: b, amount: 30 }), 4);
+      await Promise.allSettled([
+        credit.holdForBooking({ customerId: c, bookingId: b, amount: 30 }),
+        credit.holdForBooking({ customerId: c, bookingId: b, amount: 2 }),
+        credit.holdForBooking({ customerId: c, bookingId: b, amount: 30 }),
+      ]);
+      const g = await credit.getBalance(c);
+      assert.strictEqual(Math.round((g.balance + g.held) * 100), 400, `round ${round}: balance ${g.balance} + held ${g.held} != 4`);
+    }
+  });
+
+  await check('re-pricing with the same payable amount keeps the hold as is', async () => {
+    const c = customer();
+    await credit.earnCashback({ customerId: c, bookingId: booking(), promotionId: 1, amount: 4 });
+    const b = booking();
+    await credit.holdForBooking({ customerId: c, bookingId: b, amount: 30 });
+    await credit.holdForBooking({ customerId: c, bookingId: b, amount: 30 });
+    await credit.holdForBooking({ customerId: c, bookingId: b, amount: 28 });
+    const spends = await Entry.count({ where: { customerId: c, type: 'SPEND' } });
+    assert.strictEqual(spends, 1, `expected 1 spend row, got ${spends}`);
+  });
+
+  await check('unused discount becomes credit once; history says Discount credit; full refund takes it back', async () => {
+    const c = customer();
+    const b = booking();
+    assert.strictEqual((await credit.creditUnusedDiscount({ customerId: c, bookingId: b, promotionId: 7, amount: 2 })).created, true);
+    assert.strictEqual((await credit.creditUnusedDiscount({ customerId: c, bookingId: b, promotionId: 7, amount: 2 })).created, false);
+    assert.strictEqual(await bal(c), 2);
+    const h = await credit.getHistory(c);
+    assert.strictEqual(h.entries[0].title, 'Discount credit');
+    assert.strictEqual((await credit.creditUnusedDiscount({ customerId: c, bookingId: b, promotionId: 8, amount: 0 })).created, false);
+    assert.strictEqual(await credit.reverseCashbackForBooking(b, 'test refund'), 2);
+    assert.strictEqual(await bal(c), 0);
+  });
+
+  await check('support adjustments are not taken back by an order refund', async () => {
+    const c = customer();
+    await credit.adjust({ customerId: c, amount: 5, reason: 'goodwill' });
+    assert.strictEqual(await credit.reverseCashbackForBooking(booking(), 'test refund'), 0);
+    assert.strictEqual(await bal(c), 5);
+  });
+
   // Cleanup
   const ids = (await Entry.findAll({ where: { customerId: usedCustomers }, attributes: ['id'] })).map((e) => e.id);
   await Allocation.destroy({ where: { spendEntryId: ids } });

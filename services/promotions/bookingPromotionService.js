@@ -220,6 +220,8 @@ async function releaseForBooking(bookingId, reason) {
 // ─── Invoice (Phase 3) ──────────────────────────────────────────────────────
 
 const PROMOTION_ADJUSTMENT_CLASSES = ['ITEM_PROMOTION', 'BASKET_PROMOTION', 'DELIVERY_PROMOTION'];
+const NOT_APPLIED_PAID_AT_BOOKING = 'Already covered by the amount paid at booking. The offer is added as credit when the order is completed.';
+const NOT_APPLIED_DEFAULT = 'This offer does not apply to the items on this order.';
 const roundMoney = (n) => fromMinor(toMinor(n));
 
 /** Promotion discount already written on the booking (positive £). */
@@ -331,13 +333,20 @@ async function priceAtInvoice({ bookingId, allowance }) {
   await ledger.writeOrderAdjustments(bookingId, applied);
   const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
   const fullByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.totalSavingMinor || 0]));
+  const rejectedReason = new Map((result.rejected || []).map((r) => [r.promotionId, r.reasons?.find((x) => x?.reason)?.reason || null]));
   for (const h of holds) {
     const a = byPromotion.get(h.promotionId);
     const amount = fromMinor(a?.totalSavingMinor || 0);
     const full = fromMinor(fullByPromotion.get(h.promotionId) || 0);
     const cashback = fromMinor(a?.cashbackMinor || 0);
-    if (Number(h.discountAmount) !== amount || Number(h.fullDiscountAmount) !== full || Number(h.cashbackAmount || 0) !== cashback) {
-      await h.update({ discountAmount: amount, fullDiscountAmount: full, cashbackAmount: cashback || null });
+    // Why a held offer gives nothing on this invoice (shown to the customer and the shop).
+    const reason = amount > 0 || cashback > 0 ? null
+      : rejectedReason.get(h.promotionId)
+        || (full > 0 ? NOT_APPLIED_PAID_AT_BOOKING : NOT_APPLIED_DEFAULT);
+    // discountAmount is always written once priced, so "priced at £0" differs from "not priced yet".
+    if (h.discountAmount == null || Number(h.discountAmount) !== amount || Number(h.fullDiscountAmount) !== full
+      || Number(h.cashbackAmount || 0) !== cashback || (h.reason || null) !== reason) {
+      await h.update({ discountAmount: amount, fullDiscountAmount: full, cashbackAmount: cashback || null, reason });
     }
   }
 
@@ -418,6 +427,7 @@ async function settleForBooking(bookingId) {
     out.creditCommitted = await credit.commitForBooking(bookingId);
     // Cash collected at the door can be recorded after the booking is completed.
     out.cashbackIssued = await issueCashbackForBooking(bookingId);
+    out.discountCreditIssued = await issueDiscountCreditForBooking(bookingId);
   } catch (err) {
     console.error(`[promotions] booking ${bookingId}: settle failed`, err.message);
     out.error = err.message;
@@ -494,6 +504,61 @@ async function issueCashbackForBooking(bookingId) {
   }
 }
 
+/** Push to the customer that an unused discount reached their credit (fire-and-forget). */
+function notifyDiscountCredit(customerId, bookingId, amount) {
+  try {
+    const { sendNotification } = require('../../utils/notification');
+    Promise.resolve(sendNotification(
+      customerId,
+      'Discount added to your credit',
+      `£${amount.toFixed(2)} of your offer could not come off this order, so it is now in your credit. It is used automatically on your next order.`,
+      { bookingId: String(bookingId), type: 'discount_credited' }
+    )).catch((err) => console.warn(`[credit] discount credit notification failed for booking ${bookingId}:`, err?.message || err));
+  } catch (err) {
+    console.warn('[credit] discount credit notification failed:', err?.message || err);
+  }
+}
+
+/**
+ * The part of a discount the paid invoice could not take (already paid at booking, e.g. a card
+ * order at the minimum) goes to the customer's credit once the order is Completed — the same
+ * moment cashback is credited. Idempotent; never throws into the caller.
+ * @returns {number} credit lots created now
+ */
+async function issueDiscountCreditForBooking(bookingId) {
+  if (!bookingId) return 0;
+  try {
+    const b = await Booking.findByPk(bookingId, { attributes: ['id', 'customerId', 'bookingStatusId'] });
+    if (!b || Number(b.bookingStatusId) !== COMPLETED) return 0;
+    const rows = await Redemption.findAll({
+      where: { bookingId, status: 'COMMITTED' },
+      include: [{ association: 'promotion', attributes: ['id', 'name', 'benefitType'] }],
+    });
+    let issued = 0;
+    for (const r of rows) {
+      if (r.promotion?.benefitType === 'cashback') continue;
+      const unusedMinor = toMinor(r.fullDiscountAmount) - toMinor(r.discountAmount);
+      if (r.fullDiscountAmount == null || unusedMinor <= 0) continue;
+      const amount = fromMinor(unusedMinor);
+      const { created } = await credit.creditUnusedDiscount({
+        customerId: r.customerId,
+        bookingId,
+        promotionId: r.promotionId,
+        amount,
+        description: `Unused discount from order #${bookingId}${r.promotion?.name ? ` (${r.promotion.name})` : ''}`,
+      });
+      if (created) {
+        issued++;
+        notifyDiscountCredit(r.customerId, bookingId, amount);
+      }
+    }
+    return issued;
+  } catch (err) {
+    console.error(`[credit] booking ${bookingId}: discount credit failed`, err.message);
+    return 0;
+  }
+}
+
 /**
  * Safety net for the job: settle holds of bookings that are paid or completed, and reverse
  * committed promotions of fully refunded bookings, in case a payment/refund path missed it.
@@ -541,12 +606,25 @@ async function settleClosedBookings({ limit = 200 } = {}) {
      LIMIT :limit`,
     { replacements: { completed: COMPLETED, limit } }
   );
+  // Completed, paid orders owed unused-discount credit that was not credited yet.
+  const [toDiscountCredit] = await sequelize.query(
+    `SELECT DISTINCT r.bookingId FROM promotion_redemptions r
+       JOIN bookings b ON b.id = r.bookingId
+       JOIN promotions p ON p.id = r.promotionId
+       LEFT JOIN customer_credit_entries e
+         ON e.idempotencyKey = CONCAT('discount-credit-booking-', r.bookingId, '-promo-', r.promotionId)
+     WHERE r.status = 'COMMITTED' AND p.benefitType <> 'cashback'
+       AND r.fullDiscountAmount IS NOT NULL AND r.fullDiscountAmount > COALESCE(r.discountAmount, 0)
+       AND b.bookingStatusId = :completed AND e.id IS NULL
+     LIMIT :limit`,
+    { replacements: { completed: COMPLETED, limit } }
+  );
   // Refunded bookings whose cashback/credit was not handled yet.
   const [creditToRefund] = await sequelize.query(
     `SELECT DISTINCT e.bookingId FROM customer_credit_entries e
        JOIN bookings b ON b.id = e.bookingId
      WHERE b.bookingStatusId = :refunded
-       AND ((e.type = 'EARN' AND e.remainingAmount > 0
+       AND (((e.type = 'EARN' OR (e.type = 'ADJUST' AND e.idempotencyKey LIKE 'discount-credit-%')) AND e.remainingAmount > 0
              AND NOT EXISTS (SELECT 1 FROM customer_credit_entries x WHERE x.idempotencyKey = CONCAT('reverse-lot-', e.id)))
          OR (e.type = 'SPEND' AND e.status = 'COMMITTED'
              AND NOT EXISTS (SELECT 1 FROM customer_credit_entries x WHERE x.idempotencyKey = CONCAT('restore-spend-', e.id))))
@@ -565,6 +643,7 @@ async function settleClosedBookings({ limit = 200 } = {}) {
   for (const { bookingId } of creditToRelease) await credit.releaseForBooking(bookingId, 'Booking closed').catch(() => 0);
   let cashbackIssued = 0;
   for (const { bookingId } of toCredit) cashbackIssued += await issueCashbackForBooking(bookingId);
+  for (const { bookingId } of toDiscountCredit) cashbackIssued += await issueDiscountCreditForBooking(bookingId);
   for (const { bookingId } of creditToRefund) {
     await credit.reverseCashbackForBooking(bookingId, 'Booking refunded').catch(() => 0);
     await credit.restoreSpendForBooking(bookingId, 'Booking refunded').catch(() => 0);
@@ -580,6 +659,7 @@ const CUSTOMER_MESSAGES = {
   holding: 'Your offer is saved. The discount is applied when the shop finalises your invoice after inspection.',
   applied: 'Your discount is on the invoice. Final once the invoice is paid.',
   paid: 'Discount applied to your paid invoice.',
+  notApplied: 'Your offer did not apply to this invoice.',
 };
 
 /**
@@ -628,6 +708,10 @@ async function customerPromotionSummary(bookingId) {
     const p = h.promotion;
     const shown = p && (h.couponCode || ['public', 'private_code'].includes(p.visibility));
     const benefitType = p?.benefitType || null;
+    const amountMinor = discountByPromotion.get(Number(h.promotionId)) || 0;
+    // Priced on the invoice (discountAmount written) — null while only held at booking.
+    const priced = h.status === 'COMMITTED' || h.discountAmount != null;
+    const applied = priced ? (h.status === 'COMMITTED' || amountMinor > 0 || Number(h.cashbackAmount) > 0) : null;
     return {
       promotionId: Number(h.promotionId),
       name: shown ? p.name : 'Special discount',
@@ -641,8 +725,12 @@ async function customerPromotionSummary(bookingId) {
         : benefitType === 'free_delivery' || benefitType === 'delivery_discount' ? 'delivery'
         : 'basket',
       cashback: Number(h.cashbackAmount) > 0 ? Number(h.cashbackAmount) : 0,
+      // New fields (older apps ignore them): true/false once the invoice is priced, else null.
+      applied,
+      notAppliedReason: applied === false ? (h.reason || NOT_APPLIED_DEFAULT) : null,
     };
   });
+  const noneApplied = promotions.length > 0 && promotions.every((p) => p.applied === false);
 
   // Group the invoice lines by item so each item shows original → after discount.
   // A basket offer lists every line (the saving is shared across the order). A service,
@@ -688,7 +776,7 @@ async function customerPromotionSummary(bookingId) {
   const onlyCashback = cashbackHolds.length === holds.length && !totalMinor;
   return {
     state,
-    message: onlyCashback ? cashback.message : CUSTOMER_MESSAGES[state],
+    message: onlyCashback ? cashback.message : noneApplied ? CUSTOMER_MESSAGES.notApplied : CUSTOMER_MESSAGES[state],
     total: fromMinor(totalMinor),
     promotions,
     lines: shownLines,
@@ -858,6 +946,7 @@ module.exports = {
   priceAtInvoice,
   priceCreditAtInvoice,
   issueCashbackForBooking,
+  issueDiscountCreditForBooking,
   settleForBooking,
   reverseForBooking,
   settleClosedBookings,

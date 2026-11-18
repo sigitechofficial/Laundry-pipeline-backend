@@ -64,6 +64,7 @@ const {
     UnauthorizedError,
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
+const { detachFromOtherUsers } = require('../../utils/deviceTokenStore');
 const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
@@ -76,6 +77,8 @@ const {
 async function _refreshDeviceToken(userId, newToken) {
     if (!newToken) return;
     await deviceToken.destroy({ where: { userId } });
+    // The same phone may have been signed in to another account: it is this user's now.
+    await detachFromOtherUsers(userId, newToken);
     await deviceToken.create({ tokenId: newToken, status: true, userId });
 }
 

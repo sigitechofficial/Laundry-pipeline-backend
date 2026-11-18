@@ -71,6 +71,10 @@ function buildInvoiceBill(ps = {}, facts = {}) {
   const worth = facts.offerWorth == null ? null : round(facts.offerWorth);
   const applied = round(facts.promotionDiscount);
   const limited = worth != null && worth > applied + 0.01;
+  // The rest of the offer is credited when the order is completed (issueDiscountCreditForBooking).
+  const toCredit = limited && !facts.closed
+    ? ` The other ${money(sym, worth - applied)} goes to your credit when the order is completed.`
+    : '';
   if (limited) {
     if (paidAtBooking > 0) {
       const parts = [
@@ -81,12 +85,12 @@ function buildInvoiceBill(ps = {}, facts = {}) {
       notes.push(
         `This offer was worth ${money(sym, worth)}. A discount can only take off what is still to pay: ` +
         `${money(sym, paidAtBooking)} was paid at booking${parts.length ? ` (${parts.join(' + ')})` : ''}, ` +
-        `so the discount is ${money(sym, applied)}.`
+        `so the discount is ${money(sym, applied)}.${toCredit}`
       );
     } else {
       notes.push(
         `This offer was worth ${money(sym, worth)}, more than this bill, so the discount is ${money(sym, applied)} ` +
-        'and covers what was left to pay.'
+        `and covers what was left to pay.${toCredit}`
       );
     }
   }

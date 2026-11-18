@@ -78,12 +78,16 @@ async function loadCandidatePromotions(zoneId, now = new Date()) {
   return rows.filter((p) => zoneInScope(p, zoneId) && !BLOCKING_CAMPAIGN_STATUSES.includes(p.campaign?.status));
 }
 
-/** Statuses in which a promotion held by a booking is still honoured (expiry after booking is fine). */
-const HELD_HONOURED_STATUSES = ['active', 'expired'];
+/**
+ * Statuses in which a promotion held by a booking is still honoured. Expiring, pausing or
+ * archiving a promotion stops new orders only: orders that already hold it keep the offer.
+ */
+const HELD_HONOURED_STATUSES = ['active', 'expired', 'paused', 'archived'];
 
 /**
- * Promotions a booking holds, loaded for invoice pricing. Honoured even if they expired
- * after the booking; dropped if an admin paused/archived them or their campaign.
+ * Promotions a booking holds, loaded for invoice pricing. Honoured even if they expired,
+ * were paused or archived, or their campaign was stopped after the booking (new orders are
+ * gated by loadCandidatePromotions). The campaign budget is still checked at pricing.
  */
 async function loadHeldPromotions(promotionIds, zoneId) {
   if (!promotionIds.length) return [];
@@ -95,7 +99,7 @@ async function loadHeldPromotions(promotionIds, zoneId) {
       { model: Campaign, as: 'campaign', attributes: ['id', 'status', 'budgetMinor', 'usedBudgetMinor'] },
     ],
   });
-  return rows.filter((p) => zoneInScope(p, zoneId) && !BLOCKING_CAMPAIGN_STATUSES.includes(p.campaign?.status));
+  return rows.filter((p) => zoneInScope(p, zoneId));
 }
 
 /** Recurring weekday / time window, in the zone's timezone. Overnight windows supported. */
