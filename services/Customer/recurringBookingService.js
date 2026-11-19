@@ -28,7 +28,6 @@ const {
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const {
-  isCollectFromOutside,
   saveCollectionImages,
   getCollectionImages,
 } = require('../../utils/bookingCollectionImages');
@@ -806,21 +805,19 @@ async function generateNextBookingFromCompleted({
       { transaction: tx }
     );
 
-    // Same pickup spot each cycle: carry over the "Collect from Outside" photos.
-    if (isCollectFromOutside(source.driverInstructionOptions)) {
-      try {
-        const sourceImages = await getCollectionImages(source.id);
-        await saveCollectionImages(
-          created.id,
-          sourceImages.map((img) => img.imageUrl),
-          { transaction: tx }
-        );
-      } catch (collectionImagesErr) {
-        console.warn(
-          `[recurring] collection images copy failed source=${source.id}:`,
-          collectionImagesErr?.message || collectionImagesErr
-        );
-      }
+    // Same pickup spot each cycle: carry over the photos for the driver (any handover).
+    try {
+      const sourceImages = await getCollectionImages(source.id);
+      await saveCollectionImages(
+        created.id,
+        sourceImages.map((img) => img.imageUrl),
+        { transaction: tx }
+      );
+    } catch (collectionImagesErr) {
+      console.warn(
+        `[recurring] collection images copy failed source=${source.id}:`,
+        collectionImagesErr?.message || collectionImagesErr
+      );
     }
 
     await source.update(
