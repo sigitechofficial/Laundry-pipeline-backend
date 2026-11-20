@@ -176,4 +176,34 @@ assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00
   assert.strictEqual(holdEstimateMinor(tshirtDeal, null, 2000), 0);
 }
 
+// Several deals in one offer: 10 T-shirts for £30 and 5 Trousers for £25, each on its own items.
+{
+  const deals = { deals: [{ itemIds: [SHIRT], quantity: 10, price: 30 }, { itemIds: [TROUSERS], quantity: 5, price: 25 }] };
+  const offer = bulk({ discountValue: 30, targetIds: [SHIRT, TROUSERS], benefitConfig: { bundleQuantity: 10, ...deals } });
+  const save = (lines) => computeBenefit(offer, createPricingState(contextOf(lines))).totalSavingMinor;
+  assert.strictEqual(save([line(SHIRT, 4.5, 15), line(TROUSERS, 7.5, 5)]), 1500 + 1250, 'both deals: £15 + £12.50');
+  assert.strictEqual(save([line(SHIRT, 4.5, 10), line(TROUSERS, 7.5, 4)]), 1500, 'trousers short of 5: T-shirt deal only');
+  assert.strictEqual(save([line(SHIRT, 4.5, 5), line(TROUSERS, 7.5, 5)]), 1250, 'T-shirts short of 10: trousers deal only');
+  assert.strictEqual(save([line(SHIRT, 4.5, 6), line(TROUSERS, 7.5, 4)]), 0, 'T-shirts never count towards trousers');
+  const b = computeBenefit(offer, createPricingState(contextOf([line(SHIRT, 4.5, 10)])));
+  assert.strictEqual(b.label, '10 for £30.00 + 5 for £25.00');
+  // Checkout: needs one full group of any deal.
+  const short = builtInCheck(offer, contextOf([line(SHIRT, 4.5, 8), line(TROUSERS, 7.5, 3)]), null, new Map());
+  assert.ok(short && /Add 2 more items from this offer to get 10 for £30/.test(short.reason), short && short.reason);
+  assert.strictEqual(builtInCheck(offer, contextOf([line(SHIRT, 4.5, 2), line(TROUSERS, 7.5, 5)]), null, new Map()), null);
+  // Admin: deals are checked and fill the offer's items.
+  const payload = normalizePayload({ name: 'Bulk', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public', repricingPolicy: 'recalculate', priority: 50, benefitType: 'bundle', discountMode: 'amount', benefitConfig: { deals: [{ itemIds: ['21'], quantity: '10', price: '30' }, { itemIds: [23], quantity: 5, price: 25 }] } });
+  const { typeRuleFields } = require('../services/Admin/promotionAdminService');
+  if (typeRuleFields) {
+    const merged = { ...payload, ...typeRuleFields(payload) };
+    assert.deepStrictEqual(merged.targetIds, [21, 23]);
+    assert.strictEqual(merged.discountValue, 30);
+    assert.doesNotThrow(() => validatePromotion(merged));
+    const twice = { ...merged, benefitConfig: { ...merged.benefitConfig, deals: [{ itemIds: [21], quantity: 10, price: 30 }, { itemIds: [21], quantity: 5, price: 25 }] } };
+    assert.throws(() => validatePromotion(twice), /only one deal/);
+    const noPrice = { ...merged, benefitConfig: { ...merged.benefitConfig, deals: [{ itemIds: [21], quantity: 10, price: 30 }, { itemIds: [23], quantity: 5, price: null }] } };
+    assert.throws(() => validatePromotion(noPrice), /Deal 2: enter the price/);
+  }
+}
+
 console.log('promotionBulkPrice.test.js passed');

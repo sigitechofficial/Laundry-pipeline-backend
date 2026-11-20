@@ -149,6 +149,38 @@ function bundleQuantity(promotion) {
   return Number.isInteger(n) && n >= 2 ? n : 0;
 }
 
+/**
+ * The bulk price deals of an offer. Several deals: benefitConfig.deals, each
+ * { itemIds, quantity, price } ("10 T-shirts for £30", "5 Trousers for £25"); each deal
+ * counts only its own items. One deal (older offers): bundleQuantity + discountValue on the
+ * offer's chosen items (itemIds null = the offer's targets).
+ * @returns {Array<{ itemIds: number[]|null, quantity: number, priceMinor: number }>}
+ */
+function bulkDeals(promotion, zoneOverride = null) {
+  let config = promotion.benefitConfig;
+  if (typeof config === 'string') {
+    try { config = JSON.parse(config); } catch { config = null; }
+  }
+  if (Array.isArray(config?.deals) && config.deals.length) {
+    return config.deals
+      .map((d) => ({
+        itemIds: (Array.isArray(d.itemIds) ? d.itemIds : []).map(Number).filter((n) => n > 0),
+        quantity: Number(d.quantity),
+        priceMinor: toMinor(d.price),
+      }))
+      .filter((d) => d.itemIds.length && Number.isInteger(d.quantity) && d.quantity >= 2);
+  }
+  const quantity = bundleQuantity(promotion);
+  if (!quantity) return [];
+  return [{ itemIds: null, quantity, priceMinor: toMinor(effectiveValues(promotion, zoneOverride).discountValue) }];
+}
+
+/** Does a line belong to this deal? (its items, plus the offer's service rule) */
+function lineInDeal(promotion, deal, line) {
+  if (!lineMatchesTarget(promotion, line)) return false;
+  return deal.itemIds == null || (line.addonId == null && deal.itemIds.includes(Number(line.subCategoryId)));
+}
+
 /** Can this item promotion still touch the line? (stacking on the same line) */
 function lineOpenForItemPromotion(promotion, line) {
   if (line.balanceMinor <= 0) return false;
@@ -159,17 +191,19 @@ function lineOpenForItemPromotion(promotion, line) {
 // ─── Compute (pure) ─────────────────────────────────────────────────────────
 
 /**
- * Bulk price: every full group of `size` pieces of the chosen items costs `priceMinor`;
- * pieces left over pay the normal price. Pieces of all chosen items count together and
- * the cheapest are grouped first. A group is never made dearer than its normal price.
+ * Bulk price, one deal: every full group of `quantity` pieces of the deal's items costs its
+ * price; pieces left over pay the normal price. Pieces of the deal's items count together
+ * and the cheapest are grouped first. A group is never made dearer than its normal price.
  * @returns {number[]} discount per line (minor units)
  */
-function bundleLineSavings(promotion, state, size, priceMinor) {
+function dealLineSavings(promotion, state, deal) {
   const out = state.lines.map(() => 0);
+  const size = deal.quantity;
+  const priceMinor = deal.priceMinor;
   if (!size) return out;
   const pieces = [];
   state.lines.forEach((line, i) => {
-    if (!lineMatchesTarget(promotion, line) || !lineOpenForItemPromotion(promotion, line)) return;
+    if (!lineInDeal(promotion, deal, line) || !lineOpenForItemPromotion(promotion, line)) return;
     const each = Math.floor(line.balanceMinor / line.qty);
     const spare = line.balanceMinor - each * line.qty;
     for (let k = 0; k < line.qty; k += 1) pieces.push({ i, value: each + (k < spare ? 1 : 0) });
@@ -182,6 +216,20 @@ function bundleLineSavings(promotion, state, size, priceMinor) {
     group.forEach((p, k) => { out[p.i] += shares[k]; });
   }
   return out;
+}
+
+/** Bulk price: every deal of the offer, each on its own items, added up per line. */
+function bundleLineSavings(promotion, state, zoneOverride) {
+  const out = state.lines.map(() => 0);
+  for (const deal of bulkDeals(promotion, zoneOverride)) {
+    dealLineSavings(promotion, state, deal).forEach((v, i) => { out[i] += v; });
+  }
+  return out;
+}
+
+/** "10 for £30" for one deal; "10 for £30 + 5 for £25" for several. */
+function bulkLabel(promotion, sym, zoneOverride) {
+  return bulkDeals(promotion, zoneOverride).map((d) => `${d.quantity} for ${sym}${money(fromMinor(d.priceMinor))}`).join(' + ');
 }
 
 /**
@@ -214,7 +262,7 @@ function computeBenefit(promotion, state, options = {}) {
   if (scope === 'item') {
     const isBundle = promotion.benefitType === 'bundle';
     const raw = isBundle
-      ? bundleLineSavings(promotion, state, bundleQuantity(promotion), toMinor(discountValue))
+      ? bundleLineSavings(promotion, state, options.zoneOverride)
       : state.lines.map((line) => {
         if (!lineMatchesTarget(promotion, line) || !lineOpenForItemPromotion(promotion, line)) return 0;
         const want = mode === 'percent'
@@ -231,7 +279,7 @@ function computeBenefit(promotion, state, options = {}) {
       ...empty,
       lineMinor,
       totalSavingMinor: saving,
-      label: isBundle ? `${bundleQuantity(promotion)} for ${valueLabel}` : mode === 'percent' ? `${valueLabel} OFF` : `${valueLabel} OFF each`,
+      label: isBundle ? bulkLabel(promotion, sym, options.zoneOverride) : mode === 'percent' ? `${valueLabel} OFF` : `${valueLabel} OFF each`,
       description: `${kind}${capMinor != null ? ` (max ${sym}${money(maxDiscountCap)})` : ''}`,
     };
   }
@@ -406,4 +454,6 @@ module.exports = {
   lineMatchesTarget,
   limitBasket,
   bundleQuantity,
+  bulkDeals,
+  lineInDeal,
 };

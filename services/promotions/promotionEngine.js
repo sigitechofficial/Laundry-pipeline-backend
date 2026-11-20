@@ -27,7 +27,7 @@ const {
 } = require('../../models');
 
 const { evaluateConditions } = require('./conditionEvaluator');
-const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket, bundleQuantity, holdEstimateMinor } = require('./benefitHandlers');
+const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket, bundleQuantity, holdEstimateMinor, bulkDeals, lineInDeal } = require('./benefitHandlers');
 const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
@@ -264,11 +264,20 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
     return reject('MINIMUM_QUANTITY', `Add at least ${promo.minQuantity} items${from}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
   }
   // Bulk price needs one full group; judged only once the real items are known (invoice).
-  const groupSize = promo.benefitType === 'bundle' ? bundleQuantity(promo) : 0;
-  if (groupSize && Array.isArray(context.basket?.lineItems) && itemCount < groupSize) {
-    const price = `${sym}${money(effectiveValues(promo, zoneOverride).discountValue)}`;
-    const short = groupSize - itemCount;
-    return reject('MINIMUM_QUANTITY', `Add ${short} more item${short === 1 ? '' : 's'} from this offer to get ${groupSize} for ${price}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
+  // Each deal counts only its own items: the offer applies once any deal has a full group.
+  if (promo.benefitType === 'bundle' && Array.isArray(context.basket?.lineItems)) {
+    const deals = bulkDeals(promo, zoneOverride);
+    const shortBy = deals.map((deal) => {
+      const have = context.basket.lineItems
+        .filter((li) => lineInDeal(promo, deal, li))
+        .reduce((s, li) => s + Math.max(1, Math.round(Number(li.qty) || 1)), 0);
+      return { deal, short: deal.quantity - have };
+    });
+    if (shortBy.length && shortBy.every((x) => x.short > 0)) {
+      const { deal, short } = shortBy.reduce((a, b) => (b.short < a.short ? b : a));
+      const price = `${sym}${money(deal.priceMinor / 100)}`;
+      return reject('MINIMUM_QUANTITY', `Add ${short} more item${short === 1 ? '' : 's'} from this offer to get ${deal.quantity} for ${price}`, 'PROMOTION_MIN_QUANTITY_NOT_MET');
+    }
   }
 
   const orderCount = Number(context.customer?.orderCount ?? 0);
@@ -702,8 +711,22 @@ function buildOfferLabel(promo, zoneOverride = null, targetNames = null) {
       if (onCategoryOrService) return `${value} OFF each item in ${subject}${amountCap}`;
       if (promo.targetType === 'all') return `${value} OFF each item${amountCap}`;
       return targetNames?.length ? `${value} OFF each ${subject}${amountCap}` : `${value} OFF each selected item${amountCap}`;
-    case 'bundle':
-      return `${bundleQuantity(promo)} for ${sym}${money(discountValue)} on ${subject}${maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} off in total)` : ''}`;
+    case 'bundle': {
+      const capText = maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} off in total)` : '';
+      const deals = bulkDeals(promo, zoneOverride);
+      if (deals.length > 1 || (deals[0] && deals[0].itemIds)) {
+        // Several deals: name each one's items. targetNames follow targetIds (all deal items).
+        const ids = (Array.isArray(promo.targetIds) ? promo.targetIds : []).map(Number);
+        const nameOf = targetNames && targetNames.length === ids.length
+          ? new Map(ids.map((id, i) => [id, targetNames[i]])) : null;
+        const parts = deals.map((d) => {
+          const names = nameOf ? nameList(d.itemIds.map((id) => nameOf.get(id)).filter(Boolean)) : '';
+          return `${d.quantity}${names ? ` ${names}` : ''} for ${sym}${money(d.priceMinor / 100)}`;
+        });
+        return `${parts.join(' · ')}${capText}`;
+      }
+      return `${bundleQuantity(promo)} for ${sym}${money(discountValue)} on ${subject}${capText}`;
+    }
     case 'fixed_price':
       return `Special price ${sym}${money(discountValue)}`;
     case 'free_delivery':

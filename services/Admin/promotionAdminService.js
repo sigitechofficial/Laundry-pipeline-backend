@@ -143,6 +143,17 @@ const ORDER_HISTORY_CONDITIONS = { FIRST_ORDER: 'First order', CUSTOMER_TYPE: 'C
  */
 function typeRuleFields(p) {
   if (p.benefitType === 'first_order_discount') return { perCustomerLimit: 1, perDayLimit: null, perWeekLimit: null };
+  // Bulk price with several deals: the offer's items are every deal's items; the first deal
+  // fills the single-deal fields so older screens and reports still read it.
+  const deals = p.benefitType === 'bundle' && Array.isArray(p.benefitConfig?.deals) ? p.benefitConfig.deals : null;
+  if (deals && deals.length) {
+    return {
+      targetType: 'subCategory',
+      targetIds: [...new Set(deals.flatMap((d) => d.itemIds || []))],
+      discountValue: deals[0].price,
+      benefitConfig: { ...p.benefitConfig, bundleQuantity: deals[0].quantity },
+    };
+  }
   if (p.benefitType === 'first_x_orders_discount') {
     const n = Number(p.benefitConfig?.firstOrders);
     return Number.isInteger(n) && n >= 1 ? { perCustomerLimit: n } : {};
@@ -185,6 +196,17 @@ function normalizeBenefitConfig(value) {
   if ('bundleQuantity' in out) {
     const n = out.bundleQuantity;
     out.bundleQuantity = blank(n) || n == null ? null : Number(n);
+  }
+  // Bulk price deals: [{ itemIds, quantity, price }]
+  if ('deals' in out) {
+    out.deals = Array.isArray(out.deals)
+      ? out.deals.map((d = {}) => ({
+        itemIds: asIntIdList(d.itemIds),
+        quantity: blank(d.quantity) || d.quantity == null ? null : Number(d.quantity),
+        price: blank(d.price) || d.price == null ? null : Number(d.price),
+      }))
+      : [];
+    if (!out.deals.length) delete out.deals;
   }
   // Items count only in these services (empty = any service).
   if ('onlyServiceIds' in out) {
@@ -298,6 +320,23 @@ function validatePromotion(p) {
   if (p.benefitType === 'first_x_orders_discount') {
     const n = Number(p.benefitConfig?.firstOrders);
     if (!Number.isInteger(n) || n < 1) throw new ValidationError('first_x_orders_discount needs benefitConfig.firstOrders ≥ 1');
+  }
+  if (p.benefitType === 'bundle' && Array.isArray(p.benefitConfig?.deals)) {
+    const deals = p.benefitConfig.deals;
+    if (deals.length > 20) throw new ValidationError('A bulk offer can have at most 20 deals');
+    const seen = new Set();
+    deals.forEach((d, i) => {
+      const n = i + 1;
+      if (!d.itemIds || !d.itemIds.length) throw new ValidationError(`Deal ${n}: choose at least one item`);
+      if (!Number.isInteger(d.quantity) || d.quantity < 2 || d.quantity > 1000) {
+        throw new ValidationError(`Deal ${n}: how many pieces must be a whole number from 2 to 1000`);
+      }
+      if (!Number.isFinite(d.price) || d.price <= 0) throw new ValidationError(`Deal ${n}: enter the price for these pieces`);
+      for (const id of d.itemIds) {
+        if (seen.has(id)) throw new ValidationError(`Deal ${n}: an item can be in only one deal`);
+        seen.add(id);
+      }
+    });
   }
   if (p.benefitType === 'bundle') {
     const n = Number(p.benefitConfig?.bundleQuantity);
