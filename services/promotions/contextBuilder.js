@@ -56,12 +56,14 @@ async function loadCustomerFacts(customerId, asOf = {}) {
 async function loadZoneFacts(zoneId) {
   const id = Number(zoneId);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('zoneId is required');
-  const row = await Zone.findByPk(id, { attributes: ['id'] });
+  const row = await Zone.findByPk(id, { attributes: ['id', 'zoneMinimumAmount'] });
   if (!row) throw new ValidationError('Zone not found');
   const country = await getCountryContextFromZoneId(id).catch(() => null);
   return {
     id,
     timezone: resolveTimeZone(country?.ianaTimeZone),
+    // Minimum order: what a booking's hold is estimated on before the shop prices it.
+    minOrderMinor: Math.max(0, Math.round(Number(row.zoneMinimumAmount || 0) * 100)),
     // Delivery is free today (home config "Free 24h"), so delivery promotions save £0.
     // zone.serviceCharge is the service fee, not a delivery fee: never waive it here.
     deliveryFee: 0,
@@ -158,7 +160,7 @@ async function buildPromotionContext(input = {}) {
     customer,
     // The booking being priced (if any): its own holds are not counted as earlier usage.
     bookingId: input.customerAsOf?.excludeBookingId ? Number(input.customerAsOf.excludeBookingId) : null,
-    zone: { id: zone.id, timezone: zone.timezone },
+    zone: { id: zone.id, timezone: zone.timezone, minOrderMinor: zone.minOrderMinor },
     basket: {
       subtotal: rawSubtotal != null ? rawSubtotal : fromMinor(subtotalMinor),
       itemCount: lineItems.reduce((s, li) => s + li.qty, 0),

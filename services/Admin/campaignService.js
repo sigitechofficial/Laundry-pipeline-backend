@@ -57,8 +57,9 @@ async function createCampaign(payload, adminUserId) {
   return row;
 }
 
+/** Shared budgets only: an offer's own budget (ownerPromotionId) is managed on the offer. */
 async function listCampaigns({ page = 1, limit = 50, status } = {}) {
-  const where = {};
+  const where = { ownerPromotionId: null };
   if (status) where.status = status;
 
   const safeLimit = Math.min(200, Math.max(1, Number(limit) || 50));

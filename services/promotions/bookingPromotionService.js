@@ -30,7 +30,7 @@ const { normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { isPromotionsCheckoutEnabled } = require('./checkoutFlag');
 const { buildPromotionContext } = require('./contextBuilder');
 const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHeldPromotions, targetNamesByPromotion } = require('./promotionEngine');
-const { effectiveValues, resolveDiscountMode } = require('./benefitHandlers');
+const { effectiveValues, resolveDiscountMode, holdEstimateMinor } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
 const credit = require('./customerCreditService');
@@ -192,6 +192,7 @@ async function attachAtBooking({ bookingId, customerId, zoneId, couponCode, paym
         couponCode: coupon?.code || null,
         zoneId,
         bookingId,
+        estimatedAmount: fromMinor(holdEstimateMinor(promotion, zoneOverrideOf(promotion, zoneId), context.zone?.minOrderMinor)),
         idempotencyKey: ledger.bookingReservationKey(bookingId, promotion.id),
       });
       reserved.push(row.id);

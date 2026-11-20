@@ -353,7 +353,30 @@ function limitBasket(promo, context) {
   };
 }
 
+/**
+ * What a booking's hold is expected to cost a budget before the shop prices it: the offer
+ * on a minimum-size order. The real amount replaces it at invoice. Used to stop new orders
+ * before the budget runs out, so booked orders always get their full offer.
+ *
+ * @param {object} promotion
+ * @param {object|null} zoneOverride
+ * @param {number} minOrderMinor the zone's minimum order (pence)
+ * @returns {number} pence (0 when the offer saves nothing today, e.g. delivery offers)
+ */
+function holdEstimateMinor(promotion, zoneOverride, minOrderMinor) {
+  if (DELIVERY_TYPES.includes(promotion.benefitType)) return 0;
+  const base = Math.max(0, Math.round(Number(minOrderMinor) || 0));
+  const { discountValue, maxDiscountCap } = effectiveValues(promotion, zoneOverride);
+  let est;
+  if (promotion.benefitType === 'fixed_price') est = Math.max(0, base - toMinor(discountValue));
+  else if (resolveDiscountMode(promotion) === 'percent') est = percentOfMinor(base, discountValue);
+  else est = toMinor(discountValue);
+  if (maxDiscountCap != null) est = Math.min(est, toMinor(maxDiscountCap));
+  return Math.max(0, est);
+}
+
 module.exports = {
+  holdEstimateMinor,
   SUPPORTED_BENEFIT_TYPES,
   calculateBenefit,
   computeBenefit,

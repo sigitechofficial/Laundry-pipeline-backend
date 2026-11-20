@@ -19,7 +19,7 @@ const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime
 const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules');
 const { attachHeldBudget } = require('../promotions/campaignBudget');
 
-const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor'];
+const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor', 'ownerPromotionId'];
 
 /**
  * Why new orders cannot use the promotion because of its campaign, or null. Shown in the
@@ -105,6 +105,7 @@ const FULL_INCLUDE = [
     attributes: ['id', 'code', 'codeType', 'customerId', 'usedCount', 'usageLimit', 'perCustomerLimit', 'activationDate', 'expiryDate', 'isActive'],
   },
   { model: PromotionVersion, as: 'versions', separate: true, order: [['versionNumber', 'DESC']], limit: 10 },
+  { model: Campaign, as: 'campaign', attributes: CAMPAIGN_SUMMARY },
 ];
 
 // ─── Payload normalisation & validation ─────────────────────────────────────
@@ -363,12 +364,62 @@ function validatePromotion(p) {
   }
 }
 
+// ─── Offer budget ────────────────────────────────────────────────────────────
+
+/**
+ * payload.budget (£, or empty for none): the offer's own budget. It is a budget pool that
+ * belongs to this offer (campaigns.ownerPromotionId), so the engine has one budget rule for
+ * own and shared budgets. Returns undefined when not sent, null for none, else pence.
+ */
+function budgetMinorOf(payload = {}) {
+  if (!('budget' in payload)) return undefined;
+  const v = payload.budget;
+  if (blank(v) || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) throw new ValidationError('Budget must be more than £0, or left empty for no budget');
+  if (n > 1000000) throw new ValidationError('Budget is too large');
+  return Math.round(n * 100);
+}
+
+async function ownBudgetOf(promo, t) {
+  if (!promo.campaignId) return null;
+  const camp = await Campaign.findByPk(promo.campaignId, { transaction: t });
+  return camp && Number(camp.ownerPromotionId) === Number(promo.id) ? camp : null;
+}
+
+/** Create, change or remove the offer's own budget. A shared budget and an own one exclude each other. */
+async function syncOwnBudget(promo, budgetMinor, adminUserId, t) {
+  if (budgetMinor === undefined) return;
+  const own = await ownBudgetOf(promo, t);
+  if (budgetMinor == null) {
+    if (own) await promo.update({ campaignId: null }, { transaction: t });
+    return;
+  }
+  if (own) {
+    if (own.budgetMinor !== budgetMinor) await own.update({ budgetMinor, updatedBy: adminUserId }, { transaction: t });
+    return;
+  }
+  if (promo.campaignId) {
+    throw new ValidationError('This offer uses a shared budget. Remove it from the shared budget to give it its own.');
+  }
+  const camp = await Campaign.create({
+    name: `${promo.name} — budget`.slice(0, 200),
+    ownerPromotionId: promo.id,
+    budgetMinor,
+    status: 'active',
+    createdBy: adminUserId,
+    updatedBy: adminUserId,
+  }, { transaction: t });
+  await promo.update({ campaignId: camp.id }, { transaction: t });
+}
+
 /** A promotion can only be put into (or published in) a campaign that exists and is not closed. */
-async function assertCampaignUsable(campaignId, transaction) {
+async function assertCampaignUsable(campaignId, transaction, ownerOk = false) {
   if (campaignId == null) return;
   if (!Number.isInteger(campaignId) || campaignId <= 0) throw new ValidationError('Invalid campaign');
-  const row = await Campaign.findByPk(campaignId, { attributes: ['id', 'name', 'status'], transaction });
+  const row = await Campaign.findByPk(campaignId, { attributes: ['id', 'name', 'status', 'ownerPromotionId'], transaction });
   if (!row) throw new ValidationError('Campaign not found');
+  if (row.ownerPromotionId != null && !ownerOk) throw new ValidationError('That budget belongs to another offer. Choose a shared budget.');
   if (CLOSED_STATUSES.includes(row.status)) {
     throw new ValidationError(`Campaign "${row.name}" is ${row.status}. Choose another campaign or no campaign.`);
   }
@@ -481,6 +532,10 @@ async function createPromotion(payload, adminUserId, scope) {
   assertNoOrderHistoryCondition(data.benefitType, data.conditions);
   validatePromotion(data);
   await assertCampaignUsable(data.campaignId);
+  const budgetMinor = budgetMinorOf(payload);
+  if (budgetMinor != null && data.campaignId != null) {
+    throw new ValidationError("Choose either a shared budget or the offer's own budget, not both.");
+  }
 
   const promoId = await sequelize.transaction(async (t) => {
     const promo = await Promotion.create({
@@ -493,6 +548,7 @@ async function createPromotion(payload, adminUserId, scope) {
       updatedBy: adminUserId,
     }, { transaction: t });
     await writeChildren(promo.id, data, adminUserId, t, { replace: false });
+    await syncOwnBudget(promo, budgetMinor, adminUserId, t);
     await audit(promo.id, 'created', adminUserId, { newValue: promo.toJSON() }, t);
     return promo.id;
   });
@@ -580,11 +636,22 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   // Conditions/overrides are validated only when sent; coupons always (coupon_required needs one)
   validatePromotion({ ...stored, conditions: undefined, zoneOverrides: undefined, ...incoming });
   if (incoming.campaignId != null && incoming.campaignId !== promo.campaignId) await assertCampaignUsable(incoming.campaignId);
+  const budgetMinor = budgetMinorOf(payload);
+  // Moving to a shared budget (or out of one) while keeping an own budget is not possible.
+  if ('campaignId' in incoming && incoming.campaignId !== promo.campaignId) {
+    const ownNow = await ownBudgetOf(promo);
+    if (ownNow && incoming.campaignId != null && budgetMinor != null) {
+      throw new ValidationError("Choose either a shared budget or the offer's own budget, not both.");
+    }
+    // Clearing the shared budget must not drop the own one by accident.
+    if (ownNow && incoming.campaignId == null) delete incoming.campaignId;
+  }
 
   const oldValue = promo.toJSON();
   await sequelize.transaction(async (t) => {
     await promo.update({ ...columnsOf(incoming), updatedBy: adminUserId }, { transaction: t });
     await writeChildren(id, incoming, adminUserId, t, { replace: true });
+    await syncOwnBudget(promo, budgetMinor, adminUserId, t);
     await audit(id, 'updated', adminUserId, { oldValue, newValue: promo.toJSON() }, t);
   });
   return getPromotionById(id);
@@ -640,7 +707,7 @@ async function publishPromotion(id, adminUserId, reason, scope) {
     throw new ValidationError('This promotion has already ended — change the end date first');
   }
   validatePromotion(rowData(promo));
-  await assertCampaignUsable(promo.campaignId);
+  await assertCampaignUsable(promo.campaignId, undefined, true);
   const status = promo.startDate && new Date(promo.startDate) > now ? 'scheduled' : 'active';
 
   await sequelize.transaction(async (t) => {
@@ -723,8 +790,12 @@ async function clonePromotion(id, adminUserId, scope) {
   if (payload.activationType === 'coupon_required') payload.activationType = 'automatic';
   // A copy of a promotion from a closed campaign starts outside any campaign.
   if (payload.campaignId != null) {
-    const camp = await Campaign.findByPk(payload.campaignId, { attributes: ['status'] });
-    if (!camp || CLOSED_STATUSES.includes(camp.status)) payload.campaignId = null;
+    const camp = await Campaign.findByPk(payload.campaignId, { attributes: ['status', 'ownerPromotionId', 'budgetMinor'] });
+    if (camp && camp.ownerPromotionId != null) {
+      // Its own budget is not shared: the copy gets a fresh budget of the same size.
+      payload.campaignId = null;
+      if (camp.budgetMinor != null) payload.budget = camp.budgetMinor / 100;
+    } else if (!camp || CLOSED_STATUSES.includes(camp.status)) payload.campaignId = null;
   }
   return createPromotion(payload, adminUserId, scope);
 }

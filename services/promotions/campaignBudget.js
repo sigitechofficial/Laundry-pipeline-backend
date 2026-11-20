@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Budget held by open orders: holds (RESERVED) already priced at invoice but not paid yet.
+ * Budget held by open orders (RESERVED holds): priced holds count their real discount +
+ * cashback; holds not priced yet count their estimate (the offer on a minimum order).
  * Committed spend lives on campaigns.usedBudgetMinor; together they are what the budget
  * has given away, so new orders stop before the budget is passed.
  */
@@ -19,7 +20,8 @@ async function heldBudgetByCampaign(campaignIds, { now = new Date(), excludeBook
   if (!ids.length) return out;
   const rows = await sequelize.query(
     `SELECT p.campaignId AS campaignId,
-            COALESCE(SUM(ROUND((COALESCE(r.discountAmount, 0) + COALESCE(r.cashbackAmount, 0)) * 100)), 0) AS heldMinor
+            COALESCE(SUM(ROUND(CASE WHEN r.discountAmount IS NULL THEN COALESCE(r.estimatedAmount, 0)
+                                    ELSE r.discountAmount + COALESCE(r.cashbackAmount, 0) END * 100)), 0) AS heldMinor
        FROM promotion_redemptions r
        JOIN promotions p ON p.id = r.promotionId
       WHERE p.campaignId IN (:ids)

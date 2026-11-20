@@ -27,7 +27,7 @@ const {
 } = require('../../models');
 
 const { evaluateConditions } = require('./conditionEvaluator');
-const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket, bundleQuantity } = require('./benefitHandlers');
+const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limitBasket, bundleQuantity, holdEstimateMinor } = require('./benefitHandlers');
 const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
@@ -284,7 +284,10 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
 
   // a booking's hold already secured its place in the limits and the campaign budget
   if (skipUsageLimits) return null;
-  if (promo.campaign && budgetLeftMinor(promo.campaign) === 0) {
+  // Budget: a new order needs room for its expected cost (the offer on a minimum order),
+  // so orders already booked always get their full offer.
+  const left = promo.campaign ? budgetLeftMinor(promo.campaign) : null;
+  if (left != null && (left === 0 || left < holdEstimateMinor(promo, zoneOverride, context.zone?.minOrderMinor))) {
     return reject('BUDGET', 'This offer is no longer available', 'PROMOTION_BUDGET_EXHAUSTED');
   }
   if (promo.globalUsageLimit != null && (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0) >= promo.globalUsageLimit) {

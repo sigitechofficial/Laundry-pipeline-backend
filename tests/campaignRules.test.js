@@ -107,6 +107,15 @@ const codeOf = (c, opts) => (campaignBlock(c, NOW, opts) || {}).code || null;
   assert.strictEqual(rows[0].campaign.heldBudgetMinor, 1250, 'attached to campaigns with a budget');
   assert.strictEqual(rows[1].campaign.heldBudgetMinor, undefined, 'no budget: nothing to attach');
 
+  // Booking estimate: the offer on a minimum order (£20).
+  const { holdEstimateMinor } = require('../services/promotions/benefitHandlers');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'percentage_discount', discountValue: 10 }, null, 2000), 200, '10% of £20');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'percentage_discount', discountValue: 50, maxDiscountCap: 5 }, null, 2000), 500, 'capped');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'fixed_amount_discount', discountValue: 5 }, null, 2000), 500, '£5 off');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'fixed_price', discountValue: 15 }, null, 2000), 500, '£15 for a £20 basket');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'free_delivery', discountValue: 0 }, null, 2000), 0, 'delivery offers save nothing today');
+  assert.strictEqual(holdEstimateMinor({ benefitType: 'percentage_discount', discountValue: 10 }, { discountValue: 20 }, 2000), 400, 'zone override');
+
   Module._load = originalLoad;
   console.log('✅ Campaign rules: all passed');
 })().catch((err) => {

@@ -19,7 +19,7 @@ const {
 const { Op } = require('sequelize');
 const { money } = require('./moneyUtils');
 const { CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
-const { campaignBlock } = require('./campaignRules');
+const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
 const { heldBudgetByCampaign } = require('./campaignBudget');
 
 const RESERVATION_TTL_MINUTES = 15;
@@ -75,7 +75,8 @@ async function adjustCampaignBudget(promotionId, discountAmount, t) {
 /**
  * Reserve a promotion entitlement for a customer. Called during checkout before payment.
  *
- * @param {{ promotionId, customerId, couponCode?, zoneId?, discountAmount?, idempotencyKey? }} params
+ * @param {{ promotionId, customerId, couponCode?, zoneId?, discountAmount?, estimatedAmount?, idempotencyKey? }} params
+ *   estimatedAmount — expected cost to the budget until priced (the offer on a minimum order)
  * @param {object} [transaction] join an outer transaction (e.g. booking creation)
  * @returns {object} redemption row
  * @throws {RedemptionError} code: PROMOTION_NOT_FOUND | PROMOTION_NOT_ACTIVE | PROMOTION_USAGE_EXHAUSTED |
@@ -83,7 +84,7 @@ async function adjustCampaignBudget(promotionId, discountAmount, t) {
  *   COUPON_EXPIRED | COUPON_USAGE_EXHAUSTED | COUPON_ALREADY_USED | COUPON_NOT_YOUR_CODE
  */
 async function reserveRedemption(params, transaction) {
-  const { promotionId, customerId, couponCode, zoneId, discountAmount, idempotencyKey, bookingId } = params;
+  const { promotionId, customerId, couponCode, zoneId, discountAmount, estimatedAmount, idempotencyKey, bookingId } = params;
   return inTransaction(async (t) => {
     if (idempotencyKey) {
       const existing = await Redemption.findOne({ where: { idempotencyKey }, transaction: t });
@@ -113,6 +114,11 @@ async function reserveRedemption(params, transaction) {
       if (stop) {
         const code = stop.code === 'CAMPAIGN_BUDGET_EXHAUSTED' ? 'PROMOTION_BUDGET_EXHAUSTED' : 'PROMOTION_NOT_ACTIVE';
         throw new RedemptionError(code, stop.message);
+      }
+      // Room for this order's expected cost, so every booked order gets its full offer.
+      const left = budgetLeftMinor(camp);
+      if (left != null && estimatedAmount != null && left < Math.round(Number(estimatedAmount) * 100)) {
+        throw new RedemptionError('PROMOTION_BUDGET_EXHAUSTED', 'This offer is no longer available');
       }
     }
 
@@ -181,6 +187,7 @@ async function reserveRedemption(params, transaction) {
       bookingId: bookingId || null,
       status: 'RESERVED',
       discountAmount: discountAmount != null ? money(discountAmount) : null,
+      estimatedAmount: estimatedAmount != null ? money(estimatedAmount) : null,
       currency: promo.currency || 'GBP',
       zoneId: zoneId || null,
       idempotencyKey: idempotencyKey || null,

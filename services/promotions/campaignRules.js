@@ -7,11 +7,13 @@
  * A new order may use a campaign's promotion only while the campaign is:
  *   - active (draft, paused, completed and archived all stop it),
  *   - inside its start/end days (UK calendar days, both days included),
- *   - within budget: spent + priced unpaid holds is below the budget.
+ *   - within budget: spent + unpaid holds (priced amount, or the estimate until priced) leaves
+ *     room for this order's estimate (the offer on a minimum order).
  *
- * An order that already holds the promotion always keeps it (the customer was promised it,
- * and its budget was reserved when it was held): pausing, archiving or completing the
- * campaign, its end date passing or its budget running out stop new orders only. Same
+ * An order that already holds the promotion always keeps its full offer (the customer was
+ * promised it, and its estimate was held against the budget): pausing, archiving or
+ * completing the campaign, its end date passing or its budget running out stop new orders
+ * only. The budget may finish a little over when real orders are bigger than the estimate. Same
  * rule as for the promotion itself (promotionEngine.loadHeldPromotions).
  */
 
