@@ -29,7 +29,7 @@ const { CUSTOMER_RESERVE_MESSAGE, CASHBACK_RESERVE_MESSAGE } = require('../../ut
 const { normalizePaymentType } = require('../../utils/invoicePaymentSummary');
 const { isPromotionsCheckoutEnabled } = require('./checkoutFlag');
 const { buildPromotionContext } = require('./contextBuilder');
-const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHeldPromotions, targetNamesByPromotion } = require('./promotionEngine');
+const { evaluateBookingEligibility, buildOfferLabel, evaluatePromotions, loadHeldPromotions, targetNamesByPromotion, REQUIRED_ITEM_RULES } = require('./promotionEngine');
 const { effectiveValues, resolveDiscountMode, holdEstimateMinor } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
@@ -314,6 +314,8 @@ async function priceAtInvoice({ bookingId, allowance }) {
   }
 
   const promotions = await loadHeldPromotions([...new Set(holds.map((h) => h.promotionId))], b.zoneId);
+  await targetNamesByPromotion(promotions); // fills requiredItemNames for "Not applied: no … in this order"
+  const promoById = new Map(promotions.map((p) => [Number(p.id), p]));
   const coupons = new Map(holds.filter((h) => h.couponCodeId).map((h) => [h.promotionId, { id: h.couponCodeId, code: h.couponCode }]));
   const context = await buildPromotionContext({
     zoneId: b.zoneId,
@@ -334,7 +336,15 @@ async function priceAtInvoice({ bookingId, allowance }) {
   await ledger.writeOrderAdjustments(bookingId, applied);
   const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
   const fullByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.totalSavingMinor || 0]));
-  const rejectedReason = new Map((result.rejected || []).map((r) => [r.promotionId, r.reasons?.find((x) => x?.reason)?.reason || null]));
+  const rejectedReason = new Map((result.rejected || []).map((r) => {
+    const first = r.reasons?.find((x) => x?.reason) || null;
+    const needs = promoById.get(Number(r.promotionId))?.requiredItemNames;
+    // An "only if the order includes…" offer whose item isn't there: say which item.
+    if (first && REQUIRED_ITEM_RULES.includes(first.type) && needs?.length) {
+      return [r.promotionId, `Not applied: no ${listOf(needs)} in this order.`];
+    }
+    return [r.promotionId, first?.reason || null];
+  }));
   for (const h of holds) {
     const a = byPromotion.get(h.promotionId);
     const amount = fromMinor(a?.totalSavingMinor || 0);

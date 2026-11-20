@@ -656,6 +656,30 @@ async function targetNamesByPromotion(promos) {
     const rows = await Model.findAll({ where: { id: ids }, attributes: ['id', 'name'] });
     for (const row of rows) maps[kind].set(Number(row.id), row.name);
   }));
+  // "Only if the order includes…" rules (ALL group): names of the items / services they need.
+  const REQUIRED_KIND = { PRODUCT: 'subCategory', SERVICE: 'service', CATEGORY: 'category', ADDON: 'addon' };
+  const requiredOf = (promo) => (promo.conditions || [])
+    .filter((c) => REQUIRED_KIND[c.conditionType] && c.logicGroup !== 'ANY' && c.operator !== 'not_in')
+    .map((c) => {
+      let v = c.value;
+      if (typeof v === 'string') { try { v = JSON.parse(v); } catch { v = []; } }
+      return { kind: REQUIRED_KIND[c.conditionType], ids: (Array.isArray(v) ? v : []).map(Number).filter((n) => n > 0) };
+    });
+  const requiredIds = { service: new Set(), category: new Set(), subCategory: new Set(), addon: new Set() };
+  for (const promo of promos || []) for (const r of requiredOf(promo)) r.ids.forEach((id) => requiredIds[r.kind].add(id));
+  const requiredNames = {};
+  await Promise.all(Object.entries(TARGET_MODELS).map(async ([kind, Model]) => {
+    requiredNames[kind] = new Map(maps[kind] || []);
+    const ids = [...requiredIds[kind]].filter((id) => !requiredNames[kind].has(id));
+    if (!ids.length || !Model) return;
+    const rows = await Model.findAll({ where: { id: ids }, attributes: ['id', 'name'] });
+    for (const row of rows) requiredNames[kind].set(Number(row.id), row.name);
+  }));
+  for (const promo of promos || []) {
+    const names = requiredOf(promo).flatMap((r) => r.ids.map((id) => requiredNames[r.kind].get(id)).filter(Boolean));
+    if (names.length) promo.requiredItemNames = names;
+  }
+
   // Bulk deals that name services: their service names, for the offer label.
   const dealServiceIds = new Set();
   for (const promo of promos || []) {
@@ -682,6 +706,9 @@ async function targetNamesByPromotion(promos) {
   return out;
 }
 
+/** Basket rules: met only by the real items, so they are judged at invoice. */
+const REQUIRED_ITEM_RULES = ['PRODUCT', 'SERVICE', 'CATEGORY', 'ADDON'];
+
 function nameList(names) {
   const clean = (names || []).map((n) => String(n).trim()).filter(Boolean);
   if (!clean.length) return null;
@@ -699,13 +726,23 @@ function offerSubject(promo, targetNames) {
   return named || 'selected items';
 }
 
+/**
+ * The offer in customer words. An offer that needs certain items in the order says so
+ * ("… when your order includes Duvet"), from requiredItemNames (targetNamesByPromotion).
+ */
 function buildOfferLabel(promo, zoneOverride = null, targetNames = null) {
+  const core = offerLabelCore(promo, zoneOverride, targetNames);
+  const needs = nameList(promo.requiredItemNames);
+  return needs ? `${core} when your order includes ${needs}` : core;
+}
+
+function offerLabelCore(promo, zoneOverride = null, targetNames = null) {
   const { discountValue, maxDiscountCap, minSubtotal, currency } = effectiveValues(promo, zoneOverride);
   const sym = currencySymbol(currency);
   const mode = resolveDiscountMode(promo);
   const value = mode === 'percent' ? `${discountValue}%` : `${sym}${money(discountValue)}`;
   const cap = mode === 'percent' && maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)})` : '';
-  const min = minSubtotal ? ` on orders over ${sym}${money(minSubtotal)}` : '';
+  const min = minSubtotal ? ` on laundry over ${sym}${money(minSubtotal)}` : '';
   const subject = offerSubject(promo, targetNames);
   const amountCap = maxDiscountCap ? ` (up to ${sym}${money(maxDiscountCap)} in total)` : '';
   const onCategoryOrService = promo.benefitType === 'category_discount' || promo.benefitType === 'service_discount'
@@ -758,6 +795,7 @@ function buildOfferLabel(promo, zoneOverride = null, targetNames = null) {
 }
 
 module.exports = {
+  REQUIRED_ITEM_RULES,
   evaluatePromotions,
   simulatePromotions,
   toCustomerView,
