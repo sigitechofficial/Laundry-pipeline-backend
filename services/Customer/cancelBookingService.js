@@ -690,8 +690,9 @@ class CancelBookingService {
         timeZone = null,
         percentageBase = 0
     ) {
-        // Use the timezone sent by the frontend; fall back to business timezone if not provided.
-        const tz = this._resolveTimeZone(timeZone);
+        // Collection slots are UK times: pickup time and "now" are both read in UK time, whatever
+        // timezone the phone sends (a phone set to another country must not move the free window).
+        const tz = BUSINESS_TIME_ZONE;
 
         // Both pickup time and now are interpreted in the same timezone so the diff is always accurate.
         const collectionDatePart = this._getStoredDatePart(bookingData.collectionDate, 'collectionDate');

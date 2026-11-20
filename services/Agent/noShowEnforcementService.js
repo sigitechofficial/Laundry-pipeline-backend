@@ -741,6 +741,21 @@ class NoShowEnforcementService {
             );
         }
 
+        // The customer only has to be home from the start of their window: a driver who arrives
+        // early waits (or comes back) instead of marking a no-show that may cost the customer a fee.
+        const isPickupLeg = normalizedType === 'pickup';
+        const windowStart = slotDateTime(
+            isPickupLeg ? bookingData.collectionDate : bookingData.deliveryDate,
+            isPickupLeg ? bookingData.collectionTimeFrom : bookingData.deliveryTimeFrom,
+            false
+        );
+        if (windowStart && Date.now() < windowStart.getTime()) {
+            const startsAt = String(isPickupLeg ? bookingData.collectionTimeFrom : bookingData.deliveryTimeFrom).slice(0, 5);
+            throw new ValidationError(
+                `The ${isPickupLeg ? 'collection' : 'delivery'} window starts at ${startsAt}. You can mark the customer as not available only once it has started.`
+            );
+        }
+
         const openAttempt = await this.getOpenAttempt(bookingId, normalizedType);
         if (!openAttempt) {
             throw new ConflictError('No open attempt found. Mark Arrived first.');

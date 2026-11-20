@@ -14,7 +14,8 @@ const {
     service,
     categories,
     subCategories,
-    zone
+    zone,
+    bookingReschedule
 } = require('../../models');
 const { Op } = require('sequelize');
 const moment = require('moment-timezone');
@@ -432,8 +433,9 @@ class RescheduleBookingService {
             throw new ValidationError("Cannot reschedule booking at this stage. Items are out for delivery");
         }
 
-        // Step 3: Validate new dates are in the future
-        // Use the frontend timezone if provided, otherwise fall back to business timezone
+        // Step 3: Validate new dates are in the future.
+        // Collection and delivery slots are UK times, whatever the phone's timezone is, so the
+        // check is always in UK time. (resolvedTz is still used for the history wall-clock.)
         const resolvedTz = (timeZone && moment.tz.zone(timeZone.trim()))
             ? timeZone.trim()
             : BUSINESS_TIME_ZONE;
@@ -441,20 +443,20 @@ class RescheduleBookingService {
         const newCollectionMoment = moment.tz(
             `${normalizedCollectionDate} ${normalizedCollectionTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            resolvedTz
+            BUSINESS_TIME_ZONE
         );
 
         // For delivery-only reschedules (status 15), pickup already happened — skip collection future check
-        if (!isDeliveryOnlyReschedule && newCollectionMoment.isBefore(moment.tz(resolvedTz))) {
+        if (!isDeliveryOnlyReschedule && newCollectionMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
         const newDeliveryMoment = moment.tz(
             `${normalizedDeliveryDate} ${normalizedDeliveryTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            resolvedTz
+            BUSINESS_TIME_ZONE
         );
-        if (newDeliveryMoment.isBefore(moment.tz(resolvedTz))) {
+        if (newDeliveryMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
             throw new ValidationError("New delivery date and time must be in the future");
         }
 
@@ -735,6 +737,16 @@ class RescheduleBookingService {
             { where: { id: bookingId } }
         );
 
+        // Step 8b: One log row per reschedule (courtesy counts these). A late-driver reschedule
+        // is logged but never uses up a courtesy reschedule.
+        await bookingReschedule.create({
+            bookingId,
+            customerId,
+            phase: [1, 2, 3].includes(statusId) ? 'pickup' : 'delivery',
+            charge: feeDetails.rescheduleCharge || 0,
+            driverLate: feeDetails.policyApplied === 'Free Reschedule — Driver Late',
+        });
+
         // Step 9: Add booking history entry using caller/business timezone wall-clock
         const rescheduleMoment = moment.tz(resolvedTz);
         await bookingHistory.create({
@@ -925,7 +937,7 @@ class RescheduleBookingService {
 
             // Check courtesy count for pre-pickup phase
             if (config.atPickupCourtesyCountEnabled) {
-                const recentReschedules = await this.countRecentReschedules(customerId, 30);
+                const recentReschedules = await this.countRecentReschedules(customerId, config.courtesyWindowDays || 30, 'pickup');
                 if (recentReschedules < (config.atPickupCourtesyCount || 1)) {
                     return {
                         rescheduleCharge: 0,
@@ -958,7 +970,7 @@ class RescheduleBookingService {
 
             // Check courtesy count for post-pickup phase
             if (config.atDeliveryCourtesyCountEnabled) {
-                const recentReschedules = await this.countRecentReschedules(customerId, 30);
+                const recentReschedules = await this.countRecentReschedules(customerId, config.courtesyWindowDays || 30, 'delivery');
                 if (recentReschedules < (config.atDeliveryCourtesyCount || 1)) {
                     return {
                         rescheduleCharge: 0,
@@ -1007,18 +1019,20 @@ class RescheduleBookingService {
     }
 
     /**
-     * Count how many times a customer has rescheduled bookings within a window
+     * How many times the customer rescheduled in the last windowDays days (reschedules, not
+     * orders). phase 'pickup' / 'delivery' counts that stage only; rows copied from older data
+     * have no phase and count for both. Late-driver reschedules never count.
      */
-    async countRecentReschedules(customerId, windowDays) {
+    async countRecentReschedules(customerId, windowDays, phase = null) {
         const windowStart = moment().subtract(windowDays, 'days').toDate();
-        const count = await booking.count({
+        return bookingReschedule.count({
             where: {
                 customerId,
-                rescheduledCount: { [Op.gt]: 0 },
-                updatedAt: { [Op.gte]: windowStart }
+                driverLate: false,
+                createdAt: { [Op.gte]: windowStart },
+                ...(phase ? { [Op.or]: [{ phase }, { phase: null }] } : {}),
             }
         });
-        return count;
     }
 
     /**

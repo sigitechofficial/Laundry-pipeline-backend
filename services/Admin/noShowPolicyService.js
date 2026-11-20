@@ -1,4 +1,5 @@
-const { policy, noShowPolicyConfig, zone } = require('../../models');
+const { policy, noShowPolicyConfig, zone } = require('../../models');
+const { assertPolicyValues } = require('../../utils/policyValueLimits');
 const { NotFoundError, ConflictError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { Op } = require('sequelize');
 const { resolveListWindow, andWhere, buildPagination } = require('../../utils/listQuery');
@@ -112,6 +113,7 @@ class NoShowPolicyService {
             throw new ValidationError("zoneId is required — every policy must belong to a zone");
         }
 
+        assertPolicyValues(configData);
         this._validateDateRange(effectiveFrom, effectiveTo);
 
         if (isActive !== false) {
@@ -283,6 +285,7 @@ class NoShowPolicyService {
             ? (effectiveTo   ? new Date(effectiveTo)   : null)
             : policyData.effectiveTo;
 
+        assertPolicyValues(configData);
         this._validateDateRange(finalFrom, finalTo);
 
         const willBeActive = isActive !== undefined ? isActive : policyData.isActive;
