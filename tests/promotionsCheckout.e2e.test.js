@@ -109,7 +109,8 @@ async function main() {
   };
   const auto = await mk({ name: `${PREFIX} 10% basket`, benefitType: 'basket_discount', discountMode: 'percent', discountValue: 10 });
   const coded = await mk({ name: `${PREFIX} £1 off trousers`, benefitType: 'item_discount', discountMode: 'amount', discountValue: 1, targetType: 'subCategory', targetIds: [1], activationType: 'coupon_required', couponCodes: [{ code: CODE }] });
-  const legacy = await admin('POST', '/addCoupon', { code: `${CODE}OLD`, description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 });
+  // An existing legacy coupon (old data; new ones can't be made through the API any more).
+  const legacy = { status: (await models.coupon.create({ code: `${CODE}OLD`, description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 })) ? 201 : 0 };
 
   // 1. Customer sees the offers
   const offers = await cust('GET', `/promotions/offers?zoneId=${zoneId}`);

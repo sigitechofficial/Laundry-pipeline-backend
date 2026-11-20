@@ -200,9 +200,10 @@ async function main() {
     const before = await bookingCount();
     const bad = await book('bad code', { code: `NOPE${RUN}` });
     check('booking', 'unknown code: booking refused', bad.status === 404, `${bad.status} ${bad.message}`);
-    const legacyCode = await admin('POST', '/addCoupon', { code: `QAC${RUN}OLD`, description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 });
+    // An existing legacy coupon (old data; new ones can't be made) is refused at booking.
+    await models.coupon.create({ code: `QAC${RUN}OLD`, description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 });
     const old = await book('legacy code', { code: `QAC${RUN}OLD` });
-    check('booking', 'legacy code: booking refused', legacyCode.status === 201 && old.status === 404, `${old.status} ${old.message}`);
+    check('booking', 'legacy code: booking refused', old.status === 404, `${old.status} ${old.message}`);
     await promo({ name: 'card only', activationType: 'coupon_required', conditions: [{ conditionType: 'PAYMENT_METHOD', operator: 'in', value: ['card'] }], couponCodes: [{ code: `QAC${RUN}CARD` }] });
     const cash = await book('card-only code paid cash', { code: `QAC${RUN}CARD` });
     check('booking', 'card-only code on a cash booking: refused in plain words', cash.status === 400 && /only for card payments/i.test(cash.message), `${cash.status} ${cash.message}`);

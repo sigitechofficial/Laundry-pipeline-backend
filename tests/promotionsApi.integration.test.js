@@ -178,11 +178,12 @@ async function main() {
     check('promotion', 'list count matches rows', list.json.rows.length === Math.min(list.json.count, 200), `${list.json.count} total, ${list.json.rows.length} rows`);
 
     // A code may live in only one system: Promotions (coupon_codes) or Coupons (Legacy) (coupons).
+    // Coupons (Legacy) are retired: the API no longer creates or edits them.
     const legacyBody = { description: `${PREFIX} legacy`, discountType: 'percentage', discountValue: 10 };
-    const lp = await admin('POST', '/addCoupon', { ...legacyBody, code: `${CODE_PREFIX}a` });
-    check('codes', 'legacy coupon with a promotion code → 409', lp.status === 409 && /already used in Promotions/.test(lp.json?.message || ''), `${lp.status} ${lp.json?.message || ''}`);
-    const lc = await admin('POST', '/addCoupon', { ...legacyBody, code: `${CODE_PREFIX}LEG` });
-    check('codes', 'legacy coupon with a free code → 201', lc.status === 201, `${lc.status} ${lc.json?.message || ''}`);
+    const lp = await admin('POST', '/addCoupon', { ...legacyBody, code: `${CODE_PREFIX}NEW` });
+    check('codes', 'creating a legacy coupon is switched off → 404', lp.status === 404, `${lp.status} ${lp.json?.message || ''}`);
+    // A legacy coupon that already exists (old data) still blocks the same code in Promotions.
+    await models.coupon.create({ ...legacyBody, code: `${CODE_PREFIX}LEG` });
     const legacyId = (await models.coupon.findOne({ where: { code: `${CODE_PREFIX}LEG` }, attributes: ['id'] }))?.id;
     const pe = await admin('PUT', `/promotions/${p1.id}`, { couponCodes: [{ code: `${CODE_PREFIX}A` }, { code: `${CODE_PREFIX}B` }, { code: `${CODE_PREFIX}leg` }] });
     check('codes', 'promotion edit adding a legacy code → 400', pe.status === 400 && /already used in Coupons \(Legacy\)/.test(pe.json?.message || ''), `${pe.status} ${pe.json?.message || ''}`);
@@ -191,9 +192,7 @@ async function main() {
     const pa = await admin('POST', `/promotions/${p1.id}/coupons`, { code: `${CODE_PREFIX}LEG` });
     check('codes', 'add-coupon endpoint with a legacy code → 400', pa.status === 400, `${pa.status} ${pa.json?.message || ''}`);
     const lr = await admin('PUT', `/updateCoupon/${legacyId}`, { code: `${CODE_PREFIX}B` });
-    check('codes', 'legacy rename to a promotion code → 409', lr.status === 409, `${lr.status} ${lr.json?.message || ''}`);
-    const ls = await admin('PUT', `/updateCoupon/${legacyId}`, { code: `${CODE_PREFIX}LEG`, description: `${PREFIX} legacy edited` });
-    check('codes', 'legacy edit keeping its own code → 200', ls.status === 200, `${ls.status} ${ls.json?.message || ''}`);
+    check('codes', 'editing a legacy coupon is switched off → 404', lr.status === 404, `${lr.status} ${lr.json?.message || ''}`);
     const ps = await admin('PUT', `/promotions/${p1.id}`, { couponCodes: [{ code: `${CODE_PREFIX}A` }, { code: `${CODE_PREFIX}B` }] });
     check('codes', 'promotion edit keeping its own codes → 200', ps.status === 200, `${ps.status} ${ps.json?.message || ''}`);
   }

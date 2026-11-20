@@ -1063,16 +1063,18 @@ router.get('/bookings/:bookingId/service-comparison', asyncMiddleware(serviceCom
 
 
 //!-----------------------------------Coupon Management------------------------------------>>>>
-// Create a coupon
-router.post('/addCoupon', validateAccessToken, asyncMiddleware(couponController.createCoupon));
+// Coupons (Legacy) are retired: Promotions make all new codes, and a legacy code is refused at checkout
+// while Promotions are on. Creating or editing legacy coupons is switched off (kept here, not deleted);
+// list, report, view and deactivate stay so past orders' coupons can still be looked at.
+// router.post('/addCoupon', validateAccessToken, asyncMiddleware(couponController.createCoupon));
 // List all coupons (with optional ?isActive=true&page=1&limit=20)
 router.get('/getAllCoupons', validateAccessToken, asyncMiddleware(couponController.getAllCoupons));
 // Coupon usage/discount report (must be before /:id to avoid route conflict)
 router.get('/getCouponReport', validateAccessToken, asyncMiddleware(couponController.getCouponReport));
 // Get single coupon with redemption history
 router.get('/getCouponById/:id', validateAccessToken, asyncMiddleware(couponController.getCouponById));
-// Update a coupon
-router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
+// Update a coupon: switched off with addCoupon above (Coupons (Legacy) retired)
+// router.put('/updateCoupon/:id', validateAccessToken, asyncMiddleware(couponController.updateCoupon));
 // Deactivate (soft-delete) a coupon
 router.delete('/deleteCoupon/:id', validateAccessToken, asyncMiddleware(couponController.deactivateCoupon));
 
