@@ -132,6 +132,7 @@ const { buildOrderTrackTimeline } = require('../../utils/orderTrackTimeline');
 const {
     attachNoShowPolicyOnBooking,
     attachCancellationPolicyOnBooking,
+    snapshotPoliciesOnBooking,
 } = require('../../utils/bookingPolicyAttach');
 
 /**
@@ -1024,7 +1025,8 @@ function mapNoShowPolicyResponse(noShowPolicyRaw) {
         currency: config.currency ?? null,
         pickupNoShowFee: config.pickupNoShowFee ?? null,
         deliveryNoShowFee: config.deliveryNoShowFee ?? null,
-        storageFeePerDay: config.storageFeePerDay ?? null,
+        // Never charged: sent empty so the app shows no storage fee (kept for older app versions).
+        storageFeePerDay: null,
         percentageFee: config.percentageFee ?? null,
         graceMinutesOnSite: config.graceMinutesOnSite ?? null,
         driverLateSLA: config.driverLateSLA ?? null,
@@ -1035,8 +1037,9 @@ function mapNoShowPolicyResponse(noShowPolicyRaw) {
         requirePaymentAfterCap: config.requirePaymentAfterCap ?? true,
         perCustomerCap: config.perCustomerCap ?? null,
         capWindowDays: config.capWindowDays ?? null,
-        absoluteWaiverAmount: config.absoluteWaiverAmount ?? null,
-        percentageWaiverAmount: config.percentageWaiverAmount ?? null,
+        // Waivers are not applied anywhere: sent empty (kept for older app versions).
+        absoluteWaiverAmount: null,
+        percentageWaiverAmount: null,
     };
 }
 
@@ -1756,6 +1759,7 @@ class CustomerOrderService {
             await Promise.all([
                 attachNoShowPolicyOnBooking(bookingData.id, zoneId),
                 attachCancellationPolicyOnBooking(bookingData.id, zoneId),
+                snapshotPoliciesOnBooking(bookingData.id, zoneId),
             ]);
         } catch (policyAttachErr) {
             console.warn(

@@ -1014,6 +1014,19 @@ class OrderService {
         enriched.agentDeclines = agentDeclines;
         enriched.collectionImages = await getCollectionImagesSafe(orderId, 'getOrderForEdit');
 
+        // Cancellation fee and whether it was collected (owed = not collected; see E3).
+        try {
+            const { cancelBooking: CancelRecord } = require('../../models');
+            const cancelRow = await CancelRecord.findOne({
+                where: { bookingId: orderId },
+                order: [['id', 'DESC']],
+                attributes: ['feeAmount', 'feeCurrency', 'feeStatus', 'feeOwed', 'feeError', 'createdAt'],
+            });
+            enriched.cancellationFee = cancelRow && cancelRow.feeStatus ? cancelRow.toJSON() : null;
+        } catch (err) {
+            enriched.cancellationFee = null;
+        }
+
         try {
             enriched.paymentSummary =
                 await invoiceManagementService.getPaymentSummaryForBooking(orderId);

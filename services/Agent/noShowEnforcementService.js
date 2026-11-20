@@ -95,7 +95,7 @@ class NoShowEnforcementService {
     }
 
     async _loadBooking(bookingId) {
-        const row = await loadBookingForAttempts(bookingId, ['orderTrackId']);
+        const row = await loadBookingForAttempts(bookingId, ['orderTrackId', 'policySnapshot']);
         if (!row) throw new NotFoundError(`Booking ${bookingId} not found`);
         return row;
     }
@@ -244,6 +244,7 @@ class NoShowEnforcementService {
         return resolveNoShowPolicyForBooking({
             noShowPolicyId: bookingData.noShowPolicyId,
             zoneId: bookingData.zoneId,
+            policySnapshot: bookingData.policySnapshot,
         });
     }
 
@@ -305,11 +306,12 @@ class NoShowEnforcementService {
         });
     }
 
+    /** No-shows by this customer in the last windowDays days; attemptType null = pickup and delivery. */
     async _countCustomerFailedAttempts(customerId, attemptType, windowDays) {
         const since = moment().subtract(windowDays, 'days').toDate();
         return bookingAttempt.count({
             where: {
-                attemptType,
+                ...(attemptType ? { attemptType } : {}),
                 status: 'failed',
                 createdAt: { [Op.gte]: since },
             },
@@ -366,7 +368,29 @@ class NoShowEnforcementService {
             policyApplied = 'driver_late_waiver';
         }
 
-        if (!feeWaived && config?.autoForgiveFirstNoShow) {
+        // Per-customer cap: after N no-shows in the cap window the customer has used up their
+        // leeway. With "Require payment after cap" (default on) the fee is then always charged —
+        // no more auto-forgive. Turned off, reaching the cap waives the fee (the older behaviour).
+        let capReached = false;
+        if (!feeWaived && config?.perCustomerCap) {
+            const capWindow = config.capWindowDays || 90;
+            const priorNoShows = await this._countCustomerFailedAttempts(
+                bookingData.customerId,
+                null,
+                capWindow
+            );
+            capReached = priorNoShows >= config.perCustomerCap;
+            if (capReached && config.requirePaymentAfterCap === false) {
+                feeAmount = 0;
+                feeWaived = true;
+                feeWaiveReason = `Per-customer cap reached (${config.perCustomerCap} in ${capWindow}d)`;
+                policyApplied = 'customer_cap';
+            } else if (capReached) {
+                policyApplied = 'payment_after_cap';
+            }
+        }
+
+        if (!feeWaived && !capReached && config?.autoForgiveFirstNoShow) {
             const forgivePeriod = config.autoForgivePeriod || 30;
             const forgiveCount = config.autoForgiveCount || 1;
             const priorFails = await this._countCustomerFailedAttempts(
@@ -379,20 +403,6 @@ class NoShowEnforcementService {
                 feeWaived = true;
                 feeWaiveReason = `Auto-forgive (${priorFails + 1}/${forgiveCount})`;
                 policyApplied = 'auto_forgive';
-            }
-        }
-
-        if (!feeWaived && config?.perCustomerCap) {
-            const capWindow = config.capWindowDays || 90;
-            const chargedCount = await this._countCustomerChargedNoShows(
-                bookingData.customerId,
-                capWindow
-            );
-            if (chargedCount >= config.perCustomerCap) {
-                feeAmount = 0;
-                feeWaived = true;
-                feeWaiveReason = `Per-customer cap reached (${config.perCustomerCap} in ${capWindow}d)`;
-                policyApplied = 'customer_cap';
             }
         }
 

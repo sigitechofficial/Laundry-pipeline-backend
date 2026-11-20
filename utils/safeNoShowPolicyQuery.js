@@ -152,7 +152,10 @@ async function getActiveNoShowPolicySafe(zoneId) {
     return result;
 }
 
-async function resolveNoShowPolicyForBooking({ noShowPolicyId, zoneId }) {
+async function resolveNoShowPolicyForBooking({ noShowPolicyId, zoneId, policySnapshot }) {
+    // The rules copied when the order was booked win: a later policy edit is for new orders.
+    const copied = policySnapshot && (typeof policySnapshot === 'string' ? JSON.parse(policySnapshot) : policySnapshot).noShow;
+    if (copied?.noShowConfig) return copied;
     if (noShowPolicyId) {
         const snapshotted = await findPolicyByIdWithNoShowConfig(noShowPolicyId);
         if (snapshotted) return snapshotted;
@@ -169,10 +172,11 @@ function resolveArrivalRadiusFromConfig(config) {
 }
 
 async function resolveArrivalRadiusForBookingId(bookingId) {
-    const bookingRow = await loadBookingForAttempts(bookingId, ['id', 'zoneId', 'noShowPolicyId']);
+    const bookingRow = await loadBookingForAttempts(bookingId, ['id', 'zoneId', 'noShowPolicyId', 'policySnapshot']);
     const policyRecord = await resolveNoShowPolicyForBooking({
         noShowPolicyId: bookingRow.noShowPolicyId,
         zoneId: bookingRow.zoneId,
+        policySnapshot: bookingRow.policySnapshot,
     });
     return resolveArrivalRadiusFromConfig(policyRecord?.noShowConfig);
 }

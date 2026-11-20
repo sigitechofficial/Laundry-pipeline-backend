@@ -2,6 +2,7 @@
 const {
   Model
 } = require('sequelize');
+const { jsonColumn } = require('../utils/jsonColumn');
 module.exports = (sequelize, DataTypes) => {
   class booking extends Model {
     /**
@@ -264,6 +265,9 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
+  // Copy of the cancellation / reschedule / no-show rules when the order was booked (see
+  // utils/bookingPolicyAttach.js). Later policy edits apply to new orders only.
+  policySnapshot: jsonColumn(DataTypes, 'policySnapshot', { allowNull: true }),
   zoneId: {
     type: DataTypes.INTEGER,
     allowNull: true,

@@ -18,6 +18,7 @@ const {
     bookingReschedule
 } = require('../../models');
 const { Op } = require('sequelize');
+const { snapshotPolicy } = require('../../utils/bookingPolicyAttach');
 const moment = require('moment-timezone');
 const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
 const {
@@ -403,7 +404,7 @@ class RescheduleBookingService {
                 'id', 'customerId', 'bookingStatusId', 'zoneId',
                 'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
                 'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
-                'orderAmount', 'paymentConfirmed', 'rescheduledCount',
+                'orderAmount', 'paymentConfirmed', 'rescheduledCount', 'policySnapshot',
                 'laundryShopId', 'orderTrackId', 'frequency',
                 'driverInstructionOptions', 'driverInstructionOptions1',
                 'driverInstruction', 'totalItems',                 'pickupAddresId', 'dropOffAddressId',
@@ -494,7 +495,8 @@ class RescheduleBookingService {
         );
 
         // Step 4: Get active reschedule policy for the booking's zone
-        const activePolicy = await this.getActiveReschedulePolicy(bookingData.zoneId);
+        // The rules copied when the order was booked win: a later policy edit is for new orders.
+        const activePolicy = snapshotPolicy(bookingData, 'reschedule') || await this.getActiveReschedulePolicy(bookingData.zoneId);
 
         // Step 5: Calculate reschedule fee based on booking phase
         const feeDetails = await this.calculateRescheduleFee(bookingData, activePolicy, customerId);

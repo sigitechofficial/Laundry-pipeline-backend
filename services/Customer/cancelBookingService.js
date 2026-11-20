@@ -9,7 +9,8 @@ const {
     billingDetails,
     tip,
 } = require('../../models');
-const { Op } = require('sequelize');
+const { Op } = require('sequelize');
+const { snapshotPolicy } = require('../../utils/bookingPolicyAttach');
 const moment = require('moment-timezone');
 const {
     chargeOffSession,
@@ -198,6 +199,7 @@ class CancelBookingService {
                 'bookingStatusId', 
                 'zoneId',
                 'cancellationPolicyId',
+                'policySnapshot',
                 'collectionDate', 
                 'collectionTimeFrom',
                 'orderAmount',
@@ -354,12 +356,23 @@ class CancelBookingService {
             stripeChargeError = chargeOutcome.stripeChargeError;
         }
 
-        // Step 8: Create cancellation record
+        // Step 8: Create cancellation record, with what happened to the fee. A fee that could not
+        // be taken (card declined, no saved card, cash order) is recorded as owed, never dropped.
+        const feeRecord = this.describeCancellationFee({
+            fee: cancellationDetails.cancellationCharge,
+            separate: separateCancelChargeAmount,
+            isCardPayment,
+            charged: stripeChargeResult !== null,
+            chargeError: stripeChargeError,
+        });
         await cancelBooking.create({
             bookingId: bookingId,
             reasonId: reasonId,
             reasonText: reasonText,
-            userId: customerId
+            userId: customerId,
+            feeAmount: cancellationDetails.cancellationCharge || 0,
+            feeCurrency: cancellationDetails.currency || null,
+            ...feeRecord,
         });
 
         // Step 9: Cancel booking; attach cancellation policy only when a real policy exists
@@ -495,6 +508,13 @@ class CancelBookingService {
             refundProcessed: refundDetails !== null,
             refundDetails: refundDetails,
             cancellationFeeCharged: stripeChargeResult !== null,
+            cancellationFeeStatus: this.describeCancellationFee({
+                fee: cancellationDetails.cancellationCharge,
+                separate: separateCancelChargeAmount,
+                isCardPayment,
+                charged: stripeChargeResult !== null,
+                chargeError: stripeChargeError,
+            }).feeStatus,
             separateCancelFeeAmount: separateCancelChargeAmount,
             prepaidRetainedAsFee,
             stripeChargeId: stripeChargeResult?.id || null,
@@ -513,6 +533,26 @@ class CancelBookingService {
     }
 
     /**
+     * What happened to a cancellation fee: none, retained (kept from the prepaid amount),
+     * charged (card charged now) or owed (could not be collected: declined card, no saved card,
+     * or a cash order with no card on file).
+     */
+    describeCancellationFee({ fee, separate, isCardPayment, charged, chargeError }) {
+        const amount = Number(fee) || 0;
+        const rest = Number(separate) || 0;
+        if (amount <= 0) return { feeStatus: 'none', feeOwed: 0, feeError: null };
+        if (rest <= 0) return { feeStatus: 'retained', feeOwed: 0, feeError: null };
+        if (isCardPayment && charged) return { feeStatus: 'charged', feeOwed: 0, feeError: null };
+        return {
+            feeStatus: 'owed',
+            feeOwed: parseFloat(rest.toFixed(2)),
+            feeError: String(
+                chargeError || (isCardPayment ? 'The card could not be charged' : 'Cash order: no card on file to charge')
+            ).slice(0, 500),
+        };
+    }
+
+    /**
      * Resolve cancellation policy for a booking.
      * Prefers the policy snapshotted on the booking, then zone/global active policy,
      * then a built-in free-cancellation fallback for charge calculation.
@@ -520,6 +560,9 @@ class CancelBookingService {
      * @returns {Object} Cancellation policy with config (may lack id on fallback)
      */
     async resolveCancellationPolicy(bookingData) {
+        // The rules copied when the order was booked win: a later policy edit is for new orders.
+        const copied = snapshotPolicy(bookingData, 'cancellation');
+        if (copied?.cancellationConfig) return copied;
         if (bookingData.cancellationPolicyId) {
             const snapshotted = await policy.findOne({
                 where: { id: bookingData.cancellationPolicyId },
