@@ -3,7 +3,13 @@
 /**
  * Stacking & conflict resolution.
  *
- * Applies eligible promotions to one shared PricingState in a fixed order so
+ * "Doesn't combine" (stackable false) means exactly that: an offer that doesn't combine is
+ * used on its own. The customer gets whichever saves them most of
+ *   - each offer that doesn't combine, alone, and
+ *   - all the offers that do combine, together (layered as below);
+ * the others are reported ("A better offer was used on this order").
+ *
+ * Layering (offers that combine) applies them to one shared PricingState in a fixed order so
  * combined savings can never exceed what is on the order:
  *   1. Delivery: best single delivery promotion (free delivery / delivery discount)
  *   2. Item scope (item / category / service): in priority order; a line already
@@ -43,6 +49,26 @@ function stackingReject(entry, reason) {
  * @returns {{ applied: Array, rejected: Array, state, subtotalMinor, totalSavingMinor, cashbackMinor }}
  */
 function resolveAndApply(eligible, context) {
+  const lone = eligible.filter((e) => !e.promotion.stackable);
+  if (eligible.length < 2 || !lone.length) return layer(eligible, context);
+  // Options in priority order, so on equal savings the higher priority one is used.
+  const together = eligible.filter((e) => e.promotion.stackable);
+  const options = [...[...lone].sort(byPriority).map((e) => [e]), ...(together.length ? [together] : [])];
+  let best = null;
+  for (const option of options) {
+    const result = layer(option, context);
+    const value = result.totalSavingMinor + result.cashbackMinor;
+    if (!best || value > best.value) best = { option, result, value };
+  }
+  const used = new Set(best.option.map((e) => e.promotion.id));
+  const others = eligible
+    .filter((e) => !used.has(e.promotion.id))
+    .map((e) => stackingReject(e, 'A better offer was used on this order'));
+  return { ...best.result, rejected: [...best.result.rejected, ...others] };
+}
+
+/** Offers that combine, layered on one basket (see header). */
+function layer(eligible, context) {
   const state = createPricingState(context);
   const subtotalMinor = remainingSubtotalMinor(state);
   const sorted = [...eligible].sort(byPriority);
@@ -67,7 +93,7 @@ function resolveAndApply(eligible, context) {
   const groupTaken = (entry) => entry.promotion.stackGroup && usedStackGroups.has(entry.promotion.stackGroup);
   const noBenefit = (entry) => ({
     ...entry,
-    reasons: [{ type: 'NO_BENEFIT', pass: false, code: 'PROMOTION_NO_BENEFIT', reason: 'Nothing left on the order for this promotion to discount' }],
+    reasons: [{ type: 'NO_BENEFIT', pass: false, code: 'PROMOTION_NO_BENEFIT', reason: "This offer doesn't apply to the items left on this order" }],
   });
 
   // 1. Delivery — best saving wins

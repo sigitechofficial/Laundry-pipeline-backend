@@ -237,16 +237,36 @@ const { resolveAndApply, detectConflicts } = require('../services/promotions/sta
 const entry = (id, p) => ({ promotion: { id, priority: 50, stackable: false, ...p } });
 
 {
-  // The £126-on-£60 bug: item + item + basket must never exceed the basket
+  // "Doesn't combine": the customer gets the single best offer, never two on top of each other.
   const r = resolveAndApply([
     entry(1, { benefitType: 'category_discount', discountValue: 80, targetIds: [10] }),
     entry(2, { benefitType: 'service_discount', discountValue: 80, targetIds: [100] }),
     entry(3, { benefitType: 'percentage_discount', discountValue: 50 }),
   ], basket60);
+  assert.deepStrictEqual(r.applied.map((a) => a.promotion.id), [1], 'best single offer (80% of £40 beats 50% of £60); equal savings → higher priority / older');
+  assert.strictEqual(r.totalSavingMinor, 3200);
+  assert.deepStrictEqual(r.rejected.map((x) => x.promotion.id).sort(), [2, 3], 'the others are reported, not silently dropped');
+  assert.ok(r.rejected.every((x) => x.reasons[0].code === 'PROMOTION_NOT_COMBINABLE'));
+}
+{
+  // The £126-on-£60 bug: offers that combine (item + basket) must never exceed the basket.
+  const r = resolveAndApply([
+    entry(1, { benefitType: 'category_discount', discountValue: 80, targetIds: [10], stackable: true }),
+    entry(3, { benefitType: 'percentage_discount', discountValue: 50, stackable: true }),
+  ], basket60);
   assert.ok(r.totalSavingMinor <= 6000, `total ${r.totalSavingMinor} must be ≤ 6000`);
-  assert.deepStrictEqual(r.applied.map((a) => a.promotion.id), [1, 3], 'second non-stackable item promo skips already-discounted lines; basket applies to the rest');
+  assert.deepStrictEqual(r.applied.map((a) => a.promotion.id), [1, 3], 'item offer, then the basket offer on what is left');
   assert.strictEqual(r.totalSavingMinor, 3200 + 1400, '80% of £40 + 50% of remaining £28');
-  assert.strictEqual(r.rejected[0].promotion.id, 2, 'loser is reported, not silently dropped');
+}
+{
+  // An offer that doesn't combine vs offers that do: whichever saves more is used.
+  const r = resolveAndApply([
+    entry(1, { benefitType: 'percentage_discount', discountValue: 10, stackable: true }),
+    entry(2, { benefitType: 'fixed_amount_discount', discountValue: 5, stackable: true }),
+    entry(3, { benefitType: 'percentage_discount', discountValue: 15 }),
+  ], basket60);
+  assert.deepStrictEqual(r.applied.map((a) => a.promotion.id), [1, 2], '£6 + £5 together beat £9 alone');
+  assert.strictEqual(r.rejected[0].reasons[0].reason, 'A better offer was used on this order');
 }
 {
   const r = resolveAndApply([
@@ -273,9 +293,9 @@ const entry = (id, p) => ({ promotion: { id, priority: 50, stackable: false, ...
 }
 {
   const r = resolveAndApply([
-    entry(1, { benefitType: 'free_delivery' }),
-    entry(2, { benefitType: 'delivery_discount', discountValue: 1 }),
-    entry(3, { benefitType: 'percentage_discount', discountValue: 10 }),
+    entry(1, { benefitType: 'free_delivery', stackable: true }),
+    entry(2, { benefitType: 'delivery_discount', discountValue: 1, stackable: true }),
+    entry(3, { benefitType: 'percentage_discount', discountValue: 10, stackable: true }),
   ], basket60);
   assert.deepStrictEqual(r.applied.map((a) => a.promotion.id).sort(), [1, 3], 'best delivery offer + basket promo');
 }
