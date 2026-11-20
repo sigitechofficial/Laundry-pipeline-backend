@@ -578,6 +578,8 @@ async function listPromotions({ page = 1, limit = 50, status, campaignId, benefi
     include: [
       { model: CouponCode, as: 'couponCodes', attributes: ['id', 'code', 'usedCount', 'isActive'] },
       { model: Campaign, as: 'campaign', attributes: CAMPAIGN_SUMMARY },
+      // The list says who an offer is for ("First order"), so it needs the rule types.
+      { model: PromotionCondition, as: 'conditions', attributes: ['id', 'promotionId', 'conditionType'], separate: true },
     ],
   });
 
