@@ -202,6 +202,8 @@ function normalizeBenefitConfig(value) {
     out.deals = Array.isArray(out.deals)
       ? out.deals.map((d = {}) => ({
         itemIds: asIntIdList(d.itemIds),
+        // Services this deal counts in (empty = any service).
+        serviceIds: asIntIdList(d.serviceIds),
         quantity: blank(d.quantity) || d.quantity == null ? null : Number(d.quantity),
         price: blank(d.price) || d.price == null ? null : Number(d.price),
       }))

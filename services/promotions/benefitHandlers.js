@@ -152,9 +152,10 @@ function bundleQuantity(promotion) {
 /**
  * The bulk price deals of an offer. Several deals: benefitConfig.deals, each
  * { itemIds, quantity, price } ("10 T-shirts for £30", "5 Trousers for £25"); each deal
- * counts only its own items. One deal (older offers): bundleQuantity + discountValue on the
- * offer's chosen items (itemIds null = the offer's targets).
- * @returns {Array<{ itemIds: number[]|null, quantity: number, priceMinor: number }>}
+ * counts only its own items, and only in its services when it names some (serviceIds).
+ * One deal (older offers): bundleQuantity + discountValue on the offer's chosen items
+ * (itemIds null = the offer's targets).
+ * @returns {Array<{ itemIds: number[]|null, serviceIds: number[]|null, quantity: number, priceMinor: number }>}
  */
 function bulkDeals(promotion, zoneOverride = null) {
   let config = promotion.benefitConfig;
@@ -165,6 +166,7 @@ function bulkDeals(promotion, zoneOverride = null) {
     return config.deals
       .map((d) => ({
         itemIds: (Array.isArray(d.itemIds) ? d.itemIds : []).map(Number).filter((n) => n > 0),
+        serviceIds: Array.isArray(d.serviceIds) && d.serviceIds.length ? d.serviceIds.map(Number).filter((n) => n > 0) : null,
         quantity: Number(d.quantity),
         priceMinor: toMinor(d.price),
       }))
@@ -172,12 +174,13 @@ function bulkDeals(promotion, zoneOverride = null) {
   }
   const quantity = bundleQuantity(promotion);
   if (!quantity) return [];
-  return [{ itemIds: null, quantity, priceMinor: toMinor(effectiveValues(promotion, zoneOverride).discountValue) }];
+  return [{ itemIds: null, serviceIds: null, quantity, priceMinor: toMinor(effectiveValues(promotion, zoneOverride).discountValue) }];
 }
 
-/** Does a line belong to this deal? (its items, plus the offer's service rule) */
+/** Does a line belong to this deal? (its items, in its services, plus the offer's own rules) */
 function lineInDeal(promotion, deal, line) {
   if (!lineMatchesTarget(promotion, line)) return false;
+  if (deal.serviceIds && !(line.serviceId != null && deal.serviceIds.includes(Number(line.serviceId)))) return false;
   return deal.itemIds == null || (line.addonId == null && deal.itemIds.includes(Number(line.subCategoryId)));
 }
 

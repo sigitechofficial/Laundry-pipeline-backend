@@ -185,6 +185,19 @@ assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00
   assert.strictEqual(save([line(SHIRT, 4.5, 10), line(TROUSERS, 7.5, 4)]), 1500, 'trousers short of 5: T-shirt deal only');
   assert.strictEqual(save([line(SHIRT, 4.5, 5), line(TROUSERS, 7.5, 5)]), 1250, 'T-shirts short of 10: trousers deal only');
   assert.strictEqual(save([line(SHIRT, 4.5, 6), line(TROUSERS, 7.5, 4)]), 0, 'T-shirts never count towards trousers');
+  // A deal's own services: T-shirts only in service 2, trousers only in service 7.
+  const perService = bulk({ discountValue: 30, targetIds: [SHIRT, TROUSERS], benefitConfig: { deals: [
+    { itemIds: [SHIRT], serviceIds: [2], quantity: 10, price: 30 },
+    { itemIds: [TROUSERS], serviceIds: [7, 8], quantity: 5, price: 25 },
+  ] } });
+  const inService = (serviceId, sub, price, qty) => ({ ...line(sub, price, qty), serviceId });
+  const ps = (lines) => computeBenefit(perService, createPricingState(contextOf(lines))).totalSavingMinor;
+  assert.strictEqual(ps([inService(2, SHIRT, 4.5, 10), inService(8, TROUSERS, 7.5, 5)]), 1500 + 1250, 'each deal in its services');
+  assert.strictEqual(ps([inService(7, SHIRT, 4.5, 10), inService(2, TROUSERS, 7.5, 5)]), 0, 'wrong services: nothing');
+  assert.deepStrictEqual(
+    normalizePayload({ benefitConfig: { deals: [{ itemIds: [21], serviceIds: ['2', 2, ''], quantity: 10, price: 30 }] } }).benefitConfig.deals[0].serviceIds,
+    [2]
+  );
   const b = computeBenefit(offer, createPricingState(contextOf([line(SHIRT, 4.5, 10)])));
   assert.strictEqual(b.label, '10 for £30.00 + 5 for £25.00');
   // Checkout: needs one full group of any deal.
