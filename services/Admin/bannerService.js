@@ -202,7 +202,7 @@ class BannerService {
 
   /**
    * Linked banners only show while their promotion runs for this customer: promotions on at
-   * checkout in the zone, promotion live, zone in scope, campaign not switched off.
+   * checkout in the zone, promotion live, zone in scope, campaign running (campaignRules).
    */
   async applyLinkedPromotions(banners, zoneId) {
     const linkedIds = [...new Set(banners.map((b) => b.promotionId).filter(Boolean))];
@@ -210,13 +210,15 @@ class BannerService {
     const { isPromotionsCheckoutEnabled } = require('../promotions/checkoutFlag');
     const { isLive } = require('../promotions/promotionEngine');
     const { buildOfferLabel } = require('../promotions/promotionEngine');
+    const { campaignBlock } = require('../promotions/campaignRules');
+    const { attachHeldBudget } = require('../promotions/campaignBudget');
     const { promotion, campaign } = require('../../models');
-    const rows = await promotion.findAll({
-      where: { id: linkedIds },
-      include: [{ model: campaign, as: 'campaign', attributes: ['id', 'status'] }],
-    });
-    const byId = new Map(rows.map((p) => [p.id, p]));
     const now = new Date();
+    const rows = await attachHeldBudget(await promotion.findAll({
+      where: { id: linkedIds },
+      include: [{ model: campaign, as: 'campaign', attributes: ['id', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor'] }],
+    }), { now });
+    const byId = new Map(rows.map((p) => [p.id, p]));
     const out = [];
     for (const b of banners) {
       if (!b.promotionId) {
@@ -227,7 +229,7 @@ class BannerService {
       const live = promo
         && isPromotionsCheckoutEnabled(zoneId)
         && isLive(promo, now, zoneId != null ? zoneId : null)
-        && !['paused', 'completed', 'archived'].includes(promo.campaign?.status);
+        && !campaignBlock(promo.campaign, now);
       if (!live) continue;
       const offer = this.offerFromPromotion(promo);
       out.push({ ...b, ...(offer || {}), offerLabel: buildOfferLabel(promo) });

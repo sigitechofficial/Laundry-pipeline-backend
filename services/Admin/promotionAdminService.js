@@ -8,6 +8,7 @@ const {
   promotionZoneOverride: PromotionZoneOverride,
   couponCode: CouponCode,
   coupon: LegacyCoupon,
+  campaign: Campaign,
   promotionAuditLog: AuditLog,
   sequelize,
 } = require('../../models');
@@ -15,6 +16,23 @@ const { ValidationError, NotFoundError, ForbiddenError } = require('../../middle
 const { SUPPORTED_BENEFIT_TYPES, resolveDiscountMode } = require('../promotions/benefitHandlers');
 const { validateCondition } = require('../promotions/conditionEvaluator');
 const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime');
+const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules');
+const { attachHeldBudget } = require('../promotions/campaignBudget');
+
+const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor'];
+
+/**
+ * Why new orders cannot use the promotion because of its campaign, or null. Shown in the
+ * admin list so a promotion in a paused / ended / over-budget campaign is not read as running.
+ */
+async function withCampaignStop(rows, now = new Date()) {
+  await attachHeldBudget(rows, { now });
+  for (const p of rows) {
+    const stop = p.campaign ? campaignBlock(p.campaign, now) : null;
+    p.setDataValue('campaignStopReason', stop ? stop.code : null);
+  }
+  return rows;
+}
 
 // ─── Audit helper ────────────────────────────────────────────────────────────
 
@@ -345,6 +363,17 @@ function validatePromotion(p) {
   }
 }
 
+/** A promotion can only be put into (or published in) a campaign that exists and is not closed. */
+async function assertCampaignUsable(campaignId, transaction) {
+  if (campaignId == null) return;
+  if (!Number.isInteger(campaignId) || campaignId <= 0) throw new ValidationError('Invalid campaign');
+  const row = await Campaign.findByPk(campaignId, { attributes: ['id', 'name', 'status'], transaction });
+  if (!row) throw new ValidationError('Campaign not found');
+  if (CLOSED_STATUSES.includes(row.status)) {
+    throw new ValidationError(`Campaign "${row.name}" is ${row.status}. Choose another campaign or no campaign.`);
+  }
+}
+
 /** Coupon codes must be unique across all promotions. */
 async function assertCodesAvailable(codes, promotionId, transaction) {
   if (!codes.length) return;
@@ -451,6 +480,7 @@ async function createPromotion(payload, adminUserId, scope) {
   Object.assign(data, typeRuleFields(data));
   assertNoOrderHistoryCondition(data.benefitType, data.conditions);
   validatePromotion(data);
+  await assertCampaignUsable(data.campaignId);
 
   const promoId = await sequelize.transaction(async (t) => {
     const promo = await Promotion.create({
@@ -491,9 +521,11 @@ async function listPromotions({ page = 1, limit = 50, status, campaignId, benefi
     distinct: true,
     include: [
       { model: CouponCode, as: 'couponCodes', attributes: ['id', 'code', 'usedCount', 'isActive'] },
+      { model: Campaign, as: 'campaign', attributes: CAMPAIGN_SUMMARY },
     ],
   });
 
+  await withCampaignStop(rows);
   return { count, rows, page: safePage, limit: safeLimit };
 }
 
@@ -547,6 +579,7 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   );
   // Conditions/overrides are validated only when sent; coupons always (coupon_required needs one)
   validatePromotion({ ...stored, conditions: undefined, zoneOverrides: undefined, ...incoming });
+  if (incoming.campaignId != null && incoming.campaignId !== promo.campaignId) await assertCampaignUsable(incoming.campaignId);
 
   const oldValue = promo.toJSON();
   await sequelize.transaction(async (t) => {
@@ -607,6 +640,7 @@ async function publishPromotion(id, adminUserId, reason, scope) {
     throw new ValidationError('This promotion has already ended — change the end date first');
   }
   validatePromotion(rowData(promo));
+  await assertCampaignUsable(promo.campaignId);
   const status = promo.startDate && new Date(promo.startDate) > now ? 'scheduled' : 'active';
 
   await sequelize.transaction(async (t) => {
@@ -687,6 +721,11 @@ async function clonePromotion(id, adminUserId, scope) {
   // Codes are unique: the copy starts without codes (and therefore as automatic if it needed one)
   payload.couponCodes = [];
   if (payload.activationType === 'coupon_required') payload.activationType = 'automatic';
+  // A copy of a promotion from a closed campaign starts outside any campaign.
+  if (payload.campaignId != null) {
+    const camp = await Campaign.findByPk(payload.campaignId, { attributes: ['status'] });
+    if (!camp || CLOSED_STATUSES.includes(camp.status)) payload.campaignId = null;
+  }
   return createPromotion(payload, adminUserId, scope);
 }
 

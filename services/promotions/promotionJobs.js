@@ -4,6 +4,7 @@
  * Background work for promotions:
  *  - scheduled → active when startDate is reached
  *  - active/scheduled/paused → expired when endDate has passed
+ *  - campaigns: draft/active/paused → completed once their end day has passed (UK day)
  *  - release checkout reservations whose TTL expired (frees usage counters)
  *  - safety net for bookings: settle holds of paid/completed bookings, reverse
  *    promotions of fully refunded ones (bookingPromotionService.settleClosedBookings)
@@ -12,16 +13,17 @@
  */
 
 const { Op } = require('sequelize');
-const { promotion: Promotion, promotionAuditLog: AuditLog } = require('../../models');
+const { promotion: Promotion, campaign: Campaign, promotionAuditLog: AuditLog } = require('../../models');
 const { cleanupExpiredReservations } = require('./redemptionService');
+const { businessToday } = require('./campaignRules');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 let timer = null;
 
-async function audit(ids, action, reason) {
+async function audit(ids, action, reason, entityType = 'promotion') {
   for (const entityId of ids) {
     try {
-      await AuditLog.create({ entityType: 'promotion', entityId, action, actorType: 'system', reason });
+      await AuditLog.create({ entityType, entityId, action, actorType: 'system', reason });
     } catch (err) {
       console.error('[promotionJobs] audit write failed:', err.message);
     }
@@ -46,7 +48,19 @@ async function runPromotionLifecycle(now = new Date()) {
     { status: { [Op.in]: ['scheduled', 'active', 'paused'] }, endDate: { [Op.lt]: now } },
     'expired', 'status_expired', 'End date passed'
   );
-  return { activated, expired };
+  const campaignsCompleted = await completeEndedCampaigns(now);
+  return { activated, expired, campaignsCompleted };
+}
+
+/** A campaign whose end day is over is completed, so its status says what the engine already does. */
+async function completeEndedCampaigns(now = new Date()) {
+  const where = { status: { [Op.in]: ['draft', 'active', 'paused'] }, endDate: { [Op.lt]: businessToday(now) } };
+  const rows = await Campaign.findAll({ where, attributes: ['id'] });
+  if (!rows.length) return 0;
+  const ids = rows.map((r) => r.id);
+  const [count] = await Campaign.update({ status: 'completed' }, { where: { ...where, id: ids } });
+  await audit(ids, 'status_completed', 'End date passed', 'campaign');
+  return count;
 }
 
 function startPromotionJobs() {
@@ -59,8 +73,8 @@ function startPromotionJobs() {
       const cleanup = await cleanupExpiredReservations();
       const { settleClosedBookings } = require('./bookingPromotionService');
       const bookings = await settleClosedBookings();
-      if (lifecycle.activated || lifecycle.expired || cleanup.cleaned || bookings.settled || bookings.reversed) {
-        console.log(`[promotionJobs] activated=${lifecycle.activated} expired=${lifecycle.expired} releasedReservations=${cleanup.cleaned} settled=${bookings.settled} reversed=${bookings.reversed}`);
+      if (lifecycle.activated || lifecycle.expired || lifecycle.campaignsCompleted || cleanup.cleaned || bookings.settled || bookings.reversed) {
+        console.log(`[promotionJobs] activated=${lifecycle.activated} expired=${lifecycle.expired} campaignsCompleted=${lifecycle.campaignsCompleted} releasedReservations=${cleanup.cleaned} settled=${bookings.settled} reversed=${bookings.reversed}`);
       }
     } catch (err) {
       console.error('[promotionJobs] failed:', err.message);
@@ -73,4 +87,4 @@ function startPromotionJobs() {
   console.log(`[promotionJobs] started intervalMs=${intervalMs}`);
 }
 
-module.exports = { startPromotionJobs, runPromotionLifecycle };
+module.exports = { startPromotionJobs, runPromotionLifecycle, completeEndedCampaigns };

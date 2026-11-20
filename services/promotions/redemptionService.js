@@ -19,6 +19,8 @@ const {
 const { Op } = require('sequelize');
 const { money } = require('./moneyUtils');
 const { CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
+const { campaignBlock } = require('./campaignRules');
+const { heldBudgetByCampaign } = require('./campaignBudget');
 
 const RESERVATION_TTL_MINUTES = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -98,14 +100,19 @@ async function reserveRedemption(params, transaction) {
       && (!promo.endDate || new Date(promo.endDate) >= now);
     if (!live) throw new RedemptionError('PROMOTION_NOT_ACTIVE', 'This offer is no longer available');
     if (promo.campaignId) {
-      const [camp] = await sequelize.query('SELECT status, budgetMinor, usedBudgetMinor FROM campaigns WHERE id = ?', {
-        replacements: [promo.campaignId], transaction: t, type: sequelize.QueryTypes.SELECT,
-      });
-      if (camp && ['paused', 'completed', 'archived'].includes(camp.status)) {
-        throw new RedemptionError('PROMOTION_NOT_ACTIVE', 'This offer is no longer available');
+      // Locked so holds of the campaign's promotions are judged one at a time against its budget.
+      const [camp] = await sequelize.query(
+        'SELECT id, status, startDate, endDate, budgetMinor, usedBudgetMinor FROM campaigns WHERE id = ? FOR UPDATE',
+        { replacements: [promo.campaignId], transaction: t, type: sequelize.QueryTypes.SELECT }
+      );
+      if (camp && camp.budgetMinor != null) {
+        const held = await heldBudgetByCampaign([camp.id], { now, excludeBookingId: bookingId || null, transaction: t });
+        camp.heldBudgetMinor = held.get(Number(camp.id)) || 0;
       }
-      if (camp && camp.budgetMinor != null && Number(camp.usedBudgetMinor || 0) >= Number(camp.budgetMinor)) {
-        throw new RedemptionError('PROMOTION_BUDGET_EXHAUSTED', 'This offer is no longer available');
+      const stop = campaignBlock(camp, now);
+      if (stop) {
+        const code = stop.code === 'CAMPAIGN_BUDGET_EXHAUSTED' ? 'PROMOTION_BUDGET_EXHAUSTED' : 'PROMOTION_NOT_ACTIVE';
+        throw new RedemptionError(code, stop.message);
       }
     }
 

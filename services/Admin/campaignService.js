@@ -3,6 +3,14 @@
 const { campaign: Campaign, promotion: Promotion, promotionAuditLog: AuditLog } = require('../../models');
 const { Op } = require('sequelize');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
+const { CAMPAIGN_STATUSES, campaignBlock, budgetLeftMinor, businessToday, dayOf } = require('../promotions/campaignRules');
+const { heldBudgetByCampaign } = require('../promotions/campaignBudget');
+
+/** Promotion fields the campaign screens show. */
+const PROMOTION_SUMMARY = [
+  'id', 'name', 'status', 'benefitType', 'discountValue', 'discountMode', 'activationType', 'visibility',
+  'startDate', 'endDate', 'globalUsedCount', 'globalUsageLimit', 'zoneScopeMode',
+];
 
 // ─── Audit helper ────────────────────────────────────────────────────────────
 
@@ -29,6 +37,7 @@ const blankToNull = (v) => (v === '' || v === undefined ? null : v);
 
 async function createCampaign(payload, adminUserId) {
   _validateCampaign(payload);
+  _assertCanBeActive(payload);
 
   const row = await Campaign.create({
     name: payload.name.trim(),
@@ -60,25 +69,52 @@ async function listCampaigns({ page = 1, limit = 50, status } = {}) {
     limit: safeLimit,
     offset: (safePage - 1) * safeLimit,
     distinct: true,
-    include: [{ model: Promotion, as: 'promotions', attributes: ['id', 'name', 'status', 'benefitType'] }],
+    include: [{ model: Promotion, as: 'promotions', attributes: PROMOTION_SUMMARY }],
   });
 
+  await withRunning(rows);
   return { count, rows, page: safePage, limit: safeLimit };
 }
 
+/**
+ * Adds to each campaign (as plain fields on the row):
+ *   heldBudgetMinor / budgetLeftMinor — budget held by unpaid orders and what is left,
+ *   running — whether new orders can use its promotions now,
+ *   stopReason — why not (e.g. CAMPAIGN_NOT_ACTIVE, CAMPAIGN_ENDED), or null.
+ */
+async function withRunning(rows, now = new Date()) {
+  const list = Array.isArray(rows) ? rows : [rows];
+  const held = await heldBudgetByCampaign(list.filter((c) => c.budgetMinor != null).map((c) => c.id), { now });
+  for (const c of list) {
+    c.setDataValue('heldBudgetMinor', held.get(Number(c.id)) || 0);
+    c.setDataValue('budgetLeftMinor', budgetLeftMinor(c));
+    const stop = campaignBlock(c, now);
+    c.setDataValue('running', !stop);
+    c.setDataValue('stopReason', stop ? stop.code : null);
+  }
+  return rows;
+}
+
 async function getCampaignById(id) {
+  const row = await findCampaign(id);
+  await withRunning(row);
+  return row;
+}
+
+async function findCampaign(id) {
   const row = await Campaign.findByPk(id, {
-    include: [{ model: Promotion, as: 'promotions', attributes: ['id', 'name', 'status', 'benefitType', 'discountValue', 'startDate', 'endDate'] }],
+    include: [{ model: Promotion, as: 'promotions', attributes: PROMOTION_SUMMARY }],
   });
   if (!row) throw new NotFoundError('Campaign not found');
   return row;
 }
 
 async function updateCampaign(id, payload, adminUserId) {
-  const row = await getCampaignById(id);
+  const row = await findCampaign(id);
   const oldValue = row.toJSON();
 
   _validateCampaign({ ...row.toJSON(), ...payload });
+  if (payload.status !== undefined || payload.endDate !== undefined) _assertCanBeActive({ ...row.toJSON(), ...payload });
 
   await row.update({
     ...(payload.name !== undefined ? { name: payload.name.trim() } : {}),
@@ -94,18 +130,21 @@ async function updateCampaign(id, payload, adminUserId) {
   });
 
   await audit('campaign', id, 'updated', adminUserId, { oldValue, newValue: row.toJSON() });
-  return row.reload();
+  return getCampaignById(id);
 }
 
+/**
+ * Only an empty campaign is deleted. One with promotions is never removed or archived
+ * silently: archiving stops every promotion in it, so the admin does that on purpose.
+ */
 async function deleteCampaign(id, adminUserId) {
-  const row = await getCampaignById(id);
+  const row = await findCampaign(id);
 
-  // Can only archive, not hard delete, if has promotions
   const promoCount = await Promotion.count({ where: { campaignId: id } });
   if (promoCount > 0) {
-    await row.update({ status: 'archived', updatedBy: adminUserId });
-    await audit('campaign', id, 'archived', adminUserId, { reason: 'Soft delete — has promotions' });
-    return { archived: true };
+    throw new ValidationError(
+      `This campaign has ${promoCount} promotion${promoCount === 1 ? '' : 's'}, so it cannot be deleted. Archive it instead (this stops its promotions), or move the promotions to another campaign first.`
+    );
   }
 
   await row.destroy();
@@ -117,8 +156,7 @@ async function deleteCampaign(id, adminUserId) {
 
 function _validateCampaign(p) {
   if (!p.name || !String(p.name).trim()) throw new ValidationError('Campaign name is required');
-  const validStatuses = ['draft', 'active', 'paused', 'completed', 'archived'];
-  if (p.status && !validStatuses.includes(p.status)) {
+  if (p.status && !CAMPAIGN_STATUSES.includes(p.status)) {
     throw new ValidationError(`Invalid campaign status: ${p.status}`);
   }
   const budget = blankToNull(p.budgetMinor);
@@ -132,7 +170,16 @@ function _validateCampaign(p) {
   if (start && end && end < start) throw new ValidationError('End date must be on or after the start date');
 }
 
+/** Made (or kept) active, a campaign must still have days to run, or its promotions never apply. */
+function _assertCanBeActive(p) {
+  const endDay = dayOf(p.endDate);
+  if (p.status === 'active' && endDay && endDay < businessToday()) {
+    throw new ValidationError('This campaign has already ended. Change the end date to make it active again.');
+  }
+}
+
 module.exports = {
+  withRunning,
   createCampaign,
   listCampaigns,
   getCampaignById,

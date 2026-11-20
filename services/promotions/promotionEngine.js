@@ -31,9 +31,10 @@ const { benefitScope, effectiveValues, resolveDiscountMode, currencySymbol, limi
 const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
+const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
+const { attachHeldBudget } = require('./campaignBudget');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const BLOCKING_CAMPAIGN_STATUSES = ['paused', 'completed', 'archived'];
 const CUSTOMER_LEVEL_CONDITIONS = ['ZONE', 'CUSTOMER_TYPE', 'CUSTOMER_SEGMENT', 'FIRST_ORDER', 'ORDER_COUNT'];
 
 // ─── Live checks ────────────────────────────────────────────────────────────
@@ -55,11 +56,15 @@ function isLive(promo, now, zoneId) {
   return zoneId == null ? true : zoneInScope(promo, zoneId);
 }
 
+const CAMPAIGN_ATTRIBUTES = ['id', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor'];
+
 /**
  * Load active promotions that could apply for a given zone and time.
- * Cheap filtering: status, dates, zone scope.
+ * Cheap filtering: status, dates, zone scope, and the campaign rule (campaignRules):
+ * its status and days here; its budget in builtInCheck, which reports the reason.
+ * @param {{ excludeBookingId?: number|null }} [opts] the booking being priced (its own holds are not "taken" budget)
  */
-async function loadCandidatePromotions(zoneId, now = new Date()) {
+async function loadCandidatePromotions(zoneId, now = new Date(), { excludeBookingId = null } = {}) {
   const rows = await Promotion.findAll({
     where: {
       status: 'active',
@@ -71,11 +76,11 @@ async function loadCandidatePromotions(zoneId, now = new Date()) {
     include: [
       { model: PromotionCondition, as: 'conditions' },
       { model: PromotionZoneOverride, as: 'zoneOverrides' },
-      { model: Campaign, as: 'campaign', attributes: ['id', 'status', 'budgetMinor', 'usedBudgetMinor'] },
+      { model: Campaign, as: 'campaign', attributes: CAMPAIGN_ATTRIBUTES },
     ],
   });
-  // A paused/completed/archived campaign switches off all of its promotions
-  return rows.filter((p) => zoneInScope(p, zoneId) && !BLOCKING_CAMPAIGN_STATUSES.includes(p.campaign?.status));
+  const live = rows.filter((p) => zoneInScope(p, zoneId) && !campaignBlock(p.campaign, now, { budget: false }));
+  return attachHeldBudget(live, { now, excludeBookingId });
 }
 
 /**
@@ -86,8 +91,9 @@ const HELD_HONOURED_STATUSES = ['active', 'expired', 'paused', 'archived'];
 
 /**
  * Promotions a booking holds, loaded for invoice pricing. Honoured even if they expired,
- * were paused or archived, or their campaign was stopped after the booking (new orders are
- * gated by loadCandidatePromotions). The campaign budget is still checked at pricing.
+ * were paused or archived, or their campaign was stopped, ended or ran out of budget after
+ * the booking: the customer was promised it, and its budget was reserved when it was held.
+ * New orders are gated by loadCandidatePromotions (campaignRules).
  */
 async function loadHeldPromotions(promotionIds, zoneId) {
   if (!promotionIds.length) return [];
@@ -96,7 +102,7 @@ async function loadHeldPromotions(promotionIds, zoneId) {
     include: [
       { model: PromotionCondition, as: 'conditions' },
       { model: PromotionZoneOverride, as: 'zoneOverrides' },
-      { model: Campaign, as: 'campaign', attributes: ['id', 'status', 'budgetMinor', 'usedBudgetMinor'] },
+      { model: Campaign, as: 'campaign', attributes: CAMPAIGN_ATTRIBUTES },
     ],
   });
   return rows.filter((p) => zoneInScope(p, zoneId));
@@ -163,7 +169,11 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
   for (const code of list) {
     const row = await CouponCode.findOne({
       where: { code: code.toUpperCase() },
-      include: [{ model: Promotion, as: 'promotion' }],
+      include: [{
+        model: Promotion,
+        as: 'promotion',
+        include: [{ model: Campaign, as: 'campaign', attributes: CAMPAIGN_ATTRIBUTES }],
+      }],
     });
 
     if (!row || !row.isActive) {
@@ -181,6 +191,12 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
     const promo = row.promotion;
     if (!promo || !isLive(promo, now, null)) {
       errors.push(couponError(code, 'PROMOTION_NOT_ACTIVE', `Coupon "${code}" is not available right now`));
+      continue;
+    }
+    // Budget is judged with the other limits (builtInCheck); status and days here.
+    const campaignStop = campaignBlock(promo.campaign, now, { budget: false });
+    if (campaignStop) {
+      errors.push(couponError(code, 'PROMOTION_NOT_ACTIVE', `Coupon "${code}": ${campaignStop.message.charAt(0).toLowerCase()}${campaignStop.message.slice(1)}`));
       continue;
     }
     if (zoneId != null && !zoneInScope(promo, zoneId)) {
@@ -266,11 +282,11 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
     }
   }
 
-  const campaign = promo.campaign;
-  if (campaign && campaign.budgetMinor != null && Number(campaign.usedBudgetMinor || 0) >= Number(campaign.budgetMinor)) {
+  // a booking's hold already secured its place in the limits and the campaign budget
+  if (skipUsageLimits) return null;
+  if (promo.campaign && budgetLeftMinor(promo.campaign) === 0) {
     return reject('BUDGET', 'This offer is no longer available', 'PROMOTION_BUDGET_EXHAUSTED');
   }
-  if (skipUsageLimits) return null; // a booking's hold already secured its place in the limits
   if (promo.globalUsageLimit != null && (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0) >= promo.globalUsageLimit) {
     return reject('USAGE_LIMIT', 'This offer has been fully redeemed', 'PROMOTION_USAGE_EXHAUSTED');
   }
@@ -298,7 +314,7 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
  * @param {object} [held] invoice pricing of a booking's holds:
  *   promotions — the held promotions (instead of every live one);
  *   coupons — Map promotionId → { id, code } taken from the holds (codes are not re-validated);
- *   usage limits are secured by the hold, so they are not counted again (budget still is).
+ *   usage limits and the campaign budget are secured by the hold, so they are not counted again.
  */
 async function evaluatePromotions(context, held = null) {
   const now = context.currentTime instanceof Date ? context.currentTime : new Date();
@@ -306,8 +322,8 @@ async function evaluatePromotions(context, held = null) {
   const zoneId = context.zone?.id;
   const customerId = context.customer?.id;
 
-  const candidates = held ? held.promotions : await loadCandidatePromotions(zoneId, now);
   const bookingId = context.bookingId || null;
+  const candidates = held ? held.promotions : await loadCandidatePromotions(zoneId, now, { excludeBookingId: bookingId });
   const { valid: couponMap, errors: couponErrors } = held
     ? { valid: held.coupons || new Map(), errors: [] }
     : await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
@@ -549,8 +565,8 @@ async function evaluateBookingEligibility(context) {
   const zoneId = context.zone?.id;
   const customerId = context.customer?.id;
 
-  const candidates = await loadCandidatePromotions(zoneId, now);
   const bookingId = context.bookingId || null;
+  const candidates = await loadCandidatePromotions(zoneId, now, { excludeBookingId: bookingId });
   const { valid: couponMap, errors: couponErrors } = await validateCouponCodes(context.couponCodes || [], { customerId, zoneId, now, excludeBookingId: bookingId });
   const usage = await loadCustomerUsage(candidates.map((p) => p.id), customerId, now, bookingId);
 
