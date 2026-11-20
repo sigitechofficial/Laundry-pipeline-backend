@@ -57,7 +57,7 @@ bad({ ...base, minSubtotal: 50, maxSubtotal: 20 }, /Minimum subtotal/);
 bad({ ...base, perCustomerLimit: 0 }, /perCustomerLimit/);
 bad({ ...base, conditions: [{ conditionType: 'PAYMENT_METHOD', operator: 'equals', value: true }] }, /PAYMENT_METHOD/);
 bad({ ...base, couponCodes: [{ code: 'DUP1' }, { code: 'DUP1' }] }, /twice/);
-bad({ ...base, couponCodes: [{ code: 'A' }] }, /3–50/);
+bad({ ...base, couponCodes: [{ code: 'A' }] }, /3–30/);
 bad({ ...base, activationType: 'coupon_required', couponCodes: [] }, /at least one coupon/);
 bad({ ...base, couponCodes: [{ code: 'VIP123', codeType: 'customer_bound' }] }, /no customer/);
 bad({ ...base, zoneOverrides: [{ zoneId: 1 }, { zoneId: 1 }] }, /one override/);

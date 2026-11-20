@@ -18,6 +18,7 @@ const { validateCondition } = require('../promotions/conditionEvaluator');
 const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime');
 const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules');
 const { attachHeldBudget } = require('../promotions/campaignBudget');
+const { BOOKED_HOLD_SQL } = require('../promotions/bookedHold');
 
 const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor', 'ownerPromotionId'];
 
@@ -401,8 +402,8 @@ function validatePromotion(p) {
 
   const codes = new Set();
   for (const cc of p.couponCodes || []) {
-    if (!cc.code || !/^[A-Z0-9_-]{3,50}$/.test(cc.code)) {
-      throw new ValidationError(`Coupon code "${cc.code}" must be 3–50 letters, numbers, - or _`);
+    if (!cc.code || !/^[A-Z0-9_-]{3,30}$/.test(cc.code)) {
+      throw new ValidationError(`Coupon code "${cc.code}" must be 3–30 letters, numbers, - or _`);
     }
     if (codes.has(cc.code)) throw new ValidationError(`Coupon code "${cc.code}" is listed twice`);
     codes.add(cc.code);
@@ -476,6 +477,21 @@ async function assertCampaignUsable(campaignId, transaction, ownerOk = false) {
   if (CLOSED_STATUSES.includes(row.status)) {
     throw new ValidationError(`Campaign "${row.name}" is ${row.status}. Choose another campaign or no campaign.`);
   }
+}
+
+/**
+ * One name per promotion, so admins can tell them apart in the list. Archived promotions
+ * don't count (their name can be used again). The database compares without letter case.
+ */
+async function assertNameAvailable(name, exceptId, transaction) {
+  const clean = String(name ?? '').trim();
+  if (!clean) return;
+  const clash = await Promotion.findOne({
+    where: { name: clean, status: { [Op.ne]: 'archived' }, ...(exceptId ? { id: { [Op.ne]: exceptId } } : {}) },
+    attributes: ['id'],
+    transaction,
+  });
+  if (clash) throw new ValidationError(`A promotion called "${clean}" already exists. Choose a different name.`);
 }
 
 /** Coupon codes must be unique across all promotions. */
@@ -585,6 +601,7 @@ async function createPromotion(payload, adminUserId, scope) {
   Object.assign(data, typeRuleFields(data));
   assertNoOrderHistoryCondition(data.benefitType, data.conditions);
   validatePromotion(data);
+  await assertNameAvailable(data.name);
   await assertCampaignUsable(data.campaignId);
   const budgetMinor = budgetMinorOf(payload);
   if (budgetMinor != null && data.campaignId != null) {
@@ -607,6 +624,18 @@ async function createPromotion(payload, adminUserId, scope) {
     return promo.id;
   });
   return getPromotionById(promoId);
+}
+
+/** bookedCount: orders holding the promotion that get money off (or are not priced yet). */
+async function withBookedCount(rows) {
+  if (!rows.length) return;
+  const [counts] = await sequelize.query(
+    `SELECT r.promotionId AS id, COUNT(*) AS n FROM promotion_redemptions r
+      WHERE r.promotionId IN (:ids) AND ${BOOKED_HOLD_SQL('r')} GROUP BY r.promotionId`,
+    { replacements: { ids: rows.map((r) => r.id), now: new Date() } }
+  );
+  const byId = new Map(counts.map((c) => [Number(c.id), Number(c.n)]));
+  for (const row of rows) row.setDataValue('bookedCount', byId.get(Number(row.id)) || 0);
 }
 
 async function listPromotions({ page = 1, limit = 50, status, campaignId, benefitType, search } = {}, scope) {
@@ -638,6 +667,7 @@ async function listPromotions({ page = 1, limit = 50, status, campaignId, benefi
   });
 
   await withCampaignStop(rows);
+  await withBookedCount(rows);
   return { count, rows, page: safePage, limit: safeLimit };
 }
 
@@ -692,6 +722,8 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   );
   // Conditions/overrides are validated only when sent; coupons always (coupon_required needs one)
   validatePromotion({ ...stored, conditions: undefined, zoneOverrides: undefined, ...incoming });
+  // Only a changed name is checked, so older promotions that share a name can still be edited.
+  if (incoming.name && incoming.name.trim() !== promo.name) await assertNameAvailable(incoming.name, promo.id);
   if (incoming.campaignId != null && incoming.campaignId !== promo.campaignId) await assertCampaignUsable(incoming.campaignId);
   const budgetMinor = budgetMinorOf(payload);
   // Moving to a shared budget (or out of one) while keeping an own budget is not possible.
@@ -727,6 +759,7 @@ async function updateLiveOffer(promo, payload, adminUserId) {
   }
   const incoming = normalizePayload(payload);
   if ('name' in incoming && !incoming.name) throw new ValidationError('Offer name is required');
+  if (incoming.name && incoming.name.trim() !== promo.name) await assertNameAvailable(incoming.name, promo.id);
   if ('endDate' in incoming && incoming.endDate != null) {
     if (new Date(incoming.endDate) < new Date()) throw new ValidationError('The end date has already passed. To stop the offer now, pause it.');
     if (promo.startDate && new Date(incoming.endDate) < new Date(promo.startDate)) throw new ValidationError('The end date is before the start date');
@@ -878,7 +911,13 @@ async function clonePromotion(id, adminUserId, scope) {
   const plain = source.toJSON();
   const payload = {};
   for (const key of SCALAR_FIELDS) payload[key] = plain[key];
+  // A free name: "X (Copy)", then "X (Copy 2)", "X (Copy 3)"…
   payload.name = `${source.name} (Copy)`.slice(0, 200);
+  for (let n = 2; n < 100; n += 1) {
+    const used = await Promotion.findOne({ where: { name: payload.name, status: { [Op.ne]: 'archived' } }, attributes: ['id'] });
+    if (!used) break;
+    payload.name = `${source.name} (Copy ${n})`.slice(0, 200);
+  }
   payload.conditions = (plain.conditions || []).map((c) => ({
     conditionType: c.conditionType, operator: c.operator, value: c.value, logicGroup: c.logicGroup, sortOrder: c.sortOrder,
   }));

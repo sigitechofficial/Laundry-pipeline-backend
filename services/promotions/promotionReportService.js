@@ -8,7 +8,8 @@
  * Zone staff only ever see their own zone's rows (restrictedZoneId).
  */
 
-const { QueryTypes } = require('sequelize');
+const { QueryTypes } = require('sequelize');
+const { BOOKED_HOLD_SQL } = require('./bookedHold');
 const {
   sequelize,
   promotion: Promotion,
@@ -63,7 +64,7 @@ async function ledgerSummary(promotionIds, restrictedZoneId, period = null) {
        SUM(${paid}) AS uses,
        COALESCE(SUM(CASE WHEN ${paid} THEN r.discountAmount END), 0) AS discount,
        COUNT(DISTINCT CASE WHEN ${paid} THEN r.customerId END) AS customers,
-       SUM(r.status = 'RESERVED' AND r.reservationExpiresAt > :now) AS holding,
+       SUM(${BOOKED_HOLD_SQL('r')}) AS holding,
        SUM(${released}) AS released,
        SUM(${reversed}) AS refunded,
        COALESCE(SUM(CASE WHEN ${reversed} THEN r.discountAmount END), 0) AS refundedDiscount,
