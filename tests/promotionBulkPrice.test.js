@@ -154,4 +154,26 @@ assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00
   assert.doesNotThrow(() => validatePromotion({ ...payload, discountValue: 150 }), 'a group price is £, not %');
 }
 
+// The T-shirt example: £4 each, every 10 for £30; extras at normal price.
+{
+  const tshirtDeal = bulk({ discountValue: 30 });
+  const saving = (qty) => computeBenefit(tshirtDeal, createPricingState(contextOf([line(SHIRT, 4, qty)]))).totalSavingMinor;
+  assert.strictEqual(saving(9), 0, '9 T-shirts: no deal, £36');
+  assert.strictEqual(saving(10), 1000, '10 T-shirts: £30 instead of £40');
+  assert.strictEqual(saving(15), 1000, '15 T-shirts: 10 for £30 + 5 at £4 = £50');
+  assert.strictEqual(saving(20), 2000, '20 T-shirts: two deals, £60');
+  // Only in one service: T-shirts cleaned in another service do not count.
+  const inService2 = bulk({ discountValue: 30, benefitConfig: { bundleQuantity: 10, onlyServiceIds: [2] } });
+  const inService9 = bulk({ discountValue: 30, benefitConfig: { bundleQuantity: 10, onlyServiceIds: [9] } });
+  const ten = () => createPricingState(contextOf([line(SHIRT, 4, 10)]));
+  assert.strictEqual(computeBenefit(inService2, ten()).totalSavingMinor, 1000, 'right service counts');
+  assert.strictEqual(computeBenefit(inService9, ten()).totalSavingMinor, 0, 'other service does not');
+  const p = normalizePayload({ ...tshirtDeal, benefitConfig: { bundleQuantity: '10', onlyServiceIds: ['2', '', 2] } });
+  assert.deepStrictEqual(p.benefitConfig, { bundleQuantity: 10, onlyServiceIds: [2] });
+  assert.deepStrictEqual(normalizePayload({ ...tshirtDeal, benefitConfig: { bundleQuantity: 10, onlyServiceIds: [] } }).benefitConfig, { bundleQuantity: 10 });
+  // The deal's price is not a saving: nothing is estimated for a booking hold.
+  const { holdEstimateMinor } = require('../services/promotions/benefitHandlers');
+  assert.strictEqual(holdEstimateMinor(tshirtDeal, null, 2000), 0);
+}
+
 console.log('promotionBulkPrice.test.js passed');

@@ -181,9 +181,18 @@ function normalizeBenefitConfig(value) {
     try { config = JSON.parse(config); } catch { return null; }
   }
   if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  if (!('bundleQuantity' in config)) return config;
-  const n = config.bundleQuantity;
-  return { ...config, bundleQuantity: blank(n) || n == null ? null : Number(n) };
+  const out = { ...config };
+  if ('bundleQuantity' in out) {
+    const n = out.bundleQuantity;
+    out.bundleQuantity = blank(n) || n == null ? null : Number(n);
+  }
+  // Items count only in these services (empty = any service).
+  if ('onlyServiceIds' in out) {
+    const ids = asIntIdList(out.onlyServiceIds) || [];
+    if (ids.length) out.onlyServiceIds = ids;
+    else delete out.onlyServiceIds;
+  }
+  return out;
 }
 
 /** Keep only known fields; "" → null; numbers parsed; codes/times normalised. */

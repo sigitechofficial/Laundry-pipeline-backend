@@ -108,7 +108,19 @@ function remainingSubtotalMinor(state) {
  * An add-on on the same invoice row keeps the parent ids for display, but it is
  * not part of the category or service unless the promotion targets add-ons.
  */
+/** benefitConfig.onlyServiceIds: the chosen items count only when cleaned in these services. */
+function onlyServiceIdsOf(promotion) {
+  let config = promotion.benefitConfig;
+  if (typeof config === 'string') {
+    try { config = JSON.parse(config); } catch { config = null; }
+  }
+  const ids = Array.isArray(config?.onlyServiceIds) ? config.onlyServiceIds.map(Number).filter((n) => n > 0) : [];
+  return ids.length ? ids : null;
+}
+
 function lineMatchesTarget(promotion, line) {
+  const only = onlyServiceIdsOf(promotion);
+  if (only && !(line.serviceId != null && only.includes(Number(line.serviceId)))) return false;
   const ids = Array.isArray(promotion.targetIds) ? promotion.targetIds.map(Number) : [];
   const isAddon = line.addonId != null;
   if (promotion.benefitType === 'category_discount') {
@@ -367,6 +379,9 @@ function holdEstimateMinor(promotion, zoneOverride, minOrderMinor) {
   if (DELIVERY_TYPES.includes(promotion.benefitType)) return 0;
   const base = Math.max(0, Math.round(Number(minOrderMinor) || 0));
   const { discountValue, maxDiscountCap } = effectiveValues(promotion, zoneOverride);
+  // Bulk price: discountValue is the deal's price, not a saving; the saving is only known
+  // from the items, so nothing is estimated (the cap, when set, is the most it can be).
+  if (promotion.benefitType === 'bundle') return maxDiscountCap != null ? toMinor(maxDiscountCap) : 0;
   let est;
   if (promotion.benefitType === 'fixed_price') est = Math.max(0, base - toMinor(discountValue));
   else if (resolveDiscountMode(promotion) === 'percent') est = percentOfMinor(base, discountValue);
