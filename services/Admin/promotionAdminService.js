@@ -67,6 +67,9 @@ const TRANSITIONS = {
 };
 const PUBLISHABLE = ['draft', 'approved', 'paused'];
 const EDITABLE = ['draft', 'paused'];
+/** Live offers: only these change without pausing (they don't change what a booked order gets). */
+const LIVE_STATUSES = ['active', 'scheduled'];
+const LIVE_EDITABLE = ['name', 'description', 'internalNotes', 'endDate', 'globalUsageLimit', 'perCustomerLimit', 'budget'];
 
 function canTransition(from, to) {
   return (TRANSITIONS[from] || []).includes(to);
@@ -605,6 +608,7 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   if (!promo) throw new NotFoundError('Promotion not found');
   assertInScope(promo, scope);
 
+  if (LIVE_STATUSES.includes(promo.status)) return updateLiveOffer(promo, payload, adminUserId);
   if (!EDITABLE.includes(promo.status)) {
     throw new ValidationError(`Cannot edit promotion in "${promo.status}" status. Pause it first.`);
   }
@@ -657,6 +661,44 @@ async function updatePromotion(id, payload, adminUserId, scope) {
     await audit(id, 'updated', adminUserId, { oldValue, newValue: promo.toJSON() }, t);
   });
   return getPromotionById(id);
+}
+
+/**
+ * Change a live offer without pausing it: name, end date, limits and budget. These never
+ * change what an order already booked gets. The discount, who gets it and what it is on
+ * need a pause, so customers are never shown one offer and given another.
+ */
+async function updateLiveOffer(promo, payload, adminUserId) {
+  const sent = Object.keys(payload || {}).filter((k) => payload[k] !== undefined && k !== 'id');
+  const blocked = sent.filter((k) => !LIVE_EDITABLE.includes(k));
+  if (blocked.length) {
+    throw new ValidationError('While an offer is live you can change its name, end date, limits and budget. Pause it to change anything else.');
+  }
+  const incoming = normalizePayload(payload);
+  if ('name' in incoming && !incoming.name) throw new ValidationError('Offer name is required');
+  if ('endDate' in incoming && incoming.endDate != null) {
+    if (new Date(incoming.endDate) < new Date()) throw new ValidationError('The end date has already passed. To stop the offer now, pause it.');
+    if (promo.startDate && new Date(incoming.endDate) < new Date(promo.startDate)) throw new ValidationError('The end date is before the start date');
+  }
+  const taken = (promo.globalUsedCount || 0) + (promo.globalReservedCount || 0);
+  if ('globalUsageLimit' in incoming && incoming.globalUsageLimit != null) {
+    if (!isPositiveIntOrNull(incoming.globalUsageLimit)) throw new ValidationError('Total orders must be a whole number of 1 or more');
+    if (incoming.globalUsageLimit < taken) {
+      throw new ValidationError(`${taken} orders already have this offer, so the total can't be lower than ${taken}.`);
+    }
+  }
+  if ('perCustomerLimit' in incoming && !isPositiveIntOrNull(incoming.perCustomerLimit)) {
+    throw new ValidationError('Uses per customer must be a whole number of 1 or more');
+  }
+  const budgetMinor = budgetMinorOf(payload);
+
+  const oldValue = promo.toJSON();
+  await sequelize.transaction(async (t) => {
+    await promo.update({ ...columnsOf(incoming), updatedBy: adminUserId }, { transaction: t });
+    await syncOwnBudget(promo, budgetMinor, adminUserId, t);
+    await audit(promo.id, 'updated_live', adminUserId, { oldValue, newValue: promo.toJSON() }, t);
+  });
+  return getPromotionById(promo.id);
 }
 
 // ─── Lifecycle transitions ───────────────────────────────────────────────────
