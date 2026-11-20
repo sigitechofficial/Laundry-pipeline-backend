@@ -6,7 +6,7 @@
  */
 
 const assert = require('assert');
-const { businessDayBound, businessDay } = require('../services/promotions/promotionTime');
+const { businessDayBound, businessDay, businessClock } = require('../services/promotions/promotionTime');
 
 const iso = (d) => d.toISOString();
 
@@ -29,5 +29,13 @@ assert.strictEqual(businessDay(businessDayBound('2026-10-13', 'start')), '2026-1
 assert.strictEqual(businessDay(businessDayBound('2026-10-15', 'end')), '2026-10-15');
 assert.strictEqual(businessDay('2026-10-15T23:30:00.000Z'), '2026-10-16', '23:30Z in October is already the next UK day');
 assert.strictEqual(businessDay(null), null);
+
+// A 24-hour time is that minute in UK time; an end time includes its whole minute.
+assert.strictEqual(businessDayBound('2026-11-20T09:00', 'start').toISOString(), '2026-11-20T09:00:00.000Z', 'winter: UK = UTC');
+assert.strictEqual(businessDayBound('2026-07-01 09:00', 'start').toISOString(), '2026-07-01T08:00:00.000Z', 'summer: UK = UTC+1');
+assert.strictEqual(businessDayBound('2026-11-20T18:30', 'end').toISOString(), '2026-11-20T18:30:59.000Z');
+assert.strictEqual(businessDayBound('2026-11-20T25:00', 'start'), '2026-11-20T25:00', 'not a time: left for validation');
+assert.strictEqual(businessClock(new Date('2026-07-01T08:00:00Z')), '09:00');
+assert.strictEqual(businessClock(null), null);
 
 console.log('promotionDates.test.js passed');

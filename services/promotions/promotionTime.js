@@ -64,17 +64,30 @@ function localDay(value, timeZone) {
 }
 
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_TIME = /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * Promotion start/end are calendar days in the business timezone, whichever timezone the
- * admin's browser is in. A date-only value becomes the first / last moment of that day
- * there; a full timestamp (older admin builds) is kept as sent.
+ * Promotion start/end are in the business timezone (UK), whichever timezone the admin's
+ * browser is in. A date-only value becomes the first / last moment of that day there; a
+ * date with a 24-hour time ('2026-11-20 09:00' or '2026-11-20T09:00') is that minute there
+ * (an end time includes its whole minute). A full timestamp with a zone is kept as sent.
  */
 function businessDayBound(value, bound) {
+  if (typeof value === 'string' && DAY_TIME.test(value.trim())) {
+    const m = moment.tz(value.trim().replace(' ', 'T'), 'YYYY-MM-DDTHH:mm', true, DEFAULT_PROMOTION_TIME_ZONE);
+    if (!m.isValid()) return value;
+    return (bound === 'end' ? m.seconds(59).milliseconds(0) : m.seconds(0).milliseconds(0)).toDate();
+  }
   if (typeof value !== 'string' || !DAY_ONLY.test(value.trim())) return value;
   const m = moment.tz(value.trim(), 'YYYY-MM-DD', true, DEFAULT_PROMOTION_TIME_ZONE);
   if (!m.isValid()) return value;
   return (bound === 'end' ? m.endOf('day').milliseconds(0) : m.startOf('day')).toDate();
+}
+
+/** UK clock time "HH:mm" (24-hour) of a stored moment, or null. */
+function businessClock(value) {
+  const d = toDate(value);
+  return d ? moment(d).tz(DEFAULT_PROMOTION_TIME_ZONE).format('HH:mm') : null;
 }
 
 /** The business-timezone calendar day ('YYYY-MM-DD') a stored moment falls on, or null. */
@@ -86,6 +99,7 @@ function businessDay(value) {
 module.exports = {
   businessDayBound,
   businessDay,
+  businessClock,
   DEFAULT_PROMOTION_TIME_ZONE,
   resolveTimeZone,
   toDate,
