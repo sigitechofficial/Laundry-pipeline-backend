@@ -481,8 +481,9 @@ async function assertCampaignUsable(campaignId, transaction, ownerOk = false) {
 /** Coupon codes must be unique across all promotions. */
 async function assertCodesAvailable(codes, promotionId, transaction) {
   if (!codes.length) return;
+  // Codes of archived promotions are released (releasedAt) and may be used again.
   const taken = await CouponCode.findAll({
-    where: { code: codes, ...(promotionId ? { promotionId: { [Op.ne]: promotionId } } : {}) },
+    where: { code: codes, releasedAt: null, ...(promotionId ? { promotionId: { [Op.ne]: promotionId } } : {}) },
     attributes: ['code'],
     transaction,
   });
@@ -768,6 +769,11 @@ async function changeStatus(id, newStatus, adminUserId, reason, scope) {
 
   await sequelize.transaction(async (t) => {
     await promo.update({ status: newStatus, updatedBy: adminUserId }, { transaction: t });
+    // Archived is final, so its codes are given back for new promotions. Orders keep their
+    // couponCodeId, so history stays with this promotion.
+    if (newStatus === 'archived') {
+      await CouponCode.update({ releasedAt: new Date() }, { where: { promotionId: id, releasedAt: null }, transaction: t });
+    }
     await audit(id, `status_${newStatus}`, adminUserId, {
       oldValue: { status: oldStatus }, newValue: { status: newStatus }, reason: reason || null,
     }, t);
@@ -840,7 +846,7 @@ async function addCouponCode(promotionId, payload, adminUserId, scope) {
 
   const [cc] = normalizePayload({ couponCodes: [payload || {}] }).couponCodes;
   validatePromotion({ ...rowData(promo), couponCodes: [cc] });
-  const existing = await CouponCode.findOne({ where: { code: cc.code } });
+  const existing = await CouponCode.findOne({ where: { code: cc.code, releasedAt: null } });
   if (existing) throw new ValidationError(`Coupon code "${cc.code}" already exists`);
   await assertNotLegacyCoupon([cc.code]);
 

@@ -12,7 +12,7 @@ const {
 
 /** Promotion codes (coupon_codes) share the customer's code box, so a code may live in only one system. */
 async function assertNotPromotionCode(upperCode) {
-    const promoCode = await couponCode.findOne({ where: { code: upperCode }, attributes: ['id'] });
+    const promoCode = await couponCode.findOne({ where: { code: upperCode, releasedAt: null }, attributes: ['id'] });
     if (promoCode) {
         throw new ConflictError(`Code "${upperCode}" is already used in Promotions. Please use a different code.`);
     }

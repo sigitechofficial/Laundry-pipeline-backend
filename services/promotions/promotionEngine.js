@@ -167,8 +167,9 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
   if (!list.length) return { valid, errors };
 
   for (const code of list) {
+    // A released code (its promotion was archived) belongs to whichever promotion uses it now.
     const row = await CouponCode.findOne({
-      where: { code: code.toUpperCase() },
+      where: { code: code.toUpperCase(), releasedAt: null },
       include: [{
         model: Promotion,
         as: 'promotion',

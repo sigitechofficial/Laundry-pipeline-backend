@@ -12,7 +12,10 @@ module.exports = (sequelize, DataTypes) => {
   couponCode.init(
     {
       promotionId: { type: DataTypes.INTEGER, allowNull: false },
-      code: { type: DataTypes.STRING(50), allowNull: false, unique: true },
+      // Unique among codes not yet released (see liveCode in migration 20261121100000).
+      code: { type: DataTypes.STRING(50), allowNull: false },
+      // Set when its promotion is archived: the code may then be used by a new promotion.
+      releasedAt: { type: DataTypes.DATE, allowNull: true },
 
       codeType: {
         type: DataTypes.ENUM('shared', 'unique', 'customer_bound', 'partner', 'bulk'),

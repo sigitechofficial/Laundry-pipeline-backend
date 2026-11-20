@@ -43,7 +43,7 @@ const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 async function isPromotionCode(code) {
   const c = normalizeCode(code);
   if (!c) return false;
-  return Boolean(await CouponCode.findOne({ where: { code: c }, attributes: ['id'] }));
+  return Boolean(await CouponCode.findOne({ where: { code: c, releasedAt: null }, attributes: ['id'] }));
 }
 
 /**
