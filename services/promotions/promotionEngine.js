@@ -656,6 +656,21 @@ async function targetNamesByPromotion(promos) {
     const rows = await Model.findAll({ where: { id: ids }, attributes: ['id', 'name'] });
     for (const row of rows) maps[kind].set(Number(row.id), row.name);
   }));
+  // Bulk deals that name services: their service names, for the offer label.
+  const dealServiceIds = new Set();
+  for (const promo of promos || []) {
+    if (promo.benefitType !== 'bundle') continue;
+    for (const d of bulkDeals(promo)) for (const id of d.serviceIds || []) dealServiceIds.add(id);
+  }
+  const serviceNames = new Map(maps.service || []);
+  const missing = [...dealServiceIds].filter((id) => !serviceNames.has(id));
+  if (missing.length && Service) {
+    const rows = await Service.findAll({ where: { id: missing }, attributes: ['id', 'name'] });
+    for (const row of rows) serviceNames.set(Number(row.id), row.name);
+  }
+  for (const promo of promos || []) {
+    if (promo.benefitType === 'bundle' && dealServiceIds.size) promo.dealServiceNames = serviceNames;
+  }
   for (const promo of promos || []) {
     const kind = targetKind(promo);
     if (!kind || promo.id == null) continue;
@@ -721,7 +736,9 @@ function buildOfferLabel(promo, zoneOverride = null, targetNames = null) {
           ? new Map(ids.map((id, i) => [id, targetNames[i]])) : null;
         const parts = deals.map((d) => {
           const names = nameOf ? nameList(d.itemIds.map((id) => nameOf.get(id)).filter(Boolean)) : '';
-          return `${d.quantity}${names ? ` ${names}` : ''} for ${sym}${money(d.priceMinor / 100)}`;
+          const services = d.serviceIds && promo.dealServiceNames
+            ? d.serviceIds.map((id) => promo.dealServiceNames.get(id)).filter(Boolean).join(' or ') : '';
+          return `${d.quantity}${names ? ` ${names}` : ''}${services ? ` (${services})` : ''} for ${sym}${money(d.priceMinor / 100)}`;
         });
         return `${parts.join(' · ')}${capText}`;
       }
