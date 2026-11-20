@@ -9,14 +9,18 @@
  *   - inside its start/end days (UK calendar days, both days included),
  *   - within budget: spent + priced unpaid holds is below the budget.
  *
- * An order that already holds the promotion always keeps it (the customer was promised it,
- * and its budget was reserved when it was held): pausing, archiving or completing the
- * campaign, its end date passing or its budget running out stop new orders only. Same
- * rule as for the promotion itself (promotionEngine.loadHeldPromotions).
+ * An order that already holds the promotion keeps it: pausing, archiving or completing the
+ * campaign or its end date passing stop new orders only. Same rule as for the promotion
+ * itself (promotionEngine.loadHeldPromotions).
+ *
+ * The budget is a hard cap. A hold has no amount until the shop prices the order, so at
+ * invoice what the order's promotions give is limited to what the campaign has left
+ * (capToCampaignBudgets): the last order may get part of the offer, never more than the budget.
  */
 
 const moment = require('moment-timezone');
 const { DEFAULT_PROMOTION_TIME_ZONE } = require('./promotionTime');
+const { allocateMinor, fromMinor } = require('./moneyUtils');
 
 const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'completed', 'archived'];
 /** A promotion cannot be put into (or published in) a campaign in these statuses. */
@@ -86,7 +90,52 @@ function campaignBlock(campaign, now = new Date(), { held = false, budget = true
   return null;
 }
 
+/**
+ * Hard budget cap at invoice. What an order's promotions give (discount + cashback) never
+ * passes what their campaign has left. Promotions of one campaign share it in proportion to
+ * their savings; inside a promotion, discount, cashback and the discount's lines shrink in
+ * the same proportion.
+ *
+ * @param {Array<{promotionId:number,totalSavingMinor:number,cashbackMinor?:number,adjustments?:Array}>} applied
+ * @param {Map<number,{campaignId:number,leftMinor:number}>} budgetOf promotionId → its campaign
+ *   and the pence it has left (only promotions whose campaign has a budget)
+ * @returns {{ applied: Array, cappedIds: Set<number> }} cappedIds — promotions given less than in full
+ */
+function capToCampaignBudgets(applied, budgetOf) {
+  const groups = new Map();
+  applied.forEach((a, i) => {
+    const b = budgetOf.get(Number(a.promotionId));
+    if (!b) return;
+    if (!groups.has(b.campaignId)) groups.set(b.campaignId, { leftMinor: Math.max(0, Number(b.leftMinor) || 0), idx: [] });
+    groups.get(b.campaignId).idx.push(i);
+  });
+  const out = applied.slice();
+  const cappedIds = new Set();
+  for (const { leftMinor, idx } of groups.values()) {
+    const costs = idx.map((i) => (applied[i].totalSavingMinor || 0) + (applied[i].cashbackMinor || 0));
+    if (costs.reduce((s, v) => s + v, 0) <= leftMinor) continue;
+    const shares = allocateMinor(leftMinor, costs);
+    idx.forEach((i, k) => {
+      const a = applied[i];
+      const [saving, cashback] = allocateMinor(shares[k], [a.totalSavingMinor || 0, a.cashbackMinor || 0]);
+      const lines = a.adjustments || [];
+      const lineShares = allocateMinor(saving, lines.map((adj) => Math.abs(adj.amountMinor || 0)));
+      out[i] = {
+        ...a,
+        totalSavingMinor: saving,
+        totalSaving: fromMinor(saving),
+        cashbackMinor: cashback,
+        cashbackAmount: fromMinor(cashback),
+        adjustments: lines.map((adj, j) => ({ ...adj, amountMinor: -lineShares[j], amount: -fromMinor(lineShares[j]) })),
+      };
+      if (saving + cashback < costs[k]) cappedIds.add(Number(a.promotionId));
+    });
+  }
+  return { applied: out, cappedIds };
+}
+
 module.exports = {
+  capToCampaignBudgets,
   CAMPAIGN_STATUSES,
   CLOSED_STATUSES,
   campaignBlock,

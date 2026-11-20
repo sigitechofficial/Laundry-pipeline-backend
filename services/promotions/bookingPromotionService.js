@@ -34,6 +34,8 @@ const { effectiveValues, resolveDiscountMode } = require('./benefitHandlers');
 const { toMinor, fromMinor, allocateMinor } = require('./moneyUtils');
 const ledger = require('./redemptionService');
 const credit = require('./customerCreditService');
+const { attachHeldBudget } = require('./campaignBudget');
+const { budgetLeftMinor, capToCampaignBudgets } = require('./campaignRules');
 const { COMPLETED, CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 const { lineItemNames, displayLineName } = require('./promotionReportService');
 
@@ -223,6 +225,10 @@ const PROMOTION_ADJUSTMENT_CLASSES = ['ITEM_PROMOTION', 'BASKET_PROMOTION', 'DEL
 const NOT_APPLIED_PAID_AT_BOOKING = 'Already covered by the amount paid at booking. The offer is added as credit when the order is completed.';
 const NOT_APPLIED_DEFAULT = 'This offer does not apply to the items on this order.';
 const roundMoney = (n) => fromMinor(toMinor(n));
+/** Shown when the campaign budget cut the offer (campaignRules.capToCampaignBudgets). */
+const budgetCutReason = (given, full) => (given > 0
+  ? `This offer's budget was almost used up, so you got £${given.toFixed(2)} of £${full.toFixed(2)}.`
+  : "This offer's budget was used up before your order was priced.");
 
 /** Promotion discount already written on the booking (positive £). */
 async function storedPromotionDiscount(bookingId) {
@@ -328,21 +334,31 @@ async function priceAtInvoice({ bookingId, allowance }) {
     customerAsOf: { excludeBookingId: b.id, before: b.createdAt },
   });
   const result = await evaluatePromotions(context, { promotions, coupons });
-  const { applied, totalMinor, capped } = capApplied(result.applied, Math.max(0, toMinor(allowance)));
+  // Hard budget cap: other orders' priced holds count as taken, this order's own do not.
+  await attachHeldBudget(promotions, { excludeBookingId: b.id });
+  const budgetOf = new Map(promotions
+    .filter((p) => p.campaign && budgetLeftMinor(p.campaign) != null)
+    .map((p) => [Number(p.id), { campaignId: Number(p.campaign.id), leftMinor: budgetLeftMinor(p.campaign) }]));
+  const inBudget = capToCampaignBudgets(result.applied, budgetOf);
+  const { applied, totalMinor, capped } = capApplied(inBudget.applied, Math.max(0, toMinor(allowance)));
 
   await ledger.writeOrderAdjustments(bookingId, applied);
   const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
   const fullByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.totalSavingMinor || 0]));
+  const fullCashbackByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.cashbackMinor || 0]));
   const rejectedReason = new Map((result.rejected || []).map((r) => [r.promotionId, r.reasons?.find((x) => x?.reason)?.reason || null]));
   for (const h of holds) {
     const a = byPromotion.get(h.promotionId);
     const amount = fromMinor(a?.totalSavingMinor || 0);
     const full = fromMinor(fullByPromotion.get(h.promotionId) || 0);
     const cashback = fromMinor(a?.cashbackMinor || 0);
-    // Why a held offer gives nothing on this invoice (shown to the customer and the shop).
-    const reason = amount > 0 || cashback > 0 ? null
-      : rejectedReason.get(h.promotionId)
-        || (full > 0 ? NOT_APPLIED_PAID_AT_BOOKING : NOT_APPLIED_DEFAULT);
+    // Why a held offer gives less or nothing on this invoice (shown to the customer and the shop).
+    const fullValue = fromMinor((fullByPromotion.get(h.promotionId) || 0) + (fullCashbackByPromotion.get(h.promotionId) || 0));
+    const reason = inBudget.cappedIds.has(Number(h.promotionId))
+      ? budgetCutReason(roundMoney(amount + cashback), fullValue)
+      : amount > 0 || cashback > 0 ? null
+        : rejectedReason.get(h.promotionId)
+          || (full > 0 ? NOT_APPLIED_PAID_AT_BOOKING : NOT_APPLIED_DEFAULT);
     // discountAmount is always written once priced, so "priced at £0" differs from "not priced yet".
     if (h.discountAmount == null || Number(h.discountAmount) !== amount || Number(h.fullDiscountAmount) !== full
       || Number(h.cashbackAmount || 0) !== cashback || (h.reason || null) !== reason) {

@@ -26,7 +26,7 @@ Module._load = function load(request, parent, isMain) {
 };
 
 const {
-  campaignBlock, budgetLeftMinor, businessToday, dayOf, CLOSED_STATUSES,
+  campaignBlock, budgetLeftMinor, businessToday, dayOf, CLOSED_STATUSES, capToCampaignBudgets,
 } = require('../services/promotions/campaignRules');
 const { heldBudgetByCampaign, attachHeldBudget } = require('../services/promotions/campaignBudget');
 const { builtInCheck } = require('../services/promotions/promotionEngine');
@@ -106,6 +106,28 @@ const codeOf = (c, opts) => (campaignBlock(c, NOW, opts) || {}).code || null;
   await attachHeldBudget(rows, { now: NOW });
   assert.strictEqual(rows[0].campaign.heldBudgetMinor, 1250, 'attached to campaigns with a budget');
   assert.strictEqual(rows[1].campaign.heldBudgetMinor, undefined, 'no budget: nothing to attach');
+
+  // Hard budget cap at invoice: £1 left, the order's £3 off becomes £1, split over its lines.
+  const line = (m) => ({ amountMinor: -m, amount: -m / 100 });
+  const three = { promotionId: 2, totalSavingMinor: 300, cashbackMinor: 0, adjustments: [line(200), line(100)] };
+  let cap = capToCampaignBudgets([three], new Map([[2, { campaignId: 1, leftMinor: 100 }]]));
+  assert.strictEqual(cap.applied[0].totalSavingMinor, 100, 'never more than the budget left');
+  assert.deepStrictEqual(cap.applied[0].adjustments.map((a) => a.amountMinor).sort(), [-33, -67].sort(), 'lines shrink in proportion');
+  assert.ok(cap.cappedIds.has(2));
+  cap = capToCampaignBudgets([three], new Map([[2, { campaignId: 1, leftMinor: 500 }]]));
+  assert.strictEqual(cap.applied[0].totalSavingMinor, 300, 'within budget: unchanged');
+  assert.strictEqual(cap.cappedIds.size, 0);
+  cap = capToCampaignBudgets([three], new Map());
+  assert.strictEqual(cap.applied[0].totalSavingMinor, 300, 'no campaign budget: unchanged');
+  cap = capToCampaignBudgets([three], new Map([[2, { campaignId: 1, leftMinor: 0 }]]));
+  assert.strictEqual(cap.applied[0].totalSavingMinor, 0, 'budget gone: nothing');
+  // Two offers of one campaign share what is left; cashback counts too.
+  const a = { promotionId: 3, totalSavingMinor: 300, cashbackMinor: 0, adjustments: [line(300)] };
+  const b = { promotionId: 4, totalSavingMinor: 0, cashbackMinor: 100, adjustments: [] };
+  cap = capToCampaignBudgets([a, b], new Map([[3, { campaignId: 9, leftMinor: 200 }], [4, { campaignId: 9, leftMinor: 200 }]]));
+  assert.strictEqual(cap.applied[0].totalSavingMinor + cap.applied[1].cashbackMinor, 200, 'shared budget: total is what is left');
+  assert.strictEqual(cap.applied[0].totalSavingMinor, 150);
+  assert.strictEqual(cap.applied[1].cashbackMinor, 50);
 
   Module._load = originalLoad;
   console.log('✅ Campaign rules: all passed');
