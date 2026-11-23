@@ -7,7 +7,7 @@ const { isAnyShopOpenInZone } = require("../utils/shopWorkingHours");
 const {
     getOrderExpireTime,
 } = require("../utils/bookingTimeZone");
-const { getCountryContextFromZoneId } = require("../utils/countryTimeZone");
+const { resolveBookingOperationalTimeZone } = require("../utils/countryTimeZone");
 
 const HELD_RELEASE_INTERVAL_MS = 5 * 60 * 1000;
 let releaseTimer = null;
@@ -15,7 +15,7 @@ let releaseTimer = null;
 // ─── Phase-2: broadcast preferred-shop bookings whose window has expired ──────
 
 const PHASE_TWO_BOOKING_ATTRIBUTES = [
-    'id', 'zoneId',
+    'id', 'zoneId', 'operationalTimeZone',
     'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
     'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
     'placedOutsidePlatformHours',
@@ -44,8 +44,6 @@ async function broadcastBookingToShops(bookingOrId) {
     });
     const servicePayload = services.map((s) => ({ serviceId: s.serviceId }));
 
-    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
-
     const {
         bookingEventSentCheckTheShops,
     } = require('./Customer/customerOrderService');
@@ -59,8 +57,7 @@ async function broadcastBookingToShops(bookingOrId) {
         row.deliveryDate,
         row.deliveryTimeTo,
         row.deliveryTimeFrom,
-        servicePayload,
-        countryCtx.ianaTimeZone
+        servicePayload
     );
 
     return result || { notifiedCount: 0 };
@@ -95,9 +92,10 @@ async function broadcastExpiredPreferredBookings(options = {}) {
 
     for (const row of pending) {
         try {
-            const countryCtx = await getCountryContextFromZoneId(row.zoneId);
             const visibleAt = new Date();
-            const expireTime = getOrderExpireTime(countryCtx.ianaTimeZone);
+            const expireTime = getOrderExpireTime(
+                await resolveBookingOperationalTimeZone(row)
+            );
 
             // Atomic claim: Home, New filter, counts and cron may prepare the
             // same zone concurrently. Exactly one caller broadcasts this row.
@@ -176,13 +174,12 @@ async function broadcastExpiredPreferredBookings(options = {}) {
 }
 
 
-async function canReleaseHeldBooking(row, countryCtx) {
-    return isAnyShopOpenInZone(row.zoneId, countryCtx.ianaTimeZone);
+async function canReleaseHeldBooking(row) {
+    return isAnyShopOpenInZone(row.zoneId);
 }
 
 async function releaseSingleHeldBooking(row) {
-    const countryCtx = await getCountryContextFromZoneId(row.zoneId);
-    const canRelease = await canReleaseHeldBooking(row, countryCtx);
+    const canRelease = await canReleaseHeldBooking(row);
     if (!canRelease) return false;
 
     const visibleAt = new Date();
@@ -193,7 +190,7 @@ async function releaseSingleHeldBooking(row) {
 
     if (!row.placedOutsidePlatformHours) {
         updatePayload.orderExpireTime = getOrderExpireTime(
-            countryCtx.ianaTimeZone
+            await resolveBookingOperationalTimeZone(row)
         );
     }
 
@@ -276,6 +273,7 @@ async function prepareNewBookingVisibilityForZone(zoneId) {
 const HELD_BOOKING_ATTRIBUTES = [
     "id",
     "zoneId",
+    "operationalTimeZone",
     "collectionDate",
     "collectionTimeFrom",
     "collectionTimeTo",

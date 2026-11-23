@@ -30,7 +30,6 @@ const { assertLocalDatabase } = require('./provision-local-admin');
 const SHOP_EMAIL = 'shop@justdrycleans.test';
 const SEED_EMAIL_DOMAIN = '@justdrycleans.test';
 const SEED_EMAIL_PREFIX = 'seed.';
-const TIME_ZONE = 'Europe/London';
 
 // Inside the fixture shop's coverage square (see seed-local-fixtures.js).
 const CUSTOMERS = [
@@ -148,8 +147,17 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
   const serviceCharge = Number(zone.serviceCharge) || 0;
   const agentPercent = Number(zone.agentCommissionPercent) || 80;
   const platformPercent = Number(zone.zoneAdminComission) || 100 - agentPercent;
+  // Slots and stamps run on the zone's country clock (its IANA zone); never a hard-coded zone.
+  const zoneWithCountry = await db.zone.findByPk(zone.id, {
+    attributes: ['id'],
+    include: [{ model: db.cities, attributes: ['id'], include: [{ model: db.countries, attributes: ['ianaTimeZone'] }] }],
+  });
+  const timeZone = zoneWithCountry?.city?.country?.ianaTimeZone;
+  if (!timeZone || !moment.tz.zone(timeZone)) {
+    throw new Error(`Zone ${zone.id}'s country has no valid IANA time zone; fix the country first.`);
+  }
   const unusableHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-  const now = moment.tz(TIME_ZONE);
+  const now = moment.tz(timeZone);
   const created = [];
 
   await db.sequelize.transaction(async (transaction) => {
@@ -239,8 +247,8 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
         agentBroadcastHeld: false,
         agentVisibleAt: ts(placedAt),
         preferredShopBroadcastDone: true,
-        operationalTimeZone: TIME_ZONE,
-        customerLocalTimeZone: TIME_ZONE,
+        operationalTimeZone: timeZone,
+        customerLocalTimeZone: timeZone,
         invoiceStatus: invoiced ? 'finalized' : 'none',
         invoiceFinalizedAt: invoiced ? ts(collection.clone().hour(spec.slot + 3)) : null,
         paymentDeliveryGate: 'open',

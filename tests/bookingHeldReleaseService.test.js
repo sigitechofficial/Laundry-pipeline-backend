@@ -101,8 +101,8 @@ const stubs = {
         },
     },
     '../utils/countryTimeZone': {
-        async getCountryContextFromZoneId() {
-            return { ianaTimeZone: 'Europe/London' };
+        async resolveBookingOperationalTimeZone() {
+            return 'Europe/London';
         },
     },
     './Customer/customerOrderService': {

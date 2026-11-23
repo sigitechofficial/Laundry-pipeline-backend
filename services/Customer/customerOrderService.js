@@ -86,10 +86,10 @@ const { attachInvoiceBill } = require('../../utils/invoiceBill');
 const { literal, fn, col } = require("sequelize");
 const moment = require('moment-timezone');
 const {
-    BUSINESS_TIME_ZONE,
     BOOKING_ACCEPT_WINDOW_MINUTES,
     PREFERRED_SHOP_WINDOW_MINUTES,
     getOrderExpireTime,
+    wallClockNow,
 } = require('../../utils/bookingTimeZone');
 const {
     isAnyShopOpenInZone,
@@ -97,6 +97,7 @@ const {
     isShopEligibleForBroadcast,
 } = require('../../utils/shopWorkingHours');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
+const { resolveBookingOperationalTimeZone } = require('../../utils/countryTimeZone');
 const { evaluateShopSlotCapacity } = require('../../utils/shopSlotCapacity');
 const {
     buildNewBookingOfferPayload,
@@ -197,13 +198,12 @@ async function bookingEventSentCheckTheShops(
     deliveryDate,
     deliveryTimeTo,
     deliveryTimeFrom,
-    services,
-    timeZone,
-    clientTimeZone
+    services
 ) {
+    // Slots and shop hours are wall clock in the zone's country zone.
     const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
     const countryCtx = await getCountryContextFromZoneId(zoneId);
-    const resolvedTz = timeZone || countryCtx.ianaTimeZone;
+    const resolvedTz = countryCtx.ianaTimeZone;
 
     console.log(collectionTimeTo);
     console.log(collectionTimeFrom);
@@ -363,8 +363,6 @@ async function bookingEventSentCheckTheShops(
         const shopEligible = await isShopEligibleForBroadcast(
             ownerId,
             countryCtx.countryId,
-            resolvedTz,
-            clientTimeZone,
             {
                 collectionDate,
                 collectionTimeFrom,
@@ -730,7 +728,6 @@ async function routePendingBooking(bookingId) {
               deliveryTimeFrom: row.deliveryTimeFrom,
               deliveryTimeTo: row.deliveryTimeTo,
               excludeBookingId: row.id,
-              timeZone: tz,
           })
         : { shop: null, skipReason: SKIP_REASONS.DISABLED };
 
@@ -781,7 +778,7 @@ async function routePendingBooking(bookingId) {
         bookingId, row.zoneId,
         row.collectionDate, row.collectionTimeTo, row.collectionTimeFrom,
         row.deliveryDate, row.deliveryTimeTo, row.deliveryTimeFrom,
-        services, tz
+        services
     );
     return { mode: 'broadcast', ...result };
 }
@@ -1139,7 +1136,7 @@ function mapCustomerAttemptRow(attemptRow) {
     };
 }
 
-async function buildCustomerBookingPolicySummaries(bookingPlain, { timeZone } = {}) {
+async function buildCustomerBookingPolicySummaries(bookingPlain) {
     let cancellationPolicyRaw = bookingPlain.cancellationPolicyBookings;
     if (!cancellationPolicyRaw?.cancellationConfig) {
         cancellationPolicyRaw = await cancelBookingService.resolveCancellationPolicy(
@@ -1179,7 +1176,6 @@ async function buildCustomerBookingPolicySummaries(bookingPlain, { timeZone } = 
                 bookingPlain,
                 cancellationPolicyRaw,
                 bookingPlain.customerId,
-                timeZone || null,
                 prepaidCharged,
                 feeBaseAmount
             );
@@ -1452,49 +1448,14 @@ class CustomerOrderService {
         return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
     }
 
-    _resolveSourceTimeZone(timeZone) {
-        if (!timeZone || typeof timeZone !== 'string') {
-            return BUSINESS_TIME_ZONE;
-        }
-
-        const normalizedTimeZone = timeZone.trim();
-        if (!moment.tz.zone(normalizedTimeZone)) {
-            throw new ValidationError(`Unsupported timeZone: ${normalizedTimeZone}`);
-        }
-
-        return normalizedTimeZone;
-    }
-
-    _getWallClockDateTime(timeZone) {
-        const resolvedTimeZone = this._resolveSourceTimeZone(timeZone);
-        const wallClock = moment.tz(resolvedTimeZone);
-        return {
-            date: wallClock.format('YYYY-MM-DD'),
-            time: wallClock.format('HH:mm:ss'),
-            resolvedTimeZone
-        };
-    }
-
-    _convertSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName, timeZone) {
-        const datePart = this._getDatePart(dateValue, dateFieldName);
-        const timePart = this._getTimePart(timeValue, timeFieldName);
-        const sourceTimeZone = this._resolveSourceTimeZone(timeZone);
-
-        const sourceDateTime = moment.tz(
-            `${datePart} ${timePart}`,
-            'YYYY-MM-DD HH:mm:ss',
-            sourceTimeZone
-        );
-
-        if (!sourceDateTime.isValid()) {
-            throw new ValidationError(`Invalid date/time combination for ${dateFieldName} and ${timeFieldName}`);
-        }
-
-        const utcDateTime = sourceDateTime.clone().utc();
-        return {
-            date: utcDateTime.format('YYYY-MM-DD'),
-            time: utcDateTime.format('HH:mm:ss')
-        };
+    /**
+     * Wall-clock date/time for status stamps, in the booking's operational
+     * zone (never a client-sent zone).
+     * @param {string} operationalTimeZone
+     */
+    _getWallClockDateTime(operationalTimeZone) {
+        const { date, time, timeZone } = wallClockNow(operationalTimeZone);
+        return { date, time, resolvedTimeZone: timeZone };
     }
 
     /**
@@ -1560,7 +1521,6 @@ class CustomerOrderService {
             paymentMethodId,
             stripeCustomerId: clientStripeCustomerId,
             tipAmount,
-            timeZone,
             clientTimeZone,
             couponCode,
             paymentType: rawPaymentType,
@@ -1714,9 +1674,10 @@ class CustomerOrderService {
         // NOTE: Both setupIntentId and paymentMethodId are saved from frontend.
         // paymentIntentId is set at booking for card (auth hold); captured at Status 4.
         const { getCountryContextFromZoneId: resolveCountryFromZone } = require("../../utils/countryTimeZone");
+        // The operational zone is the zone's country's (its slots are wall clock
+        // there). The client's timeZone is display-only and never sets it.
         const bookingCountryCtx = await resolveCountryFromZone(zoneId);
-        const operationalTimeZone =
-            timeZone || bookingCountryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
+        const operationalTimeZone = bookingCountryCtx.ianaTimeZone;
         const customerLocalTimeZone = clientTimeZone || null;
 
         // Only slots a shop in the zone can serve (working hours that day, takes new
@@ -1877,7 +1838,7 @@ class CustomerOrderService {
         let total = 0;
         let categoryCharge = 0;
 
-        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(operationalTimeZone);
         console.log(currentDate);
         console.log(currentTime);
 
@@ -2223,21 +2184,16 @@ class CustomerOrderService {
         let bookingId = bookingData.id;
         const { getCountryContextFromZoneId } = require("../../utils/countryTimeZone");
         const countryCtx = await getCountryContextFromZoneId(zoneId);
-        const resolvedTz = timeZone || countryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
-        const platformOpenNow = await isPlatformOpenNow(
-            countryCtx.countryId,
-            resolvedTz
-        );
+        const resolvedTz = operationalTimeZone;
+        const platformOpenNow = await isPlatformOpenNow(countryCtx.countryId);
         const zoneOpenNow =
             platformOpenNow &&
-            (await isAnyShopOpenInZone(zoneId, resolvedTz));
+            (await isAnyShopOpenInZone(zoneId));
         let agentBroadcastHeld = false;
 
         if (!platformOpenNow) {
             const afterHoursExpiry = await getAfterHoursOrderExpireTime(
                 countryCtx.countryId,
-                resolvedTz,
-                null,
                 new Date()
             );
             agentBroadcastHeld = true;
@@ -2292,8 +2248,6 @@ class CustomerOrderService {
                       deliveryDate: normalizedDeliveryDate,
                       deliveryTimeFrom: normalizedDeliveryTimeFrom,
                       deliveryTimeTo: normalizedDeliveryTimeTo,
-                      timeZone: resolvedTz,
-                      clientTimeZone,
                   })
                 : { shop: null, skipReason: SKIP_REASONS.DISABLED };
             const preferredShop = preferredResult.shop;
@@ -2344,7 +2298,7 @@ class CustomerOrderService {
                         );
                         await bookingEventSentCheckTheShops(
                             bookingId, zoneId, collectionDate, collectionTimeTo, collectionTimeFrom,
-                            deliveryDate, deliveryTimeTo, deliveryTimeFrom, services, resolvedTz
+                            deliveryDate, deliveryTimeTo, deliveryTimeFrom, services
                         );
                     }
                 }
@@ -2380,8 +2334,7 @@ class CustomerOrderService {
                     deliveryDate,
                     deliveryTimeTo,
                     deliveryTimeFrom,
-                    services,
-                    resolvedTz
+                    services
                 );
 
                 if (notifiedCount === 0) {
@@ -2566,7 +2519,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object
      */
     async customerResponseUpdate(data) {
-        const { bookingId, customerResponse, timeZone, customerId } = data;
+        const { bookingId, customerResponse, customerId } = data;
 
         const bookingFind = await booking.findOne({
             where: {
@@ -2605,7 +2558,9 @@ class CustomerOrderService {
             { where: { bookingId: bookingId, deleted: false } }
         );
 
-        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(
+            await resolveBookingOperationalTimeZone(bookingFind)
+        );
 
         await booking.update(
             {
@@ -2705,7 +2660,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with booking details
      */
     async bookingDetailsById(data) {
-        const { bookingId, orderTrackId, timeZone } = data;
+        const { bookingId, orderTrackId } = data;
 
         let whereCondition = {};
 
@@ -3032,9 +2987,7 @@ class CustomerOrderService {
                 bookingPlain.customerSelectedServices
             );
 
-        const policySummaries = await buildCustomerBookingPolicySummaries(bookingPlain, {
-            timeZone,
-        });
+        const policySummaries = await buildCustomerBookingPolicySummaries(bookingPlain);
 
         const {
             cancellationPolicy,
@@ -3753,7 +3706,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with updated responses
      */
     async updateCustomerResponseForOnHoldBooking(data) {
-        const { responses, bookingId, timeZone, customerId } = data;
+        const { responses, bookingId, customerId } = data;
 
         if (!Number.isInteger(bookingId)) {
             throw new ValidationError("bookingId must be an integer");
@@ -3846,7 +3799,9 @@ class CustomerOrderService {
         }
 
         // Mark booking as customer-responded so agentIssueResolved can proceed.
-        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(timeZone);
+        const { date: currentDate, time: currentTime } = this._getWallClockDateTime(
+            await resolveBookingOperationalTimeZone(bookingFind)
+        );
 
         await booking.update(
             { bookingStatusId: 22 },

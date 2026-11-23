@@ -29,7 +29,7 @@ const {
 const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction');
 const activePoliciesService = require('../Admin/activePoliciesService');
 
-const BUSINESS_TIME_ZONE = 'Europe/London';
+const { resolveBookingOperationalTimeZone } = require('../../utils/countryTimeZone');
 const { 
     ValidationError, 
     NotFoundError, 
@@ -186,10 +186,9 @@ class CancelBookingService {
      * @param {number} customerId - Customer ID requesting cancellation
      * @param {number} reasonId - Optional reason ID
      * @param {string} reasonText - Cancellation reason text
-     * @param {string} timeZone - IANA timezone of the caller (e.g. "Asia/Karachi"). Falls back to business timezone.
      * @returns {Object} Cancellation result with charges
      */
-    async cancelCustomerBooking(bookingId, customerId, reasonId = null, reasonText, timeZone = null) {
+    async cancelCustomerBooking(bookingId, customerId, reasonId = null, reasonText) {
         // Step 1: Fetch booking details
         const bookingData = await booking.findOne({
             where: {
@@ -201,6 +200,7 @@ class CancelBookingService {
                 'customerId', 
                 'bookingStatusId', 
                 'zoneId',
+                'operationalTimeZone',
                 'cancellationPolicyId',
                 'policySnapshot',
                 'collectionDate', 
@@ -278,7 +278,6 @@ class CancelBookingService {
             bookingData,
             activeCancellationPolicy,
             customerId,
-            timeZone,
             prepaidCharged,
             feeBaseAmount
         );
@@ -401,9 +400,8 @@ class CancelBookingService {
             syncLiveTrackingForBookingStatus(bookingId, 19, { reason: 'cancelled' }).catch(() => {});
         } catch (_) { /* ignore */ }
 
-        // Step 10: Create booking history entry using caller/business timezone wall-clock
-        const resolvedTz = this._resolveTimeZone(timeZone);
-        const cancellationMoment = moment.tz(resolvedTz);
+        // Step 10: Create booking history entry on the booking's operational wall clock
+        const cancellationMoment = moment.tz(await resolveBookingOperationalTimeZone(bookingData));
         await bookingHistory.create({
             bookingId: bookingId,
             bookingStatusId: 19,
@@ -620,7 +618,6 @@ class CancelBookingService {
      * @param {Object} bookingData - Booking data
      * @param {Object} cancellationPolicy - Cancellation policy
      * @param {number} customerId - Customer ID
-     * @param {string} timeZone - IANA timezone for time comparison
      * @param {number} [prepaidCharged] - Amount already captured (refund base)
      * @param {number} [feeBaseAmount] - Prepaid bill for % fees: upfront + service fee + tip
      * @returns {Object} Cancellation charge details
@@ -629,7 +626,6 @@ class CancelBookingService {
         bookingData,
         cancellationPolicy,
         customerId,
-        timeZone = null,
         prepaidCharged = 0,
         feeBaseAmount = 0
     ) {
@@ -653,7 +649,6 @@ class CancelBookingService {
                 bookingData,
                 config,
                 customerId,
-                timeZone,
                 percentageBase
             );
             cancellationCharge = result.charge;
@@ -721,21 +716,10 @@ class CancelBookingService {
     }
 
     /**
-     * Resolve a valid IANA timezone string, falling back to the business timezone.
-     */
-    _resolveTimeZone(timeZone) {
-        if (timeZone && typeof timeZone === 'string' && moment.tz.zone(timeZone.trim())) {
-            return timeZone.trim();
-        }
-        return BUSINESS_TIME_ZONE;
-    }
-
-    /**
      * Calculate pre-pickup cancellation charge
      * @param {Object} bookingData - Booking data
      * @param {Object} config - Policy config
      * @param {number} customerId - Customer ID
-     * @param {string} timeZone - IANA timezone from the frontend (e.g. "Asia/Karachi")
      * @param {number} [percentageBase] - Prepaid bill (upfront + service fee + tip) for % fees
      * @returns {Object} Charge details
      */
@@ -743,12 +727,12 @@ class CancelBookingService {
         bookingData,
         config,
         customerId,
-        timeZone = null,
         percentageBase = 0
     ) {
-        // Collection slots are UK times: pickup time and "now" are both read in UK time, whatever
-        // timezone the phone sends (a phone set to another country must not move the free window).
-        const tz = BUSINESS_TIME_ZONE;
+        // Collection slots are wall clock in the booking's operational zone: pickup time and "now"
+        // are both read there, whatever timezone the phone sends (a phone set to another country
+        // must not move the free window).
+        const tz = await resolveBookingOperationalTimeZone(bookingData);
 
         // Both pickup time and now are interpreted in the same timezone so the diff is always accurate.
         const collectionDatePart = this._getStoredDatePart(bookingData.collectionDate, 'collectionDate');

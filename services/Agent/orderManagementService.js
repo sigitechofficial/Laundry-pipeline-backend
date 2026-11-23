@@ -38,11 +38,7 @@ const { sendEvent } = require('../../socket_io');
 const {
     assertBookingNotCancelledForAgent,
 } = require('../../utils/assertBookingNotCancelledForAgent');
-const {
-    wallClockNow,
-    resolveBookingTimeZone,
-    getActiveBookingCutoff,
-} = require('../../utils/bookingTimeZone');
+const { getActiveBookingCutoff } = require('../../utils/bookingTimeZone');
 const invoiceManagementService = require('./invoiceManagementService');
 const {
     ensureCustomerDeclaredSnapshot,
@@ -712,7 +708,7 @@ class AgentOrderManagementService {
      * @param {number} agentId - Agent ID
      * @returns {Object} Available bookings data
      */
-    async getBookingHome(agentId, timeZone, clientTimeZone) {
+    async getBookingHome(agentId) {
         const userData = await users.findOne({
             where: {
                 id: agentId,
@@ -737,9 +733,7 @@ class AgentOrderManagementService {
         }
 
         let agentZone = userData.addressDb.zoneId;
-        const resolvedExpireTz = resolveBookingTimeZone(timeZone, clientTimeZone);
-        const { timeHHmm: currentTimeString } = wallClockNow(timeZone, clientTimeZone);
-        const expireCutoff = getActiveBookingCutoff(timeZone, clientTimeZone);
+        const expireCutoff = getActiveBookingCutoff();
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         const createdAtCutoff =
             expireCutoff > twentyFourHoursAgo ? expireCutoff : twentyFourHoursAgo;
@@ -747,10 +741,6 @@ class AgentOrderManagementService {
         console.log(
             "[getBookingHome] zone:",
             agentZone,
-            "tz:",
-            resolvedExpireTz,
-            "now:",
-            currentTimeString,
             "createdAt >=",
             createdAtCutoff.toISOString()
         );

@@ -4,6 +4,9 @@
  * Pure rolling-window math for shop accept capacity (no DB access, unit-tested).
  */
 
+const moment = require('moment-timezone');
+const { requireOperationalTimeZone } = require('./bookingTimeZone');
+
 const CAPACITY_REACHED_CODE = 'SHOP_ACCEPT_CAP_REACHED';
 
 /**
@@ -54,18 +57,15 @@ function buildCapacityStatus({ cap, used = 0, resetsAt = null, now = Date.now() 
   };
 }
 
+/** "HH:mm" of an instant on the shop's clock (its operational IANA zone). */
 function formatClock(date, timeZone) {
-  try {
-    return new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      timeZone: timeZone || 'Europe/London',
-    }).format(new Date(date));
-  } catch (_) {
-    return new Date(date).toISOString().slice(11, 16);
-  }
+  return moment(new Date(date)).tz(requireOperationalTimeZone(timeZone, "shop's")).format('HH:mm');
 }
 
+/**
+ * @param {object} status
+ * @param {string} timeZone the shop's operational IANA zone (requireShopTimeZone)
+ */
 function capacityReachedMessage(status, timeZone) {
   if (!status?.limit) {
     return 'Your shop cannot accept marketplace orders right now (limit set to 0). Contact support.';

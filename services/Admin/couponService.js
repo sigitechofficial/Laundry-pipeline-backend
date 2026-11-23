@@ -1,7 +1,8 @@
 'use strict';
 
 const { coupon, couponRedemption, couponCode, users, booking, zone } = require('../../models');
-const { getCouponLifecycle } = require('../../utils/couponValidity');
+const { getCouponLifecycleAcrossZones } = require('../../utils/couponValidity');
+const { getZoneTimeZones } = require('../../utils/countryTimeZone');
 const { parseZoneIds, couponAppliesToZone } = require('../../utils/couponDiscount');
 const { Op } = require('sequelize');
 const {
@@ -16,6 +17,27 @@ async function assertNotPromotionCode(upperCode) {
     if (promoCode) {
         throw new ConflictError(`Code "${upperCode}" is already used in Promotions. Please use a different code.`);
     }
+}
+
+/**
+ * Status for each coupon row, judged on the calendar day of the zones it
+ * covers (all zones when it has none listed), in their countries' zones.
+ */
+async function withCouponStatus(plainRows) {
+    const listedIds = [...new Set(plainRows.flatMap((row) => parseZoneIds(row.zoneIds)))];
+    const allZones = plainRows.some((row) => !parseZoneIds(row.zoneIds).length);
+    const listedTimeZones = listedIds.length ? await getZoneTimeZones(listedIds) : new Map();
+    const liveTimeZones = allZones ? await getZoneTimeZones() : new Map();
+    return plainRows.map((row) => {
+        const ids = parseZoneIds(row.zoneIds);
+        const timeZones = ids.length
+            ? ids.filter((id) => listedTimeZones.has(id)).map((id) => listedTimeZones.get(id))
+            : [...liveTimeZones.values()];
+        return {
+            ...row,
+            status: getCouponLifecycleAcrossZones(row, [...new Set(timeZones)]),
+        };
+    });
 }
 
 function normalizeZoneIdsInput(raw) {
@@ -149,13 +171,9 @@ class AdminCouponService {
                 : { limit: parseInt(limit), offset }),
         });
 
-        let plain = rows.map((row) => {
-            const p = row.get ? row.get({ plain: true }) : row;
-            return {
-                ...p,
-                status: getCouponLifecycle(p),
-            };
-        });
+        let plain = await withCouponStatus(
+            rows.map((row) => (row.get ? row.get({ plain: true }) : row))
+        );
 
         if (filterByZone) {
             plain = plain.filter((row) =>
@@ -211,12 +229,7 @@ class AdminCouponService {
         }
 
         const plain = couponData.get ? couponData.get({ plain: true }) : couponData;
-        const [enriched] = await attachZoneNames([
-            {
-                ...plain,
-                status: getCouponLifecycle(plain),
-            },
-        ]);
+        const [enriched] = await attachZoneNames(await withCouponStatus([plain]));
         return {
             message: 'Coupon details fetched',
             data: enriched

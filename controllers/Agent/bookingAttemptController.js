@@ -1,30 +1,7 @@
 const ResponseHelper = require('../../utils/responseHelper');
 const noShowEnforcementService = require('../../services/Agent/noShowEnforcementService');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
-
-function agentWallClockDateTime(timeZone, clientTimeZone) {
-    const tz =
-        (timeZone && String(timeZone).trim()) ||
-        (clientTimeZone && String(clientTimeZone).trim()) ||
-        'Europe/London';
-    const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-        timeZone: tz,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    });
-    const parts = formatter.formatToParts(now);
-    const get = (type) => parts.find((p) => p.type === type)?.value || '';
-    return {
-        date: `${get('year')}-${get('month')}-${get('day')}`,
-        time: `${get('hour')}:${get('minute')}:${get('second')}`,
-    };
-}
+const { bookingWallClockNow } = require('../../utils/countryTimeZone');
 
 /**
  * GET /api/agent/booking/:bookingId/attempt-options?type=pickup|delivery
@@ -79,7 +56,8 @@ exports.markAttemptFailed = async (req, res) => {
         driverLat,
         driverLng,
         geofenceBypassToken,
-        wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
+        // History stamps on the booking's operational clock, not the device's.
+        wallClock: await bookingWallClockNow(bookingId),
         compliance,
         actorUserId: req.actorUserId || req.user?.id,
     });
@@ -110,7 +88,8 @@ exports.rescheduleAfterFail = async (req, res) => {
             deliveryTimeFrom,
             deliveryTimeTo,
         },
-        wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
+        // History stamps on the booking's operational clock, not the device's.
+        wallClock: await bookingWallClockNow(bookingId),
     });
 
     return ResponseHelper.success(res, 'Schedule updated after failed attempt', result);
@@ -138,7 +117,8 @@ exports.markAttemptUnattended = async (req, res) => {
         driverLat,
         driverLng,
         geofenceBypassToken,
-        wallClock: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone),
+        // History stamps on the booking's operational clock, not the device's.
+        wallClock: await bookingWallClockNow(bookingId),
     });
 
     return ResponseHelper.success(res, 'Unattended completion recorded', result);

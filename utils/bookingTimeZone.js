@@ -1,7 +1,11 @@
 const moment = require('moment-timezone');
+const { UnprocessableEntityError } = require('../middlewares/universalErrorHandler');
 
-/** Default IANA zone for UK laundry operations (customer + agent). */
-const BUSINESS_TIME_ZONE = 'Europe/London';
+/**
+ * Error code for a business time that cannot be placed in a time zone because
+ * the data that owns it (booking, zone -> country, shop address) carries none.
+ */
+const TIME_ZONE_UNRESOLVED = 'TIME_ZONE_UNRESOLVED';
 
 /**
  * Single source of truth: accept window for agents (filter, API, DB orderExpireTime clock).
@@ -17,29 +21,34 @@ const BOOKING_ACCEPT_WINDOW_MINUTES = 30;
 const PREFERRED_SHOP_WINDOW_MINUTES = 10;
 
 /**
- * Resolve IANA timezone from app headers/body (timeZone or clientTimeZone).
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
+ * The operational IANA zone for a business time (accept windows, slots, shop
+ * hours, status stamps), validated. It must come from data: the booking's
+ * operationalTimeZone, its zone's country, or the shop's country. A
+ * client-sent timeZone is display-only and is never passed here. There is no
+ * default zone: missing or invalid data is a configuration error (422), since
+ * computing in another zone would silently move times and days.
+ *
+ * @param {string} timeZone
+ * @param {string} [owner] what the zone belongs to, for the error message
  * @returns {string}
  */
-function resolveBookingTimeZone(timeZone, clientTimeZone) {
-    const candidate = timeZone || clientTimeZone;
-    if (candidate && typeof candidate === 'string') {
-        const trimmed = candidate.trim();
-        if (moment.tz.zone(trimmed)) {
-            return trimmed;
-        }
+function requireOperationalTimeZone(timeZone, owner = 'operational') {
+    const tz = typeof timeZone === 'string' ? timeZone.trim() : '';
+    if (!tz || !moment.tz.zone(tz)) {
+        throw new UnprocessableEntityError(
+            `The ${owner} time zone is not configured (no valid IANA time zone${tz ? `: ${tz}` : ''}).`,
+            { code: TIME_ZONE_UNRESOLVED }
+        );
     }
-    return BUSINESS_TIME_ZONE;
+    return tz;
 }
 
 /**
- * Current wall-clock in the resolved booking timezone.
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
+ * Current wall-clock in the operational time zone.
+ * @param {string} timeZone operational IANA zone
  */
-function wallClockNow(timeZone, clientTimeZone) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function wallClockNow(timeZone) {
+    const tz = requireOperationalTimeZone(timeZone);
     const m = moment.tz(tz);
     return {
         date: m.format('YYYY-MM-DD'),
@@ -51,34 +60,23 @@ function wallClockNow(timeZone, clientTimeZone) {
 
 /**
  * DB orderExpireTime: wall-clock when accept window ends (now + BOOKING_ACCEPT_WINDOW_MINUTES).
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
+ * @param {string} timeZone operational IANA zone
  * @param {number} [mins]
  */
-function getOrderExpireTime(
-    timeZone,
-    clientTimeZone,
-    mins = BOOKING_ACCEPT_WINDOW_MINUTES
-) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function getOrderExpireTime(timeZone, mins = BOOKING_ACCEPT_WINDOW_MINUTES) {
+    const tz = requireOperationalTimeZone(timeZone);
     return moment.tz(tz).add(mins, 'minutes').format('HH:mm:ss');
 }
 
 /**
  * Bookings created after this instant are still inside the agent accept window.
  * Uses BOOKING_ACCEPT_WINDOW_MINUTES — same as getOrderExpireTime.
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
+ * The cutoff is an instant, so it does not depend on any time zone.
  * @param {number} [windowMinutes]
  * @returns {Date}
  */
-function getActiveBookingCutoff(
-    timeZone,
-    clientTimeZone,
-    windowMinutes = BOOKING_ACCEPT_WINDOW_MINUTES
-) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
-    return moment.tz(tz).subtract(windowMinutes, 'minutes').toDate();
+function getActiveBookingCutoff(windowMinutes = BOOKING_ACCEPT_WINDOW_MINUTES) {
+    return moment().subtract(windowMinutes, 'minutes').toDate();
 }
 
 function normalizeTimeString(timeValue) {
@@ -91,15 +89,13 @@ function normalizeTimeString(timeValue) {
 
 /**
  * Expiry instant from window-start date (agentVisibleAt or createdAt) + orderExpireTime (TIME).
+ * orderExpireTime is wall clock in the booking's operational zone, so that is
+ * the zone the day is taken in.
+ * @param {string} timeZone the booking's operational IANA zone
  */
-function getBookingExpireMoment(
-    windowStartAt,
-    orderExpireTime,
-    timeZone,
-    clientTimeZone
-) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function getBookingExpireMoment(windowStartAt, orderExpireTime, timeZone) {
     if (!windowStartAt) return null;
+    const tz = requireOperationalTimeZone(timeZone);
     const timeStr = normalizeTimeString(orderExpireTime);
     if (!timeStr) return null;
 
@@ -116,39 +112,17 @@ function getBookingExpireMoment(
 }
 
 /** Whether agents can still accept (now < DB orderExpireTime on window-start day). */
-function isBookingAcceptWindowOpen(
-    windowStartAt,
-    orderExpireTime,
-    timeZone,
-    clientTimeZone
-) {
-    const expire = getBookingExpireMoment(
-        windowStartAt,
-        orderExpireTime,
-        timeZone,
-        clientTimeZone
-    );
+function isBookingAcceptWindowOpen(windowStartAt, orderExpireTime, timeZone) {
+    const expire = getBookingExpireMoment(windowStartAt, orderExpireTime, timeZone);
     if (!expire) return true;
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
-    return moment.tz(tz).isBefore(expire);
+    return moment().isBefore(expire);
 }
 
 /** Minutes left until orderExpireTime; used for agent countdown. */
-function getAcceptWindowMinutesRemaining(
-    windowStartAt,
-    orderExpireTime,
-    timeZone,
-    clientTimeZone
-) {
-    const expire = getBookingExpireMoment(
-        windowStartAt,
-        orderExpireTime,
-        timeZone,
-        clientTimeZone
-    );
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function getAcceptWindowMinutesRemaining(windowStartAt, orderExpireTime, timeZone) {
+    const expire = getBookingExpireMoment(windowStartAt, orderExpireTime, timeZone);
     if (!expire) return null;
-    return Math.max(0, Math.ceil(expire.diff(moment.tz(tz), 'minutes', true)));
+    return Math.max(0, Math.ceil(expire.diff(moment(), 'minutes', true)));
 }
 
 function formatOrderExpireTimeForApi(orderExpireTime) {
@@ -156,10 +130,10 @@ function formatOrderExpireTimeForApi(orderExpireTime) {
 }
 
 module.exports = {
-    BUSINESS_TIME_ZONE,
+    TIME_ZONE_UNRESOLVED,
     BOOKING_ACCEPT_WINDOW_MINUTES,
     PREFERRED_SHOP_WINDOW_MINUTES,
-    resolveBookingTimeZone,
+    requireOperationalTimeZone,
     wallClockNow,
     getOrderExpireTime,
     getActiveBookingCutoff,

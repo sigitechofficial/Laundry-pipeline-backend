@@ -1,5 +1,6 @@
 require("dotenv").config();
 const momentTz = require("moment-timezone");
+const { bookingWallClockNow } = require("../../utils/countryTimeZone");
 const {
     booking,
     addressDb,
@@ -70,22 +71,8 @@ const {
     hydrateRepairItemsForBooking,
 } = require("../../utils/repairBookingInclude");
 
-const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const INVOICE_STAGE_STATUS_ID = 8;
 const INVOICE_EDITABLE_STATUS_IDS = [8, 9];
-
-function agentWallClockDateTime(timeZone, clientTimeZone) {
-    const candidate = timeZone || clientTimeZone;
-    const tz =
-        candidate && typeof candidate === "string" && momentTz.tz.zone(candidate.trim())
-            ? candidate.trim()
-            : AGENT_BUSINESS_TIME_ZONE;
-    const m = momentTz.tz(tz);
-    return {
-        date: m.format("YYYY-MM-DD"),
-        time: m.format("HH:mm:ss"),
-    };
-}
 
 /**
  * Agent Invoice Management Service
@@ -800,8 +787,6 @@ class AgentInvoiceManagementService {
             services = [],
             serviceCharge,
             zoneMinimumAmount,
-            timeZone,
-            clientTimeZone,
         } = data;
 
         if (!bookingId) {
@@ -824,10 +809,7 @@ class AgentInvoiceManagementService {
             );
         }
 
-        const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-            timeZone,
-            clientTimeZone
-        );
+        const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
 
         const keptActiveIds = await this.syncInvoiceDraftServiceLines({
             bookingId,
@@ -882,8 +864,6 @@ class AgentInvoiceManagementService {
             services = [],
             serviceCharge,
             zoneMinimumAmount,
-            timeZone,
-            clientTimeZone,
         } = data;
 
         if (!bookingId) {
@@ -909,10 +889,7 @@ class AgentInvoiceManagementService {
 
         const isFinalized = bookingRow.invoiceStatus === "finalized";
 
-        const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-            timeZone,
-            clientTimeZone
-        );
+        const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
 
         const keptActiveIds = await this.syncInvoiceDraftServiceLines({
             bookingId,

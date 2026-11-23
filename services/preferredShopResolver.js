@@ -149,8 +149,6 @@ async function resolvePreferredShop({
     deliveryTimeFrom = null,
     deliveryTimeTo = null,
     excludeBookingId = null,
-    timeZone = null,
-    clientTimeZone = null,
 } = {}) {
     const emptyResult = (skipReason) => ({
         shop: null,
@@ -230,8 +228,8 @@ async function resolvePreferredShop({
                 customerId
             );
 
+        // Shop hours and the pickup slot are checked in the zone's country zone.
         const countryCtx = await getCountryContextFromZoneId(zoneId);
-        const resolvedTz = timeZone || countryCtx.ianaTimeZone;
         const pickup =
             collectionDate && collectionTimeFrom && collectionTimeTo
                 ? { collectionDate, collectionTimeFrom, collectionTimeTo }
@@ -271,8 +269,6 @@ async function resolvePreferredShop({
             const openForPickup = await isShopEligibleForBroadcast(
                 ownerId,
                 countryCtx.countryId,
-                resolvedTz,
-                clientTimeZone,
                 pickup
             );
             if (!openForPickup) continue;

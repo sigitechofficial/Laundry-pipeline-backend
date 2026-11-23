@@ -1,6 +1,5 @@
 const moment = require("moment-timezone");
 const { ValidationError } = require("../middlewares/universalErrorHandler");
-const { BUSINESS_TIME_ZONE } = require("./bookingTimeZone");
 
 /**
  * Normalize timeZone / clientTimeZone from request body.
@@ -18,15 +17,25 @@ function parseTimeZoneFromBody(data) {
 }
 
 /**
- * Resolve agent IANA timezone: body override, then saved user field, then fallback.
+ * The agent app's display time zone (sign-in / session responses): the
+ * device's zone from the body, then the one saved from an earlier sign-in,
+ * then the shop's own operational zone (its country). Display-only: business
+ * times always use the operational zone from data. With none of them known
+ * the answer is null, not an assumed zone.
+ *
+ * @param {object} data request body
+ * @param {string|null} savedIanaTimeZone users.ianaTimeZone
+ * @param {string|null} shopTimeZone the shop's country zone, when it has one
+ * @returns {string|null}
  */
-function resolveAgentTimeZone(data, savedIanaTimeZone, fallback = BUSINESS_TIME_ZONE) {
+function resolveAgentTimeZone(data, savedIanaTimeZone, shopTimeZone) {
   const fromBody = parseTimeZoneFromBody(data);
   if (fromBody) return fromBody;
-  if (savedIanaTimeZone && moment.tz.zone(String(savedIanaTimeZone).trim())) {
-    return String(savedIanaTimeZone).trim();
+  for (const candidate of [savedIanaTimeZone, shopTimeZone]) {
+    const tz = candidate ? String(candidate).trim() : "";
+    if (tz && moment.tz.zone(tz)) return tz;
   }
-  return fallback;
+  return null;
 }
 
 module.exports = {

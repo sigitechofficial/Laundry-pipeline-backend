@@ -1,6 +1,5 @@
 const {
     BOOKING_ACCEPT_WINDOW_MINUTES,
-    BUSINESS_TIME_ZONE,
     isBookingAcceptWindowOpen,
 } = require("./bookingTimeZone");
 
@@ -19,26 +18,13 @@ function getAcceptWindowAnchor(booking) {
 }
 
 /**
- * Resolve IANA timezone for admin/agent window checks.
- * @param {object} booking
- * @param {string} [timeZone]
- */
-function resolveTimeZoneForBooking(booking, timeZone) {
-    return (
-        timeZone ||
-        booking?.ianaTimeZone ||
-        booking?.country?.ianaTimeZone ||
-        BUSINESS_TIME_ZONE
-    );
-}
-
-/**
  * Agent accept window ended (DB orderExpireTime + agentVisibleAt/createdAt + timezone).
  * Held bookings (agentBroadcastHeld) never expire until released to agents.
  * @param {object} booking
- * @param {string} [timeZone] - from booking zone country when known
+ * @param {string} operationalTimeZone - the booking's operational IANA zone
+ *   (countryTimeZone.resolveBookingOperationalTimeZone); required, no default
  */
-function isAgentAcceptExpired(booking, timeZone) {
+function isAgentAcceptExpired(booking, operationalTimeZone) {
     if (!booking) return false;
     if (booking.agentBroadcastHeld) return false;
     if (Number(booking.bookingStatusId) !== 1) return false;
@@ -48,7 +34,6 @@ function isAgentAcceptExpired(booking, timeZone) {
 
     const windowStart = getAcceptWindowAnchor(booking);
     const orderExpireTime = booking.orderExpireTime;
-    const tz = resolveTimeZoneForBooking(booking, timeZone);
 
     if (!orderExpireTime) {
         return false;
@@ -61,7 +46,7 @@ function isAgentAcceptExpired(booking, timeZone) {
     return !isBookingAcceptWindowOpen(
         windowStart,
         orderExpireTime,
-        tz
+        operationalTimeZone
     );
 }
 
@@ -120,13 +105,13 @@ function canAdminAssignOrReassignBooking(booking) {
 }
 
 /** @deprecated Use canAdminAssignOrReassignBooking — kept for legacy callers */
-function canAdminAssignBooking(booking, timeZone, options = {}) {
+function canAdminAssignBooking(booking, operationalTimeZone, options = {}) {
     if (canAdminAssignOrReassignBooking(booking)) {
         if (!isUnassignedPendingBooking(booking)) {
             return true;
         }
         if (options.hasAgentDecline) return true;
-        return isAgentAcceptExpired(booking, timeZone);
+        return isAgentAcceptExpired(booking, operationalTimeZone);
     }
     return false;
 }
@@ -135,7 +120,6 @@ module.exports = {
     BOOKING_ACCEPT_WINDOW_MINUTES,
     getBookingVisibleAt,
     getAcceptWindowAnchor,
-    resolveTimeZoneForBooking,
     isAgentAcceptExpired,
     isUnassignedPendingBooking,
     isTerminalBookingStatus,

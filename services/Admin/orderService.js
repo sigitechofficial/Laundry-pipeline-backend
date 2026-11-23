@@ -44,7 +44,6 @@ const {
     RETURNING_CUSTOMER_MIN_COMPLETED,
 } = require('../../constants/bookingStatusIds');
 const sequelize = require('sequelize');
-const momentTz = require('moment-timezone');
 const {
     buildOrderListSequelizeOrder,
 } = require('../../utils/orderListSort');
@@ -55,7 +54,10 @@ const {
     serviceLineHasAddOnPayload,
     sumActiveBookingServicesSubtotal,
 } = require('../../utils/invoiceLineTotals');
-const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const {
+    bookingWallClockNow,
+    resolveBookingOperationalTimeZone,
+} = require('../../utils/countryTimeZone');
 const zoneCatalogService = require('./zoneCatalogService');
 const { attachCommercialTerms } = require('../../utils/bookingRateSnapshot');
 const {
@@ -80,18 +82,6 @@ const {
     ConflictError,
     UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
-
-const ADMIN_BUSINESS_TIME_ZONE = 'Europe/London';
-
-function adminWallClockDateTime(timeZone, clientTimeZone) {
-    const candidate = timeZone || clientTimeZone;
-    const zone = candidate && momentTz.tz.zone(candidate) ? candidate : ADMIN_BUSINESS_TIME_ZONE;
-    const now = momentTz().tz(zone);
-    return {
-        date: now.format('YYYY-MM-DD'),
-        time: now.format('HH:mm:ss')
-    };
-}
 
 class OrderService {
     _applyRecurringTypeFilter(whereClause, filters = {}) {
@@ -996,7 +986,7 @@ class OrderService {
             );
         }
 
-        const countryCtx = await getCountryContextFromZoneId(plain.zoneId);
+        const operationalTimeZone = await resolveBookingOperationalTimeZone(plain);
         let agentDeclines = [];
         try {
             const agentBookingDeclineService = require('../Agent/agentBookingDeclineService');
@@ -1009,7 +999,7 @@ class OrderService {
         }
         const enriched = adminBookingAssignService.enrichBookingForAdmin(
             plain,
-            countryCtx.ianaTimeZone,
+            operationalTimeZone,
             agentDeclines.length
         );
         enriched.agentDeclines = agentDeclines;
@@ -1745,10 +1735,7 @@ class OrderService {
         let syncedInvoiceLines = false;
 
         if (hasInvoiceLineDetails) {
-            const { date: currentDate, time: currentTime } = adminWallClockDateTime(
-                orderData.timeZone,
-                orderData.clientTimeZone
-            );
+            const { date: currentDate, time: currentTime } = await bookingWallClockNow(orderId);
             await invoiceManagementService.syncInvoiceDraftServiceLines({
                 bookingId: orderId,
                 services,
@@ -2175,18 +2162,13 @@ class OrderService {
         const {
             services,
             bookingId,
-            timeZone,
-            clientTimeZone,
         } = data;
 
         if (!Array.isArray(services) || services.length === 0) {
             throw new ValidationError("Invalid request. Please provide an array of services.");
         }
 
-        const { date: currentDate, time: currentTime } = adminWallClockDateTime(
-            timeZone,
-            clientTimeZone
-        );
+        const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
 
         const bookings = await booking.findByPk(bookingId, {
             include: [

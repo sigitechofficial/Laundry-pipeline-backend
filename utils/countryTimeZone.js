@@ -1,20 +1,22 @@
 const {
   addressDb,
+  booking,
   cities,
   countries,
   zone,
 } = require("../models");
-const { BUSINESS_TIME_ZONE } = require("./bookingTimeZone");
+const {
+  NotFoundError,
+  UnprocessableEntityError,
+} = require("../middlewares/universalErrorHandler");
+const {
+  TIME_ZONE_UNRESOLVED,
+  requireOperationalTimeZone,
+  wallClockNow,
+} = require("./bookingTimeZone");
 
 const ZONE_CONTEXT_TTL_MS = 5 * 60 * 1000;
-// This deployment is UK-only (BUSINESS_TIME_ZONE=Europe/London, UK address
-// lookup APIs, UK Twilio number) — used only when no country can be resolved
-// from DB rows at all (empty countries table, or the found row has no
-// shortName), so callers like phone-dial-code inference never get stuck.
-const DEFAULT_COUNTRY_SHORT_NAME = "GB";
 const zoneContextCache = new Map();
-let defaultCountryContextCache = null;
-let defaultCountryContextCachedAt = 0;
 
 const zoneCountryInclude = [
   {
@@ -31,64 +33,45 @@ const zoneCountryInclude = [
   },
 ];
 
-async function getDefaultCountryContext() {
-  const now = Date.now();
-  if (
-    defaultCountryContextCache &&
-    now - defaultCountryContextCachedAt < ZONE_CONTEXT_TTL_MS
-  ) {
-    return defaultCountryContextCache;
-  }
-
-  const row = await countries.findOne({
-    attributes: ["id", "name", "shortName", "ianaTimeZone"],
-    order: [["id", "ASC"]],
-  });
-  const ctx = !row
-    ? {
-        countryId: 1,
-        countryName: null,
-        shortName: DEFAULT_COUNTRY_SHORT_NAME,
-        ianaTimeZone: BUSINESS_TIME_ZONE,
-      }
-    : {
-        countryId: row.id,
-        countryName: row.name,
-        // `shortName` was previously omitted here entirely, so every caller
-        // that fell back to the default context (missing/unresolvable
-        // countryId or zoneId — the common case for customer-entered
-        // pickup/drop-off addresses) got shortName=undefined and could never
-        // resolve a dial code from it (e.g. agent notify-customer phone
-        // resolution failing on every booking).
-        shortName: row.shortName || DEFAULT_COUNTRY_SHORT_NAME,
-        ianaTimeZone: row.ianaTimeZone || BUSINESS_TIME_ZONE,
-      };
-
-  defaultCountryContextCache = ctx;
-  defaultCountryContextCachedAt = now;
-  return ctx;
+function unresolved(message) {
+  return new UnprocessableEntityError(message, { code: TIME_ZONE_UNRESOLVED });
 }
 
+/**
+ * Country context for business times. Every field comes from the country row;
+ * there is no default country or zone. A country without a valid IANA zone is
+ * a configuration error the caller surfaces (422), because computing its
+ * times in any other zone would silently shift them.
+ */
 function contextFromCountryRow(countryRow) {
-  if (!countryRow) return null;
   return {
     countryId: countryRow.id,
     countryName: countryRow.name,
-    shortName: countryRow.shortName,
-    ianaTimeZone: countryRow.ianaTimeZone || BUSINESS_TIME_ZONE,
+    shortName: countryRow.shortName || null,
+    ianaTimeZone: requireOperationalTimeZone(
+      countryRow.ianaTimeZone,
+      `country "${countryRow.name || countryRow.id}"`
+    ),
   };
 }
 
 async function getCountryContextById(countryId) {
-  if (!countryId) return getDefaultCountryContext();
+  if (!countryId) {
+    throw unresolved("No country is set, so its time zone cannot be resolved.");
+  }
   const row = await countries.findByPk(countryId, {
     attributes: ["id", "name", "shortName", "ianaTimeZone"],
   });
-  return contextFromCountryRow(row) || getDefaultCountryContext();
+  if (!row) {
+    throw unresolved(`Country ${countryId} does not exist, so its time zone cannot be resolved.`);
+  }
+  return contextFromCountryRow(row);
 }
 
 async function getCountryContextFromZoneId(zoneId) {
-  if (!zoneId) return getDefaultCountryContext();
+  if (!zoneId) {
+    throw unresolved("No zone is set, so its country's time zone cannot be resolved.");
+  }
 
   const cacheKey = String(zoneId);
   const cached = zoneContextCache.get(cacheKey);
@@ -97,21 +80,29 @@ async function getCountryContextFromZoneId(zoneId) {
     return cached.value;
   }
 
+  // A deleted zone keeps its country: its bookings still run on that clock.
   const row = await zone.findOne({
     where: { id: zoneId },
     attributes: ["id"],
     include: zoneCountryInclude,
+    paranoid: false,
   });
 
   const countryRow = row?.city?.country;
-  const value =
-    contextFromCountryRow(countryRow) || (await getDefaultCountryContext());
+  if (!countryRow) {
+    throw unresolved(
+      `Zone ${zoneId} has no city with a country, so its time zone cannot be resolved.`
+    );
+  }
+  const value = contextFromCountryRow(countryRow);
   zoneContextCache.set(cacheKey, { at: now, value });
   return value;
 }
 
 async function getCountryContextFromShopUserId(shopUserId) {
-  if (!shopUserId) return getDefaultCountryContext();
+  if (!shopUserId) {
+    throw unresolved("No shop is set, so its time zone cannot be resolved.");
+  }
 
   const shopAddress = await addressDb.findOne({
     where: {
@@ -129,7 +120,70 @@ async function getCountryContextFromShopUserId(shopUserId) {
     return getCountryContextFromZoneId(shopAddress.zoneId);
   }
 
-  return getDefaultCountryContext();
+  throw unresolved(
+    `Shop ${shopUserId} has no shop address with a country or zone, so its time zone cannot be resolved.`
+  );
+}
+
+/**
+ * Each zone's country IANA zone, by zone id, as stored (null when its country
+ * has none). Callers validate the ones they use (requireOperationalTimeZone),
+ * so one misconfigured zone fails only what depends on it.
+ *
+ * @param {number[]|null} zoneIds the zones to read (deleted ones included, they
+ *   keep their country); null reads every live zone
+ * @returns {Promise<Map<number, string|null>>}
+ */
+async function getZoneTimeZones(zoneIds = null) {
+  const rows = await zone.findAll({
+    ...(zoneIds ? { where: { id: zoneIds }, paranoid: false } : {}),
+    attributes: ["id"],
+    include: zoneCountryInclude,
+  });
+  return new Map(
+    rows.map((row) => [Number(row.id), row.city?.country?.ianaTimeZone || null])
+  );
+}
+
+/**
+ * The booking's operational IANA zone: the zone its slots and accept window
+ * were set in. Stored on the booking at creation (bookings.operationalTimeZone,
+ * from its zone's country); a booking without it takes its zone's country,
+ * which is where that value comes from. Never a client time zone.
+ *
+ * @param {{ id?: number, operationalTimeZone?: string|null, zoneId?: number|null }} bookingRow
+ * @returns {Promise<string>}
+ */
+async function resolveBookingOperationalTimeZone(bookingRow) {
+  if (bookingRow?.operationalTimeZone) {
+    return requireOperationalTimeZone(
+      bookingRow.operationalTimeZone,
+      `booking ${bookingRow.id}`
+    );
+  }
+  if (bookingRow?.zoneId) {
+    return (await getCountryContextFromZoneId(bookingRow.zoneId)).ianaTimeZone;
+  }
+  throw unresolved(
+    `Booking ${bookingRow?.id} has neither an operational time zone nor a zone.`
+  );
+}
+
+/**
+ * Wall-clock now on the booking's operational clock, for its status history
+ * and invoice-line stamps (never the device's zone of whoever acted).
+ *
+ * @param {number|string} bookingId
+ * @returns {Promise<{ date: string, time: string, timeHHmm: string, timeZone: string }>}
+ */
+async function bookingWallClockNow(bookingId) {
+  const row = await booking.findByPk(bookingId, {
+    attributes: ["id", "operationalTimeZone", "zoneId"],
+  });
+  if (!row) {
+    throw new NotFoundError(`Booking ${bookingId} not found`);
+  }
+  return wallClockNow(await resolveBookingOperationalTimeZone(row));
 }
 
 /**
@@ -143,9 +197,6 @@ async function getCountryContextFromShopUserId(shopUserId) {
  * @returns {Promise<string>}
  */
 async function requireShopTimeZone(shopAddress) {
-  const { UnprocessableEntityError } = require("../middlewares/universalErrorHandler");
-  const moment = require("moment-timezone");
-
   let countryRow = null;
   if (shopAddress?.countryId) {
     countryRow = await countries.findByPk(shopAddress.countryId, {
@@ -157,23 +208,25 @@ async function requireShopTimeZone(shopAddress) {
       where: { id: shopAddress.zoneId },
       attributes: ["id"],
       include: zoneCountryInclude,
+      paranoid: false,
     });
     countryRow = zoneRow?.city?.country || null;
   }
 
-  const tz = countryRow?.ianaTimeZone ? String(countryRow.ianaTimeZone).trim() : "";
-  if (!tz || !moment.tz.zone(tz)) {
-    throw new UnprocessableEntityError(
-      "The shop's time zone is not configured (its country has no valid IANA time zone)."
+  if (!countryRow) {
+    throw unresolved(
+      "The shop's time zone is not configured (its address has no country or zone)."
     );
   }
-  return tz;
+  return requireOperationalTimeZone(countryRow.ianaTimeZone, "shop's");
 }
 
 module.exports = {
   getCountryContextById,
   getCountryContextFromZoneId,
   getCountryContextFromShopUserId,
-  getDefaultCountryContext,
+  getZoneTimeZones,
+  resolveBookingOperationalTimeZone,
+  bookingWallClockNow,
   requireShopTimeZone,
 };

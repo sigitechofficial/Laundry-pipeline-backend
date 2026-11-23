@@ -2,7 +2,7 @@
  * Agent → customer SMS / click-to-call (Twilio) when reached for pickup / delivery.
  */
 
-const { booking, users, addressDb, bookingAttempt, bookingNotification, bookingCallSession } = require("../../models");
+const { booking, users, addressDb, bookingAttempt, bookingNotification, bookingCallSession, countries, cities, zone } = require("../../models");
 const { Op } = require("sequelize");
 const {
     ValidationError,
@@ -23,10 +23,28 @@ const twilioSmsService = require("../twilioSmsService");
 const twilioCallService = require("../twilioCallService");
 const { maskPhoneNumber } = require("../../utils/maskPhone");
 const { sendNotification } = require("../../utils/notification");
-const {
-    getCountryContextById,
-    getCountryContextFromZoneId,
-} = require("../../utils/countryTimeZone");
+
+/** The country's ISO short name (dial-code lookup only; no time zone involved). */
+async function countryShortNameById(countryId) {
+    const row = await countries.findByPk(countryId, { attributes: ["shortName"] });
+    return row?.shortName || null;
+}
+
+/** The ISO short name of a zone's country (zone → city → country). */
+async function countryShortNameFromZoneId(zoneId) {
+    const row = await zone.findOne({
+        where: { id: zoneId },
+        attributes: ["id"],
+        paranoid: false,
+        include: [{
+            model: cities,
+            required: true,
+            attributes: ["id"],
+            include: [{ model: countries, required: true, attributes: ["shortName"] }],
+        }],
+    });
+    return row?.city?.country?.shortName || null;
+}
 
 const RATE_LIMIT_MS = 2 * 60 * 1000;
 /** Push notifies before SMS is used for the same booking+leg */
@@ -210,8 +228,8 @@ async function resolveBookingCountryShortName(bookingRow) {
         for (const id of orderedAddressIds) {
             const addr = addrById.get(Number(id));
             if (addr?.countryId) {
-                const ctx = await getCountryContextById(addr.countryId);
-                if (ctx?.shortName) return ctx.shortName;
+                const shortName = await countryShortNameById(addr.countryId);
+                if (shortName) return shortName;
             }
         }
 
@@ -219,15 +237,15 @@ async function resolveBookingCountryShortName(bookingRow) {
         for (const id of orderedAddressIds) {
             const addr = addrById.get(Number(id));
             if (addr?.zoneId) {
-                const ctx = await getCountryContextFromZoneId(addr.zoneId);
-                if (ctx?.shortName) return ctx.shortName;
+                const shortName = await countryShortNameFromZoneId(addr.zoneId);
+                if (shortName) return shortName;
             }
         }
 
         // 3) Booking zone.
         if (zoneId != null) {
-            const ctx = await getCountryContextFromZoneId(zoneId);
-            if (ctx?.shortName) return ctx.shortName;
+            const shortName = await countryShortNameFromZoneId(zoneId);
+            if (shortName) return shortName;
         }
 
         return null;

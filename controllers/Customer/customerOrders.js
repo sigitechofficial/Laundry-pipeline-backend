@@ -99,7 +99,6 @@ async function createBooking(req, res) {
         stripeCustomerId,
         tipAmount,
         couponCode,
-        timeZone,
         clientTimeZone,
         paymentType,
         repairItems,
@@ -138,7 +137,6 @@ async function createBooking(req, res) {
         stripeCustomerId,
         tipAmount,
         couponCode,
-        timeZone,
         clientTimeZone,
         paymentType,
         repairItems,
@@ -184,14 +182,12 @@ async function onHoldCustomerShow(req, res) {
  *   on Hold Laundry Customer response Updated
  */
 async function customerResponseUpdate(req, res) {
-    const { bookingId, customerResponse, timeZone, clientTimeZone } = req.body;
-    const resolvedTimeZone = timeZone || clientTimeZone || null;
+    const { bookingId, customerResponse } = req.body;
 
     // Call service to handle business logic
     const result = await customerOrderService.customerResponseUpdate({
         bookingId,
         customerResponse,
-        timeZone: resolvedTimeZone,
         customerId: req.user.id
     });
 
@@ -218,13 +214,12 @@ async function allBookings(req, res) {
  * Customer booking Detail
  */
 async function bookingDetailsById(req, res) {
-    const { bookingId, orderTrackId, timeZone } = req.query;
+    const { bookingId, orderTrackId } = req.query;
 
     // Call service to handle business logic
     const result = await customerOrderService.bookingDetailsById({
         bookingId,
         orderTrackId,
-        timeZone,
     });
 
     // Return response using ResponseHelper success method
@@ -387,14 +382,12 @@ async function getOnHoldBookings(req, res) {
  * Update Customer response for on hold booking
  */
 async function updateCustomerResponseForOnHoldBooking(req, res) {
-    const { responses, bookingId, timeZone, clientTimeZone } = req.body;
-    const resolvedTimeZone = timeZone || clientTimeZone || null;
+    const { responses, bookingId } = req.body;
 
     // Call service to handle business logic
     const result = await customerOrderService.updateCustomerResponseForOnHoldBooking({
         responses,
         bookingId,
-        timeZone: resolvedTimeZone,
         customerId: req.user.id
     });
 
@@ -506,9 +499,8 @@ async function getAllOrderStatus(req, res) {
  * Cancel Customer Booking with Policy Enforcement
  */
 async function cancelCustomerBooking(req, res) {
-    const { bookingId, reasonId, reasonText, timeZone, clientTimeZone } = req.body;
+    const { bookingId, reasonId, reasonText } = req.body;
     const customerId = req.user.id;
-    const resolvedTimeZone = timeZone || clientTimeZone || null;
 
     if (!bookingId) {
         throw new customError("Booking ID is required");
@@ -522,8 +514,7 @@ async function cancelCustomerBooking(req, res) {
         bookingId,
         customerId,
         reasonId,
-        reasonText,
-        resolvedTimeZone
+        reasonText
     );
 
     // Cancelling one order of a recurring series does not stop the series:
@@ -806,16 +797,6 @@ async function findZones(lat, lng) {
 }
 
 
-function getTimePlusMinutes(mins = 40) {
-    const dt = new Date(Date.now() + mins * 60000);
-    return dt.toLocaleTimeString("en-GB", {
-        timeZone: "Asia/Karachi",
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-    });
-}
-
 //!--------------------------------------------------------------------------------------------------------------->>>
 
 /**
@@ -945,13 +926,10 @@ async function rescheduleCustomerBooking(req, res) {
         totalBags,
         sameBagForAllServices,
         totalItems,
-        timeZone,
-        clientTimeZone,
         rescheduleType,
     } = req.body;
 
     const customerId = req.user.id;
-    const resolvedTimeZone = timeZone || clientTimeZone;
 
     if (!bookingId) {
         throw new customError("Booking ID is required", 400);
@@ -973,7 +951,6 @@ async function rescheduleCustomerBooking(req, res) {
             deliveryDate,
             deliveryTimeFrom,
             deliveryTimeTo,
-            timeZone: resolvedTimeZone,
             totalBags,
             sameBagForAllServices,
             totalItems,
