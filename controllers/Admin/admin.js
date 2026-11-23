@@ -37,6 +37,7 @@ const { users,
     billingDetails,
     serviceCategories } = require('../../models')
 const sequelize = require('sequelize')
+const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
@@ -1753,7 +1754,7 @@ async function addZones(req, res) {
 */
 async function addZonesByPostcodes(req, res) {
     console.log('=== Controller: addZonesByPostcodes ===');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request body:', JSON.stringify(redact(req.body), null, 2));
     console.log('Content-Type:', req.headers['content-type']);
     
     const zoneCreate = await postcodeZoneService.addZoneByPostcodes(req.body);

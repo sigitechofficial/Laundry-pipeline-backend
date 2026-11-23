@@ -301,7 +301,6 @@ class CustomerAuthService {
             }
         });
 
-        console.log("🚀 ~ verifyOTpSignUp ~ userData:", userData);
 
         if (!userData) {
             throw new NotFoundError("User not found");
@@ -687,7 +686,6 @@ class CustomerAuthService {
                 ]
             });
 
-            console.log("socialUserFind------------>", socialUserFind);
 
             if (!socialUserFind) {
                 // The email exists but was registered with email/password — give a helpful message
@@ -754,7 +752,6 @@ class CustomerAuthService {
         // Regular email/password login
         let otpId = 0;
 
-        console.log("User Find------------>", userFind);
 
         // Check if user exists before accessing properties
         if (!userFind) {

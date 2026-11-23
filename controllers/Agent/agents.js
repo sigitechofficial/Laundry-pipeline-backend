@@ -41,6 +41,7 @@ const {
     preferenceValues
 } = require("../../models");
 const sequelize = require("sequelize");
+const { redact } = require("../../utils/redact");
 const { Op } = require("sequelize");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -377,7 +378,7 @@ exports.agentAddressEdit = async (req, res) => {
         postalcode
     } = req.body;
 
-    console.log("req.body===================>>>", req.body)
+    console.log("req.body===================>>>", redact(req.body))
 
 
     const agentId = req.user.id;
@@ -6958,7 +6959,7 @@ exports.updateInvoice = async (req, res) => {
     const { services, bookingId, timeZone, clientTimeZone, zoneMinimumAmount, serviceCharge } = req.body;
 
     console.log("[PATCH /agent/updateInvoice] agentId:", req.user?.id ?? null);
-    console.log("[PATCH /agent/updateInvoice] request body:", JSON.stringify(req.body, null, 2));
+    console.log("[PATCH /agent/updateInvoice] request body:", JSON.stringify(redact(req.body), null, 2));
     console.log("[PATCH /agent/updateInvoice] bookingId:", bookingId);
     console.log("[PATCH /agent/updateInvoice] timeZone:", timeZone, "clientTimeZone:", clientTimeZone);
     console.log(

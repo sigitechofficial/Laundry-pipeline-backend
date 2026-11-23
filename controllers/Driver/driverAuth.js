@@ -10,6 +10,7 @@ const { users,
     countries,
     driverInZones } = require('../../models')
 const sequelize = require('sequelize')
+const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
@@ -392,7 +393,7 @@ async function verifyOtp(req, res) {
 
 async function driverRegister3(req, res) {
     const { licIssueDate, licExpiryDate, userId, dvToken } = req.body
-    console.log("🚀 ~ driverRegister3 ~ req.body:", req.body)
+    console.log("🚀 ~ driverRegister3 ~ req.body:", redact(req.body))
     const userData = await users.findOne({
         where: {
             id: userId
@@ -400,7 +401,7 @@ async function driverRegister3(req, res) {
         include: { model: deviceToken, attributes: ['tokenId'] },
         attributes: ['id', "firstName", 'lastName', 'email', 'status', "verifiedAt", 'phoneNum', 'image', 'userTypeId', [sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"), "joinedOn"]]
     })
-    console.log("🚀 ~ driverRegister3 ~ userData:", userData)
+    console.log("🚀 ~ driverRegister3 ~ userData:", redact(userData))
     let tmpLicFrontImage = req.files.frontImage[0].path;
     let licFrontImage = tmpLicFrontImage.replace(/\\/g, "/");
     let tmpLicBackImage = req.files.backImage[0].path;
