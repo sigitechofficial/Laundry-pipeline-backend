@@ -74,7 +74,8 @@ const newInput = (overrides = {}) => ({
   profile: { email: 'new@example.com', firstName: 'Ada', lastName: 'L', phoneNum: '7400123456' },
   passwordHash: 'hash',
   otp: otp(),
-  dvToken: 'device-1',
+  pushToken: 'push-token-1',
+  deviceId: '6f1c2d3e-4a5b-4c6d-8e7f-901234567890',
   ...overrides,
 });
 
@@ -92,6 +93,8 @@ async function run() {
     assert.equal(state.otps[0].OTP, '1234');
     assert.equal(otpRow.id, state.otps[0].id);
     assert.equal(state.tokens.length, 1);
+    assert.equal(state.tokens[0].tokenId, 'push-token-1');
+    assert.equal(state.tokens[0].deviceId, '6f1c2d3e-4a5b-4c6d-8e7f-901234567890', 'token recorded against the install');
   }
 
   // Shop agents use the same flow with their own user type.
@@ -108,10 +111,10 @@ async function run() {
     assert.equal(state.users.length + state.otps.length + state.tokens.length, 0, `rollback on ${table}`);
   }
 
-  // No device token supplied: no empty token row.
+  // No push token (simulator, Firebase unavailable): no empty token row.
   {
     const { deps, state } = makeDeps();
-    await createUnverifiedAccount(deps, newInput({ dvToken: undefined }));
+    await createUnverifiedAccount(deps, newInput({ pushToken: undefined }));
     assert.equal(state.tokens.length, 0);
   }
 

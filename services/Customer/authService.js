@@ -1,5 +1,4 @@
 require("dotenv").config();
-const { appSessionKey } = require('../../utils/sessionKeys');
 const { users, userType, booking, otpVerification, deviceToken, countries, cities, zone, units } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
@@ -52,8 +51,6 @@ async function findZoneByCoords(lat, lng) {
     }
 }
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const redisCli = require('../../redis/redis');
 const otpGenerator = require('otp-generator');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
@@ -65,7 +62,7 @@ const {
     UnauthorizedError,
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
-const { replaceUserToken } = require('../../utils/deviceTokenStore');
+const { resolveSessionIdentity, openAppSession } = require('../../utils/appSession');
 const { customerLoginVerification } = require('../../utils/customerLoginVerification');
 const {
     createUnverifiedAccount,
@@ -80,15 +77,6 @@ const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
 } = require('../../utils/accountBlocked');
-
-/**
- * Replaces all existing device tokens for a user with a single new one.
- * Prevents token accumulation (which causes duplicate notifications).
- */
-async function _refreshDeviceToken(userId, newToken) {
-    // The same phone may have been signed in to another account: it is this user's now.
-    await replaceUserToken(userId, newToken);
-}
 
 /**
  * Customer Authentication Service
@@ -112,7 +100,8 @@ class CustomerAuthService {
      * @param {string} data.firstName - First name
      * @param {string} data.lastName - Last name
      * @param {string} data.password - Password
-     * @param {string} data.dvToken - Device token
+     * @param {string} data.deviceId - App install id (UUID): the session's identity
+     * @param {string} [data.dvToken] - Push (FCM) token, optional; LEGACY builds send only this
      * @param {string} data.phoneNum - Phone number
      * @param {string} data.confirmPassword - Confirm password
      * @param {number} data.countryId - Country ID
@@ -127,7 +116,6 @@ class CustomerAuthService {
             firstName,
             lastName,
             password,
-            dvToken,
             phoneNum,
             confirmPassword,
             countryId,
@@ -223,23 +211,15 @@ class CustomerAuthService {
             });
             await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });
 
-            if (dvToken) {
-                await _refreshDeviceToken(userfindByEmail.id, dvToken);
-            }
-
-            const accessToken = jwt.sign({
-                id: userfindByEmail.id,
-                email: userfindByEmail.email,
-                dvToken,
-                userTypeId: userfindByEmail.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            if (dvToken) {
-                await redisCli.hSet(
-                    appSessionKey(userfindByEmail.id),
-                    { [dvToken]: accessToken }
-                );
-            }
+            // Session for this app install (utils/appSession.js), when the app identified it.
+            const identity = resolveSessionIdentity(data, { required: false });
+            const accessToken = identity
+                ? await openAppSession({
+                    userId: userfindByEmail.id,
+                    claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
+                    identity,
+                })
+                : null;
 
             return {
                 otpId: otpRow.id,
@@ -251,8 +231,9 @@ class CustomerAuthService {
             };
         }
 
-        // New customer: user, OTP and device token in one transaction (no partial
-        // account on failure). No Stripe call: created on first payment.
+        // New customer: user, OTP and the install's push token in one transaction (no
+        // partial account on failure). No Stripe call: created on first payment.
+        const identity = resolveSessionIdentity(data, { required: false });
         const otp = newSignupOtp();
         const { user, otpRow } = await createUnverifiedAccount(signupPersistenceDeps(), {
             userTypeId: 2,
@@ -268,7 +249,8 @@ class CustomerAuthService {
             },
             passwordHash: await bcrypt.hash(password, 8),
             otp,
-            dvToken,
+            pushToken: identity ? identity.pushToken : null,
+            deviceId: identity ? identity.deviceId : null,
         });
         await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });
 
@@ -286,11 +268,13 @@ class CustomerAuthService {
      * @param {number} data.otpId - OTP ID
      * @param {string} data.OTP - OTP code
      * @param {number} data.userId - User ID
-     * @param {string} data.dvToken - Device token
+     * @param {string} data.deviceId - App install id (UUID): the session's identity
+     * @param {string} [data.dvToken] - Push (FCM) token, optional; LEGACY builds send only this
      * @returns {Object} Verification result with user data and access token
      */
     async verifyOTpSignUp(data) {
-        const { otpId, OTP, userId, dvToken } = data;
+        const { otpId, OTP, userId } = data;
+        const identity = resolveSessionIdentity(data);
 
         // Get user data
         const userData = await users.findByPk(userId, {
@@ -303,16 +287,6 @@ class CustomerAuthService {
 
         if (!userData) {
             throw new NotFoundError("User not found");
-        }
-
-        await _refreshDeviceToken(userData.id, dvToken);
-
-        // Handle device token - generate one if not provided
-        let finalDvToken = dvToken;
-        if (!finalDvToken || finalDvToken.trim() === '') {
-            // Generate a default device token if none provided
-            finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-            console.log("⚠️ No dvToken provided during OTP verification, generated:", finalDvToken);
         }
 
         // Handle special test OTP
@@ -337,19 +311,11 @@ class CustomerAuthService {
                 // Don't throw error - email failure shouldn't block signup completion
             }
 
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: userData.id,
-                email: userData.email,
-                dvToken: finalDvToken,
-                userTypeId: userData.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store token in Redis
-            await redisCli.hSet(
-                appSessionKey(userData.id),
-                { [finalDvToken]: accessToken }
-            );
+            const accessToken = await openAppSession({
+                userId: userData.id,
+                claims: { id: userData.id, email: userData.email, userTypeId: userData.userTypeId },
+                identity,
+            });
 
             return {
                 userData,
@@ -397,19 +363,11 @@ class CustomerAuthService {
                 // Don't throw error - email failure shouldn't block signup completion
             }
 
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: userData.id,
-                email: userData.email,
-                dvToken: finalDvToken,
-                userTypeId: userData.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store token in Redis
-            await redisCli.hSet(
-                appSessionKey(userData.id),
-                { [finalDvToken]: accessToken }
-            );
+            const accessToken = await openAppSession({
+                userId: userData.id,
+                claims: { id: userData.id, email: userData.email, userTypeId: userData.userTypeId },
+                identity,
+            });
 
             return {
                 userData,
@@ -425,7 +383,8 @@ class CustomerAuthService {
      * @param {string} data.email - Email
      * @param {string} data.password - Password
      * @param {string} data.signedFrom - Social login provider
-     * @param {string} data.dvToken - Device token
+     * @param {string} data.deviceId - App install id (UUID): the session's identity
+     * @param {string} [data.dvToken] - Push (FCM) token, optional; LEGACY builds send only this
      * @returns {Object} Login result with user data and access token or special response
      */
     async loginUser(data) {
@@ -454,13 +413,13 @@ class CustomerAuthService {
             email,
             password,
             signedFrom,
-            dvToken,
             firstName,
             lastName,
             phoneNum,
             lat,
             lng,
         } = data;
+        const identity = resolveSessionIdentity(data);
         const socialProviders = ['google', 'facebook', 'apple'];
         const requiredProfileFields = ['firstName', 'lastName', 'phoneNum'];
 
@@ -579,20 +538,6 @@ class CustomerAuthService {
                 // Don't throw error - email failure shouldn't block signup completion
             }
 
-            // Handle device token - generate one if not provided
-            let finalDvToken = dvToken;
-            if (!finalDvToken || finalDvToken.trim() === '') {
-                // Generate a default device token if none provided
-                finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-                console.log("⚠️ No dvToken provided, generated:", finalDvToken);
-            }
-
-            await deviceToken.create({
-                tokenId: finalDvToken,
-                status: true,
-                userId: createUser.id
-            });
-
             // Fetch created user with all attributes including joinedOn
             const userData = await users.findOne({
                 where: {
@@ -618,19 +563,11 @@ class CustomerAuthService {
                 ]
             });
 
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: userData.id,
-                email: userData.email,
-                dvToken: finalDvToken,
-                userTypeId: userData.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store token in Redis
-            await redisCli.hSet(
-                appSessionKey(userData.id),
-                { [finalDvToken]: accessToken }
-            );
+            const accessToken = await openAppSession({
+                userId: userData.id,
+                claims: { id: userData.id, email: userData.email, userTypeId: userData.userTypeId },
+                identity,
+            });
 
             // Zone lookup (optional — skipped if lat/lng not provided)
             const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;
@@ -708,29 +645,11 @@ class CustomerAuthService {
                 });
             }
 
-            // Handle device token - generate one if not provided
-            let finalDvToken = dvToken;
-            if (!finalDvToken || finalDvToken.trim() === '') {
-                // Generate a default device token if none provided
-                finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-                console.log("⚠️ No dvToken provided, generated:", finalDvToken);
-            }
-
-            await _refreshDeviceToken(socialUserFind.id, finalDvToken);
-
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: socialUserFind.id,
-                email: socialUserFind.email,
-                dvToken: finalDvToken,
-                userTypeId: socialUserFind.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store in Redis
-            await redisCli.hSet(
-                appSessionKey(socialUserFind.id),
-                { [finalDvToken]: accessToken }
-            );
+            const accessToken = await openAppSession({
+                userId: socialUserFind.id,
+                claims: { id: socialUserFind.id, email: socialUserFind.email, userTypeId: socialUserFind.userTypeId },
+                identity,
+            });
 
             // Zone lookup (optional — skipped if lat/lng not provided)
             const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;
@@ -798,29 +717,11 @@ class CustomerAuthService {
             );
         }
 
-        // Handle device token - generate one if not provided
-        let finalDvToken = dvToken;
-        if (!finalDvToken || finalDvToken.trim() === '') {
-            // Generate a default device token if none provided
-            finalDvToken = `web-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-            console.log("⚠️ No dvToken provided, generated:", finalDvToken);
-        }
-
-        await _refreshDeviceToken(userFind.id, finalDvToken);
-
-        // Generate access token
-        const accessToken = jwt.sign({
-            id: userFind.id,
-            email: userFind.email,
-            dvToken: finalDvToken,
-            userTypeId: userFind.userTypeId
-        }, process.env.JWT_ACCESS_SECRET);
-
-        // Store in Redis
-        await redisCli.hSet(
-            appSessionKey(userFind.id),
-            { [finalDvToken]: accessToken }
-        );
+        const accessToken = await openAppSession({
+            userId: userFind.id,
+            claims: { id: userFind.id, email: userFind.email, userTypeId: userFind.userTypeId },
+            identity,
+        });
 
         // Zone lookup (optional — skipped if lat/lng not provided)
         const zoneData = (lat && lng) ? await findZoneByCoords(lat, lng) : null;

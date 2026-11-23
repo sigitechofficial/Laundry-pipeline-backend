@@ -1,5 +1,6 @@
 require('dotenv').config()
 const { appSessionKey } = require('../utils/sessionKeys');
+const { sessionFieldOf } = require('../utils/sessionIdentity');
 const { verify } = require('jsonwebtoken')
 const redisCli = require('../redis/redis')
 const { attachShopAgentContext } = require('../utils/shopAgentContext')
@@ -24,13 +25,14 @@ module.exports = async function validateAccessToken(req, res, next) {
             return;
         }
 
+        // The session of this app install (utils/appSession.js: deviceId, or a legacy dvToken).
+        const sessionField = sessionFieldOf(validateToken);
         const redisToken = await redisCli.hGetAll(appSessionKey(validateToken.id));
-        if (!redisToken) {
+        if (!sessionField || !redisToken || !redisToken[sessionField]) {
             throw new Error("Invalid Token")
         }
 
-        const dvToken = validateToken.dvToken;
-        const redis_Validate = verify(redisToken[dvToken], process.env.JWT_ACCESS_SECRET)
+        const redis_Validate = verify(redisToken[sessionField], process.env.JWT_ACCESS_SECRET)
 
         req.user = redis_Validate;
         attachShopAgentContext(req);

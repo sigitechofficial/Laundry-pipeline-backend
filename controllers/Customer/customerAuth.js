@@ -11,7 +11,8 @@ const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
-const { saveCurrentToken, removeUserTokens } = require('../../utils/deviceTokenStore')
+const { saveCurrentToken } = require('../../utils/deviceTokenStore')
+const { endAppSession, normalizeDeviceId } = require('../../utils/appSession')
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken')
 const path = require('path')
 const { stat } = require('fs')
@@ -26,7 +27,7 @@ const { ValidationError } = require('../../middlewares/universalErrorHandler')
   * Combine Register with OTP
 */
 async function registerCustomerWithOTP(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
+    const { firstName, lastName, password, deviceId, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
 
     let profileImg = null;
     if (req.file) {
@@ -39,6 +40,7 @@ async function registerCustomerWithOTP(req, res) {
         firstName,
         lastName,
         password,
+        deviceId,
         dvToken,
         phoneNum,
         confirmPassword,
@@ -60,13 +62,14 @@ async function registerCustomerWithOTP(req, res) {
    * verify OTp for SignUp
 */
 async function verifyOTpSignUp(req, res) {
-    const { otpId, OTP, userId, dvToken } = req.body;
+    const { otpId, OTP, userId, deviceId, dvToken } = req.body;
 
     // Call service to handle business logic
     const result = await customerAuthService.verifyOTpSignUp({
         otpId,
         OTP,
         userId,
+        deviceId,
         dvToken
     });
 
@@ -95,6 +98,7 @@ async function loginUser(req, res) {
         email,
         password,
         signedFrom,
+        deviceId,
         dvToken,
         firstName,
         lastName,
@@ -110,6 +114,7 @@ async function loginUser(req, res) {
         email,
         password,
         signedFrom,
+        deviceId,
         dvToken,
         firstName,
         lastName,
@@ -229,12 +234,11 @@ async function resendOTP(req, res) {
     *          8. Log out
 */
 async function logout(req, res) {
-    // Forget this device's push tokens — the one signed in with and the app's current
-    // one (newer apps send it; it differs when the push token changed after sign-in) —
-    // and revoke the session. asyncMiddleware reports failures.
-    const currentToken = typeof req.query?.dvToken === 'string' ? req.query.dvToken.trim() : '';
-    await removeUserTokens(req.user.id, [req.user.dvToken, currentToken]);
-    await redisCli.hDel(appSessionKey(req.user.id), req.user.dvToken);
+    // Revoke this install's session only and stop its pushes (utils/appSession.js).
+    // LEGACY builds also report their current push token (?dvToken=), which differs from
+    // the sign-in one after a rotation. asyncMiddleware reports failures.
+    const currentPushToken = typeof req.query?.dvToken === 'string' ? req.query.dvToken.trim() : '';
+    await endAppSession(req.user, { currentPushToken });
     return res.json({ status: "1", message: "Log-out successfully", data: {}, error: "" });
 }
 
@@ -458,14 +462,16 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
 
 /**
  * POST /customer/deviceToken { dvToken } — the app reports its current push token (on start
- * and whenever Firebase gives it a new one), so pushes reach the phone after a token change.
+ * and whenever Firebase gives it a new one), so pushes reach the phone after a token change
+ * or when it had none at sign-in. For installs with a deviceId session the token replaces
+ * that install's previous one.
  */
 async function updateDeviceToken(req, res) {
     const token = typeof req.body?.dvToken === 'string' ? req.body.dvToken.trim() : '';
     if (!isValidFcmRegistrationToken(token)) {
         return res.status(400).json({ status: "0", message: "A valid device token is required", data: {}, error: "INVALID_DEVICE_TOKEN" });
     }
-    const { created } = await saveCurrentToken(req.user.id, token);
+    const { created } = await saveCurrentToken(req.user.id, token, normalizeDeviceId(req.user.deviceId));
     return res.json({ status: "1", message: "Device token saved", data: { created }, error: "" });
 }
 

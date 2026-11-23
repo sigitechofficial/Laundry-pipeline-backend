@@ -1,5 +1,6 @@
 require("dotenv").config();
 const { appSessionKey } = require('../utils/sessionKeys');
+const { sessionFieldOf } = require('../utils/sessionIdentity');
 const { verify } = require("jsonwebtoken");
 const redisCli = require("../redis/redis");
 const guestAuthService = require("../services/Customer/guestAuthService");
@@ -54,14 +55,15 @@ module.exports = async function validateAccessTokenOrGuest(req, res, next) {
             return;
         }
 
+        // The session of this app install (utils/appSession.js: deviceId, or a legacy dvToken).
+        const sessionField = sessionFieldOf(decoded);
         const redisToken = await redisCli.hGetAll(appSessionKey(decoded.id));
-        if (!redisToken || Object.keys(redisToken).length === 0) {
+        if (!sessionField || !redisToken || !redisToken[sessionField]) {
             throw new Error("Invalid Token");
         }
 
-        const dvToken = decoded.dvToken;
         const redis_Validate = verify(
-            redisToken[dvToken],
+            redisToken[sessionField],
             process.env.JWT_ACCESS_SECRET
         );
 

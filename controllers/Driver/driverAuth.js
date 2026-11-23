@@ -9,14 +9,12 @@ const { users,
     vehicleImage,
     countries,
     driverInZones } = require('../../models')
-const { appSessionKey } = require('../../utils/sessionKeys');
+const { resolveSessionIdentity, openAppSession } = require('../../utils/appSession');
 const sequelize = require('sequelize')
 const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
 var JSbarcode = require('jsbarcode')
-const redisCli = require('../../redis/redis')
 const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
 const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
@@ -28,16 +26,6 @@ const stripe = require('../stripe')
 const { create } = require('domain');
 const accessToken = require("../../middlewares/accessToken");
 const axios = require('axios')
-
-/**
- * Replaces all existing device tokens for a user with a single new one.
- * Prevents token accumulation (which causes duplicate notifications).
- */
-async function _refreshDeviceToken(userId, newToken) {
-    if (!newToken) return;
-    await deviceToken.destroy({ where: { userId } });
-    await deviceToken.create({ tokenId: newToken, status: true, userId });
-}
 
 //!------------------------------------Driver Auth-------------------------------------//
 
@@ -394,6 +382,8 @@ async function verifyOtp(req, res) {
 
 async function driverRegister3(req, res) {
     const { licIssueDate, licExpiryDate, userId, dvToken } = req.body
+    // The session of this app install (utils/appSession.js); checked before any write.
+    const identity = resolveSessionIdentity(req.body)
     console.log("🚀 ~ driverRegister3 ~ req.body:", redact(req.body))
     const userData = await users.findOne({
         where: {
@@ -410,18 +400,11 @@ async function driverRegister3(req, res) {
     await driverDetail.update({ licIssueDate, licExpiryDate, licFrontImage, licBackImage }, { where: { userId } })
 
 
-    await _refreshDeviceToken(userData.id, dvToken);
-
-    const accessToken = jwt.sign({
-        id: userData.id,
-        email: userData.email,
-        dvToken: dvToken,
-        uiserTypeId: userData.userTypeId
-    }, process.env.JWT_ACCESS_SECRET)
-
-    if (dvToken) {
-        await redisCli.hSet(appSessionKey(userData.id), { [dvToken]: accessToken })
-    }
+    const accessToken = await openAppSession({
+        userId: userData.id,
+        claims: { id: userData.id, email: userData.email, userTypeId: userData.userTypeId },
+        identity,
+    })
     const firebaseSet = await axios.get(
         "https://theshippinghack-default-rtdb.firebaseio.com/ShippingHack_driver/" +
         `${userData.id}` +
@@ -445,6 +428,8 @@ async function driverRegister3(req, res) {
 */
 async function driverLogin(req, res) {
     const { email, password, dvToken } = req.body
+    // The session of this app install (utils/appSession.js); push token optional.
+    const identity = resolveSessionIdentity(req.body)
 
     let online_status = false;
 
@@ -556,18 +541,11 @@ async function driverLogin(req, res) {
     console.log("Device Tokens", requ);
 
 
-    await _refreshDeviceToken(userData.id, dvToken);
-
-    const accessToken = jwt.sign({
-        id: userData.id,
-        email: userData.email,
-        dvToken: dvToken,
-        userTypeId: userData.userTypeId
-    }, process.env.JWT_ACCESS_SECRET)
-
-    if (dvToken) {
-        await redisCli.hSet(appSessionKey(userData.id), { [dvToken]: accessToken })
-    }
+    const accessToken = await openAppSession({
+        userId: userData.id,
+        claims: { id: userData.id, email: userData.email, userTypeId: userData.userTypeId },
+        identity,
+    })
     let output = loginDataForDriver(userData, accessToken, online_status, dvToken)
     return res.json(output)
 }

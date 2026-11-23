@@ -17,10 +17,16 @@ const {
 const SECRET = 'test-socket-auth-secret-not-for-prod';
 const sign = (payload, secret = SECRET) => jwt.sign(payload, secret);
 
-// Agent session exactly as authService mints it: JWT + Redis hash id-<id> { [dvToken]: token }.
+// LEGACY agent session (dvToken-only build): JWT + Redis hash id-<id> { [dvToken]: token }.
 function session({ id, dvToken = 'device-1', extra = {} }) {
     const token = sign({ id, email: `u${id}@example.com`, dvToken, ...extra });
     return { token, redis: { [`id-${id}`]: { [dvToken]: token } } };
+}
+
+// Session as utils/appSession.js mints it: keyed by the app install's deviceId.
+function installSession({ id, deviceId, extra = {} }) {
+    const token = sign({ id, email: `u${id}@example.com`, deviceId, ...extra });
+    return { token, redis: { [`id-${id}`]: { [deviceId]: token } } };
 }
 
 function verifierFor(redis, { blocked = [] } = {}) {
@@ -89,6 +95,16 @@ async function run() {
         SOCKET_AUTH_ERROR.INVALID_TOKEN
     );
     await rejectsWith(verifierFor(owner.redis, { blocked: [7] })(owner.token), SOCKET_AUTH_ERROR.ACCOUNT_BLOCKED);
+
+    // Install sessions (deviceId; no push token involved). Two installs of one account each
+    // verify; revoking one leaves the other.
+    const ipad = installSession({ id: 7, deviceId: '0f8e2a4c-6b1d-4e3f-9a7c-5d2b8e1f4a6c' });
+    const phone = installSession({ id: 7, deviceId: 'a1b2c3d4-e5f6-4789-8abc-def012345678' });
+    const both = { 'id-7': { ...ipad.redis['id-7'], ...phone.redis['id-7'] } };
+    assert.equal((await verifierFor(both)(ipad.token)).deviceId, '0f8e2a4c-6b1d-4e3f-9a7c-5d2b8e1f4a6c');
+    assert.equal((await verifierFor(both)(phone.token)).id, 7);
+    await rejectsWith(verifierFor(phone.redis)(ipad.token), SOCKET_AUTH_ERROR.INVALID_TOKEN);
+    assert.equal((await verifierFor(phone.redis)(phone.token)).id, 7);
 
     // ── room join ─────────────────────────────────────────────────────────
     const join = (payload, mode = SOCKET_AUTH_MODE.OPTIONAL, handshake = {}) =>

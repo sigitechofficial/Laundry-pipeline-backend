@@ -4,6 +4,11 @@
  * Push tokens (deviceTokens table). A token belongs to one app install, so it may belong to
  * one user only: when a user signs in or the app reports its token, the same token is removed
  * from any other user (a phone that switched accounts must not get the old account's pushes).
+ *
+ * A token is only a push address. Sessions are keyed by the install's `deviceId`
+ * (utils/appSession.js); rows record that `deviceId` so a rotated token replaces the install's
+ * old one and signing out of an install removes exactly its tokens. Rows from app builds
+ * without a deviceId have deviceId NULL and are removed by token (removeUserTokens).
  */
 
 const { Op } = require('sequelize');
@@ -17,16 +22,23 @@ async function detachFromOtherUsers(userId, tokenId) {
 
 /**
  * Save the app's current token for the user (idempotent): one row, active, and on no other user.
+ * With the install's `deviceId`, the token replaces that install's earlier (rotated) token.
  * @returns {{ created: boolean }}
  */
-async function saveCurrentToken(userId, tokenId) {
+async function saveCurrentToken(userId, tokenId, deviceId = null) {
   await detachFromOtherUsers(userId, tokenId);
+  if (deviceId) {
+    await deviceToken.destroy({ where: { userId, deviceId, tokenId: { [Op.ne]: tokenId } } });
+  }
   const existing = await deviceToken.findOne({ where: { userId, tokenId } });
   if (existing) {
-    if (!existing.status) await existing.update({ status: true });
+    const changes = {};
+    if (!existing.status) changes.status = true;
+    if (deviceId && existing.deviceId !== deviceId) changes.deviceId = deviceId;
+    if (Object.keys(changes).length) await existing.update(changes);
     return { created: false };
   }
-  await deviceToken.create({ userId, tokenId, status: true });
+  await deviceToken.create({ userId, tokenId, deviceId, status: true });
   return { created: true };
 }
 
@@ -35,18 +47,30 @@ async function saveCurrentToken(userId, tokenId) {
  * no duplicate notifications from stale installs), and the token leaves any other user.
  * No-op without a token.
  */
-async function replaceUserToken(userId, tokenId) {
+async function replaceUserToken(userId, tokenId, deviceId = null) {
   if (!userId || !tokenId) return;
   await deviceToken.destroy({ where: { userId } });
   await detachFromOtherUsers(userId, tokenId);
-  await deviceToken.create({ userId, tokenId, status: true });
+  await deviceToken.create({ userId, tokenId, deviceId, status: true });
 }
 
-/** Sign-out: forget the given token(s) for this user. */
+/** Sign-out of an install: forget every token that install registered for this user. */
+async function removeInstallTokens(userId, deviceId) {
+  if (!userId || !deviceId) return 0;
+  return deviceToken.destroy({ where: { userId, deviceId } });
+}
+
+/** Sign-out (legacy installs without a deviceId): forget the given token(s) for this user. */
 async function removeUserTokens(userId, tokenIds) {
   const ids = (Array.isArray(tokenIds) ? tokenIds : [tokenIds]).filter(Boolean);
   if (!userId || ids.length === 0) return 0;
   return deviceToken.destroy({ where: { userId, tokenId: ids } });
 }
 
-module.exports = { detachFromOtherUsers, saveCurrentToken, replaceUserToken, removeUserTokens };
+module.exports = {
+  detachFromOtherUsers,
+  saveCurrentToken,
+  replaceUserToken,
+  removeInstallTokens,
+  removeUserTokens,
+};
