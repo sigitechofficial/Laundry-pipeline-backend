@@ -41,6 +41,7 @@ const {
     LAUNDRY_SHOP_MANAGER_ROLE_ID,
 } = require('../../utils/shopAgentContext');
 const { CLASSIFIED_AS } = require('../../constants/systemRoles');
+const { zoneCurrency } = require('../../utils/zoneCurrency');
 const {
     SHOP_ADDRESS_TYPE,
     openAgentOwnerBookingWhere,
@@ -61,6 +62,22 @@ async function _refreshDeviceToken(userId, newToken) {
  * Handles all agent authentication related business logic
  */
 class AgentAuthService {
+    /**
+     * The shop app's display currency (symbol): the zone currency of the shop's
+     * LaundaryShopAddress. A shop with no zone yet (registration in progress) gets the
+     * platform default from resolveDisplayCurrency.
+     * @param {number|string} shopOwnerUserId the shop owner (an employee's employeeOff)
+     */
+    async _shopCurrencySymbol(shopOwnerUserId) {
+        const shopAddress = shopOwnerUserId
+            ? await addressDb.findOne({
+                  where: { userId: shopOwnerUserId, addressType: 'LaundaryShopAddress' },
+                  attributes: ['id', 'zoneId'],
+              })
+            : null;
+        return (await zoneCurrency(shopAddress?.zoneId)).currencySymbol;
+    }
+
     _ianaTimeZoneUpdate(data) {
         const tz = parseTimeZoneFromBody(data);
         return tz ? { ianaTimeZone: tz } : {};
@@ -381,6 +398,7 @@ class AgentAuthService {
             return {
                 userId: data.userId,
                 ianaTimeZone,
+                currencyUnit: await this._shopCurrencySymbol(data.userId),
             };
         } else {
             const otpData = await otpVerification.findByPk(data.otpId);
@@ -418,6 +436,7 @@ class AgentAuthService {
             return {
                 userId: data.userId,
                 ianaTimeZone,
+                currencyUnit: await this._shopCurrencySymbol(data.userId),
             };
         }
     }
@@ -1115,7 +1134,7 @@ class AgentAuthService {
                 accessToken,
                 userTypeId: String(socialUser.userTypeId),
                 addressId: null,
-                currencyUnit: '$',
+                currencyUnit: await this._shopCurrencySymbol(socialUser.id),
                 isGuest: false,
                 joinedOn: socialUser.dataValues.joinedOn,
                 phoneNum: socialUser.phoneNum,
@@ -1164,7 +1183,7 @@ class AgentAuthService {
             }
         }
         
-        const currencyUnit = userAddress?.zone?.currencyUnitZ?.symbol || '$';
+        const currencyUnit = await this._shopCurrencySymbol(userFind.id);
         // agentInfo is already declared above in the validation section
 
         // If connectAccountId exists but isConnectAccountConnected is still false, check Stripe live
@@ -1414,7 +1433,7 @@ class AgentAuthService {
                 userId: employeeData.employeeOff,
                 addressType: 'LaundaryShopAddress',
             },
-            attributes: ['id'],
+            attributes: ['id', 'zoneId'],
         });
 
         await _refreshDeviceToken(employeeData.id, data.dvToken);
@@ -1449,7 +1468,8 @@ class AgentAuthService {
             : agentData?.agentInfo;
         const isConnectAccountConnected = true; // employees never complete Stripe onboarding
         const connectAccountId = agentInfoRow?.connectAccountId || null;
-        const currencyUnit = '$';
+        // Staff see the owner's shop currency.
+        const currencyUnit = (await zoneCurrency(shopAddress?.zoneId)).currencySymbol;
         const ianaTimeZone = resolveAgentTimeZone(
             data,
             agentData?.ianaTimeZone || employeeData.ianaTimeZone
@@ -1695,6 +1715,7 @@ class AgentAuthService {
         return {
             userData: plainUser,
             accessToken,
+            currencyUnit: await this._shopCurrencySymbol(userData.id),
             isGuest: data.guestUser,
             featureData,
             isConnectAccountConnected,
@@ -1914,6 +1935,8 @@ class AgentAuthService {
             classifiedAsId: employeeData.classifiedAsId,
             employeeOff: employeeData.employeeOff,
             addressId: shopAddress ? String(shopAddress.id) : null,
+            // Staff see the owner's shop currency.
+            currencyUnit: (await zoneCurrency(shopAddress?.zoneId)).currencySymbol,
             ianaTimeZone: shopTimeZone,
             shopOperationalTimeZone,
             isEmployee: true,
