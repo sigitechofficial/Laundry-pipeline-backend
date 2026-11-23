@@ -56,7 +56,7 @@ const redisCli = require('../../redis/redis');
 const otpGenerator = require('otp-generator');
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
-const signupWelcomeMail = require('../../helper/signupWelcomeMail');
+const { enqueueEmail } = require('../email/emailOutbox');
 const {
     ValidationError, 
     NotFoundError, 
@@ -330,13 +330,12 @@ class CustomerAuthService {
 
             // Send welcome email after successful verification
             try {
-                await signupWelcomeMail({
+                await enqueueEmail('signupWelcome', {
                     email: userData.email,
                     userName: userData.firstName || 'User'
-                });
-                console.log('✅ Welcome email sent to:', userData.email);
+                }, { dedupeKey: `signupWelcome:user:${userData.id}` });
             } catch (emailError) {
-                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                console.error('⚠️ Failed to queue welcome email:', emailError.message);
                 // Don't throw error - email failure shouldn't block signup completion
             }
 
@@ -391,13 +390,12 @@ class CustomerAuthService {
 
             // Send welcome email after successful verification
             try {
-                await signupWelcomeMail({
+                await enqueueEmail('signupWelcome', {
                     email: userData.email,
                     userName: userData.firstName || 'User'
-                });
-                console.log('✅ Welcome email sent to:', userData.email);
+                }, { dedupeKey: `signupWelcome:user:${userData.id}` });
             } catch (emailError) {
-                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                console.error('⚠️ Failed to queue welcome email:', emailError.message);
                 // Don't throw error - email failure shouldn't block signup completion
             }
 
@@ -574,13 +572,12 @@ class CustomerAuthService {
 
             // Send welcome email for social signup
             try {
-                await signupWelcomeMail({
+                await enqueueEmail('signupWelcome', {
                     email: email,
                     userName: firstName || 'User'
-                });
-                console.log('✅ Welcome email sent to:', email);
+                }, { dedupeKey: `signupWelcome:user:${createUser.id}` });
             } catch (emailError) {
-                console.error('⚠️ Failed to send welcome email (non-blocking):', emailError.message);
+                console.error('⚠️ Failed to queue welcome email:', emailError.message);
                 // Don't throw error - email failure shouldn't block signup completion
             }
 

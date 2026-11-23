@@ -471,6 +471,8 @@ async function startServer() {
     startRecurringGenerationJob();
     const { startPromotionJobs } = require('./services/promotions/promotionJobs');
     startPromotionJobs();
+    const { startEmailOutboxJob } = require('./services/email/emailOutbox');
+    startEmailOutboxJob();
 
     server.listen(server_port, function (err) {
       if (err) throw err;

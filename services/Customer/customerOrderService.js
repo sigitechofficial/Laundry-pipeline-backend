@@ -122,6 +122,7 @@ const zoneCatalogService = require('../Admin/zoneCatalogService');
 const couponService = require('./couponService');
 const bookingPromotionService = require('../promotions/bookingPromotionService');
 const cancelBookingService = require('./cancelBookingService');
+const { enqueueEmail } = require('../email/emailOutbox');
 const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
@@ -2403,7 +2404,6 @@ class CustomerOrderService {
 
         // Send booking confirmation email (non-blocking)
         try {
-            const bookingConfirmationMail = require('../../helper/bookingConfirmationMail');
 
             // Fetch customer info
             const customerData = await users.findOne({
@@ -2422,8 +2422,8 @@ class CustomerOrderService {
                 pickupAddressData?.district
             ].filter(Boolean).join(', ');
 
-            await bookingConfirmationMail({
-                email: customerData?.email || '',
+            await enqueueEmail('bookingConfirmation', {
+                email: customerData?.email,
                 userName: customerData?.firstName || 'Customer',
                 orderNumber: ordertrackingNumber,
                 address: addressLine,
@@ -2436,11 +2436,9 @@ class CustomerOrderService {
                 dropoffTimeTo: normalizedDeliveryTimeTo,
                 upfrontAmount: parsedUpfront,
                 currency: '£'
-            });
-
-            console.log('✅ Booking confirmation email sent for order:', ordertrackingNumber);
+            }, { dedupeKey: `bookingConfirmation:${ordertrackingNumber}` });
         } catch (emailError) {
-            console.error('⚠️ Failed to send booking confirmation email (non-blocking):', emailError.message);
+            console.error('⚠️ Failed to queue booking confirmation email:', emailError.message);
         }
 
         return {
