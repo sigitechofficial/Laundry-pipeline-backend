@@ -7,6 +7,8 @@
 const assert = require('assert');
 
 require('./stubSequelizeModels').install();
+// Currency symbols come from the units table; these are the units the labels below use.
+require('../utils/currencySymbols').primeCurrencySymbols([{ name: 'GBP', symbol: '£' }, { name: 'EUR', symbol: '€' }]);
 
 const {
   computeBenefit, applyBenefit, createPricingState, limitBasket, bundleQuantity,
