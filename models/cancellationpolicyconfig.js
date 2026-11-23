@@ -37,8 +37,7 @@ module.exports = (sequelize, DataTypes) => {
     prePickupAbsoluteCurrency: {
       type: DataTypes.STRING(10),
       allowNull: true,
-      defaultValue: 'USD',
-      comment: 'Currency for absolute charges'
+      comment: 'Currency for absolute charges; NULL = the booking zone currency'
     },
     prePickupAbsoluteAmount: {
       type: DataTypes.DECIMAL(10, 2),
@@ -67,8 +66,7 @@ module.exports = (sequelize, DataTypes) => {
     unprocessedAbsoluteCurrency: {
       type: DataTypes.STRING(10),
       allowNull: true,
-      defaultValue: 'USD',
-      comment: 'Currency for unprocessed charges'
+      comment: 'Currency for unprocessed charges; NULL = the booking zone currency'
     },
     unprocessedAbsoluteAmount: {
       type: DataTypes.DECIMAL(10, 2),

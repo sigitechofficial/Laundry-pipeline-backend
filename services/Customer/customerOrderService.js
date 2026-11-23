@@ -984,7 +984,11 @@ async function hydrateBookingSelectedServiceAddOns(bookingId, selectedServices) 
     });
 }
 
-function mapCancellationPolicyResponse(cancellationPolicyRaw) {
+/**
+ * Policy fees are in the policy's own currency when it names one, else in the booking
+ * zone's (`zoneCurrencyCode`) — the same rule the fee services apply when charging.
+ */
+function mapCancellationPolicyResponse(cancellationPolicyRaw, zoneCurrencyCode) {
     if (!cancellationPolicyRaw?.cancellationConfig) return null;
     const config = cancellationPolicyRaw.cancellationConfig;
     return {
@@ -994,10 +998,10 @@ function mapCancellationPolicyResponse(cancellationPolicyRaw) {
         freeCancellationWindowMinutes: config.prePickupFreeChargeWindowMinutes ?? null,
         firstCancellationFree: config.prePickupFirstCancellationLeniency ?? false,
         prePickupChargeAmount: config.prePickupAbsoluteAmount ?? null,
-        prePickupChargeCurrency: config.prePickupAbsoluteCurrency ?? null,
+        prePickupChargeCurrency: config.prePickupAbsoluteCurrency || zoneCurrencyCode || null,
         prePickupChargePercentage: config.prePickupPercentage ?? null,
         unprocessedChargeAmount: config.unprocessedAbsoluteAmount ?? null,
-        unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency ?? null,
+        unprocessedChargeCurrency: config.unprocessedAbsoluteCurrency || zoneCurrencyCode || null,
         // Canonical unprocessed % (of prepaid). Legacy unprocessedPercentage mapped only as fallback display.
         unprocessedChargePercentage:
             (config.unprocessedOrderValuePercentage != null &&
@@ -1014,7 +1018,8 @@ function mapCancellationPolicyResponse(cancellationPolicyRaw) {
     };
 }
 
-function mapNoShowPolicyResponse(noShowPolicyRaw) {
+/** See mapCancellationPolicyResponse for the currency rule. */
+function mapNoShowPolicyResponse(noShowPolicyRaw, zoneCurrencyCode) {
     if (!noShowPolicyRaw?.noShowConfig) return null;
     const config = noShowPolicyRaw.noShowConfig;
     return {
@@ -1024,7 +1029,7 @@ function mapNoShowPolicyResponse(noShowPolicyRaw) {
         enableForPickup: config.enableForPickup ?? true,
         enableForDelivery: config.enableForDelivery ?? true,
         feeType: config.feeType ?? null,
-        currency: config.currency ?? null,
+        currency: config.currency || zoneCurrencyCode || null,
         pickupNoShowFee: config.pickupNoShowFee ?? null,
         deliveryNoShowFee: config.deliveryNoShowFee ?? null,
         // Never charged: sent empty so the app shows no storage fee (kept for older app versions).
@@ -1150,8 +1155,9 @@ async function buildCustomerBookingPolicySummaries(bookingPlain, { timeZone } = 
         });
     }
 
-    const cancellationPolicy = mapCancellationPolicyResponse(cancellationPolicyRaw);
-    const noShowPolicy = mapNoShowPolicyResponse(noShowPolicyRaw);
+    const bookingCurrencyCode = (await zoneCurrency(bookingPlain.zoneId)).currencyCode;
+    const cancellationPolicy = mapCancellationPolicyResponse(cancellationPolicyRaw, bookingCurrencyCode);
+    const noShowPolicy = mapNoShowPolicyResponse(noShowPolicyRaw, bookingCurrencyCode);
     const phase = resolveCancellationPhase(bookingPlain.bookingStatusId);
 
     let feePreview = null;
@@ -3064,6 +3070,15 @@ class CustomerOrderService {
         const { currencySymbol, currencyCode: currency } = await zoneCurrency(
             bookingPlain.zoneId ?? bookingPlain.zone?.id
         );
+        // A policy that names no currency of its own charges in the booking zone's
+        // (the fee services do the same), so clients get the effective currency.
+        const noShowCfg = bookingPlain.noShowPolicyBookings?.noShowConfig;
+        if (noShowCfg && !noShowCfg.currency) noShowCfg.currency = currency;
+        const cancelCfg = bookingPlain.cancellationPolicyBookings?.cancellationConfig;
+        if (cancelCfg) {
+            if (!cancelCfg.prePickupAbsoluteCurrency) cancelCfg.prePickupAbsoluteCurrency = currency;
+            if (!cancelCfg.unprocessedAbsoluteCurrency) cancelCfg.unprocessedAbsoluteCurrency = currency;
+        }
 
         const paymentSummary = enrichPaymentSummary(
             buildPaymentSummaryForBooking(bookingPlain.paymentType, {

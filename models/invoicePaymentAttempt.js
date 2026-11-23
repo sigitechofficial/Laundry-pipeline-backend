@@ -44,10 +44,11 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
                 defaultValue: 0,
             },
+            // The booking's currency (its zone's); never defaulted.
             currency: {
                 type: DataTypes.STRING(10),
                 allowNull: false,
-                defaultValue: "GBP",
+                validate: { is: /^[A-Z]{3}$/ },
             },
             paymentMethodId: {
                 type: DataTypes.STRING,

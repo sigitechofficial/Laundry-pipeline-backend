@@ -140,8 +140,10 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
   const dryClean = await db.service.findOne({ where: { name: 'Dry Clean' }, attributes: ['id'] });
   const serviceIds = new Set((await db.service.findAll({ attributes: ['id'], raw: true })).map((s) => s.id));
 
-  const currencyUnit = zone.currencyUnitId ? await db.units.findByPk(zone.currencyUnitId) : null;
-  const currencyCode = currencyUnit?.name || 'GBP';
+  // Orders are in the zone's currency (every zone has one); never a hard-coded code.
+  const currencyUnit = await db.units.findByPk(zone.currencyUnitId);
+  const currencyCode = currencyUnit?.name ? String(currencyUnit.name).trim().toUpperCase() : '';
+  if (!currencyCode) throw new Error(`Zone ${zone.id} has no currency unit with an ISO code; fix the zone first.`);
   const zoneMinimum = Number(zone.zoneMinimumAmount) || 0;
   const serviceCharge = Number(zone.serviceCharge) || 0;
   const agentPercent = Number(zone.agentCommissionPercent) || 80;
@@ -339,7 +341,7 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
       if (status === ST.CANCELLED) {
         await db.cancelBooking.create({
           bookingId: booking.id, userId: user.id, reasonText: spec.cancelReason,
-          feeAmount: 0, feeCurrency: 'GBP', feeStatus: 'none',
+          feeAmount: 0, feeCurrency: currencyCode, feeStatus: 'none',
         }, { transaction });
       }
       created.push(`${booking.orderTrackId.padEnd(10)} ${String(status).padStart(2)}  ${spec.pay.padEnd(4)}  ${user.firstName}`);

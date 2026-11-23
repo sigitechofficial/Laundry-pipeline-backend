@@ -51,10 +51,10 @@ module.exports = (sequelize, DataTypes) => {
                 allowNull: false,
                 defaultValue: 0,
             },
+            // ISO code of the fee (the policy's, else the booking zone's); never defaulted.
             feeCurrency: {
                 type: DataTypes.STRING(10),
                 allowNull: true,
-                defaultValue: 'USD',
             },
             feeWaived: {
                 type: DataTypes.BOOLEAN,
