@@ -140,6 +140,8 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
   const dryClean = await db.service.findOne({ where: { name: 'Dry Clean' }, attributes: ['id'] });
   const serviceIds = new Set((await db.service.findAll({ attributes: ['id'], raw: true })).map((s) => s.id));
 
+  const currencyUnit = zone.currencyUnitId ? await db.units.findByPk(zone.currencyUnitId) : null;
+  const currencyCode = currencyUnit?.name || 'GBP';
   const zoneMinimum = Number(zone.zoneMinimumAmount) || 0;
   const serviceCharge = Number(zone.serviceCharge) || 0;
   const agentPercent = Number(zone.agentCommissionPercent) || 80;
@@ -304,6 +306,26 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
         paymentStatus: balancePaid ? 'Paid' : 'Pending', // as createBooking until settled
       }, { transaction });
       await db.tip.create({ bookingId: booking.id, source: 'booking' }, { transaction });
+
+      // Arrival attempts, as noShowEnforcementService records them: "arrived" opens
+      // one (the at-pickup / at-door screens need it), completion or failure closes it.
+      const attempt = (attemptType, at, outcome) => db.bookingAttempt.create({
+        bookingId: booking.id, attemptType, attemptNumber: 1, driverId,
+        status: outcome, arrivedAt: ts(at),
+        completedAt: outcome === 'completed' ? ts(at.clone().add(12, 'minutes')) : null,
+        failedAt: outcome === 'failed' ? ts(at.clone().add(15, 'minutes')) : null,
+        failureReasonNote: outcome === 'failed' ? 'Customer not available' : null,
+        feeAmount: 0, feeCurrency: currencyCode,
+        feeWaived: outcome === 'completed',
+        feeWaiveReason: outcome === 'completed' ? 'Successful completion' : null,
+      }, { transaction });
+      const pickupAt = collection.clone().hour(spec.slot);
+      if (status === ST.AT_PICKUP) await attempt('pickup', pickupAt, 'arrived');
+      if (pickedUp) await attempt('pickup', pickupAt, 'completed');
+      const doorAt = delivery.clone().hour(7).minute(10);
+      if (status === ST.AT_DELIVERY) await attempt('delivery', doorAt, 'arrived');
+      if (status === ST.DELIVERY_FAILED) await attempt('delivery', doorAt, 'failed');
+      if (delivered) await attempt('delivery', doorAt, 'completed');
 
       if (pickedUp) {
         await db.proofOfDeliveries.create({
