@@ -8,7 +8,9 @@ const {
     wallet,
     billingDetails,
     tip,
+    reason,
 } = require('../../models');
+const { resolveCancelReasonId } = require('../../utils/cancelReason');
 const { Op } = require('sequelize');
 const { zoneCurrencyCode, bookingCurrencyCode } = require('../../utils/zoneCurrency');
 const { snapshotPolicy } = require('../../utils/bookingPolicyAttach');
@@ -231,6 +233,14 @@ class CancelBookingService {
         if (!bookingData) {
             throw new NotFoundError("Booking not found or you don't have permission to cancel this booking");
         }
+
+        // Step 1b: Validate the optional reason before anything has a side effect (hold
+        // release, cancellation fee). An unknown id used to fail the final INSERT after those.
+        reasonId = await resolveCancelReasonId(
+            reasonId,
+            (id) => reason.findByPk(id, { attributes: ['id'] }),
+            (message) => new ValidationError(message)
+        );
 
         // Step 2: Check if booking is in Processing (Status 11)
         if (bookingData.bookingStatusId === 11) {
