@@ -430,16 +430,17 @@ function validatePromotion(p) {
 // ─── Offer budget ────────────────────────────────────────────────────────────
 
 /**
- * payload.budget (£, or empty for none): the offer's own budget. It is a budget pool that
- * belongs to this offer (campaigns.ownerPromotionId), so the engine has one budget rule for
- * own and shared budgets. Returns undefined when not sent, null for none, else pence.
+ * payload.budget (in the offer's currency, or empty for none): the offer's own budget. It is
+ * a budget pool that belongs to this offer (campaigns.ownerPromotionId), so the engine has
+ * one budget rule for own and shared budgets. Returns undefined when not sent, null for
+ * none, else minor units (pence, cents).
  */
 function budgetMinorOf(payload = {}) {
   if (!('budget' in payload)) return undefined;
   const v = payload.budget;
   if (blank(v) || v == null) return null;
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) throw new ValidationError('Budget must be more than £0, or left empty for no budget');
+  if (!Number.isFinite(n) || n <= 0) throw new ValidationError('Budget must be more than 0, or left empty for no budget');
   if (n > 1000000) throw new ValidationError('Budget is too large');
   return Math.round(n * 100);
 }
@@ -450,16 +451,26 @@ async function ownBudgetOf(promo, t) {
   return camp && Number(camp.ownerPromotionId) === Number(promo.id) ? camp : null;
 }
 
-/** Create, change or remove the offer's own budget. A shared budget and an own one exclude each other. */
+/**
+ * Create, change or remove the offer's own budget. A shared budget and an own one exclude
+ * each other. The own budget is in the offer's currency and follows it when it changes.
+ */
 async function syncOwnBudget(promo, budgetMinor, adminUserId, t) {
-  if (budgetMinor === undefined) return;
   const own = await ownBudgetOf(promo, t);
+  if (budgetMinor === undefined) {
+    if (own && own.currency !== promo.currency) {
+      await own.update({ currency: promo.currency, updatedBy: adminUserId }, { transaction: t });
+    }
+    return;
+  }
   if (budgetMinor == null) {
     if (own) await promo.update({ campaignId: null }, { transaction: t });
     return;
   }
   if (own) {
-    if (own.budgetMinor !== budgetMinor) await own.update({ budgetMinor, updatedBy: adminUserId }, { transaction: t });
+    if (own.budgetMinor !== budgetMinor || own.currency !== promo.currency) {
+      await own.update({ budgetMinor, currency: promo.currency, updatedBy: adminUserId }, { transaction: t });
+    }
     return;
   }
   if (promo.campaignId) {
@@ -469,6 +480,7 @@ async function syncOwnBudget(promo, budgetMinor, adminUserId, t) {
     name: `${promo.name} — budget`.slice(0, 200),
     ownerPromotionId: promo.id,
     budgetMinor,
+    currency: promo.currency,
     status: 'active',
     createdBy: adminUserId,
     updatedBy: adminUserId,
@@ -476,15 +488,25 @@ async function syncOwnBudget(promo, budgetMinor, adminUserId, t) {
   await promo.update({ campaignId: camp.id }, { transaction: t });
 }
 
-/** A promotion can only be put into (or published in) a campaign that exists and is not closed. */
-async function assertCampaignUsable(campaignId, transaction, ownerOk = false) {
+/**
+ * A promotion can only be put into (or published in) a campaign that exists and is not
+ * closed, and whose budget (if any) is in the promotion's currency.
+ * @param {{ currency?: string, transaction?: object, ownerOk?: boolean }} [options]
+ */
+async function assertCampaignUsable(campaignId, { currency, transaction, ownerOk = false } = {}) {
   if (campaignId == null) return;
   if (!Number.isInteger(campaignId) || campaignId <= 0) throw new ValidationError('Invalid campaign');
-  const row = await Campaign.findByPk(campaignId, { attributes: ['id', 'name', 'status', 'ownerPromotionId'], transaction });
+  const row = await Campaign.findByPk(campaignId, {
+    attributes: ['id', 'name', 'status', 'ownerPromotionId', 'budgetMinor', 'currency'],
+    transaction,
+  });
   if (!row) throw new ValidationError('Campaign not found');
   if (row.ownerPromotionId != null && !ownerOk) throw new ValidationError('That budget belongs to another offer. Choose a shared budget.');
   if (CLOSED_STATUSES.includes(row.status)) {
     throw new ValidationError(`Campaign "${row.name}" is ${row.status}. Choose another campaign or no campaign.`);
+  }
+  if (row.budgetMinor != null && currency && row.currency && row.currency !== currency) {
+    throw new ValidationError(`Campaign "${row.name}" has a budget in ${row.currency}, but this promotion is in ${currency}. Choose a campaign in ${currency}.`);
   }
 }
 
@@ -635,7 +657,7 @@ async function createPromotion(payload, adminUserId, scope) {
   assertNoOrderHistoryCondition(data.benefitType, data.conditions);
   validatePromotion(data);
   await assertNameAvailable(data.name);
-  await assertCampaignUsable(data.campaignId);
+  await assertCampaignUsable(data.campaignId, { currency: data.currency });
   const budgetMinor = budgetMinorOf(payload);
   if (budgetMinor != null && data.campaignId != null) {
     throw new ValidationError("Choose either a shared budget or the offer's own budget, not both.");
@@ -757,7 +779,9 @@ async function updatePromotion(id, payload, adminUserId, scope) {
   validatePromotion({ ...stored, conditions: undefined, zoneOverrides: undefined, ...incoming });
   // Only a changed name is checked, so older promotions that share a name can still be edited.
   if (incoming.name && incoming.name.trim() !== promo.name) await assertNameAvailable(incoming.name, promo.id);
-  if (incoming.campaignId != null && incoming.campaignId !== promo.campaignId) await assertCampaignUsable(incoming.campaignId);
+  if (incoming.campaignId != null && incoming.campaignId !== promo.campaignId) {
+    await assertCampaignUsable(incoming.campaignId, { currency: incoming.currency ?? promo.currency });
+  }
   const budgetMinor = budgetMinorOf(payload);
   // Moving to a shared budget (or out of one) while keeping an own budget is not possible.
   if ('campaignId' in incoming && incoming.campaignId !== promo.campaignId) {
@@ -873,7 +897,7 @@ async function publishPromotion(id, adminUserId, reason, scope) {
     throw new ValidationError('This promotion has already ended — change the end date first');
   }
   validatePromotion(rowData(promo));
-  await assertCampaignUsable(promo.campaignId, undefined, true);
+  await assertCampaignUsable(promo.campaignId, { currency: promo.currency, ownerOk: true });
   const status = promo.startDate && new Date(promo.startDate) > now ? 'scheduled' : 'active';
 
   await sequelize.transaction(async (t) => {

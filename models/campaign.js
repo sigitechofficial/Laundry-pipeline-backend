@@ -23,8 +23,10 @@ module.exports = (sequelize, DataTypes) => {
 
       budgetMinor: { type: DataTypes.INTEGER, allowNull: true },
       usedBudgetMinor: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
-      // Set when this budget belongs to one offer (its own £ budget); null = shared budget.
+      // Currency of the budget, chosen by the admin (a campaign has no zone). Required when
+      // there is a budget; null without one. Never defaulted.
+      currency: { type: DataTypes.STRING(3), allowNull: true },
+      // Set when this budget belongs to one offer (its own budget); null = shared budget.
       ownerPromotionId: { type: DataTypes.INTEGER, allowNull: true },
 
       startDate: { type: DataTypes.DATEONLY, allowNull: true },
