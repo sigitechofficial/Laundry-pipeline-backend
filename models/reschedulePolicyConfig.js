@@ -41,8 +41,7 @@ module.exports = (sequelize, DataTypes) => {
     atPickupAbsoluteCurrency: {
       type: DataTypes.STRING(10),
       allowNull: true,
-      defaultValue: 'USD',
-      comment: 'Currency for absolute charges at pickup'
+      comment: 'Currency for absolute charges at pickup; NULL = the booking zone currency'
     },
     atPickupAbsoluteAmount: {
       type: DataTypes.DECIMAL(10, 2),
@@ -71,8 +70,7 @@ module.exports = (sequelize, DataTypes) => {
     atDeliveryAbsoluteCurrency: {
       type: DataTypes.STRING(10),
       allowNull: true,
-      defaultValue: 'USD',
-      comment: 'Currency for absolute charges at delivery'
+      comment: 'Currency for absolute charges at delivery; NULL = the booking zone currency'
     },
     atDeliveryAbsoluteAmount: {
       type: DataTypes.DECIMAL(10, 2),

@@ -259,6 +259,8 @@ function buildStripeChargePresentation({
         description,
         metadata,
         statementDescriptorSuffix: STATEMENT_SUFFIX[chargeType] || "LAUNDRY",
+        // The charge's currency: chargeOffSession / createAuthorizationHold charge in it.
+        currency: currencyLabel,
     };
 }
 

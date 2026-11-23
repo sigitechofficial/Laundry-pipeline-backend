@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS booking_attempts (
   driverId INT NULL,
   driverLateMinutes INT NULL,
   feeAmount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-  feeCurrency VARCHAR(10) NULL DEFAULT 'USD',
+  feeCurrency VARCHAR(10) NULL, -- the fee's ISO code; never defaulted
   feeWaived TINYINT(1) NOT NULL DEFAULT 0,
   feeWaiveReason VARCHAR(255) NULL,
   failureReason VARCHAR(500) NULL,

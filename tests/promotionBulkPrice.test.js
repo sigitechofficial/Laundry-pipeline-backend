@@ -7,6 +7,8 @@
 const assert = require('assert');
 
 require('./stubSequelizeModels').install();
+// Currency symbols come from the units table; these are the units the labels below use.
+require('../utils/currencySymbols').primeCurrencySymbols([{ name: 'GBP', symbol: '£' }, { name: 'EUR', symbol: '€' }]);
 
 const {
   computeBenefit, applyBenefit, createPricingState, limitBasket, bundleQuantity,
@@ -139,7 +141,7 @@ assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00
 {
   const base = {
     name: 'Shirts 10 for £25', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public',
-    repricingPolicy: 'recalculate', priority: 50, perCustomerLimit: null,
+    repricingPolicy: 'recalculate', priority: 50, perCustomerLimit: null, currency: 'GBP',
   };
   const payload = normalizePayload({
     ...base, benefitType: 'bundle', discountValue: '25', targetType: 'subCategory', targetIds: [SHIRT],
@@ -207,7 +209,7 @@ assert.strictEqual(buildOfferLabel(bulk({ maxDiscountCap: 5 })), '10 for £25.00
   assert.ok(short && /Add 2 more items from this offer to get 10 for £30/.test(short.reason), short && short.reason);
   assert.strictEqual(builtInCheck(offer, contextOf([line(SHIRT, 4.5, 2), line(TROUSERS, 7.5, 5)]), null, new Map()), null);
   // Admin: deals are checked and fill the offer's items.
-  const payload = normalizePayload({ name: 'Bulk', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public', repricingPolicy: 'recalculate', priority: 50, benefitType: 'bundle', discountMode: 'amount', benefitConfig: { deals: [{ itemIds: ['21'], quantity: '10', price: '30' }, { itemIds: [23], quantity: 5, price: 25 }] } });
+  const payload = normalizePayload({ name: 'Bulk', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public', repricingPolicy: 'recalculate', priority: 50, currency: 'GBP', benefitType: 'bundle', discountMode: 'amount', benefitConfig: { deals: [{ itemIds: ['21'], quantity: '10', price: '30' }, { itemIds: [23], quantity: 5, price: 25 }] } });
   const { typeRuleFields } = require('../services/Admin/promotionAdminService');
   if (typeRuleFields) {
     const merged = { ...payload, ...typeRuleFields(payload) };

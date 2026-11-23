@@ -1,5 +1,7 @@
 'use strict';
 
+const moment = require('moment-timezone');
+
 /**
  * Compare a completed pickup/delivery timestamp against the booked slot.
  * Early = before window start, on_time = inside the window, late = after window end.
@@ -117,6 +119,57 @@ function classifySlotTiming(completedAt, dateValue, timeFrom, timeTo) {
   return TIMING.ON_TIME;
 }
 
+const SLOT_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const SLOT_TIME_PATTERN = /^\d{2}:\d{2}(:\d{2})?$/;
+
+/**
+ * A booked slot as real instants. The slot's day and HH:mm wall clock are
+ * in the zone the slot was offered in (booking.operationalTimeZone), not the
+ * server's zone. Returns null when anything needed is missing or invalid —
+ * the caller reports such a leg as unmeasured instead of guessing.
+ *
+ * @param {string} slotDay YYYY-MM-DD (the booking's collection/delivery day)
+ * @param {string} timeFrom HH:mm[:ss]
+ * @param {string} timeTo HH:mm[:ss]
+ * @param {string} timeZone IANA zone
+ * @returns {{ start: Date, end: Date } | null}
+ */
+function slotWindowInZone(slotDay, timeFrom, timeTo, timeZone) {
+  if (typeof slotDay !== 'string' || !SLOT_DAY_PATTERN.test(slotDay)) return null;
+  if (!timeZone || !moment.tz.zone(String(timeZone))) return null;
+  const from = timeFrom == null ? '' : String(timeFrom).trim();
+  const to = timeTo == null ? '' : String(timeTo).trim();
+  if (!SLOT_TIME_PATTERN.test(from) || !SLOT_TIME_PATTERN.test(to)) return null;
+
+  const at = (clock) =>
+    moment.tz(`${slotDay} ${clock.length === 5 ? `${clock}:00` : clock}`, 'YYYY-MM-DD HH:mm:ss', true, timeZone);
+  const start = at(from);
+  const end = at(to);
+  if (!start.isValid() || !end.isValid() || !end.isAfter(start)) return null;
+  return { start: start.toDate(), end: end.toDate() };
+}
+
+/**
+ * Punctuality of a driver's arrival at the door against the booked slot:
+ * early = before the slot start, on_time = inside [start, end], late = after
+ * the end. minutesLate = whole minutes past the slot end (0 unless late).
+ * Null when the arrival or the slot cannot be resolved.
+ */
+function classifyArrivalInZone(arrivedAt, slotDay, timeFrom, timeTo, timeZone) {
+  if (!arrivedAt) return null;
+  const arrived = arrivedAt instanceof Date ? arrivedAt : new Date(arrivedAt);
+  if (Number.isNaN(arrived.getTime())) return null;
+  const slot = slotWindowInZone(slotDay, timeFrom, timeTo, timeZone);
+  if (!slot) return null;
+
+  const ts = arrived.getTime();
+  if (ts < slot.start.getTime()) return { timing: TIMING.EARLY, minutesLate: 0 };
+  if (ts > slot.end.getTime()) {
+    return { timing: TIMING.LATE, minutesLate: Math.ceil((ts - slot.end.getTime()) / 60000) };
+  }
+  return { timing: TIMING.ON_TIME, minutesLate: 0 };
+}
+
 function addTiming(summary, kind, timing) {
   if (!timing) return;
   if (kind === 'pickup') {
@@ -148,6 +201,8 @@ module.exports = {
   calendarParts,
   slotDateTime,
   classifySlotTiming,
+  slotWindowInZone,
+  classifyArrivalInZone,
   addTiming,
   summarizeOrderPunctuality,
 };

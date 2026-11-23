@@ -28,10 +28,10 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       defaultValue: '0.00'
     },
+    // The shop's / booking's currency, supplied by every insert; never defaulted.
     currency: {
       type: DataTypes.STRING,
-      allowNull: true,
-      defaultValue: 'GBP'
+      allowNull: true
     },
     description: {
       type: DataTypes.STRING,

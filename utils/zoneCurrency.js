@@ -6,16 +6,22 @@
  * when no policy exists, amounts are in the zone currency — never a hard-coded one
  * (fees used to fall back to 'USD' in GBP zones).
  *
- * Resolution and the platform-wide last resort live in resolveDisplayCurrency.
+ * Every zone has a currency (zones.currencyUnitId is NOT NULL). There is no platform
+ * default: no zone (or an unknown one) resolves to an empty currency
+ * `{ currencySymbol: '', currencyCode: '' }`, and callers that must have one fail loudly
+ * (utils/requireCurrency) instead of guessing. Resolution lives in resolveDisplayCurrency.
  */
-const { resolveDisplayCurrency } = require('./resolveDisplayCurrency');
+const { currencyOfZone } = require('./resolveDisplayCurrency');
 
-/** @returns {Promise<{ currencySymbol: string, currencyCode: string }>} */
+/**
+ * The zone's currency; empty when zoneId is missing or names no zone.
+ * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
+ */
 function zoneCurrency(zoneId) {
-  return resolveDisplayCurrency({ zoneId });
+  return currencyOfZone(zoneId);
 }
 
-/** ISO code (e.g. "GBP") of the zone's currency. */
+/** ISO code (e.g. "GBP") of the zone's currency; '' when there is no zone. */
 async function zoneCurrencyCode(zoneId) {
   return (await zoneCurrency(zoneId)).currencyCode;
 }
@@ -35,7 +41,8 @@ async function bookingCurrencyCode(bookingId) {
 /**
  * Currency of a shop's own money (wallet, withdrawals, settlements, the shop app):
  * the zone of its LaundaryShopAddress. A shop with no zone yet (registration in
- * progress) gets the platform default from resolveDisplayCurrency.
+ * progress) has no currency yet: the result is empty, which the shop app shows as
+ * "unknown" (no currency pills) — never a platform guess.
  * @param {number|string} shopOwnerUserId the shop owner (an employee's employeeOff)
  * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
  */

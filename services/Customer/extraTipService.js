@@ -8,6 +8,7 @@ const {
 } = require('../../middlewares/universalErrorHandler');
 const { COMPLETED } = require('../../constants/bookingStatusIds');
 const { chargeOffSession } = require('../../controllers/stripe');
+const { bookingCurrencyCode } = require('../../utils/zoneCurrency');
 const customerPaymentMethodService = require('./customerPaymentMethodService');
 const agentWalletService = require('../Agent/agentWalletService');
 const {
@@ -130,7 +131,9 @@ async function addExtraTip({ bookingId, customerId, amount, paymentMethodId }) {
         tipAmount,
         stripeCustomerId,
         defaultId,
-        `extra-tip-${row.id}`
+        `extra-tip-${row.id}`,
+        // A tip is in the order's currency (its zone's).
+        { currency: await bookingCurrencyCode(row.id) }
     );
 
     if (!paymentIntent || !['succeeded', 'requires_capture'].includes(paymentIntent.status)) {

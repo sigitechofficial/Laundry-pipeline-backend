@@ -41,9 +41,10 @@ module.exports = (sequelize, DataTypes) => {
       units.hasMany(models.zone, { as: 'distanceUnitZ', foreignKey: "distanceUnitId" })
       models.zone.belongsTo(units, { as: 'distanceUnitZ', foreignKey: "distanceUnitId" })
 
-      // Linking as currencyUnitZ with zone model
-      units.hasMany(models.zone, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId' });
-      models.zone.belongsTo(units, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId' });
+      // Linking as currencyUnitZ with zone model. A zone must have a currency, so a unit
+      // in use by a zone cannot be deleted (ON DELETE RESTRICT, see zone.currencyUnitId).
+      units.hasMany(models.zone, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId', onDelete: 'RESTRICT' });
+      models.zone.belongsTo(units, { as: 'currencyUnitZ', foreignKey: 'currencyUnitId', onDelete: 'RESTRICT' });
 
 
 

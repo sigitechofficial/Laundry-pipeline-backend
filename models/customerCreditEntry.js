@@ -25,7 +25,8 @@ module.exports = (sequelize, DataTypes) => {
       },
       amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
       remainingAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
+      // The credit's own currency (its order's / source entry's); never defaulted.
+      currency: { type: DataTypes.STRING(3), allowNull: false, validate: { is: /^[A-Z]{3}$/ } },
       expiresAt: { type: DataTypes.DATE, allowNull: true },
       bookingId: { type: DataTypes.INTEGER, allowNull: true },
       promotionId: { type: DataTypes.INTEGER, allowNull: true },

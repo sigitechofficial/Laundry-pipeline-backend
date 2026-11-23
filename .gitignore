@@ -21,3 +21,25 @@ logs/
 uploads/
 *.log
 .DS_Store
+
+# Runtime uploads (written by the API). Never commit what users upload: licence,
+# profile, vehicle and proof photos are personal data. Each folder keeps a
+# .gitkeep so it exists in a fresh clone; seed content already tracked stays
+# tracked.
+Public/BannerImages/*
+Public/BarCodeImages/*
+Public/BlogImages/*
+Public/CategoryImages/*
+Public/categoryImages/*
+Public/DriverProfileImages/*
+Public/Images/CountryFlags/*
+Public/Images/VehicleTypes/*
+Public/LicenseImages/*
+Public/Profile/*
+Public/VehicleImages/*
+Public/collectionImages/*
+Public/driverProofs/*
+Public/onHoldImages/*
+Public/repairImages/*
+Public/serviceImages/*
+!Public/**/.gitkeep

@@ -17,7 +17,7 @@ SELECT
   b.id,
   'cash_collected',
   bd.total,
-  'GBP',
+  u.name, -- the booking zone's currency (zones.currencyUnitId -> units)
   'debit',
   'completed',
   CONCAT('Cash collected for order #', COALESCE(b.orderTrackId, b.id)),
@@ -26,6 +26,8 @@ SELECT
 FROM billingDetails bd
 INNER JOIN bookings b ON b.id = bd.bookingId
 INNER JOIN addressDb a ON a.id = b.laundryShopId AND a.addressType = 'LaundaryShopAddress'
+INNER JOIN zones z ON z.id = b.zoneId
+INNER JOIN units u ON u.id = z.currencyUnitId AND u.type = 'currency'
 WHERE bd.paymentStatus = 'Paid'
   AND LOWER(COALESCE(b.paymentType, '')) = 'cash'
   AND bd.total IS NOT NULL

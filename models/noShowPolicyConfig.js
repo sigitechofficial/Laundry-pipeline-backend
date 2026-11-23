@@ -52,10 +52,10 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 'absolute'
     },
+    // Fee currency; NULL = the booking zone's currency (never a hard-coded default).
     currency: {
       type: DataTypes.STRING(10),
-      allowNull: true,
-      defaultValue: 'USD'
+      allowNull: true
     },
     pickupNoShowFee: {
       type: DataTypes.DECIMAL(10, 2),

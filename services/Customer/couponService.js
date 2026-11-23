@@ -3,6 +3,7 @@
 const { coupon, couponRedemption } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { getCouponLifecycle } = require('../../utils/couponValidity');
+const { bookingCurrency } = require('../../utils/zoneCurrency');
 const {
     calcDiscount,
     evaluateCouponAgainstLaundry,
@@ -140,6 +141,7 @@ class CouponService {
             couponData: redemption.coupon,
             laundryAmount: laundrySubtotal,
             deferMinOrderWhenLaundryUnknown: false,
+            currencySymbol: (await bookingCurrency(bookingId)).currencySymbol,
         });
 
         const discountAmt = evaluation.rejected ? 0 : evaluation.discountAmt;

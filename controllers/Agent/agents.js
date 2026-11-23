@@ -385,7 +385,7 @@ exports.agentAddressEdit = async (req, res) => {
     console.log("req.body===================>>>", redact(req.body))
 
 
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
 
     // Check if address exists for this user
     const existingAddress = await addressDb.findOne({
@@ -449,7 +449,7 @@ exports.agentAddressEdit = async (req, res) => {
  * Get Agent Address - Simple Version
  */
 exports.getAgentAddress = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
 
     const agentUser = await users.findByPk(agentId, {
         attributes: ["id", "ianaTimeZone"],
@@ -509,424 +509,6 @@ exports.getAgentAddress = async (req, res) => {
 
 /*
  * Get Agent Address - Complex Version with Business Info
- */
-
-exports.getShopAddress = async (req, res) => {
-    const userId = req.user.id;
-
-    const findAddress = await bussinessInformation.findOne({
-        where: {
-            agentId: userId,
-        },
-        attributes: ["id", "shopName", "matchProfileOptions", "agentId"],
-        include: [
-            {
-                model: addressDb,
-                where: {
-                    addressType: "LaundaryShopAddress",
-                    userId: userId,
-                },
-                attributes: [
-                    "streetAddress",
-                    "province",
-                    "postalCode",
-                    "district",
-                    "lat",
-                    "lng",
-                    "coordinates",
-                    "addressType",
-                    "zoneId",
-                ],
-                include: [
-                    {
-                        model: countries,
-                        attributes: ["name"],
-                    },
-                    {
-                        model: cities,
-                        attributes: ["name"],
-                    },
-                ],
-            },
-        ],
-    });
-    console.log("ðŸš€ ~ getShopAddress ~ findAddress:", findAddress.id);
-
-    const workingHours = await bussinessWorkingHours.findAll({
-        where: {
-            bussinessInformationId: findAddress.id,
-        },
-        attributes: ["dayOfWeek", "openTime", "closeTime"],
-    });
-
-    let outObj = {
-        findAddress,
-        workingHours,
-    };
-    //console.log("ðŸš€ ~ getShopAddress ~ findAddress:", findAddress);
-    return ResponseHelper.success(res, "Address Get", outObj);
-}
-
-//!------------------------------------------Get Order For Agent----------------------------------------//
-
-/**
- * Canonical "visible New bookings" for an agent — the SINGLE source of truth
- * shared by the New list AND the New badge count.
- *
- * Historically the New tab list (getBookingHome) applied per-row visibility
- * filters (agent must offer every selected service, pickup must fall inside
- * shop working hours, accept window must be open, orderExpireTime must exist,
- * booking not already declined) while the badge counters (bookingCounts /
- * fetchTabCounts) only ran the coarse SQL `where`. Result: badge showed N
- * (e.g. 3) while the list was empty. Both now derive from this function so
- * they can never drift again.
- *
- * @param {number} agentId
- * @param {object} [opts]
- * @param {string} [opts.timeZone]
- * @param {string} [opts.clientTimeZone]
- * @param {boolean} [opts.withDetails=false] include display joins (list) vs lean (count)
- * @returns {Promise<Array>} filtered plain booking rows visible to this agent
- */
-async function fetchVisibleNewBookings(agentId, opts = {}) {
-    const { timeZone, clientTimeZone, withDetails = false } = opts;
-
-    const shopAddr = await addressDb.findOne({
-        where: { userId: agentId, deletedAt: null },
-        attributes: ["id", "zoneId", "lat", "lng", "status"],
-    });
-    // A deactivated shop gets no new marketplace orders.
-    if (!shopAddr || !shopAddr.zoneId || shopAddr.status === false) return [];
-
-    const agentShopId = shopAddr.id;
-    const agentZone = shopAddr.zoneId;
-    const {
-        prepareNewBookingVisibilityForZone,
-    } = require("../../services/bookingHeldReleaseService");
-    await prepareNewBookingVisibilityForZone(agentZone);
-
-    const shopLat = parseFloat(shopAddr.lat);
-    const shopLng = parseFloat(shopAddr.lng);
-    const shopHasCoords =
-        Number.isFinite(shopLat) &&
-        Number.isFinite(shopLng) &&
-        !(Math.abs(shopLat) < 0.0001 && Math.abs(shopLng) < 0.0001);
-
-    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
-    const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
-    const resolvedAgentTz = timeZone || agentCountryCtx.ianaTimeZone;
-
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
-    const declinedBookingIds =
-        await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
-
-    const bookingWhere = {
-        bookingStatusId: 1,
-        zoneId: agentZone,
-        laundryShopId: null,
-        agentBroadcastHeld: { [Op.not]: true },
-        createdAt: { [Op.gte]: twentyFourHoursAgo },
-        [Op.or]: marketplaceHeld
-            ? [{ adminAssignedShopId: agentShopId }]
-            : [
-                  { adminAssignedShopId: null },
-                  { adminAssignedShopId: agentShopId },
-              ],
-        [Op.and]: [
-            {
-                [Op.or]: [
-                    { preferredShopAgentId: null },
-                    { preferredShopAgentId: agentId },
-                    { preferredShopBroadcastDone: true },
-                ],
-            },
-        ],
-    };
-    if (declinedBookingIds.length > 0) {
-        bookingWhere.id = { [Op.notIn]: declinedBookingIds };
-    }
-
-    const detailIncludes = [
-        {
-            model: addressDb,
-            as: "pickupAddress",
-            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
-            include: [
-                { model: countries, attributes: ['id', 'name', 'shortName'] },
-                { model: cities, attributes: ['id', 'name'] },
-            ],
-        },
-        {
-            model: addressDb,
-            as: "dropOffAddress",
-            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
-            required: false,
-            include: [
-                { model: countries, attributes: ['id', 'name', 'shortName'] },
-                { model: cities, attributes: ['id', 'name'] },
-            ],
-        },
-        {
-            model: users,
-            as: 'customer',
-            attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum'],
-        },
-        {
-            model: users,
-            as: 'driver',
-            required: false,
-            attributes: ['id', 'firstName', 'lastName', 'image'],
-        },
-        {
-            model: users,
-            as: 'deliveryDriver',
-            required: false,
-            attributes: ['id', 'firstName', 'lastName', 'image'],
-        },
-        {
-            model: zone,
-            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
-        },
-    ];
-
-    // Lightweight coords for distance sort when list details are not needed (counts).
-    const distanceIncludes = [
-        {
-            model: addressDb,
-            as: "pickupAddress",
-            attributes: ["id", "lat", "lng"],
-            required: false,
-        },
-        {
-            model: addressDb,
-            as: "dropOffAddress",
-            attributes: ["id", "lat", "lng"],
-            required: false,
-        },
-    ];
-
-    const bookingData = await booking.findAll({
-        where: bookingWhere,
-        include: withDetails ? detailIncludes : distanceIncludes,
-        attributes: ['id',
-            'orderTrackId',
-            'bookingStatusId',
-            'collectionDate',
-            'collectionTimeTo',
-            'collectionTimeFrom',
-            'driverInstructionOptions',
-            'driverInstructionOptions1',
-            'driverInstruction',
-            'paymentConfirmed',
-            "partialPayment",
-            "totalItems",
-            "totalBags",
-            "sameBagForAllServices",
-            "orderAmount",
-            "frequency",
-            "deliveryDate",
-            "deliveryTimeFrom",
-            "deliveryTimeTo",
-            "pickupAddresId",
-            "dropOffAddressId",
-            "laundryShopId",
-            "customerId",
-            "driverId",
-            "deliveryDriverId",
-            "createdAt",
-            "orderExpireTime",
-            "adminAssignedShopId",
-            "agentVisibleAt",
-            "placedOutsidePlatformHours",
-        ],
-    });
-
-    // Agent's actively-offered service IDs. A broadcast booking is only shown if
-    // the agent offers EVERY service the customer selected on that booking.
-    const agentServiceRows = await agentSelectServices.findAll({
-        where: { agentServiceId: agentId, status: true },
-        attributes: ["serviceId"],
-    });
-    const agentServiceIdSet = new Set(
-        agentServiceRows.map((r) => Number(r.serviceId))
-    );
-
-    const bookingIds = bookingData.map((b) => b.id);
-    const bookingServiceIds = new Map();
-    if (bookingIds.length > 0) {
-        const selectedServiceRows = await customerSelectedService.findAll({
-            where: { bookingId: { [Op.in]: bookingIds } },
-            attributes: ["bookingId", "serviceId"],
-        });
-        for (const row of selectedServiceRows) {
-            const bId = Number(row.bookingId);
-            const sId = Number(row.serviceId);
-            if (!Number.isFinite(sId) || sId <= 0) continue;
-            if (!bookingServiceIds.has(bId)) bookingServiceIds.set(bId, new Set());
-            bookingServiceIds.get(bId).add(sId);
-        }
-    }
-
-    // Per-customer shop exclusions: admin blocked this customer from this shop.
-    // Load once for all bookings so the loop below can skip them cheaply.
-    const customerShopExclusionService = require("../../services/Admin/customerShopExclusionService");
-    const customerExcludedCache = new Map();
-    async function isExcludedFromThisShop(customerId) {
-        const cid = Number(customerId);
-        if (!Number.isFinite(cid) || cid <= 0) return false;
-        if (customerExcludedCache.has(cid)) return customerExcludedCache.get(cid);
-        const result = await customerShopExclusionService.isCustomerExcludedFromShop(cid, agentShopId);
-        customerExcludedCache.set(cid, result);
-        return result;
-    }
-
-    // Slot capacity: hide orders whose pickup / delivery slot has no room left
-    // for this shop (accepting would be refused). One check per distinct slot pair.
-    const { resolveAcceptCapForShop } = require("../../utils/shopAcceptCapacity");
-    const { evaluateShopSlotCapacity } = require("../../utils/shopSlotCapacity");
-    const shopCap = await resolveAcceptCapForShop(agentId);
-    const slotRoomCache = new Map();
-    async function hasSlotRoom(plain) {
-        if (plain.adminAssignedShopId != null) return true; // admin decided
-        const key = [
-            plain.collectionDate, plain.collectionTimeFrom, plain.collectionTimeTo,
-            plain.deliveryDate, plain.deliveryTimeFrom, plain.deliveryTimeTo,
-        ].map((v) => (v instanceof Date ? v.toISOString() : String(v))).join("|");
-        if (!slotRoomCache.has(key)) {
-            const result = await evaluateShopSlotCapacity(agentId, agentShopId, plain, {
-                excludeBookingId: plain.id,
-                cap: shopCap,
-            });
-            slotRoomCache.set(key, result.allowed);
-        }
-        return slotRoomCache.get(key);
-    }
-
-    const out = [];
-    const excluded = {
-        noExpiry: 0,
-        services: 0,
-        expired: 0,
-        pickupHours: 0,
-        customerExcluded: 0,
-        slotFull: 0,
-    };
-    for (const row of bookingData) {
-        const plain = row.get({ plain: true });
-        if (!plain.orderExpireTime) {
-            excluded.noExpiry += 1;
-            continue;
-        }
-
-        // Admin excluded this customer from this shop — hide the order so the
-        // agent never sees it (the accept endpoint also blocks, but hiding is
-        // cleaner and prevents confusion).
-        if (plain.customerId && await isExcludedFromThisShop(plain.customerId)) {
-            excluded.customerExcluded += 1;
-            continue;
-        }
-
-        const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
-        if (
-            !requiredServiceIds ||
-            requiredServiceIds.size === 0 ||
-            ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
-        ) {
-            excluded.services += 1;
-            continue;
-        }
-
-        if (
-            !isBookingAcceptWindowOpen(
-                getAcceptWindowAnchor(plain),
-                plain.orderExpireTime,
-                timeZone,
-                clientTimeZone
-            )
-        ) {
-            excluded.expired += 1;
-            continue;
-        }
-
-        const pickupOk = await isPickupWithinShopWorkingHours(
-            agentId,
-            plain.collectionDate,
-            plain.collectionTimeFrom,
-            plain.collectionTimeTo,
-            resolvedAgentTz,
-            clientTimeZone,
-            agentCountryCtx.countryId
-        );
-        if (!pickupOk) {
-            excluded.pickupHours += 1;
-            continue;
-        }
-
-        if (!(await hasSlotRoom(plain))) {
-            excluded.slotFull += 1;
-            continue;
-        }
-
-        if (withDetails) {
-            const minutesLeft = getAcceptWindowMinutesRemaining(
-                getAcceptWindowAnchor(plain),
-                plain.orderExpireTime,
-                timeZone,
-                clientTimeZone
-            );
-            out.push({
-                ...plain,
-                createdAt: plain.createdAt,
-                orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
-                acceptWindowMinutes: minutesLeft,
-            });
-        } else {
-            out.push(plain);
-        }
-    }
-
-    // Distance from THIS shop to each order's pickup / delivery — then least total trip first.
-    await attachShopOrderDistances(out, shopHasCoords ? shopLat : null, shopHasCoords ? shopLng : null);
-    if (bookingData.length > 0 || out.length > 0) {
-        console.log(
-            `[new-list] agent=${agentId} zone=${agentZone} candidates=${bookingData.length} ` +
-            `visible=${out.length} excluded=${JSON.stringify(excluded)}`
-        );
-    }
-
-    return out;
-}
-
-/**
- * Attach pickup/delivery km from the agent's shop and sort least total trip
- * (pickup + delivery km) first. Also flags top-3 nearest pickup / delivery ranks.
- */
-async function attachShopOrderDistances(rows, shopLat, shopLng) {
-    if (!Array.isArray(rows) || !rows.length) return rows;
-
-    const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
-    for (const row of rows) {
-        // Same helper as the new-order broadcast: missing / (0,0) coordinates = unknown.
-        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
-            shopLat,
-            shopLng,
-            row.pickupAddress,
-            row.dropOffAddress
-        );
-        row.pickupDistanceKm = pickupDistanceKm;
-        row.deliveryDistanceKm = deliveryDistanceKm;
-    }
-
-    const {
-        applyNearestDistanceRanks,
-    } = require('../../utils/shopOrderDistanceRank');
-    applyNearestDistanceRanks(rows);
-    return rows;
-}
-
-/*
- * Get Agent Order Home Api
  */
 
 exports.getBookingHome = async (req, res) => {
@@ -2049,7 +1631,7 @@ exports.invoiceDetailTab = async (req, res) => {
             All: [],
         });
     }
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
 
 
     const addressFound = await addressDb.findOne({
@@ -4312,7 +3894,7 @@ exports.agentUpdateInvoice = async (req, res) => {
  * Save invoice as draft (no notification, no status change)
  */
 exports.saveInvoiceDraft = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const result = await invoiceManagementService.saveInvoiceDraft({
         agentId,
         ...req.body,
@@ -4324,7 +3906,7 @@ exports.saveInvoiceDraft = async (req, res) => {
  * Get saved invoice draft for agent booking
  */
 exports.getInvoiceDraft = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const result = await invoiceManagementService.getInvoiceDraft({
         agentId,
         bookingId: req.params.bookingId,
@@ -4336,7 +3918,7 @@ exports.getInvoiceDraft = async (req, res) => {
  * Update existing invoice draft (sync lines by id)
  */
 exports.updateInvoiceDraft = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const result = await invoiceManagementService.updateInvoiceDraft({
         agentId,
         ...req.body,
@@ -5629,7 +5211,7 @@ exports.getAllEmployees = async (req, res) => {
  */
 
 exports.getAgentServices = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const { findServices } = await agentServiceManagementService.getAgentServices(agentId);
     return ResponseHelper.success(res, "Services Found", { findServices });
 }
@@ -5639,7 +5221,7 @@ exports.getAgentServices = async (req, res) => {
 */
 exports.editServiceStatus = async (req, res) => {
     const { serviceId, status } = req.body;
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
 
     await agentServiceManagementService.editServiceStatus(
         { serviceId, status },
@@ -5652,7 +5234,7 @@ exports.editServiceStatus = async (req, res) => {
 
 
 async function resolveAgentCatalogZoneId(req) {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const shop = await addressDb.findOne({
         where: { userId: agentId, addressType: "LaundaryShopAddress" },
         attributes: ["id", "zoneId"],
@@ -5677,7 +5259,7 @@ async function resolveAgentCatalogZoneId(req) {
   *  Specific Service Detail For the Customer
 */
 exports.serviceDetail = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
 
 
     const agentServiceFind = await agentSelectServices.findAll({
@@ -6297,153 +5879,17 @@ exports.getCustomerServicesForOnHold = async (req, res) => {
 */
 
 exports.getPerformanceDashboard = async (req, res) => {
-    const agentId = req.user.id;
-    const { startDate, endDate } = req.query;
-
-    // Range: today by default; picked dates are whole local days (end day included).
-    const parseDay = (v) => {
-        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ""));
-        return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
-    };
-    const start = (startDate && parseDay(startDate)) || new Date();
-    const end = (endDate && parseDay(endDate)) || new Date(start);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-    if (start > end) {
-        throw new ValidationError("Start date must be before end date.");
-    }
-
-    // Comparison = the same number of days just before.
-    const durationInMs = end.getTime() - start.getTime() + 1;
-    const compStart = new Date(start.getTime() - durationInMs);
-    const compEnd = new Date(start.getTime() - 1);
-
-    const findAgentShopAddress = await addressDb.findOne({
-        where: { userId: agentId, addressType: "LaundaryShopAddress" },
-    });
-    if (!findAgentShopAddress) {
-        throw new NotFoundError("Agent shop address not found");
-    }
-
-    // Earnings = the shop's own earning on paid orders (not the customer's
-    // order amount, not cancelled or refunded orders).
-    const sumEarnings = async (from, to) => {
-        const [row] = await dbModels.sequelize.query(
-            `SELECT COUNT(*) AS orders, ROUND(COALESCE(SUM(bd.agentEarning), 0), 2) AS earnings
-             FROM bookings b JOIN billingDetails bd ON bd.bookingId = b.id
-             WHERE b.laundryShopId = :shopId AND b.deletedAt IS NULL
-               AND b.bookingStatusId NOT IN (19, 21) AND bd.paymentStatus = 'Paid'
-               AND b.createdAt BETWEEN :from AND :to`,
-            { replacements: { shopId: findAgentShopAddress.id, from, to }, type: sequelize.QueryTypes.SELECT }
-        );
-        return { orders: Number(row?.orders || 0), earnings: Number(row?.earnings || 0) };
-    };
-
-    const [pickups, deliveries, current, previous] = await Promise.all([
-        booking.count({
-            where: {
-                laundryShopId: findAgentShopAddress.id,
-                bookingStatusId: { [Op.notIn]: [19, 21] },
-                collectionDate: { [Op.between]: [start, end] },
-            },
-        }),
-        booking.count({
-            where: {
-                laundryShopId: findAgentShopAddress.id,
-                bookingStatusId: { [Op.notIn]: [19, 21] },
-                deliveryDate: { [Op.between]: [start, end] },
-            },
-        }),
-        sumEarnings(start, end),
-        sumEarnings(compStart, compEnd),
-    ]);
-
-    // Signed % change vs the previous period (negative = down). 0 when there is nothing to compare.
-    const earningsDiffPercent = previous.earnings > 0
-        ? parseFloat((((current.earnings - previous.earnings) / previous.earnings) * 100).toFixed(1))
-        : 0;
-
-    const todaySummary = {
-        pickups,
-        deliveries,
-        paidOrders: current.orders,
-        earnings: current.earnings,
-        previousEarnings: previous.earnings,
-        earningsComparison: earningsDiffPercent,
-        range: { startDate: start, endDate: end },
-    };
-
-    // 🔹 Delivery Type Split (Agent Drivers only)
-    const agentDriverIds = await users.findAll({
-        where: {
-            roleId: 6,
-            employeeOff: agentId
-        },
-        attributes: ['id'],
-        raw: true
-    });
-
-    const driverIds = agentDriverIds.map(d => d.id);
-
-    let deliveryWhere = {
-        [Op.or]: [
-            { deliveryDriverId: { [Op.in]: driverIds } },
-            { driverId: { [Op.in]: driverIds } }
-        ]
-    };
-
-    if (startDate && endDate) {
-        deliveryWhere.createdAt = {
-            [Op.between]: [start, end]
-        };
-    }
-
-    const agentDriversDeliveries = await booking.count({
-        where: deliveryWhere
-    });
-
-    // 🔹 Driver Performance
-    const driverPerformance = await users.findAll({
-        where: { employeeOff: agentId, roleId: 6 },
-        include: [{
-            model: booking,
-            as: 'driver',
-            attributes: [],
-            where: {
-                createdAt: {
-                    [Op.between]: [start, end]
-                }
-            },
-            required: false
-        }],
-        attributes: [
-            'id', 'firstName', 'lastName',
-            [sequelize.fn('COUNT', sequelize.col('driver.id')), 'pickups'],
-            [sequelize.fn('COUNT', sequelize.col('driver.deliveryDriverId')), 'deliveries'],
-            [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, driver.collectionTimeTo, driver.collectionTimeFrom))`), 'collectionTimeliness'],
-            [sequelize.literal(`AVG(TIMESTAMPDIFF(MINUTE, driver.deliveryTimeTo, driver.deliveryTimeFrom))`), 'deliveryTimeliness']
-        ],
-        group: ['users.id']
-    });
-
-    // ✅ Final Response
-    const response = {
-        todaySummary,
-        deliveryTypeSplit: {
-            agentDriversDeliveries,
-            freelanceDriverDeliveries: 0
-        },
-        driverPerformance
-    };
-
-    return ResponseHelper.success(res, "Performance Dashboard Data", response);
+    // req.shopAgentId = the shop owner for owner and employee sessions alike.
+    const performanceDashboardService = require("../../services/Agent/performanceDashboardService");
+    const data = await performanceDashboardService.getPerformanceDashboard(req.shopAgentId, req.query);
+    return ResponseHelper.success(res, "Performance Dashboard Data", data);
 }
 
 /*
  * Order Summary Dashboard (Today/Week/Month/Year)
  */
 exports.getOrderSummaryDashboard = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const period = (req.query.period || "today").toLowerCase();
 
     const { start, end } = resolveAgentReportRange(period, req.query);
@@ -6527,7 +5973,7 @@ exports.getOrderSummaryDashboard = async (req, res) => {
  * Shop Performance Dashboard (Today/Week/Month/Year)
  */
 exports.getShopPerformanceDashboard = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const period = (req.query.period || "today").toLowerCase();
 
     const { start, end } = resolveAgentReportRange(period, req.query);
@@ -6715,7 +6161,7 @@ exports.getShopPerformanceDashboard = async (req, res) => {
  * Earning Report Dashboard (Today/Week/Month/Year)
  */
 exports.getEarningReportDashboard = async (req, res) => {
-    const agentId = req.user.id;
+    const agentId = shopAgentIdFromReq(req); // staff act for their shop
     const period = (req.query.period || "today").toLowerCase();
 
     const { start, end } = resolveAgentReportRange(period, req.query);

@@ -33,6 +33,7 @@ const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
 const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
 const { attachHeldBudget } = require('./campaignBudget');
+const { warmCurrencySymbols } = require('../../utils/currencySymbols');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CUSTOMER_LEVEL_CONDITIONS = ['ZONE', 'CUSTOMER_TYPE', 'CUSTOMER_SEGMENT', 'FIRST_ORDER', 'ORDER_COUNT'];
@@ -65,6 +66,7 @@ const CAMPAIGN_ATTRIBUTES = ['id', 'status', 'startDate', 'endDate', 'budgetMino
  * @param {{ excludeBookingId?: number|null }} [opts] the booking being priced (its own holds are not "taken" budget)
  */
 async function loadCandidatePromotions(zoneId, now = new Date(), { excludeBookingId = null } = {}) {
+  await warmCurrencySymbols(); // labels and reasons show each promotion's currency symbol
   const rows = await Promotion.findAll({
     where: {
       status: 'active',
@@ -97,6 +99,7 @@ const HELD_HONOURED_STATUSES = ['active', 'expired', 'paused', 'archived'];
  */
 async function loadHeldPromotions(promotionIds, zoneId) {
   if (!promotionIds.length) return [];
+  await warmCurrencySymbols();
   const rows = await Promotion.findAll({
     where: { id: promotionIds, status: HELD_HONOURED_STATUSES },
     include: [
@@ -640,6 +643,7 @@ const TARGET_MODELS = {
  * Missing rows are skipped; a failed lookup leaves the generic label in place.
  */
 async function targetNamesByPromotion(promos) {
+  await warmCurrencySymbols(); // callers build offer labels next
   const out = new Map();
   const idsByKind = { service: new Set(), category: new Set(), subCategory: new Set(), addon: new Set() };
   for (const promo of promos || []) {

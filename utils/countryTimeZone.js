@@ -132,9 +132,48 @@ async function getCountryContextFromShopUserId(shopUserId) {
   return getDefaultCountryContext();
 }
 
+/**
+ * The shop's own IANA zone: the country of its LaundaryShopAddress (by
+ * countryId, else through its zone's city). Unlike the context helpers above
+ * this never substitutes a default: a shop whose country has no valid zone is
+ * a configuration error the caller must surface, because day boundaries
+ * computed in another zone would silently move orders between days.
+ *
+ * @param {{ countryId?: number|null, zoneId?: number|null }} shopAddress
+ * @returns {Promise<string>}
+ */
+async function requireShopTimeZone(shopAddress) {
+  const { UnprocessableEntityError } = require("../middlewares/universalErrorHandler");
+  const moment = require("moment-timezone");
+
+  let countryRow = null;
+  if (shopAddress?.countryId) {
+    countryRow = await countries.findByPk(shopAddress.countryId, {
+      attributes: ["id", "ianaTimeZone"],
+    });
+  }
+  if (!countryRow && shopAddress?.zoneId) {
+    const zoneRow = await zone.findOne({
+      where: { id: shopAddress.zoneId },
+      attributes: ["id"],
+      include: zoneCountryInclude,
+    });
+    countryRow = zoneRow?.city?.country || null;
+  }
+
+  const tz = countryRow?.ianaTimeZone ? String(countryRow.ianaTimeZone).trim() : "";
+  if (!tz || !moment.tz.zone(tz)) {
+    throw new UnprocessableEntityError(
+      "The shop's time zone is not configured (its country has no valid IANA time zone)."
+    );
+  }
+  return tz;
+}
+
 module.exports = {
   getCountryContextById,
   getCountryContextFromZoneId,
   getCountryContextFromShopUserId,
   getDefaultCountryContext,
+  requireShopTimeZone,
 };

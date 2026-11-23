@@ -32,7 +32,7 @@ module.exports = (sequelize, DataTypes) => {
       estimatedAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
       /** Cashback priced on the invoice; credited to the customer after delivery. */
       cashbackAmount: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
+      currency: { type: DataTypes.STRING(3), allowNull: false, validate: { is: /^[A-Z]{3}$/ } }, // the promotion's
       zoneId: { type: DataTypes.INTEGER, allowNull: true },
 
       idempotencyKey: { type: DataTypes.STRING(200), allowNull: true, unique: true },

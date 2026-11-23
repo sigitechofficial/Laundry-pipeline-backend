@@ -37,7 +37,7 @@ module.exports = (sequelize, DataTypes) => {
       lineDescription: { type: DataTypes.STRING(200), allowNull: true },
 
       amount: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
+      currency: { type: DataTypes.STRING(3), allowNull: false, validate: { is: /^[A-Z]{3}$/ } }, // the booking's
 
       label: { type: DataTypes.STRING(200), allowNull: true },
       description: { type: DataTypes.STRING(500), allowNull: true },

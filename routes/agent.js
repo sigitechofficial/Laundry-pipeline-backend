@@ -199,6 +199,7 @@ router.post(
 router.patch(
     "/agentAddressEdit",
     validateAccessToken,
+    requireShopOwner, // shop address / services: owner only (as in the app)
     asyncMiddleware(agentController.agentAddressEdit)
 );
 router.get(
@@ -722,6 +723,7 @@ router.patch(
     "/editServiceStatus",
     validateAccessToken,
     checkPermissions,
+    requireShopOwner, // shop address / services: owner only (as in the app)
     asyncMiddleware(agentController.editServiceStatus)
 );
 //!-------------------------------------------------------Customer Selected Services--------------------------------------------------//
@@ -829,6 +831,7 @@ router.post(
 router.get(
     "/getPerformanceDashboard",
     validateAccessToken,
+    requireCapability("canManageFinance"),
     asyncMiddleware(agentController.getPerformanceDashboard)
 );
 router.get(

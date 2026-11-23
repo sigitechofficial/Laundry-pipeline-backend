@@ -5,12 +5,11 @@ const { Op } = require('sequelize');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { CAMPAIGN_STATUSES, campaignBlock, budgetLeftMinor, businessToday, dayOf } = require('../promotions/campaignRules');
 const { heldBudgetByCampaign } = require('../promotions/campaignBudget');
-const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 
 /** Promotion fields the campaign screens show. */
 const PROMOTION_SUMMARY = [
   'id', 'name', 'status', 'benefitType', 'discountValue', 'discountMode', 'activationType', 'visibility',
-  'startDate', 'endDate', 'globalUsedCount', 'globalUsageLimit', 'zoneScopeMode',
+  'startDate', 'endDate', 'globalUsedCount', 'globalUsageLimit', 'zoneScopeMode', 'currency',
 ];
 
 // ─── Audit helper ────────────────────────────────────────────────────────────
@@ -36,6 +35,12 @@ async function audit(entityType, entityId, action, actorId, { oldValue, newValue
 
 const blankToNull = (v) => (v === '' || v === undefined ? null : v);
 
+/** ISO code, upper-cased; null when blank. */
+function currencyOf(v) {
+  const c = blankToNull(v);
+  return c == null ? null : String(c).trim().toUpperCase() || null;
+}
+
 async function createCampaign(payload, adminUserId) {
   _validateCampaign(payload);
   _assertCanBeActive(payload);
@@ -46,8 +51,8 @@ async function createCampaign(payload, adminUserId) {
     objective: payload.objective || null,
     channel: payload.channel || null,
     budgetMinor: blankToNull(payload.budgetMinor) == null ? null : Number(payload.budgetMinor),
-    // A campaign has no zone: without its own currency it is in the platform's.
-    currency: payload.currency || (await resolveDisplayCurrency({})).currencyCode,
+    // A campaign has no zone, so its budget's currency is the admin's (see _validateCampaign).
+    currency: currencyOf(payload.currency),
     startDate: blankToNull(payload.startDate),
     endDate: blankToNull(payload.endDate),
     status: payload.status || 'draft',
@@ -116,7 +121,9 @@ async function updateCampaign(id, payload, adminUserId) {
   const row = await findCampaign(id);
   const oldValue = row.toJSON();
 
-  _validateCampaign({ ...row.toJSON(), ...payload });
+  const merged = { ...row.toJSON(), ...payload };
+  _validateCampaign(merged);
+  _assertPromotionsInBudgetCurrency(merged, row.promotions);
   if (payload.status !== undefined || payload.endDate !== undefined) _assertCanBeActive({ ...row.toJSON(), ...payload });
 
   await row.update({
@@ -125,7 +132,7 @@ async function updateCampaign(id, payload, adminUserId) {
     ...(payload.objective !== undefined ? { objective: payload.objective } : {}),
     ...(payload.channel !== undefined ? { channel: payload.channel } : {}),
     ...(payload.budgetMinor !== undefined ? { budgetMinor: blankToNull(payload.budgetMinor) == null ? null : Number(payload.budgetMinor) } : {}),
-    ...(payload.currency !== undefined ? { currency: payload.currency } : {}),
+    ...(payload.currency !== undefined ? { currency: currencyOf(payload.currency) } : {}),
     ...(payload.startDate !== undefined ? { startDate: blankToNull(payload.startDate) } : {}),
     ...(payload.endDate !== undefined ? { endDate: blankToNull(payload.endDate) } : {}),
     ...(payload.status !== undefined ? { status: payload.status } : {}),
@@ -164,13 +171,34 @@ function _validateCampaign(p) {
   }
   const budget = blankToNull(p.budgetMinor);
   if (budget != null && (!Number.isInteger(Number(budget)) || Number(budget) < 0)) {
-    throw new ValidationError('Budget must be a whole number of pence ≥ 0');
+    throw new ValidationError('Budget must be a whole number of minor units (pence, cents) ≥ 0');
+  }
+  // A campaign has no zone to take a currency from: a budget needs the admin to name one.
+  const currency = currencyOf(p.currency);
+  if (budget != null && currency == null) {
+    throw new ValidationError('Choose the currency of the campaign budget');
+  }
+  if (currency != null && !/^[A-Z]{3}$/.test(currency)) {
+    throw new ValidationError('Currency must be a 3-letter ISO code (e.g. GBP)');
   }
   const start = blankToNull(p.startDate) ? new Date(p.startDate) : null;
   const end = blankToNull(p.endDate) ? new Date(p.endDate) : null;
   if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime()))) throw new ValidationError('Invalid start or end date');
   // Calendar days (DATEONLY): a campaign may start and end on the same day.
   if (start && end && end < start) throw new ValidationError('End date must be on or after the start date');
+}
+
+/** A budget is spent by its promotions, so they must all be in the budget's currency. */
+function _assertPromotionsInBudgetCurrency(p, promotions = []) {
+  const currency = currencyOf(p.currency);
+  if (blankToNull(p.budgetMinor) == null || currency == null) return;
+  const other = (promotions || []).filter((promo) => promo.currency && promo.currency !== currency);
+  if (other.length) {
+    throw new ValidationError(
+      `The budget is in ${currency}, but ${other.map((promo) => `"${promo.name}" (${promo.currency})`).join(', ')} ` +
+        `${other.length === 1 ? 'is' : 'are'} not. Move ${other.length === 1 ? 'it' : 'them'} to another campaign first.`
+    );
+  }
 }
 
 /** Made (or kept) active, a campaign must still have days to run, or its promotions never apply. */
@@ -182,6 +210,7 @@ function _assertCanBeActive(p) {
 }
 
 module.exports = {
+  _validateCampaign,
   withRunning,
   createCampaign,
   listCampaigns,
