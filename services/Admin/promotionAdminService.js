@@ -20,7 +20,7 @@ const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules'
 const { attachHeldBudget } = require('../promotions/campaignBudget');
 const { BOOKED_HOLD_SQL } = require('../promotions/bookedHold');
 const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
-const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
+const { resolveDisplayCurrency, sharedCurrencyOfZones } = require('../../utils/resolveDisplayCurrency');
 
 const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor', 'ownerPromotionId'];
 
@@ -233,6 +233,7 @@ function normalizePayload(payload = {}) {
     if (v != null && DECIMAL_FIELDS.includes(key)) v = Number(v);
     if (v != null && INT_FIELDS.includes(key)) v = Number(v);
     if (key === 'name' && v != null) v = String(v).trim();
+    if (key === 'currency' && v != null) v = String(v).trim().toUpperCase();
     if (key === 'stackGroup' && v != null) v = String(v).trim() || null;
     if (key === 'benefitConfig' && v != null) v = normalizeBenefitConfig(v);
     if ((key === 'recurringStartTime' || key === 'recurringEndTime') && v != null) v = normalizeHHMM(v) || '__invalid__';
@@ -370,6 +371,11 @@ function validatePromotion(p) {
       throw new ValidationError('Select at least one zone');
     }
   }
+  // Set by the admin, or on create by defaultPromotionCurrency when its zones share one.
+  if (p.currency == null) {
+    throw new ValidationError("Choose the promotion's currency: the zones it applies to do not share a single currency.");
+  }
+  if (!/^[A-Z]{3}$/.test(p.currency)) throw new ValidationError('Currency must be a 3-letter ISO code (e.g. GBP)');
   if (!['automatic', 'coupon_required'].includes(p.activationType)) throw new ValidationError('Invalid activationType');
   if (!['public', 'private_code', 'targeted', 'hidden'].includes(p.visibility)) throw new ValidationError('Invalid visibility');
   if (!['recalculate', 'revalidate', 'lock'].includes(p.repricingPolicy)) throw new ValidationError('Invalid repricingPolicy');
@@ -599,14 +605,26 @@ async function writeChildren(promotionId, data, adminUserId, t, { replace }) {
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
 /**
- * Currency of a new promotion that names none: the currency its selected zones share;
- * for all zones (or zones in different currencies) the platform's (resolveDisplayCurrency).
+ * Currency of a new promotion that names none, from its zones' data:
+ *  - selected zones → the currency they all share;
+ *  - all zones      → the currency shared by every active zone;
+ *  - excluded zones → the currency shared by every other active zone.
+ * Null when there is no single one (zones in different currencies, or none):
+ * validatePromotion then asks the admin to choose it — a currency is never guessed.
  */
 async function defaultPromotionCurrency(data) {
-  const zoneIds = data.zoneScopeMode === 'selected' && Array.isArray(data.zoneIds) ? data.zoneIds : [];
-  const codes = new Set(await Promise.all(zoneIds.map((id) => zoneCurrencyCode(id))));
-  if (codes.size === 1) return [...codes][0];
-  return (await resolveDisplayCurrency({})).currencyCode;
+  const zoneIds = asIntIdList(data.zoneIds);
+  let code;
+  if (data.zoneScopeMode === 'selected') {
+    const codes = new Set(await Promise.all(zoneIds.map((id) => zoneCurrencyCode(id))));
+    code = codes.size === 1 ? [...codes][0] : '';
+  } else if (data.zoneScopeMode === 'excluded') {
+    const where = zoneIds.length ? { status: true, id: { [Op.notIn]: zoneIds } } : { status: true };
+    code = (await sharedCurrencyOfZones(where)).currencyCode;
+  } else {
+    code = (await resolveDisplayCurrency({})).currencyCode;
+  }
+  return code || null;
 }
 
 async function createPromotion(payload, adminUserId, scope) {
@@ -1027,6 +1045,7 @@ module.exports = {
   // exported for tests
   normalizePayload,
   validatePromotion,
+  defaultPromotionCurrency,
   typeRuleFields,
   assertNoOrderHistoryCondition,
   TRANSITIONS,
