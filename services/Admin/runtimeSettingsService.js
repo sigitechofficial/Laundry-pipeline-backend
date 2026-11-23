@@ -24,6 +24,16 @@ const DEFINITIONS = {
     envKey: "INVOICE_AUTO_CHARGE_ENABLED",
     defaultValue: true,
   },
+  invoicePaymentWindowMinutes: {
+    type: "integer",
+    label: "Payment window after pickup (minutes)",
+    description: "When the payment window applies, the shop has this long after pickup to collect payment and finalise the invoice; the shop app counts down to it.",
+    group: "invoice",
+    envKey: "INVOICE_PAYMENT_WINDOW_MINUTES",
+    defaultValue: 60,
+    min: 5,
+    max: 24 * 60,
+  },
   invoiceAutoChargeDelayMs: {
     type: "integer",
     label: "Auto-charge delay (ms)",
