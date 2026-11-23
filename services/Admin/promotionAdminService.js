@@ -15,7 +15,9 @@ const {
 const { ValidationError, NotFoundError, ForbiddenError } = require('../../middlewares/universalErrorHandler');
 const { SUPPORTED_BENEFIT_TYPES, resolveDiscountMode } = require('../promotions/benefitHandlers');
 const { validateCondition } = require('../promotions/conditionEvaluator');
-const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime');
+const { normalizeHHMM, businessDayBound, businessDay, businessClock } = require('../promotions/promotionTime');
+const { getZoneTimeZones, getOperationalTimeZones } = require('../../utils/countryTimeZone');
+const { requireOperationalTimeZone } = require('../../utils/bookingTimeZone');
 const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules');
 const { attachHeldBudget } = require('../promotions/campaignBudget');
 const { BOOKED_HOLD_SQL } = require('../promotions/bookedHold');
@@ -30,8 +32,11 @@ const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budge
  */
 async function withCampaignStop(rows, now = new Date()) {
   await attachHeldBudget(rows, { now });
+  // A campaign has no zone: its days as seen across every active zone (campaignRules).
+  const dated = rows.some((p) => p.campaign && (p.campaign.startDate || p.campaign.endDate));
+  const timeZones = dated ? await getOperationalTimeZones() : undefined;
   for (const p of rows) {
-    const stop = p.campaign ? campaignBlock(p.campaign, now) : null;
+    const stop = p.campaign ? campaignBlock(p.campaign, now, { timeZones }) : null;
     p.setDataValue('campaignStopReason', stop ? stop.code : null);
   }
   return rows;
@@ -237,8 +242,8 @@ function normalizePayload(payload = {}) {
     if (key === 'stackGroup' && v != null) v = String(v).trim() || null;
     if (key === 'benefitConfig' && v != null) v = normalizeBenefitConfig(v);
     if ((key === 'recurringStartTime' || key === 'recurringEndTime') && v != null) v = normalizeHHMM(v) || '__invalid__';
-    if (key === 'startDate' && v != null) v = businessDayBound(v, 'start');
-    if (key === 'endDate' && v != null) v = businessDayBound(v, 'end');
+    // startDate / endDate stay as sent here: a day is placed in the promotion's own time
+    // zone once its zones are known (applyDateBounds).
     if (key === 'targetIds' || key === 'zoneIds' || key === 'recurringDays') {
       if (v == null) {
         out[key] = null;
@@ -587,6 +592,8 @@ function rowData(row) {
 function columnsOf(data) {
   const out = {};
   for (const key of SCALAR_FIELDS) if (key in data) out[key] = data[key];
+  // Derived on save from the zones (promotionTimeZone), never taken from the payload.
+  if (data.timeZone) out.timeZone = data.timeZone;
   return out;
 }
 
@@ -649,8 +656,53 @@ async function defaultPromotionCurrency(data) {
   return code || null;
 }
 
+/**
+ * The time zone a promotion's start / end days are in: the one IANA zone its zones share
+ * (each zone's country), the way its currency is the one they share:
+ *  - selected zones → theirs (deleted ones keep their country);
+ *  - all zones      → every active zone's;
+ *  - excluded zones → every other active zone's.
+ * A day means a different moment in each time zone, so zones in several are refused, and a
+ * zone whose country has no valid zone fails as a configuration error. Never assumed.
+ */
+async function promotionTimeZone(data) {
+  const zoneIds = asIntIdList(data.zoneIds);
+  let zoneTimeZones;
+  if (data.zoneScopeMode === 'selected') {
+    if (!zoneIds.length) throw new ValidationError('Select at least one zone');
+    zoneTimeZones = await getZoneTimeZones(zoneIds);
+  } else {
+    zoneTimeZones = await getZoneTimeZones();
+    if (data.zoneScopeMode === 'excluded') for (const id of zoneIds) zoneTimeZones.delete(id);
+  }
+  if (!zoneTimeZones.size) throw new ValidationError('This promotion applies to no active zone');
+  const timeZones = new Set(
+    [...zoneTimeZones.entries()].map(([id, tz]) => requireOperationalTimeZone(tz, `zone ${id}`))
+  );
+  if (timeZones.size !== 1) {
+    throw new ValidationError(
+      `The zones this promotion applies to are in different time zones (${[...timeZones].join(', ')}), ` +
+        'so its start and end days would be different moments in each. Make one promotion per time zone.'
+    );
+  }
+  return [...timeZones][0];
+}
+
+/** Place a sent start / end day (or day and time) in the promotion's time zone. */
+function applyDateBounds(data, timeZone) {
+  if (data.startDate != null) data.startDate = businessDayBound(data.startDate, 'start', timeZone);
+  if (data.endDate != null) data.endDate = businessDayBound(data.endDate, 'end', timeZone);
+}
+
+/** A stored start / end as the same day and time in another time zone ('YYYY-MM-DDTHH:mm'). */
+function sameLocalDayTime(value, fromTimeZone) {
+  return `${businessDay(value, fromTimeZone)}T${businessClock(value, fromTimeZone)}`;
+}
+
 async function createPromotion(payload, adminUserId, scope) {
   const data = applyZoneRestriction({ ...DEFAULTS, ...normalizePayload(payload) }, scope);
+  data.timeZone = await promotionTimeZone(data);
+  applyDateBounds(data, data.timeZone);
   if (data.currency == null) data.currency = await defaultPromotionCurrency(data);
   if (data.discountMode == null && data.benefitType !== 'free_delivery') data.discountMode = resolveDiscountMode(data);
   Object.assign(data, typeRuleFields(data));
@@ -761,6 +813,22 @@ async function updatePromotion(id, payload, adminUserId, scope) {
     });
   }
   const stored = rowData(promo);
+  // Days are in the time zone the (possibly changed) zones share. It is derived again when the
+  // zones or days are sent (or none is stored yet), so editing e.g. the name of an "all zones"
+  // promotion is not refused because another zone opened since. When that zone changes, a
+  // start / end not re-sent keeps its day and time, now in the new zone.
+  const zonesOrDaysSent = ['zoneScopeMode', 'zoneIds', 'startDate', 'endDate'].some((k) => k in incoming);
+  const timeZone = zonesOrDaysSent || !promo.timeZone
+    ? await promotionTimeZone({ ...stored, ...incoming })
+    : promo.timeZone;
+  if (timeZone !== promo.timeZone) {
+    incoming.timeZone = timeZone;
+    if (promo.timeZone) {
+      if (!('startDate' in incoming) && promo.startDate) incoming.startDate = sameLocalDayTime(promo.startDate, promo.timeZone);
+      if (!('endDate' in incoming) && promo.endDate) incoming.endDate = sameLocalDayTime(promo.endDate, promo.timeZone);
+    }
+  }
+  applyDateBounds(incoming, timeZone);
   // A benefit type with a fixed mode (e.g. fixed_amount_discount) drags discountMode along
   if (incoming.benefitType && incoming.discountMode === undefined && incoming.benefitType !== 'free_delivery') {
     incoming.discountMode = resolveDiscountMode({ ...stored, ...incoming, discountMode: stored.discountMode });
@@ -815,6 +883,12 @@ async function updateLiveOffer(promo, payload, adminUserId) {
     throw new ValidationError('While an offer is live you can change its name, end date, limits and budget. Pause it to change anything else.');
   }
   const incoming = normalizePayload(payload);
+  if ('endDate' in incoming && incoming.endDate != null) {
+    // A live offer's zones cannot change, so its day is in the zone they share.
+    const timeZone = promo.timeZone || (await promotionTimeZone(promo));
+    if (!promo.timeZone) incoming.timeZone = timeZone;
+    applyDateBounds(incoming, timeZone);
+  }
   if ('name' in incoming && !incoming.name) throw new ValidationError('Offer name is required');
   if (incoming.name && incoming.name.trim() !== promo.name) await assertNameAvailable(incoming.name, promo.id);
   if ('endDate' in incoming && incoming.endDate != null) {
@@ -1068,6 +1142,8 @@ module.exports = {
   restrictedZoneOf,
   // exported for tests
   normalizePayload,
+  applyDateBounds,
+  promotionTimeZone,
   validatePromotion,
   defaultPromotionCurrency,
   typeRuleFields,

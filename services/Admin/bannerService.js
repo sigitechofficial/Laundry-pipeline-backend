@@ -216,6 +216,7 @@ class BannerService {
     const { buildOfferLabel } = require('../promotions/promotionEngine');
     await require('../../utils/currencySymbols').warmCurrencySymbols();
     const { campaignBlock } = require('../promotions/campaignRules');
+    const { getOperationalTimeZones } = require('../../utils/countryTimeZone');
     const { attachHeldBudget } = require('../promotions/campaignBudget');
     const { promotion, campaign } = require('../../models');
     const now = new Date();
@@ -224,6 +225,9 @@ class BannerService {
       include: [{ model: campaign, as: 'campaign', attributes: ['id', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor'] }],
     }), { now });
     const byId = new Map(rows.map((p) => [p.id, p]));
+    // Campaign days on the customer's zone clock (every active zone's when no zone is known).
+    const dated = rows.some((p) => p.campaign && (p.campaign.startDate || p.campaign.endDate));
+    const timeZones = dated ? await getOperationalTimeZones(zoneId != null ? zoneId : null) : undefined;
     const out = [];
     for (const b of banners) {
       if (!b.promotionId) {
@@ -234,7 +238,7 @@ class BannerService {
       const live = promo
         && isPromotionsCheckoutEnabled(zoneId)
         && isLive(promo, now, zoneId != null ? zoneId : null)
-        && !campaignBlock(promo.campaign, now);
+        && !campaignBlock(promo.campaign, now, { timeZones });
       if (!live) continue;
       const offer = this.offerFromPromotion(promo);
       out.push({ ...b, ...(offer || {}), offerLabel: buildOfferLabel(promo) });

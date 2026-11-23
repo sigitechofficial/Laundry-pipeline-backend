@@ -22,7 +22,7 @@ const { zoneCurrency } = require('../../utils/zoneCurrency');
 const { resolvePrice } = require('../Admin/zoneCatalogService');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const { toDecimal, toMinor, fromMinor } = require('./moneyUtils');
-const { localDay, resolveTimeZone, toDate } = require('./promotionTime');
+const { localDay, toDate } = require('./promotionTime');
 const { PAYMENT_METHODS } = require('./conditionEvaluator');
 
 const INACTIVE_AFTER_DAYS = 90;
@@ -59,14 +59,15 @@ async function loadZoneFacts(zoneId) {
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('zoneId is required');
   const row = await Zone.findByPk(id, { attributes: ['id', 'zoneMinimumAmount'] });
   if (!row) throw new ValidationError('Zone not found');
-  const country = await getCountryContextFromZoneId(id).catch(() => null);
+  // The zone's own clock (its country's IANA zone); a zone without one fails clearly.
+  const country = await getCountryContextFromZoneId(id);
   const { currencyCode, currencySymbol } = await zoneCurrency(id);
   return {
     id,
     // The basket's currency (ISO code + display symbol).
     currency: currencyCode,
     currencySymbol,
-    timezone: resolveTimeZone(country?.ianaTimeZone),
+    timezone: country.ianaTimeZone,
     // Minimum order: what a booking's hold is estimated on before the shop prices it.
     minOrderMinor: Math.max(0, Math.round(Number(row.zoneMinimumAmount || 0) * 100)),
     // Delivery is free today (home config "Free 24h"), so delivery promotions save £0.

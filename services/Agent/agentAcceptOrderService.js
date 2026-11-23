@@ -18,9 +18,8 @@ const agentBookingDeclineService = require("./agentBookingDeclineService");
  * Shared accept logic for REST and socket.
  * @param {number} agentUserId - Shop owner user id
  * @param {number} bookingId
- * @param {{ timeZone?: string, clientTimeZone?: string }} [options]
  */
-async function acceptOrderForAgent(agentUserId, bookingId, options = {}) {
+async function acceptOrderForAgent(agentUserId, bookingId) {
     const shopAddress = await addressDb.findOne({
         where: {
             userId: agentUserId,

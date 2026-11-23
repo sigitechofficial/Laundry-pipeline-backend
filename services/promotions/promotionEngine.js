@@ -32,6 +32,7 @@ const { resolveAndApply } = require('./stackingResolver');
 const { toDecimal, toMinor, fromMinor, money } = require('./moneyUtils');
 const { localClock, isWithinWindow } = require('./promotionTime');
 const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
+const { getOperationalTimeZones } = require('../../utils/countryTimeZone');
 const { attachHeldBudget } = require('./campaignBudget');
 const { warmCurrencySymbols } = require('../../utils/currencySymbols');
 
@@ -81,7 +82,10 @@ async function loadCandidatePromotions(zoneId, now = new Date(), { excludeBookin
       { model: Campaign, as: 'campaign', attributes: CAMPAIGN_ATTRIBUTES },
     ],
   });
-  const live = rows.filter((p) => zoneInScope(p, zoneId) && !campaignBlock(p.campaign, now, { budget: false }));
+  // Campaign days on this zone's clock (its country's IANA zone).
+  const dated = rows.some((p) => p.campaign && (p.campaign.startDate || p.campaign.endDate));
+  const timeZones = dated ? await getOperationalTimeZones(zoneId) : undefined;
+  const live = rows.filter((p) => zoneInScope(p, zoneId) && !campaignBlock(p.campaign, now, { budget: false, timeZones }));
   return attachHeldBudget(live, { now, excludeBookingId });
 }
 
@@ -198,7 +202,12 @@ async function validateCouponCodes(codes = [], { customerId, zoneId, now = new D
       continue;
     }
     // Budget is judged with the other limits (builtInCheck); status and days here.
-    const campaignStop = campaignBlock(promo.campaign, now, { budget: false });
+    const campaignStop = campaignBlock(promo.campaign, now, {
+      budget: false,
+      timeZones: promo.campaign && (promo.campaign.startDate || promo.campaign.endDate)
+        ? await getOperationalTimeZones(zoneId || null)
+        : undefined,
+    });
     if (campaignStop) {
       errors.push(couponError(code, 'PROMOTION_NOT_ACTIVE', `Coupon "${code}": ${campaignStop.message.charAt(0).toLowerCase()}${campaignStop.message.slice(1)}`));
       continue;

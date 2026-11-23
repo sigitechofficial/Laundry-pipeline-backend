@@ -91,7 +91,6 @@ const {
 } = require("../../utils/repairBookingInclude");
 const {
     wallClockNow,
-    resolveBookingTimeZone,
     BOOKING_ACCEPT_WINDOW_MINUTES,
     isBookingAcceptWindowOpen,
     getAcceptWindowMinutesRemaining,
@@ -110,9 +109,10 @@ const {
     getWallClockContext,
     isPickupWithinShopWorkingHours,
 } = require("../../utils/shopWorkingHours");
-
-/** Same default as customer booking / reschedule services (IANA). */
-const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
+const {
+    bookingWallClockNow,
+    resolveBookingOperationalTimeZone,
+} = require("../../utils/countryTimeZone");
 
 function recurringIntervalDaysFromLabel(value) {
     const key = String(value || "").trim().toLowerCase();
@@ -141,23 +141,6 @@ function syncLiveTrackingSafe(bookingId, bookingStatusId, extras = {}) {
             err.message
         );
     }
-}
-
-/**
- * Wall-clock date/time for agent actions (invoice lines, history).
- * Pass timeZone or clientTimeZone from the app (e.g. Asia/Karachi) so stored times match the user.
- */
-function agentWallClockDateTime(timeZone, clientTimeZone) {
-    const candidate = timeZone || clientTimeZone;
-    const tz =
-        candidate && typeof candidate === "string" && momentTz.tz.zone(candidate.trim())
-            ? candidate.trim()
-            : AGENT_BUSINESS_TIME_ZONE;
-    const m = momentTz.tz(tz);
-    return {
-        date: m.format("YYYY-MM-DD"),
-        time: m.format("HH:mm:ss"),
-    };
 }
 
 /** Optional non-negative integer from multipart fields (empty/missing → undefined). */
@@ -519,15 +502,16 @@ exports.getAgentAddress = async (req, res) => {
  * (e.g. 3) while the list was empty. Both now derive from this function so
  * they can never drift again.
  *
+ * Each booking's accept window and pickup slot are read in its own
+ * operational zone (bookings.operationalTimeZone), not the agent device's.
+ *
  * @param {number} agentId
  * @param {object} [opts]
- * @param {string} [opts.timeZone]
- * @param {string} [opts.clientTimeZone]
  * @param {boolean} [opts.withDetails=false] include display joins (list) vs lean (count)
  * @returns {Promise<Array>} filtered plain booking rows visible to this agent
  */
 async function fetchVisibleNewBookings(agentId, opts = {}) {
-    const { timeZone, clientTimeZone, withDetails = false } = opts;
+    const { withDetails = false } = opts;
 
     const shopAddr = await addressDb.findOne({
         where: { userId: agentId, deletedAt: null },
@@ -549,10 +533,6 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         Number.isFinite(shopLat) &&
         Number.isFinite(shopLng) &&
         !(Math.abs(shopLat) < 0.0001 && Math.abs(shopLng) < 0.0001);
-
-    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
-    const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
-    const resolvedAgentTz = timeZone || agentCountryCtx.ianaTimeZone;
 
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
@@ -677,6 +657,8 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             "adminAssignedShopId",
             "agentVisibleAt",
             "placedOutsidePlatformHours",
+            "operationalTimeZone",
+            "zoneId",
         ],
     });
 
@@ -775,12 +757,12 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             continue;
         }
 
+        const bookingTz = await resolveBookingOperationalTimeZone(plain);
         if (
             !isBookingAcceptWindowOpen(
                 getAcceptWindowAnchor(plain),
                 plain.orderExpireTime,
-                timeZone,
-                clientTimeZone
+                bookingTz
             )
         ) {
             excluded.expired += 1;
@@ -792,9 +774,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             plain.collectionDate,
             plain.collectionTimeFrom,
             plain.collectionTimeTo,
-            resolvedAgentTz,
-            clientTimeZone,
-            agentCountryCtx.countryId
+            bookingTz
         );
         if (!pickupOk) {
             excluded.pickupHours += 1;
@@ -810,8 +790,7 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             const minutesLeft = getAcceptWindowMinutesRemaining(
                 getAcceptWindowAnchor(plain),
                 plain.orderExpireTime,
-                timeZone,
-                clientTimeZone
+                bookingTz
             );
             out.push({
                 ...plain,
@@ -924,44 +903,26 @@ exports.getBookingHome = async (req, res) => {
     }
 
     let agentZone = userData.addressDb.zoneId;
-    const queryTimeZone =
-        req.query?.timeZone ||
-        req.body?.timeZone ||
-        userData?.ianaTimeZone;
-    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
-    const resolvedExpireTz = resolveBookingTimeZone(queryTimeZone, queryClientTimeZone);
-    const { timeHHmm: currentTimeString } = wallClockNow(queryTimeZone, queryClientTimeZone);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     await markAgentOnline(agentId, agentZone);
 
+    // Shop and platform hours are wall clock in the shop's country zone; the
+    // agent device's timeZone is display-only and does not move them.
     const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
     const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
-    const platformOpenNow = await isPlatformOpenNow(
-        agentCountryCtx.countryId,
-        queryTimeZone || agentCountryCtx.ianaTimeZone,
-        queryClientTimeZone
-    );
-    const { dayOfWeek } = getWallClockContext(queryTimeZone, queryClientTimeZone);
+    const shopTz = agentCountryCtx.ianaTimeZone;
+    const { timeHHmm: currentTimeString } = wallClockNow(shopTz);
+    const platformOpenNow = await isPlatformOpenNow(agentCountryCtx.countryId);
+    const { dayOfWeek } = getWallClockContext(shopTz);
     const todayHours = await findTodayWorkingHoursRow(agentId, dayOfWeek);
-    const resolvedAgentTz =
-        queryTimeZone || agentCountryCtx.ianaTimeZone;
     const scheduleShopOpen = platformOpenNow
-        ? await isShopOpenNow(
-            agentId,
-            agentCountryCtx.countryId,
-            resolvedAgentTz,
-            queryClientTimeZone
-        )
+        ? await isShopOpenNow(agentId, agentCountryCtx.countryId)
         : false;
     const agentOnlineNow = await isAgentOnline(agentId);
     const agentShopOpen =
         agentOnlineNow || scheduleShopOpen || !platformOpenNow;
-    const zoneShopsOpen = await isAnyShopOpenInZone(
-        agentZone,
-        resolvedAgentTz,
-        queryClientTimeZone
-    );
+    const zoneShopsOpen = await isAnyShopOpenInZone(agentZone);
 
     console.log(
         "[getBookingHome] agent:",
@@ -969,7 +930,7 @@ exports.getBookingHome = async (req, res) => {
         "zone:",
         agentZone,
         "tz:",
-        resolvedExpireTz,
+        shopTz,
         "day:",
         dayOfWeek,
         "hoursStatus:",
@@ -1006,8 +967,6 @@ exports.getBookingHome = async (req, res) => {
         // agent (admin-assigned / preferred / broadcast). Returning [] here
         // used to wipe a socket-pushed first order on the next home refresh.
         const bookingDataWhenClosed = await fetchVisibleNewBookings(agentId, {
-            timeZone: queryTimeZone,
-            clientTimeZone: queryClientTimeZone,
             withDetails: true,
         });
         return ResponseHelper.success(res, "Agent Orders fetched", {
@@ -1026,8 +985,6 @@ exports.getBookingHome = async (req, res) => {
     // (bookingCounts / fetchTabCounts) call this same helper so list and
     // count can never diverge again.
     const bookingDataForResponse = await fetchVisibleNewBookings(agentId, {
-        timeZone: queryTimeZone,
-        clientTimeZone: queryClientTimeZone,
         withDetails: true,
     });
 
@@ -1104,10 +1061,7 @@ exports.agentAcceptOrder = async (req, res) => {
     }
 
     const { acceptOrderForAgent } = require("../../services/Agent/agentAcceptOrderService");
-    const result = await acceptOrderForAgent(agentId, bookingId, {
-        timeZone: req.body?.timeZone,
-        clientTimeZone: req.body?.clientTimeZone,
-    });
+    const result = await acceptOrderForAgent(agentId, bookingId);
 
     return ResponseHelper.success(res, "Order accepted successfully", result);
 };
@@ -1713,14 +1667,10 @@ exports.agentBookingFilters = async (req, res) => {
     // count can never show orders the visible list would drop (services not
     // offered, pickup outside working hours, accept window closed, missing
     // orderExpireTime, already declined). Memoised so list + count reuse it.
-    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
-    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
     let _visibleNewRowsCache;
     const getVisibleNewRows = async () => {
         if (_visibleNewRowsCache === undefined) {
             _visibleNewRowsCache = await fetchVisibleNewBookings(agentId, {
-                timeZone: queryTimeZone,
-                clientTimeZone: queryClientTimeZone,
                 withDetails: true,
             });
         }
@@ -1916,18 +1866,13 @@ exports.getBookingCounts = async (req, res) => {
     const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
     const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
     const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
-    const queryTimeZone = req.query?.timeZone || req.body?.timeZone;
-    const queryClientTimeZone = req.query?.clientTimeZone || req.body?.clientTimeZone;
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([
         // Same visibility pipeline as the New list (getBookingHome) so the badge
         // never shows orders the list would drop. See fetchVisibleNewBookings.
         hideNew
             ? Promise.resolve(0)
-            : fetchVisibleNewBookings(agentId, {
-                  timeZone: queryTimeZone,
-                  clientTimeZone: queryClientTimeZone,
-              }).then((rows) => rows.length),
+            : fetchVisibleNewBookings(agentId).then((rows) => rows.length),
         booking.count({ where: withStaffScope(agentDayTabWhere(shopId, todayStr, tomorrowStr)) }),
         booking.count({ where: withStaffScope(agentDayTabWhere(shopId, tomorrowStr, dayAfterStr)) }),
         booking.count({
@@ -2157,10 +2102,11 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
                 { where: { id: bookingId } }
             );
 
+            const historyClock = await bookingWallClockNow(bookingId);
             await bookingHistory.create({
                 bookingId,
-                date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-                time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+                date: historyClock.date,
+                time: historyClock.time,
                 bookingStatusId: 4,
             });
         }
@@ -2240,10 +2186,11 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             });
             const currentDate = new Date().toISOString().split("T")[0];
 
+            const historyClock = await bookingWallClockNow(bookingId);
             await bookingHistory.create({
                 bookingId,
-                date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-                time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+                date: historyClock.date,
+                time: historyClock.time,
                 bookingStatusId: 4,
             });
         }
@@ -2376,10 +2323,11 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         { where: { id: bookingId } }
     );
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
         bookingId,
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingStatusId: 4,
     });
 
@@ -2480,9 +2428,10 @@ exports.driverStatusArrived = async (req, res) => {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingStatusId: 5,
         bookingId: bookingId,
     });
@@ -2673,9 +2622,10 @@ exports.agentInspectionStatus = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     const statusId = [6, 7];
+    const historyClock = await bookingWallClockNow(bookingId);
     const bookinghistories = statusId.map(statusId => ({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -2764,9 +2714,10 @@ exports.reachedAtDeliveryShopStatus = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: 8,
     });
@@ -3369,9 +3320,10 @@ exports.bookingInvoiceGeneratedStatusUpdated = async (req, res) => {
     }
 
     const statusId = [10, 11];
+    const historyClock = await bookingWallClockNow(bookingId);
     const bookinghistories = statusId.map(statusId => ({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -3470,9 +3422,10 @@ exports.laundryWashCompleted = async (req, res) => {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingStatusId: 12,
         bookingId: bookingId,
     });
@@ -3582,9 +3535,10 @@ exports.laundryDeliverToCustomer = async (req, res) => {
         { where: { id: bookingId } }
     );
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: 13,
     });
@@ -3687,9 +3641,10 @@ exports.driverReachedForDelivery = async (req, res) => {
 
     const currentDate = new Date().toISOString().split("T")[0];
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: 14,
     });
@@ -3858,9 +3813,10 @@ exports.bookingDeliverToCustomer = async (req, res) => {
     const currentDate = new Date().toISOString().split("T")[0];
 
     const statusId = [16, 17];
+    const historyClock = await bookingWallClockNow(bookingId);
     const bookinghistories = statusId.map(statusId => ({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: statusId
     }))
@@ -3970,18 +3926,13 @@ exports.driverAddSerivces = async (req, res) => {
         bookingId,
         zoneMinimumAmount,
         serviceCharge,
-        timeZone,
-        clientTimeZone,
     } = req.body;
 
     if (!Array.isArray(services) || services.length === 0) {
         throw new ValidationError("Invalid request. Please provide an array of services.");
     }
 
-    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-        timeZone,
-        clientTimeZone
-    );
+    const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
     console.log("Invoice line timestamp (tz-aware):", currentDate, currentTime);
 
     // Fetch booking with zone and tip information
@@ -4069,7 +4020,7 @@ exports.driverAddSerivces = async (req, res) => {
         { where: { bookingId: bookingId } }
     );
 
-    const wall = agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone);
+    const wall = await bookingWallClockNow(bookingId);
     // Invoice finalize → Processing immediately (leave Invoice tab; no separate Proceed required)
     await bookingHistory.bulkCreate([
         { date: wall.date, time: wall.time, bookingId, bookingStatusId: 9 },
@@ -5013,10 +4964,7 @@ exports.onHoldConformation = async (req, res) => {
         }
     }
 
-    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-        req.body?.timeZone,
-        req.body?.clientTimeZone
-    );
+    const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
 
     const responseData = [];
     for (let i = 0; i < cleanRecords.length; i++) {
@@ -5118,7 +5066,7 @@ exports.agentIssueResolved = async (req, res) => {
         { where: { id: bookingId } }
     );
 
-    const { date, time } = agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone);
+    const { date, time } = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
         date,
         time,
@@ -5298,9 +5246,10 @@ exports.agentCancelBooking = async (req, res) => {
     });
     const currentDate = new Date().toISOString().split("T")[0];
 
+    const historyClock = await bookingWallClockNow(bookingId);
     await bookingHistory.create({
-        date: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).date,
-        time: agentWallClockDateTime(req.body?.timeZone, req.body?.clientTimeZone).time,
+        date: historyClock.date,
+        time: historyClock.time,
         bookingId: bookingId,
         bookingStatusId: 13,
         reasonId: reasonId,
@@ -6341,12 +6290,11 @@ exports.listMyCashRemittances = async (req, res) => {
   * Update Invoice  
 */
 exports.updateInvoice = async (req, res) => {
-    const { services, bookingId, timeZone, clientTimeZone, zoneMinimumAmount, serviceCharge } = req.body;
+    const { services, bookingId, zoneMinimumAmount, serviceCharge } = req.body;
 
     console.log("[PATCH /agent/updateInvoice] agentId:", req.user?.id ?? null);
     console.log("[PATCH /agent/updateInvoice] request body:", JSON.stringify(redact(req.body), null, 2));
     console.log("[PATCH /agent/updateInvoice] bookingId:", bookingId);
-    console.log("[PATCH /agent/updateInvoice] timeZone:", timeZone, "clientTimeZone:", clientTimeZone);
     console.log(
         "[PATCH /agent/updateInvoice] services:",
         Array.isArray(services) ? `count=${services.length}` : typeof services,
@@ -6398,10 +6346,7 @@ exports.updateInvoice = async (req, res) => {
         throw new NotFoundError("Zone information not found for this booking");
     }
 
-    const { date: currentDate, time: currentTime } = agentWallClockDateTime(
-        timeZone,
-        clientTimeZone
-    );
+    const { date: currentDate, time: currentTime } = await bookingWallClockNow(bookingId);
     console.log("Update invoice timestamp (tz-aware):", currentDate, currentTime);
 
     // Save / update each service from the request (sync — no duplicate lines)

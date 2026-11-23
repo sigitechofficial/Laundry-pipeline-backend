@@ -15,7 +15,7 @@
 const { Op } = require('sequelize');
 const { promotion: Promotion, campaign: Campaign, promotionAuditLog: AuditLog } = require('../../models');
 const { cleanupExpiredReservations } = require('./redemptionService');
-const { businessToday } = require('./campaignRules');
+const { campaignEndedEverywhere } = require('./campaignRules');
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 let timer = null;
@@ -52,12 +52,18 @@ async function runPromotionLifecycle(now = new Date()) {
   return { activated, expired, campaignsCompleted };
 }
 
-/** A campaign whose end day is over is completed, so its status says what the engine already does. */
+/**
+ * A campaign whose end day is over in every active zone is completed, so its status says
+ * what the engine already does (a campaign has no zone; each order is judged on its zone's day).
+ */
 async function completeEndedCampaigns(now = new Date()) {
-  const where = { status: { [Op.in]: ['draft', 'active', 'paused'] }, endDate: { [Op.lt]: businessToday(now) } };
-  const rows = await Campaign.findAll({ where, attributes: ['id'] });
-  if (!rows.length) return 0;
-  const ids = rows.map((r) => r.id);
+  const where = { status: { [Op.in]: ['draft', 'active', 'paused'] }, endDate: { [Op.ne]: null } };
+  const candidates = await Campaign.findAll({ where, attributes: ['id', 'endDate'] });
+  if (!candidates.length) return 0;
+  const { getOperationalTimeZones } = require('../../utils/countryTimeZone');
+  const timeZones = await getOperationalTimeZones();
+  const ids = candidates.filter((c) => campaignEndedEverywhere(c.endDate, now, timeZones)).map((c) => c.id);
+  if (!ids.length) return 0;
   const [count] = await Campaign.update({ status: 'completed' }, { where: { ...where, id: ids } });
   await audit(ids, 'status_completed', 'End date passed', 'campaign');
   return count;

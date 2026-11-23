@@ -3,19 +3,12 @@
 /**
  * Zone-local clock for promotion schedules.
  * Schedules ("weekends", "17:00–20:00") are wall-clock times in the zone's
- * timezone, never the server's. Default is the UK business timezone.
+ * timezone (its country's IANA zone), never the server's. There is no default
+ * zone: a missing one is a configuration error (requireOperationalTimeZone).
  */
 
 const moment = require('moment-timezone');
-
-const DEFAULT_PROMOTION_TIME_ZONE = 'Europe/London';
-
-function resolveTimeZone(timeZone) {
-  if (timeZone && typeof timeZone === 'string' && moment.tz.zone(timeZone.trim())) {
-    return timeZone.trim();
-  }
-  return DEFAULT_PROMOTION_TIME_ZONE;
-}
+const { requireOperationalTimeZone } = require('../../utils/bookingTimeZone');
 
 /** Normalise a Date / ISO string / epoch into a valid Date, or null. */
 function toDate(value) {
@@ -26,7 +19,7 @@ function toDate(value) {
 
 /** { day: 0-6 (0=Sunday), hhmm: 'HH:MM' } in the given timezone. */
 function localClock(date, timeZone) {
-  const m = moment(toDate(date) || new Date()).tz(resolveTimeZone(timeZone));
+  const m = moment(toDate(date) || new Date()).tz(requireOperationalTimeZone(timeZone, "the zone"));
   return { day: m.day(), hhmm: m.format('HH:mm') };
 }
 
@@ -57,51 +50,55 @@ function isWithinWindow(hhmm, start, end) {
 function localDay(value, timeZone) {
   if (value == null || value === '') return null;
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return moment.tz(value, 'YYYY-MM-DD', resolveTimeZone(timeZone)).day();
+    return moment.tz(value, 'YYYY-MM-DD', requireOperationalTimeZone(timeZone, "the zone")).day();
   }
   const d = toDate(value);
-  return d ? moment(d).tz(resolveTimeZone(timeZone)).day() : null;
+  return d ? moment(d).tz(requireOperationalTimeZone(timeZone, "the zone")).day() : null;
 }
 
 const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_TIME = /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * Promotion start/end are in the business timezone (UK), whichever timezone the admin's
- * browser is in. A date-only value becomes the first / last moment of that day there; a
- * date with a 24-hour time ('2026-11-20 09:00' or '2026-11-20T09:00') is that minute there
- * (an end time includes its whole minute). A full timestamp with a zone is kept as sent.
+ * Promotion start/end are in the promotion's own time zone (promotions.timeZone: the one its
+ * zones share), whichever timezone the admin's browser is in. A date-only value becomes the
+ * first / last moment of that day there; a date with a 24-hour time ('2026-11-20 09:00' or
+ * '2026-11-20T09:00') is that minute there (an end time includes its whole minute). A full
+ * timestamp with a zone is kept as sent.
+ *
+ * @param {string|Date|null} value
+ * @param {'start'|'end'} bound
+ * @param {string} timeZone the promotion's IANA zone (needed for a day or day-and-time value)
  */
-function businessDayBound(value, bound) {
+function businessDayBound(value, bound, timeZone) {
   if (typeof value === 'string' && DAY_TIME.test(value.trim())) {
-    const m = moment.tz(value.trim().replace(' ', 'T'), 'YYYY-MM-DDTHH:mm', true, DEFAULT_PROMOTION_TIME_ZONE);
+    const tz = requireOperationalTimeZone(timeZone, "the promotion");
+    const m = moment.tz(value.trim().replace(' ', 'T'), 'YYYY-MM-DDTHH:mm', true, tz);
     if (!m.isValid()) return value;
     return (bound === 'end' ? m.seconds(59).milliseconds(0) : m.seconds(0).milliseconds(0)).toDate();
   }
   if (typeof value !== 'string' || !DAY_ONLY.test(value.trim())) return value;
-  const m = moment.tz(value.trim(), 'YYYY-MM-DD', true, DEFAULT_PROMOTION_TIME_ZONE);
+  const m = moment.tz(value.trim(), 'YYYY-MM-DD', true, requireOperationalTimeZone(timeZone, "the promotion"));
   if (!m.isValid()) return value;
   return (bound === 'end' ? m.endOf('day').milliseconds(0) : m.startOf('day')).toDate();
 }
 
-/** UK clock time "HH:mm" (24-hour) of a stored moment, or null. */
-function businessClock(value) {
+/** Clock time "HH:mm" (24-hour) of a stored moment in the promotion's zone, or null. */
+function businessClock(value, timeZone) {
   const d = toDate(value);
-  return d ? moment(d).tz(DEFAULT_PROMOTION_TIME_ZONE).format('HH:mm') : null;
+  return d ? moment(d).tz(requireOperationalTimeZone(timeZone, "the promotion")).format('HH:mm') : null;
 }
 
-/** The business-timezone calendar day ('YYYY-MM-DD') a stored moment falls on, or null. */
-function businessDay(value) {
+/** The calendar day ('YYYY-MM-DD') a stored moment falls on in the promotion's zone, or null. */
+function businessDay(value, timeZone) {
   const d = toDate(value);
-  return d ? moment(d).tz(DEFAULT_PROMOTION_TIME_ZONE).format('YYYY-MM-DD') : null;
+  return d ? moment(d).tz(requireOperationalTimeZone(timeZone, "the promotion")).format('YYYY-MM-DD') : null;
 }
 
 module.exports = {
   businessDayBound,
   businessDay,
   businessClock,
-  DEFAULT_PROMOTION_TIME_ZONE,
-  resolveTimeZone,
   toDate,
   localClock,
   normalizeHHMM,

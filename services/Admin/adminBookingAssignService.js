@@ -25,10 +25,8 @@ const {
 } = require("../../utils/bookingAgentWindow");
 const {
     getCountryContextFromZoneId,
+    resolveBookingOperationalTimeZone,
 } = require("../../utils/countryTimeZone");
-const {
-    BUSINESS_TIME_ZONE,
-} = require("../../utils/bookingTimeZone");
 const {
     computeShopOrderDistances,
     sortAssignableShops,
@@ -43,6 +41,7 @@ class AdminBookingAssignService {
             attributes: [
                 "id",
                 "zoneId",
+                "operationalTimeZone",
                 "bookingStatusId",
                 "laundryShopId",
                 "adminAssignedShopId",
@@ -262,7 +261,10 @@ class AdminBookingAssignService {
         // then most completed orders for this customer, then name.
         sortAssignableShops(shopList);
 
-        const expired = isAgentAcceptExpired(bookingRow, countryCtx.ianaTimeZone);
+        const expired = isAgentAcceptExpired(
+            bookingRow,
+            await resolveBookingOperationalTimeZone(bookingRow)
+        );
 
         return {
             bookingId: bookingRow.id,
@@ -508,12 +510,15 @@ class AdminBookingAssignService {
         };
     }
 
-    enrichBookingForAdmin(bookingInstance, timeZone, agentDeclineCount = 0) {
+    /**
+     * @param {string} operationalTimeZone the booking's operational IANA zone
+     *   (countryTimeZone.resolveBookingOperationalTimeZone); required
+     */
+    enrichBookingForAdmin(bookingInstance, operationalTimeZone, agentDeclineCount = 0) {
         const plain = bookingInstance.get
             ? bookingInstance.get({ plain: true })
             : bookingInstance;
-        const tz = timeZone || BUSINESS_TIME_ZONE;
-        const expired = isAgentAcceptExpired(plain, tz);
+        const expired = isAgentAcceptExpired(plain, operationalTimeZone);
         return {
             ...plain,
             agentAcceptExpired: expired,

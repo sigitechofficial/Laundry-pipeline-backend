@@ -1,7 +1,7 @@
 const moment = require("moment-timezone");
 const platformOperationalHoursService = require("../services/Admin/platformOperationalHoursService");
 const { normalizeTimeString } = require("./platformOperationalHours");
-const { resolveBookingTimeZone } = require("./bookingTimeZone");
+const { getCountryContextById } = require("./countryTimeZone");
 
 const DAY_NAMES = [
     "Sunday",
@@ -20,23 +20,19 @@ const AFTER_HOURS_EXPIRY_BUFFER_HOURS = 1;
  * Next platform-open instant strictly after placedAt, plus buffer (default +1 hour).
  * Used when customer books outside platform operational hours.
  *
+ * Platform hours are wall clock in the country's own zone, so that is the
+ * zone the open instant and the returned orderExpireTime are in.
+ *
  * @param {number} countryId
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
  * @param {Date|string|moment.Moment} [placedAt]
  */
-async function getAfterHoursOrderExpireTime(
-    countryId,
-    timeZone,
-    clientTimeZone,
-    placedAt = null
-) {
+async function getAfterHoursOrderExpireTime(countryId, placedAt = null) {
     const platformData = await platformOperationalHoursService.getAll(countryId);
     const platformMap = new Map(
         (platformData.days || []).map((row) => [row.dayOfWeek, row])
     );
 
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+    const { ianaTimeZone: tz } = await getCountryContextById(countryId);
     const placed = placedAt
         ? moment.tz(placedAt, tz)
         : moment.tz(tz);

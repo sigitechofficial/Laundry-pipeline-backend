@@ -5,7 +5,7 @@ const {
     bussinessInformation,
     platformOperationalHours,
 } = require("../models");
-const { resolveBookingTimeZone } = require("./bookingTimeZone");
+const { requireOperationalTimeZone } = require("./bookingTimeZone");
 const {
     getCountryContextById,
     getCountryContextFromZoneId,
@@ -32,10 +32,12 @@ function normalizeTimeString(timeValue) {
 }
 
 /**
- * Wall clock from explicit IANA zone (agent query override).
+ * Wall clock in an operational IANA zone (a country's, from data; never a
+ * client-sent zone).
+ * @param {string} timeZone operational IANA zone
  */
-function getWallClockContext(timeZone, clientTimeZone) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function getWallClockContext(timeZone) {
+    const tz = requireOperationalTimeZone(timeZone);
     const now = moment.tz(tz);
     return {
         tz,
@@ -47,16 +49,12 @@ function getWallClockContext(timeZone, clientTimeZone) {
 }
 
 /**
+ * Wall clock in the country's own IANA zone (countries.ianaTimeZone).
  * @param {number} countryId
- * @param {string} [timeZone]
- * @param {string} [clientTimeZone]
  */
-async function getWallClockContextForCountry(countryId, timeZone, clientTimeZone) {
+async function getWallClockContextForCountry(countryId) {
     const countryCtx = await getCountryContextById(countryId);
-    const tz = resolveBookingTimeZone(
-        timeZone || countryCtx.ianaTimeZone,
-        clientTimeZone
-    );
+    const tz = countryCtx.ianaTimeZone;
     const now = moment.tz(tz);
     return {
         countryId: countryCtx.countryId,
@@ -160,8 +158,8 @@ function isTimeSlotWithinHoursWindow(
     return slotFrom.isSameOrAfter(openAt) && slotTo.isSameOrBefore(closeAt);
 }
 
-function resolvePickupDayContext(collectionDate, timeZone, clientTimeZone) {
-    const tz = resolveBookingTimeZone(timeZone, clientTimeZone);
+function resolvePickupDayContext(collectionDate, timeZone) {
+    const tz = requireOperationalTimeZone(timeZone);
     const pickupDay = moment.tz(collectionDate, tz);
     return {
         tz,
@@ -174,15 +172,16 @@ function resolvePickupDayContext(collectionDate, timeZone, clientTimeZone) {
  * Whether the booking pickup window fits inside the shop's working hours
  * on the pickup day (collectionDate — not the day the customer booked).
  * Day off on pickup day (status: false) → agent does not receive the booking.
+ *
+ * @param {string} timeZone the booking's operational IANA zone (its slot times
+ *   are wall clock there)
  */
 async function isPickupWithinShopWorkingHours(
     shopUserId,
     collectionDate,
     collectionTimeFrom,
     collectionTimeTo,
-    timeZone,
-    clientTimeZone,
-    countryId
+    timeZone
 ) {
     if (!shopUserId || collectionDate == null || !collectionTimeFrom || !collectionTimeTo) {
         return false;
@@ -190,8 +189,7 @@ async function isPickupWithinShopWorkingHours(
 
     const { tz, dateStr, dayOfWeek } = resolvePickupDayContext(
         collectionDate,
-        timeZone,
-        clientTimeZone
+        timeZone
     );
 
     const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
@@ -213,12 +211,8 @@ async function isPickupWithinShopWorkingHours(
  * Platform open now for the current day in the given country.
  * @param {number} countryId
  */
-async function isPlatformOpenNow(countryId, timeZone, clientTimeZone) {
-    const { now, dayOfWeek, date, tz } = await getWallClockContextForCountry(
-        countryId,
-        timeZone,
-        clientTimeZone
-    );
+async function isPlatformOpenNow(countryId) {
+    const { now, dayOfWeek, date, tz } = await getWallClockContextForCountry(countryId);
     const platformRow = await findTodayPlatformHoursRow(dayOfWeek, countryId);
     if (!platformRow || !platformRow.status) return false;
     return isNowWithinHoursWindow(
@@ -235,7 +229,7 @@ async function isPlatformOpenNow(countryId, timeZone, clientTimeZone) {
  * @param {number} shopUserId - laundry shop owner users.id
  * @param {number} [countryId] - defaults from shop address / zone
  */
-async function isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
+async function isShopOpenNow(shopUserId, countryId) {
     if (!shopUserId) return false;
 
     let resolvedCountryId = countryId;
@@ -245,9 +239,7 @@ async function isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
     }
 
     const { tz, now, dayOfWeek, date } = await getWallClockContextForCountry(
-        resolvedCountryId,
-        timeZone,
-        clientTimeZone
+        resolvedCountryId
     );
 
     const platformRow = await findTodayPlatformHoursRow(
@@ -283,7 +275,7 @@ async function isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
 /**
  * Shop schedule open now (shop working hours only — no platform gate).
  */
-async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTimeZone) {
+async function isShopScheduleOpenNow(shopUserId, countryId) {
     if (!shopUserId) return false;
 
     let resolvedCountryId = countryId;
@@ -293,9 +285,7 @@ async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTime
     }
 
     const { tz, now, dayOfWeek, date } = await getWallClockContextForCountry(
-        resolvedCountryId,
-        timeZone,
-        clientTimeZone
+        resolvedCountryId
     );
 
     const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
@@ -315,26 +305,19 @@ async function isShopScheduleOpenNow(shopUserId, countryId, timeZone, clientTime
  * When pickup is provided, it must fall within working hours on the pickup day
  * (collectionDate). Day off on that day blocks the booking for that agent.
  */
-async function isShopEligibleForBroadcast(
-    shopUserId,
-    countryId,
-    timeZone,
-    clientTimeZone,
-    pickup = null
-) {
+async function isShopEligibleForBroadcast(shopUserId, countryId, pickup = null) {
     if (
         pickup?.collectionDate != null &&
         pickup?.collectionTimeFrom &&
         pickup?.collectionTimeTo
     ) {
+        const { ianaTimeZone } = await getCountryContextById(countryId);
         const pickupOk = await isPickupWithinShopWorkingHours(
             shopUserId,
             pickup.collectionDate,
             pickup.collectionTimeFrom,
             pickup.collectionTimeTo,
-            timeZone,
-            clientTimeZone,
-            countryId
+            ianaTimeZone
         );
         if (!pickupOk) {
             return false;
@@ -345,22 +328,18 @@ async function isShopEligibleForBroadcast(
         return true;
     }
 
-    const platformOpen = await isPlatformOpenNow(
-        countryId,
-        timeZone,
-        clientTimeZone
-    );
+    const platformOpen = await isPlatformOpenNow(countryId);
     if (!platformOpen) {
         return false;
     }
 
-    return isShopOpenNow(shopUserId, countryId, timeZone, clientTimeZone);
+    return isShopOpenNow(shopUserId, countryId);
 }
 
 /**
  * At least one shop in zone can receive orders (app online or schedule open).
  */
-async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
+async function isAnyShopOpenInZone(zoneId) {
     const countryCtx = await getCountryContextFromZoneId(zoneId);
 
     const shops = await addressDb.findAll({
@@ -371,19 +350,13 @@ async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
         attributes: ["userId"],
     });
 
-    const resolvedTz = timeZone || countryCtx.ianaTimeZone;
 
     for (const shop of shops) {
         if (await isAgentOnline(shop.userId)) {
             return true;
         }
         if (
-            await isShopOpenNow(
-                shop.userId,
-                countryCtx.countryId,
-                resolvedTz,
-                clientTimeZone
-            )
+            await isShopOpenNow(shop.userId, countryCtx.countryId)
         ) {
             return true;
         }
@@ -394,7 +367,7 @@ async function isAnyShopOpenInZone(zoneId, timeZone, clientTimeZone) {
 /**
  * Shop owner user IDs in zone that can receive orders now.
  */
-async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
+async function getOpenShopUserIdsInZone(zoneId) {
     const countryCtx = await getCountryContextFromZoneId(zoneId);
 
     const shops = await addressDb.findAll({
@@ -405,7 +378,6 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
         attributes: ["userId"],
     });
 
-    const resolvedTz = timeZone || countryCtx.ianaTimeZone;
     const openIds = new Set();
 
     for (const shop of shops) {
@@ -414,12 +386,7 @@ async function getOpenShopUserIdsInZone(zoneId, timeZone, clientTimeZone) {
             continue;
         }
         if (
-            await isShopOpenNow(
-                shop.userId,
-                countryCtx.countryId,
-                resolvedTz,
-                clientTimeZone
-            )
+            await isShopOpenNow(shop.userId, countryCtx.countryId)
         ) {
             openIds.add(shop.userId);
         }

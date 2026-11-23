@@ -31,11 +31,11 @@ const { chargeOffSession } = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
 const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
 const { isShopOpenNow, isAnyShopOpenInZone, isPlatformOpenNow, isShopEligibleForBroadcast } = require('../../utils/shopWorkingHours');
+const { getOrderExpireTime } = require('../../utils/bookingTimeZone');
 const {
-    getOrderExpireTime,
-    BUSINESS_TIME_ZONE,
-} = require('../../utils/bookingTimeZone');
-const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+    getCountryContextFromZoneId,
+    resolveBookingOperationalTimeZone,
+} = require('../../utils/countryTimeZone');
 const { getAfterHoursOrderExpireTime } = require('../../utils/afterHoursBooking');
 const { sendNotification } = require('../../utils/notification');
 const activePoliciesService = require('../Admin/activePoliciesService');
@@ -152,8 +152,6 @@ async function findAvailableShopsAndNotify(bookingId, updatedBooking) {
                 await isShopEligibleForBroadcast(
                     ownerId,
                     countryCtx.countryId,
-                    countryCtx.ianaTimeZone,
-                    null,
                     {
                         collectionDate,
                         collectionTimeFrom,
@@ -318,41 +316,6 @@ class RescheduleBookingService {
         return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
     }
 
-    _resolveSourceTimeZone(timeZone) {
-        if (!timeZone || typeof timeZone !== 'string') {
-            return BUSINESS_TIME_ZONE;
-        }
-
-        const normalizedTimeZone = timeZone.trim();
-        if (!moment.tz.zone(normalizedTimeZone)) {
-            throw new ValidationError(`Unsupported timeZone: ${normalizedTimeZone}`);
-        }
-
-        return normalizedTimeZone;
-    }
-
-    _convertSlotToUtc(dateValue, timeValue, dateFieldName, timeFieldName, timeZone) {
-        const datePart = this._getDatePart(dateValue, dateFieldName);
-        const timePart = this._getTimePart(timeValue, timeFieldName);
-        const sourceTimeZone = this._resolveSourceTimeZone(timeZone);
-
-        const sourceDateTime = moment.tz(
-            `${datePart} ${timePart}`,
-            'YYYY-MM-DD HH:mm:ss',
-            sourceTimeZone
-        );
-
-        if (!sourceDateTime.isValid()) {
-            throw new ValidationError(`Invalid date/time combination for ${dateFieldName} and ${timeFieldName}`);
-        }
-
-        const utcDateTime = sourceDateTime.clone().utc();
-        return {
-            date: utcDateTime.format('YYYY-MM-DD'),
-            time: utcDateTime.format('HH:mm:ss')
-        };
-    }
-
     /**
      * Reschedule a booking
      * @param {number} bookingId
@@ -371,7 +334,6 @@ class RescheduleBookingService {
             deliveryDate,
             deliveryTimeFrom,
             deliveryTimeTo,
-            timeZone,
             rescheduleType,
         } = newSchedule;
         const isDeliveryOnlyReschedule = rescheduleType === 'delivery';
@@ -402,7 +364,7 @@ class RescheduleBookingService {
                 customerId: customerId
             },
             attributes: [
-                'id', 'customerId', 'bookingStatusId', 'zoneId',
+                'id', 'customerId', 'bookingStatusId', 'zoneId', 'operationalTimeZone',
                 'collectionDate', 'collectionTimeFrom', 'collectionTimeTo',
                 'deliveryDate', 'deliveryTimeFrom', 'deliveryTimeTo',
                 'orderAmount', 'paymentConfirmed', 'rescheduledCount', 'policySnapshot',
@@ -436,29 +398,27 @@ class RescheduleBookingService {
         }
 
         // Step 3: Validate new dates are in the future.
-        // Collection and delivery slots are UK times, whatever the phone's timezone is, so the
-        // check is always in UK time. (resolvedTz is still used for the history wall-clock.)
-        const resolvedTz = (timeZone && moment.tz.zone(timeZone.trim()))
-            ? timeZone.trim()
-            : BUSINESS_TIME_ZONE;
+        // Collection and delivery slots are wall clock in the booking's operational zone,
+        // whatever the phone's timezone is, so the check (and the history wall-clock) is there.
+        const resolvedTz = await resolveBookingOperationalTimeZone(bookingData);
 
         const newCollectionMoment = moment.tz(
             `${normalizedCollectionDate} ${normalizedCollectionTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            BUSINESS_TIME_ZONE
+            resolvedTz
         );
 
         // For delivery-only reschedules (status 15), pickup already happened — skip collection future check
-        if (!isDeliveryOnlyReschedule && newCollectionMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
+        if (!isDeliveryOnlyReschedule && newCollectionMoment.isBefore(moment.tz(resolvedTz))) {
             throw new ValidationError("New collection date and time must be in the future");
         }
 
         const newDeliveryMoment = moment.tz(
             `${normalizedDeliveryDate} ${normalizedDeliveryTimeFrom}`,
             'YYYY-MM-DD HH:mm:ss',
-            BUSINESS_TIME_ZONE
+            resolvedTz
         );
-        if (newDeliveryMoment.isBefore(moment.tz(BUSINESS_TIME_ZONE))) {
+        if (newDeliveryMoment.isBefore(moment.tz(resolvedTz))) {
             throw new ValidationError("New delivery date and time must be in the future");
         }
 
@@ -751,7 +711,7 @@ class RescheduleBookingService {
             driverLate: feeDetails.policyApplied === 'Free Reschedule — Driver Late',
         });
 
-        // Step 9: Add booking history entry using caller/business timezone wall-clock
+        // Step 9: Add booking history entry on the booking's operational wall clock
         const rescheduleMoment = moment.tz(resolvedTz);
         await bookingHistory.create({
             bookingId,
@@ -767,20 +727,12 @@ class RescheduleBookingService {
         // so agents are notified of the updated schedule and services
         if (statusId === 1) {
             const countryCtx = await getCountryContextFromZoneId(bookingData.zoneId);
-            const platformOpenNow = await isPlatformOpenNow(
-                countryCtx.countryId,
-                resolvedTz
-            );
-            const zoneOpenNow = await isAnyShopOpenInZone(
-                bookingData.zoneId,
-                resolvedTz
-            );
+            const platformOpenNow = await isPlatformOpenNow(countryCtx.countryId);
+            const zoneOpenNow = await isAnyShopOpenInZone(bookingData.zoneId);
 
             if (!platformOpenNow) {
                 const afterHoursExpiry = await getAfterHoursOrderExpireTime(
                     countryCtx.countryId,
-                    resolvedTz,
-                    null,
                     new Date()
                 );
                 await booking.update(

@@ -34,6 +34,7 @@ const {
     parseTimeZoneFromBody,
     resolveAgentTimeZone,
 } = require('../../utils/agentTimeZone');
+const { requireShopTimeZone } = require('../../utils/countryTimeZone');
 const {
     getEffectiveShopCapabilities,
     LAUNDRY_SHOP_DRIVER_ROLE_ID,
@@ -63,6 +64,36 @@ class AgentAuthService {
     _ianaTimeZoneUpdate(data) {
         const tz = parseTimeZoneFromBody(data);
         return tz ? { ianaTimeZone: tz } : {};
+    }
+
+    /**
+     * The shop's own operational zone for the app's display clock: null only
+     * while the shop has no address yet (nothing to show); a shop whose country
+     * has no valid zone is a configuration error and surfaces as such.
+     * @param {number} shopOwnerId
+     */
+    async _shopDisplayTimeZone(shopOwnerId) {
+        return this._shopDisplayTimeZoneOf(
+            await addressDb.findOne({
+                where: { userId: shopOwnerId, addressType: 'LaundaryShopAddress' },
+                attributes: ['countryId', 'zoneId'],
+                order: [['id', 'ASC']],
+            })
+        );
+    }
+
+    async _shopDisplayTimeZoneOf(shopAddress) {
+        return shopAddress ? requireShopTimeZone(shopAddress) : null;
+    }
+
+    /**
+     * The app's display zone (resolveAgentTimeZone): the shop's zone is looked up only when
+     * neither the device nor an earlier sign-in gave one, so it never blocks a sign-in that
+     * does not need it.
+     */
+    async _agentDisplayTimeZone(data, savedIanaTimeZone, shopTimeZoneOf) {
+        const fromDeviceOrSaved = resolveAgentTimeZone(data, savedIanaTimeZone, null);
+        return fromDeviceOrSaved || resolveAgentTimeZone(data, null, await shopTimeZoneOf());
     }
 
     async _getUserIanaTimeZone(userId) {
@@ -744,11 +775,8 @@ class AgentAuthService {
             findTodayWorkingHoursRow,
         } = require('../../utils/shopWorkingHours');
         const { countActiveAssignedOrders } = require('../../utils/agentActiveOrders');
-        const { dayOfWeek } = await getWallClockContextForCountry(
-            countryCtx.countryId,
-            data.timeZone,
-            data.clientTimeZone
-        );
+        // "Today" on the shop's own clock (its country zone), not the device's.
+        const { dayOfWeek } = await getWallClockContextForCountry(countryCtx.countryId);
         const incomingToday = (data.bussinessWorkingDays || []).find(
             (d) =>
                 String(d.dayOfWeek).toLowerCase() ===
@@ -1178,7 +1206,11 @@ class AgentAuthService {
             roleId: userFind.roleId ?? null,
             classifiedAsId: userFind.classifiedAsId ?? null,
             capabilities: ownerCapabilities,
-            ianaTimeZone: resolveAgentTimeZone(data, userFind.ianaTimeZone),
+            ianaTimeZone: await this._agentDisplayTimeZone(
+                data,
+                userFind.ianaTimeZone,
+                () => this._shopDisplayTimeZone(userFind.id)
+            ),
             ...this._buildAgentApprovalConnectMeta({
                 agentApprovalStatus: userFind.agentApprovalStatus || 'approved',
                 connectAccountId,
@@ -1376,7 +1408,7 @@ class AgentAuthService {
                 userId: employeeData.employeeOff,
                 addressType: 'LaundaryShopAddress',
             },
-            attributes: ['id', 'zoneId'],
+            attributes: ['id', 'zoneId', 'countryId'],
         });
 
         const accessToken = await openAppSession({
@@ -1407,9 +1439,10 @@ class AgentAuthService {
         const connectAccountId = agentInfoRow?.connectAccountId || null;
         // Staff see the owner's shop currency.
         const currencyUnit = (await zoneCurrency(shopAddress?.zoneId)).currencySymbol;
-        const ianaTimeZone = resolveAgentTimeZone(
+        const ianaTimeZone = await this._agentDisplayTimeZone(
             data,
-            agentData?.ianaTimeZone || employeeData.ianaTimeZone
+            agentData?.ianaTimeZone || employeeData.ianaTimeZone,
+            () => this._shopDisplayTimeZoneOf(shopAddress)
         );
         const plainUser = this._withAgentTimeZone(
             this._toPlainUserForResponse(employeeData),
@@ -1635,7 +1668,11 @@ class AgentAuthService {
             }
         }
 
-        const ianaTimeZone = resolveAgentTimeZone(data, userData.ianaTimeZone);
+        const ianaTimeZone = await this._agentDisplayTimeZone(
+            data,
+            userData.ianaTimeZone,
+            () => this._shopDisplayTimeZone(userData.id)
+        );
         const plainUser = this._withAgentTimeZone(
             this._toPlainUserForResponse(userData),
             ianaTimeZone

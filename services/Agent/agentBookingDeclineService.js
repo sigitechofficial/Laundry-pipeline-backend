@@ -9,7 +9,7 @@ const {
     isBookingAcceptWindowOpen,
 } = require('../../utils/bookingTimeZone');
 const { getBookingVisibleAt, getAcceptWindowAnchor } = require('../../utils/bookingAgentWindow');
-const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const { resolveBookingOperationalTimeZone } = require('../../utils/countryTimeZone');
 
 class AgentBookingDeclineService {
     async getDeclinedBookingIdsForAgent(agentUserId) {
@@ -102,6 +102,7 @@ class AgentBookingDeclineService {
                 'laundryShopId',
                 'adminAssignedShopId',
                 'zoneId',
+                'operationalTimeZone',
                 'createdAt',
                 'agentVisibleAt',
                 'orderExpireTime',
@@ -150,13 +151,12 @@ class AgentBookingDeclineService {
 
         const acceptWindowStart = getAcceptWindowAnchor(bookingRow);
 
-        const countryCtx = await getCountryContextFromZoneId(bookingRow.zoneId);
         if (
             !bookingRow.orderExpireTime ||
             !isBookingAcceptWindowOpen(
                 acceptWindowStart,
                 bookingRow.orderExpireTime,
-                countryCtx.ianaTimeZone
+                await resolveBookingOperationalTimeZone(bookingRow)
             )
         ) {
             throw new ValidationError('Accept window has expired for this booking');

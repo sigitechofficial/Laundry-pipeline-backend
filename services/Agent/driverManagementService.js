@@ -14,7 +14,7 @@ const {
     NotFoundError,
     ValidationError,
 } = require('../../middlewares/universalErrorHandler');
-const momentTz = require('moment-timezone');
+const { bookingWallClockNow } = require('../../utils/countryTimeZone');
 const assignmentAuditService = require('./assignmentAuditService');
 const liveTrackingRtdb = require('../../utils/liveTrackingRtdb');
 const {
@@ -24,7 +24,6 @@ const {
 /** Delivered / Completed / Cancelled / Refunded — no staff unassign. */
 const TERMINAL_UNASSIGN_STATUSES = new Set([16, 17, 19, 21]);
 
-const AGENT_BUSINESS_TIME_ZONE = "Europe/London";
 const LAUNDRY_SHOP_DRIVER_ROLE_ID = 6;
 const LAUNDRY_SHOP_MANAGER_ROLE_ID = 8;
 const ASSIGNABLE_STAFF_ROLE_IDS = [
@@ -37,17 +36,6 @@ const ASSIGNABLE_STAFF_ROLE_IDS = [
  * Shop owner assigns, unassigns, and reassigns pickup/delivery staff on bookings.
  */
 class AgentDriverManagementService {
-    _getWallClockDateTime(timeZone) {
-        const normalizedTimeZone =
-            timeZone && typeof timeZone === 'string' && momentTz.tz.zone(timeZone.trim())
-                ? timeZone.trim()
-                : AGENT_BUSINESS_TIME_ZONE;
-        const wallClock = momentTz.tz(normalizedTimeZone);
-        return {
-            date: wallClock.format('YYYY-MM-DD'),
-            time: wallClock.format('HH:mm:ss'),
-        };
-    }
 
     async _getShopContext(agentId) {
         const shopAddress = await addressDb.findOne({
@@ -118,8 +106,9 @@ class AgentDriverManagementService {
         return { field: 'driverId', label: 'pickup' };
     }
 
-    async _writeAssignmentHistory(bookingId, statusId, timeZone, clientTimeZone) {
-        const { date, time } = this._getWallClockDateTime(timeZone || clientTimeZone);
+    /** History stamp on the booking's operational clock, not the device's. */
+    async _writeAssignmentHistory(bookingId, statusId) {
+        const { date, time } = await bookingWallClockNow(bookingId);
         await bookingHistory.create({
             date,
             time,
@@ -267,8 +256,6 @@ class AgentDriverManagementService {
         assignmentType,
         agentId,
         actedBy,
-        timeZone,
-        clientTimeZone,
     }) {
         const { field, label } = this._assignmentField(assignmentType);
         const fromUserId =
@@ -281,12 +268,7 @@ class AgentDriverManagementService {
         // Keep in-memory row in sync for multi-leg assigns
         bookingRow[field] = staff.id;
 
-        await this._writeAssignmentHistory(
-            bookingId,
-            bookingRow.bookingStatusId,
-            timeZone,
-            clientTimeZone
-        );
+        await this._writeAssignmentHistory(bookingId, bookingRow.bookingStatusId);
 
         await assignmentAuditService.recordEvent({
             bookingId,
@@ -323,8 +305,6 @@ class AgentDriverManagementService {
             driverId,
             staffId,
             assignmentType = 'pickup',
-            timeZone,
-            clientTimeZone,
             alsoAssignDelivery,
         } = data;
 
@@ -365,8 +345,6 @@ class AgentDriverManagementService {
                     assignmentType: leg,
                     agentId,
                     actedBy,
-                    timeZone,
-                    clientTimeZone,
                 })
             );
         }
@@ -414,8 +392,6 @@ class AgentDriverManagementService {
         const {
             bookingId,
             assignmentType = 'pickup',
-            timeZone,
-            clientTimeZone,
         } = data;
         if (!bookingId) {
             throw new ValidationError('bookingId is required');
@@ -472,12 +448,7 @@ class AgentDriverManagementService {
             { where: { id: bookingId } }
         );
 
-        await this._writeAssignmentHistory(
-            bookingId,
-            bookingRow.bookingStatusId,
-            timeZone,
-            clientTimeZone
-        );
+        await this._writeAssignmentHistory(bookingId, bookingRow.bookingStatusId);
 
         const auditSource = opts.selfOnly === true ? 'self_return' : 'manual';
         await assignmentAuditService.recordEvent({
@@ -536,8 +507,6 @@ class AgentDriverManagementService {
             bookingId,
             staffId,
             assignmentType = 'pickup',
-            timeZone,
-            clientTimeZone,
             alsoAssignDelivery,
         } = data;
         return this.assignBookingStaff(
@@ -545,8 +514,6 @@ class AgentDriverManagementService {
                 bookingId,
                 staffId: staffId != null ? staffId : agentId,
                 assignmentType,
-                timeZone,
-                clientTimeZone,
                 alsoAssignDelivery,
             },
             agentId,

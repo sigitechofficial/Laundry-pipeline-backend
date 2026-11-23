@@ -462,21 +462,19 @@ async function applyAssignmentVisibility({
   deliveryDate,
   deliveryTimeFrom,
   deliveryTimeTo,
-  fallbackTimeZone,
 }) {
   const runtimeSettings = require('../Admin/runtimeSettingsService');
   const customerOrderService = require('./customerOrderService');
+  // The zone's country zone: the same operational zone the booking was created with.
   const resolvedCountry = await getCountryContextFromZoneId(zoneId);
-  const resolvedTz = fallbackTimeZone || resolvedCountry?.ianaTimeZone || 'Europe/London';
+  const resolvedTz = resolvedCountry.ianaTimeZone;
 
-  const platformOpen = await isPlatformOpenNow(resolvedCountry.countryId, resolvedTz);
-  const zoneOpen = platformOpen && (await isAnyShopOpenInZone(zoneId, resolvedTz));
+  const platformOpen = await isPlatformOpenNow(resolvedCountry.countryId);
+  const zoneOpen = platformOpen && (await isAnyShopOpenInZone(zoneId));
 
   if (!platformOpen) {
     const afterHoursExpiry = await getAfterHoursOrderExpireTime(
       resolvedCountry.countryId,
-      resolvedTz,
-      null,
       new Date()
     );
     await booking.update(
@@ -527,7 +525,6 @@ async function applyAssignmentVisibility({
         deliveryTimeFrom,
         deliveryTimeTo,
         excludeBookingId: bookingId,
-        timeZone: resolvedTz,
       })
     : { shop: null, skipReason: SKIP_REASONS.DISABLED };
   const preferredShop = preferredResult.shop;
@@ -619,8 +616,7 @@ async function applyAssignmentVisibility({
     deliveryDate,
     deliveryTimeTo,
     deliveryTimeFrom,
-    servicesPayload,
-    resolvedTz
+    servicesPayload
   );
 
   if (!result?.notifiedCount) {
@@ -661,7 +657,6 @@ async function notifyCustomerRecurringCreated(created) {
 async function generateNextBookingFromCompleted({
   bookingId,
   actorUserId = null,
-  timeZone = null,
 } = {}) {
   const sourceBookingId = Number(bookingId);
   if (!Number.isFinite(sourceBookingId) || sourceBookingId <= 0) {
@@ -788,7 +783,8 @@ async function generateNextBookingFromCompleted({
         paymentMethodId,
         setupIntentId: null,
         paymentIntentId: null,
-        operationalTimeZone: source.operationalTimeZone || timeZone || null,
+        // The new order's slots are wall clock in its zone's country zone.
+        operationalTimeZone: (await getCountryContextFromZoneId(source.zoneId)).ianaTimeZone,
         customerLocalTimeZone: source.customerLocalTimeZone || null,
         recurringPlanId: plan?.id || null,
         recurringSourceBookingId: source.id,
@@ -949,7 +945,6 @@ async function generateNextBookingFromCompleted({
       deliveryDate: created.deliveryDate,
       deliveryTimeFrom: created.deliveryTimeFrom,
       deliveryTimeTo: created.deliveryTimeTo,
-      fallbackTimeZone: created.operationalTimeZone || timeZone,
     });
 
     console.log(

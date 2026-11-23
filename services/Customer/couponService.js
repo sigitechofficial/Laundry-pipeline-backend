@@ -3,6 +3,7 @@
 const { coupon, couponRedemption } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { getCouponLifecycle } = require('../../utils/couponValidity');
+const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
 const { bookingCurrency } = require('../../utils/zoneCurrency');
 const {
     calcDiscount,
@@ -20,7 +21,13 @@ const {
  * - Pay Now / Stripe hold never reduced
  */
 class CouponService {
-    async _loadRedeemableCoupon(code, userId) {
+    /**
+     * @param {string} code
+     * @param {number} userId
+     * @param {number} zoneId the booking's zone: its country's calendar day is
+     *   the "today" the coupon's start / expiry dates are checked against
+     */
+    async _loadRedeemableCoupon(code, userId, zoneId) {
         if (!code || typeof code !== 'string') {
             throw new ValidationError('Coupon code is required');
         }
@@ -33,7 +40,15 @@ class CouponService {
             throw new NotFoundError('Coupon code is invalid or inactive');
         }
 
-        const lifecycle = getCouponLifecycle(couponData);
+        this._assertZoneAllowed(couponData, zoneId);
+        if (zoneId == null || zoneId === '') {
+            throw new ValidationError(
+                'Choose a collection address in a valid zone to apply this coupon.'
+            );
+        }
+        const { ianaTimeZone } = await getCountryContextFromZoneId(zoneId);
+
+        const lifecycle = getCouponLifecycle(couponData, ianaTimeZone);
         if (lifecycle === 'scheduled') {
             throw new ValidationError('This coupon is not yet active');
         }
@@ -82,8 +97,7 @@ class CouponService {
      * @param {number} [options.zoneId]
      */
     async validateCoupon(code, laundryCartAmount, userId, options = {}) {
-        const couponData = await this._loadRedeemableCoupon(code, userId);
-        this._assertZoneAllowed(couponData, options.zoneId);
+        const couponData = await this._loadRedeemableCoupon(code, userId, options.zoneId);
 
         const laundry = roundMoney(laundryCartAmount);
         const zoneIds = parseZoneIds(couponData.zoneIds);
