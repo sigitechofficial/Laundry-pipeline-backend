@@ -316,7 +316,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
 
     console.log("🚀 ~ sendNotification ~ tokens:", tokens);
 
-    const { isValidFcmRegistrationToken } = require('./fcmToken');
+    const { isValidFcmRegistrationToken, isStaleTokenError } = require('./fcmToken');
     const validTokenRows = (tokens || []).filter((t) =>
       isValidFcmRegistrationToken(t.tokenId)
     );
@@ -372,12 +372,16 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       }));
 
     const invalidTokens = failedTokens
-      .filter(item =>
-        item.code === 'messaging/registration-token-not-registered' ||
-        item.code === 'messaging/invalid-registration-token' ||
-        item.code === 'messaging/invalid-argument'
-      )
+      .filter(item => isStaleTokenError(item))
       .map(item => item.token);
+    const keptFailures = failedTokens.filter(item => !isStaleTokenError(item));
+    if (keptFailures.length > 0) {
+      // Not the token's fault (APNs/auth/quota/payload): keep the tokens, report the cause.
+      console.warn(
+        `[FCM] send to user ${userId} failed for ${keptFailures.length} token(s); tokens kept:`,
+        [...new Set(keptFailures.map(f => `${f.code}: ${f.message}`))].join(' | ')
+      );
+    }
 
     if (invalidTokens.length > 0) {
       await deviceToken.destroy({
