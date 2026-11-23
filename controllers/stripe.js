@@ -62,6 +62,28 @@ async function createStripeCustomer(name, email) {
     }
 }
 
+/*
+ *   Update Customer (e.g. name change before the account is verified)
+ */
+async function updateStripeCustomer(customerId, params) {
+    try {
+        await stripe.customers.update(customerId, params);
+    } catch (error) {
+        throw new customError(error.message, error.code);
+    }
+}
+
+/*
+ *   Delete Customer — compensation when a sign-up's database write fails
+ */
+async function deleteStripeCustomer(customerId) {
+    try {
+        await stripe.customers.del(customerId);
+    } catch (error) {
+        throw new customError(error.message, error.code);
+    }
+}
+
 
 //!==============================Payment Intents=========================//
 /*
@@ -1007,6 +1029,8 @@ async function createConnectAccount(email, country = 'GB') {
 
 module.exports = {
     createStripeCustomer,
+    updateStripeCustomer,
+    deleteStripeCustomer,
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
     createSetupIntent,

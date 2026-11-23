@@ -65,6 +65,47 @@ const {
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
 const { detachFromOtherUsers } = require('../../utils/deviceTokenStore');
+const db = require('../../models');
+const {
+    createUnverifiedCustomer,
+    refreshUnverifiedCustomer,
+} = require('./customerSignupPersistence');
+
+/** Real dependencies for the atomic sign-up writes (see customerSignupPersistence.js). */
+const signupDeps = () => ({
+    sequelize: db.sequelize,
+    users,
+    otpVerification,
+    deviceToken,
+    stripeApi: {
+        createCustomer: ({ name, email }) => stripe.createStripeCustomer(name, email),
+        updateCustomer: (id, params) => stripe.updateStripeCustomer(id, params),
+        deleteCustomer: (id) => stripe.deleteStripeCustomer(id),
+    },
+});
+
+/** 4-digit OTP valid for 1 minute. */
+function newSignupOtp() {
+    const requestedAt = new Date();
+    return {
+        code: otpGenerator.generate(4, {
+            lowerCaseAlphabets: false,
+            upperCaseAlphabets: false,
+            specialChars: false,
+        }),
+        requestedAt,
+        expiresAt: new Date(requestedAt.getTime() + 1 * 60 * 1000),
+    };
+}
+
+/** Sent only after the sign-up transaction committed; failure must not undo the sign-up. */
+async function sendSignupOtpEmail(email, otpCode, firstName) {
+    try {
+        await otpMail({ type: 'RegisterOTP', email, OTP: otpCode, userName: firstName });
+    } catch (mailError) {
+        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
+    }
+}
 const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
@@ -127,8 +168,6 @@ class CustomerAuthService {
             email,
             countryCode
         } = data;
-
-        console.log("🚀 ~ registerCustomerWithOTP ~ data:", data);
 
         const userfindByEmail = await users.findOne({
             where: {
@@ -198,65 +237,24 @@ class CustomerAuthService {
 
             console.log('🔄 Customer exists but not verified. Updating details and resending OTP...');
 
-            const hashedPassword = await bcrypt.hash(password, 8);
-            await users.update({
-                firstName,
-                lastName,
-                phoneNum,
-                password: hashedPassword,
-                countryCode,
-                email,
-                countryId,
-                cityId,
-                image: profileImg || userfindByEmail.image
-            }, {
-                where: { id: userfindByEmail.id }
-            });
-
-            if (firstName !== userfindByEmail.firstName) {
-                const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-                await users.update(
-                    { stripeCustomerId: stripeCustomer },
-                    { where: { id: userfindByEmail.id } }
-                );
-            }
-
-            const otp = otpGenerator.generate(4, {
-                lowerCaseAlphabets: false,
-                upperCaseAlphabets: false,
-                specialChars: false
-            });
-
-            try {
-                await otpMail({
-                    type: 'RegisterOTP',
+            // Details, Stripe record and OTP are refreshed atomically; the existing Stripe
+            // customer is renamed rather than replaced (no orphan customers).
+            const otp = newSignupOtp();
+            const { otpRow, stripeCustomerId } = await refreshUnverifiedCustomer(signupDeps(), userfindByEmail, {
+                profile: {
+                    firstName,
+                    lastName,
+                    phoneNum,
+                    countryCode,
                     email,
-                    OTP: otp,
-                    userName: firstName
-                });
-            } catch (mailError) {
-                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-            }
-
-            const dt = new Date();
-            const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
-
-            if (userfindByEmail.otpVerification && userfindByEmail.otpVerification.id) {
-                await otpVerification.update({
-                    OTP: otp,
-                    reqAt: dt,
-                    expirtAt: expirationTime
-                }, {
-                    where: { userId: userfindByEmail.id }
-                });
-            } else {
-                await otpVerification.create({
-                    OTP: otp,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                    userId: userfindByEmail.id
-                });
-            }
+                    countryId,
+                    cityId,
+                    image: profileImg || userfindByEmail.image,
+                },
+                passwordHash: await bcrypt.hash(password, 8),
+                otp,
+            });
+            await sendSignupOtpEmail(email, otp.code, firstName);
 
             if (dvToken) {
                 await _refreshDeviceToken(userfindByEmail.id, dvToken);
@@ -276,87 +274,39 @@ class CustomerAuthService {
                 );
             }
 
-            const updatedOtp = await otpVerification.findOne({
-                where: { userId: userfindByEmail.id }
-            });
-
-            const refreshedUser = await users.findByPk(userfindByEmail.id, {
-                attributes: ['stripeCustomerId']
-            });
-
             return {
-                otpId: updatedOtp.id,
+                otpId: otpRow.id,
                 userId: userfindByEmail.id,
-                stripeCustomerId: refreshedUser?.stripeCustomerId || null,
+                stripeCustomerId: stripeCustomerId || null,
                 accessToken,
                 message: 'User details updated. New OTP sent to your email.'
             };
         }
 
-        // Create new user
-        const userTypeId = 2;
-        const hashedPassword = await bcrypt.hash(password, 8);
-
-        const userCreate = await users.create({
-            email,
-            firstName,
-            lastName,
-            phoneNum,
-            userTypeId,
-            password: hashedPassword,
-            status: true,
-            countryCode
-        });
-
-        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-        console.log('🚀 ~ registerCustomerWithOTP ~ stripeCustomer:', stripeCustomer);
-
-        const otp = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false
-        });
-
-        try {
-            await otpMail({
-                type: 'RegisterOTP',
+        // New customer: Stripe customer, user, OTP and device token are created
+        // all-or-nothing (a Stripe or database failure leaves no partial account).
+        const otp = newSignupOtp();
+        const { user, otpRow, stripeCustomerId } = await createUnverifiedCustomer(signupDeps(), {
+            profile: {
                 email,
-                OTP: otp,
-                userName: firstName
-            });
-        } catch (mailError) {
-            console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-        }
-
-        const dt = new Date();
-        const expirationTime = new Date(dt.getTime() + 1 * 60 * 1000);
-
-        const otpCreation = await otpVerification.create({
-            OTP: otp,
-            reqAt: dt,
-            expirtAt: expirationTime,
-            userId: userCreate.id
+                firstName,
+                lastName,
+                phoneNum,
+                countryCode,
+                image: profileImg,
+                countryId,
+                cityId,
+            },
+            passwordHash: await bcrypt.hash(password, 8),
+            otp,
+            dvToken,
         });
-
-        await deviceToken.create({
-            tokenId: dvToken,
-            status: true,
-            userId: userCreate.id
-        });
-
-        await users.update({
-            stripeCustomerId: stripeCustomer,
-            image: profileImg,
-            countryId,
-            cityId
-        }, {
-            where: { id: userCreate.id }
-        });
+        await sendSignupOtpEmail(email, otp.code, firstName);
 
         return {
-            otpId: otpCreation.id,
-            userId: userCreate.id,
-            stripeCustomerId: stripeCustomer
+            otpId: otpRow.id,
+            userId: user.id,
+            stripeCustomerId
         };
     }
 

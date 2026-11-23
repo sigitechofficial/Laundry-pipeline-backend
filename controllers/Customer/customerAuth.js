@@ -27,7 +27,6 @@ const { ValidationError } = require('../../middlewares/universalErrorHandler')
 */
 async function registerCustomerWithOTP(req, res) {
     const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
-    console.log("🚀 ~ registerCustomerWithOTP ~ req.body:", req.body);
 
     let profileImg = null;
     if (req.file) {
