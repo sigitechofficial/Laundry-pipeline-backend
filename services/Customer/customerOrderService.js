@@ -1719,6 +1719,22 @@ class CustomerOrderService {
             timeZone || bookingCountryCtx.ianaTimeZone || BUSINESS_TIME_ZONE;
         const customerLocalTimeZone = clientTimeZone || null;
 
+        // Only slots a shop in the zone can serve (working hours that day, takes new
+        // orders, offers these services) — the same rule the slot list uses. Without
+        // it an order could be placed that no shop can take (no_eligible_recipient).
+        const { canZoneServeSlot } = require("../../utils/servableSlots");
+        const weekdayOf = (day) => moment.utc(day, "YYYY-MM-DD").format("dddd");
+        if (!(await canZoneServeSlot(zoneId, weekdayOf(normalizedCollectionDate),
+            normalizedCollectionTimeFrom, normalizedCollectionTimeTo, { serviceIds: bookingServiceIds }))) {
+            throw new ValidationError("No shop can collect at this time. Please choose another collection slot.",
+                { code: "COLLECTION_SLOT_UNSERVABLE" });
+        }
+        if (!(await canZoneServeSlot(zoneId, weekdayOf(normalizedDeliveryDate),
+            normalizedDeliveryTimeFrom, normalizedDeliveryTimeTo, { serviceIds: bookingServiceIds }))) {
+            throw new ValidationError("No shop can deliver at this time. Please choose another delivery slot.",
+                { code: "DELIVERY_SLOT_UNSERVABLE" });
+        }
+
         const bookingData = await booking.create({
             collectionDate: normalizedCollectionDate,
             collectionTimeFrom: normalizedCollectionTimeFrom,

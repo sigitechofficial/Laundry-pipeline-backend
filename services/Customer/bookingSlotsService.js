@@ -1,6 +1,7 @@
 const moment = require("moment-timezone");
 const { ValidationError } = require("../../middlewares/universalErrorHandler");
 const platformOperationalHoursService = require("../Admin/platformOperationalHoursService");
+const { slotFitsAnyWindow, servableShopWindows } = require("../../utils/servableSlots");
 const {
   getCountryContextById,
   getCountryContextFromZoneId,
@@ -77,6 +78,7 @@ async function buildSlots({
   slotDurationMinutes = 60,
   startAfterHours = 2,
   fromDate = null,
+  shopWindowsByDay = null,
 }) {
   const cid = Number(countryId);
   if (!Number.isInteger(cid) || cid < 1) {
@@ -153,6 +155,18 @@ async function buildSlots({
             .isSameOrBefore(closeMoment)
         ) {
           const slotEnd = slotStart.clone().add(slotDurationMinutes, "minutes");
+          // Zone known: only slots a shop that can take the order works in full.
+          if (
+            shopWindowsByDay &&
+            !slotFitsAnyWindow(
+              format24h(slotStart),
+              format24h(slotEnd),
+              shopWindowsByDay.get(dayOfWeek.toLowerCase()) || []
+            )
+          ) {
+            slotStart = slotEnd.clone();
+            continue;
+          }
           timeSlots.push({
             start: format12h(slotStart),
             end: format12h(slotEnd),
@@ -240,6 +254,16 @@ class BookingSlotsService {
         ? 24
         : 2;
 
+    // With the customer's zone, offer only times a shop there can serve (its
+    // working hours that day); without one (browsing before an address), the
+    // platform's hours — the zone decides at booking, which checks again.
+    const zone = zoneId ? Number(zoneId) : null;
+    const serviceIds = String(data.serviceIds || "")
+      .split(",")
+      .map((v) => Number(v))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const servable = zone ? await servableShopWindows(zone, { serviceIds }) : null;
+
     const slots = await buildSlots({
       countryId: resolvedCountryId,
       clientTimeZone,
@@ -247,6 +271,7 @@ class BookingSlotsService {
       slotDurationMinutes: 60,
       startAfterHours: resolvedStartAfterHours,
       fromDate: fromDate || null,
+      shopWindowsByDay: servable ? servable.windowsByDay : null,
     });
 
     return {
@@ -254,6 +279,9 @@ class BookingSlotsService {
       data: {
         type: isDelivery ? "delivery" : "collection",
         ...slots,
+        // "shops" = filtered by the zone's shops' hours; "platform" = no zone given.
+        slotSource: servable ? "shops" : "platform",
+        ...(servable && servable.shopCount === 0 ? { unavailableReason: "no_shop_in_zone" } : {}),
       },
     };
   }
