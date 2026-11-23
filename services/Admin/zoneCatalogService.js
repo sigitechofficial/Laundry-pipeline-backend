@@ -24,6 +24,7 @@ const {
   applyBestDiscount,
   loadActiveDiscountRules,
   decoratePriceWithDiscount,
+  catalogCurrencySymbol,
 } = require("./serviceDiscountService");
 const {
   attachKey,
@@ -258,6 +259,7 @@ async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
   }
 
   const discountRules = await loadActiveDiscountRules();
+  const currencySymbol = discountRules.length ? await catalogCurrencySymbol(zoneId) : '';
   const sid = serviceId != null ? Number(serviceId) : null;
 
   const out = [];
@@ -275,7 +277,7 @@ async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
           subCategoryId: Number(priced.id),
           categoryId: catId,
           serviceId: sid || undefined,
-        });
+        }, currencySymbol);
       });
     if (!items.length) continue;
     out.push({
@@ -533,10 +535,11 @@ async function applyToAddOnRows(rows, zoneId, { subCategoryId } = {}) {
       });
   }
 
+  const currencySymbol = discountRules.length ? await catalogCurrencySymbol(zoneId) : '';
   return filtered.map((plain) =>
     decoratePriceWithDiscount(plain, discountRules, zoneId, {
       addOnServiceId: Number(plain.id),
-    })
+    }, currencySymbol)
   );
 }
 

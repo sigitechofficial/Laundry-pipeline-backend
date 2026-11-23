@@ -903,7 +903,7 @@ async function getAgentSettlementDetail(agentUserId, options = {}) {
         recentActivity,
         formulas: {
             cashDue:
-                "Ledger cash due = cash collected − cash refunded − commission credited (cash + card, net of clawbacks) − cash remitted ± admin adjustments. Recording cash raises remitted and can make live due £0 — remitted history stays.",
+                "Ledger cash due = cash collected − cash refunded − commission credited (cash + card, net of clawbacks) − cash remitted ± admin adjustments. Recording cash raises remitted and can make live due 0 — remitted history stays.",
             cashInTill:
                 "Physical cash still with the agent before commission netting = collected − refunded − remitted.",
             payable:

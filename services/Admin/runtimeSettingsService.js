@@ -143,6 +143,17 @@ const DEFINITIONS = {
     envKey: "ZONE_CATALOG_OVERRIDES",
     defaultValue: false,
   },
+  shopMinWithdrawalMinor: {
+    type: "integer",
+    label: "Minimum shop withdrawal (minor units)",
+    description:
+      "Smallest amount a shop can withdraw, in minor units of the shop's own currency (100 = 1.00 in GBP, USD or EUR).",
+    group: "payouts",
+    envKey: "SHOP_MIN_WITHDRAWAL_MINOR",
+    defaultValue: 100,
+    min: 1,
+    max: 10000000,
+  },
   recurringMaxFailuresBeforePause: {
     type: "integer",
     label: "Recurring max generation failures",

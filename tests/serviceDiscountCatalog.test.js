@@ -143,6 +143,10 @@ const rules = [
   assert.strictEqual(r.saving, '3.00');
   assert.strictEqual(r.discountedPrice, '7.00');
   assert.strictEqual(r.appliedDiscount.name, 'Shirt £3 off');
+  // No currency given (e.g. zones in different currencies): the amount alone, no guessed symbol.
+  assert.strictEqual(r.appliedDiscount.label, '3.00 OFF');
+  const inEur = svc.pickBestDiscountFromRules(rules, 7, { serviceId: 10, categoryId: 1, subCategoryId: 55 }, 10, '€');
+  assert.strictEqual(inEur.appliedDiscount.label, '€3.00 OFF', 'flat label in the zone currency');
 }
 
 // Zone-specific rule skipped when zone mismatches

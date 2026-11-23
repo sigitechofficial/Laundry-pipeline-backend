@@ -35,6 +35,13 @@ assert.strictEqual(calcDiscount(pct10Cap20(), 100), 10);
     });
     assert.strictEqual(rejected.rejected, true);
     assert.strictEqual(rejected.discountAmt, 0);
+    assert.ok(!/\u00a3/.test(rejected.rejectReason), 'no hard-coded pound sign');
+    const inUsd = evaluateCouponAgainstLaundry({
+        couponData: flat30(),
+        laundryAmount: 30,
+        currencySymbol: '$',
+    });
+    assert.ok(/of \$\d/.test(inUsd.rejectReason), 'reason in the booking currency: ' + inUsd.rejectReason);
 }
 
 {
