@@ -193,11 +193,15 @@ class BannerService {
     const value = promo.discountValue != null ? parseFloat(promo.discountValue) : null;
     if (promo.benefitType === 'free_delivery') return { offerType: 'free_delivery', discountValue: null, maxDiscountCap: null };
     if (['fixed_price', 'bundle', 'cashback'].includes(promo.benefitType)) return null;
+    // Amounts (a flat discount, a percentage's cap) are in the promotion's currency.
+    const { currencySymbolOf } = require('../../utils/currencySymbols');
+    const currency = promo.currency ? String(promo.currency).toUpperCase() : null;
+    const money = { currency, currencySymbol: currency ? currencySymbolOf(currency).trim() : null };
     if (resolveDiscountMode(promo) === 'percent') {
       const cap = promo.maxDiscountCap != null ? parseFloat(promo.maxDiscountCap) : null;
-      return { offerType: 'percentage', discountValue: value, maxDiscountCap: cap && cap > 0 ? cap : null };
+      return { offerType: 'percentage', discountValue: value, maxDiscountCap: cap && cap > 0 ? cap : null, ...money };
     }
-    return { offerType: 'flat', discountValue: value, maxDiscountCap: null };
+    return { offerType: 'flat', discountValue: value, maxDiscountCap: null, ...money };
   }
 
   /**
