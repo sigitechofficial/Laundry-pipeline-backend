@@ -1,6 +1,87 @@
 'use strict';
 
 /** Seeds Alteration & Repair service + dedicated repair garments/options (not wash catalog). */
+
+const OPTION_DEFS = [
+  { name: 'Button resew / replace', price: 3.5, sortOrder: 1 },
+  { name: 'Zip repair / replace', price: 12, sortOrder: 2 },
+  { name: 'Hemming', price: 8, sortOrder: 3 },
+  { name: 'Seam repair', price: 7, sortOrder: 4 },
+  { name: 'Tear / hole patch', price: 10, sortOrder: 5 },
+  { name: 'Take in / let out', price: 15, sortOrder: 6 },
+  { name: 'Other alteration', price: 0, sortOrder: 7 },
+];
+
+const GARMENT_DEFS = [
+  {
+    name: 'Shirt',
+    sortOrder: 1,
+    options: [
+      'Button resew / replace',
+      'Seam repair',
+      'Take in / let out',
+      'Other alteration',
+    ],
+  },
+  {
+    name: 'Trouser / Pants',
+    sortOrder: 2,
+    options: [
+      'Zip repair / replace',
+      'Hemming',
+      'Seam repair',
+      'Take in / let out',
+      'Other alteration',
+    ],
+  },
+  {
+    name: 'Dress',
+    sortOrder: 3,
+    options: [
+      'Zip repair / replace',
+      'Hemming',
+      'Seam repair',
+      'Take in / let out',
+      'Other alteration',
+    ],
+  },
+  {
+    name: 'Jacket / Coat',
+    sortOrder: 4,
+    options: [
+      'Button resew / replace',
+      'Zip repair / replace',
+      'Seam repair',
+      'Tear / hole patch',
+      'Other alteration',
+    ],
+  },
+  {
+    name: 'Skirt',
+    sortOrder: 5,
+    options: [
+      'Zip repair / replace',
+      'Hemming',
+      'Seam repair',
+      'Take in / let out',
+      'Other alteration',
+    ],
+  },
+  {
+    name: 'Other garment',
+    sortOrder: 6,
+    options: [
+      'Button resew / replace',
+      'Zip repair / replace',
+      'Hemming',
+      'Seam repair',
+      'Tear / hole patch',
+      'Take in / let out',
+      'Other alteration',
+    ],
+  },
+];
+
 module.exports = {
   async up(queryInterface) {
     const now = new Date();
@@ -33,19 +114,10 @@ module.exports = {
     const garmentCount = Number(garmentCountRows?.[0]?.cnt || 0);
     if (garmentCount > 0) return;
 
-    const optionDefs = [
-      { name: 'Button resew / replace', price: 3.5, sortOrder: 1 },
-      { name: 'Zip repair / replace', price: 12, sortOrder: 2 },
-      { name: 'Hemming', price: 8, sortOrder: 3 },
-      { name: 'Seam repair', price: 7, sortOrder: 4 },
-      { name: 'Tear / hole patch', price: 10, sortOrder: 5 },
-      { name: 'Take in / let out', price: 15, sortOrder: 6 },
-      { name: 'Other alteration', price: 0, sortOrder: 7 },
-    ];
 
     await queryInterface.bulkInsert(
       'repairOptions',
-      optionDefs.map((o) => ({
+      OPTION_DEFS.map((o) => ({
         name: o.name,
         description: null,
         price: o.price,
@@ -62,79 +134,10 @@ module.exports = {
     );
     const optionIdByName = new Map(options.map((o) => [o.name, o.id]));
 
-    const garmentDefs = [
-      {
-        name: 'Shirt',
-        sortOrder: 1,
-        options: [
-          'Button resew / replace',
-          'Seam repair',
-          'Take in / let out',
-          'Other alteration',
-        ],
-      },
-      {
-        name: 'Trouser / Pants',
-        sortOrder: 2,
-        options: [
-          'Zip repair / replace',
-          'Hemming',
-          'Seam repair',
-          'Take in / let out',
-          'Other alteration',
-        ],
-      },
-      {
-        name: 'Dress',
-        sortOrder: 3,
-        options: [
-          'Zip repair / replace',
-          'Hemming',
-          'Seam repair',
-          'Take in / let out',
-          'Other alteration',
-        ],
-      },
-      {
-        name: 'Jacket / Coat',
-        sortOrder: 4,
-        options: [
-          'Button resew / replace',
-          'Zip repair / replace',
-          'Seam repair',
-          'Tear / hole patch',
-          'Other alteration',
-        ],
-      },
-      {
-        name: 'Skirt',
-        sortOrder: 5,
-        options: [
-          'Zip repair / replace',
-          'Hemming',
-          'Seam repair',
-          'Take in / let out',
-          'Other alteration',
-        ],
-      },
-      {
-        name: 'Other garment',
-        sortOrder: 6,
-        options: [
-          'Button resew / replace',
-          'Zip repair / replace',
-          'Hemming',
-          'Seam repair',
-          'Tear / hole patch',
-          'Take in / let out',
-          'Other alteration',
-        ],
-      },
-    ];
 
     await queryInterface.bulkInsert(
       'repairGarments',
-      garmentDefs.map((g) => ({
+      GARMENT_DEFS.map((g) => ({
         name: g.name,
         description: null,
         status: true,
@@ -151,7 +154,7 @@ module.exports = {
     const garmentIdByName = new Map(garments.map((g) => [g.name, g.id]));
 
     const links = [];
-    for (const g of garmentDefs) {
+    for (const g of GARMENT_DEFS) {
       const garmentId = garmentIdByName.get(g.name);
       for (const optName of g.options) {
         const optionId = optionIdByName.get(optName);
@@ -169,9 +172,18 @@ module.exports = {
     }
   },
 
+  /** Removes only the seeded garments/options (and their links); admin-created ones stay. */
   async down(queryInterface) {
-    await queryInterface.bulkDelete('repairGarmentOptions', null, {});
-    await queryInterface.bulkDelete('repairGarments', null, {});
-    await queryInterface.bulkDelete('repairOptions', null, {});
+    const garmentNames = GARMENT_DEFS.map((g) => g.name);
+    const optionNames = OPTION_DEFS.map((o) => o.name);
+    await queryInterface.sequelize.query(
+      `DELETE gro FROM repairGarmentOptions gro
+         JOIN repairGarments g ON g.id = gro.repairGarmentId
+         JOIN repairOptions o ON o.id = gro.repairOptionId
+        WHERE g.name IN (:garmentNames) AND o.name IN (:optionNames)`,
+      { replacements: { garmentNames, optionNames } }
+    );
+    await queryInterface.bulkDelete('repairGarments', { name: garmentNames });
+    await queryInterface.bulkDelete('repairOptions', { name: optionNames });
   },
 };

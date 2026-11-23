@@ -21,3 +21,40 @@ jobs:
         run: |
           npm ci
           npm test
+
+  # A database built only by migrations must contain every column the models use.
+  # Catches columns that were only ever created by sequelize.sync().
+  schema-drift:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+          MYSQL_DATABASE: laundry_pipeline_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci_root_password"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Write CI database config
+        run: |
+          node -e '
+            const db = { username: "root", password: "ci_root_password", database: "laundry_pipeline_ci",
+              host: "127.0.0.1", port: 3306, dialect: "mysql", logging: false,
+              dialectOptions: { decimalNumbers: true } };
+            require("fs").writeFileSync("config/config.json",
+              JSON.stringify({ development: db, test: db, production: db }, null, 2));'
+      - name: Migrate a fresh database
+        run: npx sequelize-cli db:migrate
+      - name: Check models against migrated schema
+        run: npm run db:check-drift

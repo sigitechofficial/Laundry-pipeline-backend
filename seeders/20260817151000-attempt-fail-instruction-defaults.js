@@ -124,8 +124,13 @@ module.exports = {
     await queryInterface.bulkInsert('attempt_fail_instructions', rows);
   },
 
+  /** Removes only the two global default sets (and their items); zone sets stay. */
   async down(queryInterface) {
-    await queryInterface.bulkDelete('attempt_fail_instructions', null, {});
-    await queryInterface.bulkDelete('attempt_fail_instruction_sets', null, {});
+    const where = `zoneId IS NULL AND name IN ('Default pickup fail checklist', 'Default delivery fail checklist')`;
+    await queryInterface.sequelize.query(
+      `DELETE FROM attempt_fail_instructions
+        WHERE setId IN (SELECT id FROM (SELECT id FROM attempt_fail_instruction_sets WHERE ${where}) s)`
+    );
+    await queryInterface.sequelize.query(`DELETE FROM attempt_fail_instruction_sets WHERE ${where}`);
   },
 };

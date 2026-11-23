@@ -143,16 +143,24 @@ npm run dev
 
 Leave that terminal open. You should see **Server running in DEVELOPMENT (local)** on port **3010**.
 
-### First time only — database schema (+ optional seeds)
+### First time only — database schema, reference data, local admin
 
-In a **second** terminal (with MySQL already up):
+In a **second** terminal (with MySQL already up), from this repo:
 
 ```bash
-cd /Users/mac/Desktop/faisalProjects/laundryAll/Laundry-pipeline-backend
-npm run db:setup
-# optional demo/reference data:
-npm run db:seed
+npm run db:setup          # create DB + run all migrations
+npm run db:check-drift    # optional: confirms models match the migrated schema
+npm run db:seed           # reference data (user types, statuses, units, catalog, permissions)
+NODE_ENV=development LOCAL_ADMIN_EMAIL=you@example.com LOCAL_ADMIN_PASSWORD='choose-one' \
+  npm run db:provision:local-admin   # creates (or resets) your local super admin
 ```
+
+- Seeders are **idempotent**: running `db:seed` again inserts only what is missing, and
+  `db:seed:undo:all` removes only seeded rows (never admin-created data).
+- No admin account is seeded — a seeded account would ship a known password. The provision
+  script creates it, and only runs with `NODE_ENV=development` against a local database.
+- Never use `sequelize.sync()` to fix a missing column: add a migration. CI fails the
+  `schema-drift` job when a model uses a column no migration creates.
 
 ---
 
@@ -282,7 +290,9 @@ Optional health probe via API: **http://localhost:3010/health/redis**
 | `npm run dev` | Start API with nodemon |
 | `npm run db:setup` | Create DB (if needed) + run migrations |
 | `npm run db:setup:reset` | **Local only** wipe + remigrate |
-| `npm run db:seed` | Run seeders |
+| `npm run db:seed` | Run seeders (idempotent; safe to re-run) |
+| `npm run db:check-drift` | Fail if a model uses a table/column that migrations do not create |
+| `npm run db:provision:local-admin` | Create or reset the local super admin (dev + local DB only) |
 | `npm test` | Run included unit tests |
 
 ---

@@ -20,9 +20,17 @@ const DRIVER_ROLE_ID = 6;
 const ZONE_ADMIN_ROLE_ID = 7;
 const MANAGER_ROLE_ID = 8;
 
+// Permissions are rows per feature, so the feature catalog must exist first. Seeders run
+// in filename order and the catalog seeder sorts after this one; ensure it explicitly
+// (it is idempotent) instead of relying on order — otherwise a single db:seed:all left
+// every system role without permissions.
+const featureCatalogSeed = require('./20260914121000-admin-feature-catalog');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
-  async up(queryInterface) {
+  async up(queryInterface, Sequelize) {
+    await featureCatalogSeed.up(queryInterface, Sequelize);
+
     const [features] = await queryInterface.sequelize.query(
       `SELECT id, featureOf FROM features
        WHERE status = 1
