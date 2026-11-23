@@ -217,7 +217,7 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
         // Same format booking creation writes (getOrderExpireTime): shop-time HH:mm:ss.
         orderExpireTime: placedAt.clone().add(acceptWindowMinutes, 'minutes').format('HH:mm:ss'),
         paymentConfirmed: true,
-        partialPayment: true,
+        partialPayment: spec.pay !== 'cash', // as createBooking: cash prepays nothing
         paymentType: spec.pay,
         balanceCollectedVia: balancePaid ? spec.pay : null,
         totalItems: pickedUp ? spec.items || 0 : 0,
@@ -298,7 +298,7 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
         total: invoiced ? total : upfront,
         agentEarning: invoiced ? money((effectiveLaundry * agentPercent) / 100) : null,
         zoneAdminCommission: invoiced ? money((effectiveLaundry * platformPercent) / 100) : null,
-        paymentStatus: !invoiced || balancePaid ? 'Paid' : 'Pending',
+        paymentStatus: balancePaid ? 'Paid' : 'Pending', // as createBooking until settled
       }, { transaction });
       await db.tip.create({ bookingId: booking.id, source: 'booking' }, { transaction });
 
