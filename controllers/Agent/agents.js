@@ -6189,6 +6189,11 @@ exports.printLabelData = async (req, res) => {
     return ResponseHelper.success(res, "Print Label Data", {
         bookingId: bookingData.id,
         orderTrackId: bookingData.orderTrackId,
+        // Tag dates: "IN" = collection day, header = ready (delivery) day. Calendar
+        // dates (stored as UTC midnight), so every printer — the shop app's own or a
+        // job sent from the admin panel — prints the order's days, not "today".
+        collectionDate: bookingData.collectionDate,
+        deliveryDate: bookingData.deliveryDate,
         customer: bookingData.customer,
         totalTags,
         tags
