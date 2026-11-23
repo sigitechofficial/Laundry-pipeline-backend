@@ -1,6 +1,7 @@
 "use strict";
 
 const { Op } = require("sequelize");
+const { zoneCurrency } = require('../../utils/zoneCurrency');
 const { users, booking } = require("../../models");
 const {
     ValidationError,
@@ -242,9 +243,22 @@ class CustomerPaymentMethodService {
             );
         }
 
+        // The customer's currency (their default address zone's) — the app passes it to
+        // Google Pay; null when they have no address yet (wallets are then not offered).
+        const { addressDb } = require('../../models');
+        const address = await addressDb.findOne({
+            where: { userId, isDefault: true },
+            attributes: ['id', 'zoneId'],
+            order: [['id', 'DESC']],
+        });
+        const currencyCode = address?.zoneId
+            ? (await zoneCurrency(address.zoneId)).currencyCode || null
+            : null;
+
         return {
             setupIntentId: setupIntent.id,
             clientSecret: setupIntent.client_secret,
+            currencyCode,
             stripeCustomerId,
             customerId: stripeCustomerId,
             ephemeralKeySecret,

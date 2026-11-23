@@ -25,6 +25,21 @@ function parseTimeRequiredDays(value) {
     return Math.ceil(maxNum);
 }
 
+/**
+ * Upper bound of a turnaround string in hours ("12-24 hours" → 24, "2 days" → 48);
+ * null when it states no time.
+ */
+function parseTimeRequiredHours(value) {
+    if (value == null || value === '') return null;
+    const str = String(value).trim().toLowerCase();
+    const nums = (str.match(/\d+(?:\.\d+)?/g) || [])
+        .map(Number)
+        .filter((n) => Number.isFinite(n) && n > 0);
+    if (!nums.length) return null;
+    const maxNum = Math.max(...nums);
+    return /hour|hr\b|hrs\b/.test(str) ? Math.ceil(maxNum) : Math.ceil(maxNum * 24);
+}
+
 function addDaysToIsoDate(isoDate, days) {
     if (!isoDate || typeof isoDate !== 'string') return '';
     const parts = isoDate.split('-').map(Number);
@@ -119,6 +134,7 @@ async function assertDeliveryMeetsTurnaround(
 
 module.exports = {
     parseTimeRequiredDays,
+    parseTimeRequiredHours,
     addDaysToIsoDate,
     getMinDeliveryDate,
     getDatePartOnly,

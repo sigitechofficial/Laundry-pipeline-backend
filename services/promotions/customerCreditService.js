@@ -25,6 +25,7 @@ const {
 } = require('../../models');
 const { toMinor, fromMinor } = require('./moneyUtils');
 const { zoneCurrency } = require('../../utils/zoneCurrency');
+const { warmCurrencySymbols, currencySymbolOf } = require('../../utils/currencySymbols');
 const { currencyOfCode } = require('../../utils/resolveDisplayCurrency');
 const { requireCurrencyCode } = require('../../utils/requireCurrency');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
@@ -124,18 +125,13 @@ async function restoreAllocations(entry, t) {
 // ─── Read ───────────────────────────────────────────────────────────────────
 
 /**
- * ISO code of the customer's credit: the currency of their latest credit entry; for a
- * customer without any, the currency of the zone of their default address. '' when
+ * ISO code the customer's credit is kept and spent in: their default address zone's
+ * currency (what their orders are priced in), else their latest credit's. Null when
  * neither exists — the currency is then unknown, never a platform guess.
  */
 async function customerCreditCurrency(customerId, transaction) {
-  const latest = await Entry.findOne({
-    where: { customerId },
-    attributes: ['currency'],
-    order: [['id', 'DESC']],
-    transaction,
-  });
-  if (latest?.currency) return String(latest.currency).toUpperCase();
+  // The currency the customer's orders are priced in: their default address zone's;
+  // else (no address yet) their latest credit's; null when neither exists.
   const { addressDb } = require('../../models');
   const address = await addressDb.findOne({
     where: { userId: customerId, isDefault: true },
@@ -143,30 +139,65 @@ async function customerCreditCurrency(customerId, transaction) {
     order: [['id', 'DESC']],
     transaction,
   });
-  return (await zoneCurrency(address?.zoneId)).currencyCode;
+  const zoneCode = address?.zoneId ? (await zoneCurrency(address.zoneId)).currencyCode : '';
+  if (zoneCode) return String(zoneCode).toUpperCase();
+  const latest = await Entry.findOne({
+    where: { customerId },
+    attributes: ['currency'],
+    order: [['id', 'DESC']],
+    transaction,
+  });
+  return latest?.currency ? String(latest.currency).toUpperCase() : null;
 }
 
-/** { balance, held, expiringSoon: { amount, expiresAt } | null } — held = on unpaid invoices. */
+/**
+ * Credit per currency — credit only pays invoices in its own currency, so amounts in
+ * different currencies are never added together.
+ *
+ * Top level = the customer's spendable currency (their default address zone's, else
+ * their latest credit's): { currency, currencySymbol, balance, held, expiringSoon }.
+ * `balances` lists every currency the customer holds credit in (same fields), so
+ * credit left in another zone's currency stays visible. held = on unpaid invoices.
+ */
 async function getBalance(customerId, now = new Date()) {
-  const lots = await Entry.findAll({
-    where: liveLotWhere(customerId, now),
-    attributes: ['remainingAmount', 'expiresAt', 'currency'],
-    order: [[sequelize.literal('expiresAt IS NULL'), 'ASC'], ['expiresAt', 'ASC']],
-  });
-  const balanceMinor = lots.reduce((s, l) => s + toMinor(l.remainingAmount), 0);
-  const held = await Entry.findAll({ where: { customerId, type: 'SPEND', status: 'HELD' }, attributes: ['amount', 'currency'] });
-  const heldMinor = held.reduce((s, e) => s + Math.abs(toMinor(e.amount)), 0);
+  const [lots, held] = await Promise.all([
+    Entry.findAll({
+      where: liveLotWhere(customerId, now),
+      attributes: ['remainingAmount', 'expiresAt', 'currency'],
+      order: [[sequelize.literal('expiresAt IS NULL'), 'ASC'], ['expiresAt', 'ASC']],
+    }),
+    Entry.findAll({ where: { customerId, type: 'SPEND', status: 'HELD' }, attributes: ['amount', 'currency'] }),
+  ]);
+  await warmCurrencySymbols();
   const soonLimit = new Date(now.getTime() + 30 * DAY_MS);
-  const soon = lots.filter((l) => l.expiresAt && new Date(l.expiresAt) <= soonLimit);
+  const code = (c) => (c ? String(c).toUpperCase() : null);
+
+  const byCurrency = new Map();
+  const bucket = (c) => {
+    if (!byCurrency.has(c)) byCurrency.set(c, { lots: [], heldMinor: 0 });
+    return byCurrency.get(c);
+  };
+  for (const lot of lots) bucket(code(lot.currency)).lots.push(lot);
+  for (const e of held) bucket(code(e.currency)).heldMinor += Math.abs(toMinor(e.amount));
+
+  const summarize = (currency) => {
+    const b = byCurrency.get(currency) || { lots: [], heldMinor: 0 };
+    const soon = b.lots.filter((l) => l.expiresAt && new Date(l.expiresAt) <= soonLimit);
+    return {
+      currency,
+      currencySymbol: currency ? currencySymbolOf(currency) : null,
+      balance: fromMinor(b.lots.reduce((s, l) => s + toMinor(l.remainingAmount), 0)),
+      held: fromMinor(b.heldMinor),
+      expiringSoon: soon.length
+        ? { amount: fromMinor(soon.reduce((s, l) => s + toMinor(l.remainingAmount), 0)), expiresAt: soon[0].expiresAt }
+        : null,
+    };
+  };
+
+  const spendable = code(await customerCreditCurrency(customerId));
   return {
-    balance: fromMinor(balanceMinor),
-    held: fromMinor(heldMinor),
-    // The credit's own currency; for a customer with no credit, their address zone's;
-    // null when unknown (the balance is then 0).
-    currency: lots[0]?.currency || held[0]?.currency || (await customerCreditCurrency(customerId)) || null,
-    expiringSoon: soon.length
-      ? { amount: fromMinor(soon.reduce((s, l) => s + toMinor(l.remainingAmount), 0)), expiresAt: soon[0].expiresAt }
-      : null,
+    ...summarize(spendable),
+    balances: [...byCurrency.keys()].map(summarize),
   };
 }
 

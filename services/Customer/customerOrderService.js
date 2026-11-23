@@ -44,7 +44,7 @@ const {
     repairGarment,
     repairOption,
 } = require('../../models');
-const { zoneCurrency } = require('../../utils/zoneCurrency');
+const { zoneCurrency, bookingCurrency } = require('../../utils/zoneCurrency');
 const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -52,6 +52,7 @@ const { getPublicRefundSummary } = require('../Admin/adminRefundService');
 const serviceManagementService = require('../Admin/serviceManagementService');
 const addOnServicesService = require('../Admin/addOnServicesService');
 const repairCatalogService = require('../Admin/repairCatalogService');
+const { warmCurrencySymbols, currencySymbolOf } = require('../../utils/currencySymbols');
 const dbModels = require('../../models');
 const {
     buildRepairItemsInclude,
@@ -74,7 +75,7 @@ const {
     ForbiddenError,
     ConflictError
 } = require('../../middlewares/universalErrorHandler');
-const { assertDeliveryMeetsTurnaround } = require('../../utils/turnaroundTime');
+const { assertDeliveryMeetsTurnaround, parseTimeRequiredHours } = require('../../utils/turnaroundTime');
 const { sumActiveBookingServicesSubtotal, computePhysicalTotalItems } = require('../../utils/invoiceLineTotals');
 const {
     getFrozenCustomerDeclaredServices,
@@ -3720,9 +3721,11 @@ class CustomerOrderService {
             return json;
         });
 
+        // Prices on the on-hold items are in the booking's (zone's) currency.
+        const { currencyCode, currencySymbol } = await bookingCurrency(bookingId);
         return {
             message: "On-hold bookings retrieved successfully",
-            data: { onHoldBookings: rows }
+            data: { onHoldBookings: rows, currency: { code: currencyCode, symbol: currencySymbol } }
         };
     }
 
@@ -3890,16 +3893,21 @@ class CustomerOrderService {
                     attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems']
                 }
             ],
-            attributes: ["id", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
+            attributes: ["id", "zoneId", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
         });
 
         if (!onHoldBookings || onHoldBookings.length === 0) {
             throw new NotFoundError("No on-hold bookings found for this customer");
         }
 
+        // Each order's amounts are in its own zone's currency.
+        const rows = await Promise.all(onHoldBookings.map(async (b) => {
+            const { currencyCode, currencySymbol } = await zoneCurrency(b.zoneId);
+            return { ...b.toJSON(), currency: { code: currencyCode, symbol: currencySymbol } };
+        }));
         return {
             message: "On-hold bookings retrieved successfully",
-            data: { onHoldBookings }
+            data: { onHoldBookings: rows }
         };
     }
 
@@ -3975,8 +3983,30 @@ class CustomerOrderService {
             })
         ]);
 
-        // All amounts on this card are in the zone's currency (display symbol).
+        // Zone amounts are in the zone's currency; a policy fee is in its own currency
+        // when the policy names one (NULL = the zone's), so it is labelled with that.
         const { currencySymbol: currency } = await zoneCurrency(activeZone?.id);
+        await warmCurrencySymbols();
+        const policySymbol = (code) => (code ? currencySymbolOf(code).trim() : currency);
+
+        // Delivery: there is no delivery fee in the platform, so it is free; the window is
+        // the fastest turnaround among the services offered in this zone (their stated
+        // upper bound), null when no service states one.
+        const disabledServiceIds = (await dbModels.zoneServiceOverride.findAll({
+            where: { zoneId: activeZone.id, isEnabled: false },
+            attributes: ['serviceId'],
+            raw: true,
+        })).map((r) => Number(r.serviceId));
+        const offeredServices = await dbModels.service.findAll({
+            where: { status: true },
+            attributes: ['id', 'timeRequired'],
+            raw: true,
+        });
+        const turnaroundHours = offeredServices
+            .filter((svc) => !disabledServiceIds.includes(Number(svc.id)))
+            .map((svc) => parseTimeRequiredHours(svc.timeRequired))
+            .filter((h) => h != null);
+        const fastestHours = turnaroundHours.length ? Math.min(...turnaroundHours) : null;
         const minOrder = activeZone?.zoneMinimumAmount ?? null;
         const serviceFee = activeZone?.serviceCharge ?? null;
 
@@ -3991,9 +4021,9 @@ class CustomerOrderService {
             data: {
                 delivery: {
                     label: "Delivery",
-                    value: "Free 24h",
+                    value: fastestHours == null ? "Free" : `Free ${fastestHours}h`,
                     isFree: true,
-                    windowHours: 24
+                    windowHours: fastestHours
                 },
                 minOrder: {
                     label: "Min. Order",
@@ -4008,12 +4038,12 @@ class CustomerOrderService {
                 noShowFee: {
                     label: "No-Show Fee",
                     value: noShowFee,
-                    currency
+                    currency: policySymbol(defaultNoShowPolicy?.noShowConfig?.currency)
                 },
                 cancellationFee: {
                     label: "Cancellation Fee",
                     value: cancellationFee,
-                    currency
+                    currency: policySymbol(defaultCancellationPolicy?.cancellationConfig?.prePickupAbsoluteCurrency)
                 },
                 zone: {
                     id: activeZone.id,
