@@ -52,11 +52,27 @@ function applyStripePresentationFields(params, stripeOptions = {}) {
 /*
  *   Create Customer
  */
-async function createStripeCustomer(name, email) {
+async function createStripeCustomer(name, email, metadata) {
     try {
-        const customerCreate = await stripe.customers.create({ name, email });
+        const customerCreate = await stripe.customers.create({
+            name,
+            email,
+            ...(metadata ? { metadata } : {}),
+        });
 
         return customerCreate.id;
+    } catch (error) {
+        throw new customError(error.message, error.code);
+    }
+}
+
+/*
+ *   Delete Customer — compensation when saving a new customer id fails
+ *   (services/shared/stripeCustomerService.js)
+ */
+async function deleteStripeCustomer(customerId) {
+    try {
+        await stripe.customers.del(customerId);
     } catch (error) {
         throw new customError(error.message, error.code);
     }
@@ -1007,6 +1023,7 @@ async function createConnectAccount(email, country = 'GB') {
 
 module.exports = {
     createStripeCustomer,
+    deleteStripeCustomer,
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
     createSetupIntent,

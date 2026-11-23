@@ -24,7 +24,6 @@ The email system has been migrated from SMTP (Nodemailer) to ZeptoMail API for b
 - ✅ `helper/otpMail.js` - Main OTP email function
 - ✅ `helper/testEmail.js` - Test email script
 - ✅ `services/Agent/authService.js` - All otpMail calls
-- ✅ `controllers/Agent/agentAuth.js` - All otpMail calls
 - ✅ `services/Customer/authService.js` - All otpMail calls
 - ✅ `controllers/Driver/driverAuth.js` - All otpMail calls
 - ✅ `controllers/Customer/customerOrders.js` - Test email endpoint

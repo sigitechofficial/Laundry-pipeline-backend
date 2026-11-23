@@ -102,7 +102,8 @@ const {
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold, createStripeCustomer } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
+const { ensureStripeCustomer } = require('../shared/stripeCustomerService');
 const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
 const extraTipService = require('./extraTipService');
 const { bookingTipAmountFromTips } = require('../../utils/bookingTips');
@@ -3621,31 +3622,13 @@ class CustomerOrderService {
         }
 
         // Resolve the Stripe customer from the authenticated user — never trust a
-        // client-sent customerId. Self-heal: create and persist a Stripe customer
-        // the first time a user pays, so new/seeded accounts (stripeCustomerId
-        // null) don't fail with "No such customer: null".
-        const user = await users.findByPk(userId, {
-            attributes: ['id', 'firstName', 'lastName', 'email', 'stripeCustomerId'],
-        });
+        // client-sent customerId. Created the first time a user pays (sign-up does
+        // not create one), via the single concurrency-safe creation point.
+        const user = await users.findByPk(userId, { attributes: ['id'] });
         if (!user) {
             throw new ValidationError("User not found");
         }
-
-        let customerId = user.stripeCustomerId;
-        if (!customerId) {
-            const fullName = [user.firstName, user.lastName]
-                .filter(Boolean)
-                .join(' ')
-                .trim() || user.email;
-            customerId = await createStripeCustomer(fullName, user.email);
-            await users.update(
-                { stripeCustomerId: customerId },
-                { where: { id: user.id } }
-            );
-            console.log(
-                `[createIntentUsingStripe] created Stripe customer ${customerId} for user ${user.id}`
-            );
-        }
+        const customerId = await ensureStripeCustomer(user.id);
 
         console.log("Creating setup intent for customer:", customerId);
 

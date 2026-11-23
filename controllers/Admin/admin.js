@@ -66,7 +66,6 @@ const {
 const { type } = require("os");
 const { group } = require("console");
 const { literal } = require('sequelize');
-const { registerCustomer } = require("../Customer/customerAuth");
 const { createCanvas } = require("canvas")
 const JsBarcode = require("jsbarcode")
 const fs = require("fs")

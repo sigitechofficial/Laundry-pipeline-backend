@@ -6,8 +6,8 @@ const {
     ValidationError,
     NotFoundError,
 } = require("../../middlewares/universalErrorHandler");
+const { ensureStripeCustomer } = require("../shared/stripeCustomerService");
 const {
-    createStripeCustomer,
     createSetupIntent,
     createEphemeralKey,
     attachPaymentMethodToCustomer,
@@ -83,9 +83,9 @@ class CustomerPaymentMethodService {
         if (user.stripeCustomerId) {
             return user.stripeCustomerId;
         }
-        const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
-        const stripeCustomerId = await createStripeCustomer(name, user.email);
-        await user.update({ stripeCustomerId });
+        // Single, concurrency-safe creation point (row lock + compensation).
+        const stripeCustomerId = await ensureStripeCustomer(user.id);
+        user.stripeCustomerId = stripeCustomerId;
         return stripeCustomerId;
     }
 

@@ -29,7 +29,6 @@ const {
     ValidationError,
     UnprocessableEntityError
 } = require('../../middlewares/universalErrorHandler');
-const stripe = require('../../controllers/stripe');
 
 /**
  * Agent Registration Service
@@ -105,22 +104,15 @@ class AgentRegistrationService {
             cityId
         });
 
-        // Create Stripe customer
-        const stripeCustomer = await stripe.createStripeCustomer(firstName, email);
-
-        // Update user with Stripe customer ID
-        await users.update({
-            stripeCustomerId: stripeCustomer
-        }, {
-            where: { id: userCreate.id }
-        });
-
+        // No Stripe customer: shop accounts never pay as customers (agents are paid via
+        // Stripe Connect). Previously an unused Stripe customer was created here, and a
+        // Stripe failure left the agent created without one.
         return {
             userId: userCreate.id,
             email: userCreate.email,
             firstName: userCreate.firstName,
             lastName: userCreate.lastName,
-            stripeCustomerId: stripeCustomer,
+            stripeCustomerId: null, // kept for API compatibility
             agentApprovalStatus,
             registrationStatus: agentApprovalStatus === 'pending' ? 'inactive' : 'active',
         };
