@@ -1,205 +1,144 @@
 'use strict';
 
 /**
- * Enterprise currency resolution for admin aggregates and reports.
- * Order: zone → city → country (unanimous zone currency) → country ISO map → first active zone → GBP.
+ * Currency resolution from data only: a zone's currency is its `currencyUnitId` →
+ * `units` row (zones.currencyUnitId is NOT NULL, see migration
+ * 20261123160000-zones-currency-unit-required). Nothing here invents a currency —
+ * no platform default, no country → currency table, no "first active zone".
+ *
+ *  - zone filter            → that zone's currency (soft-deleted zones too: historic
+ *                             bookings keep the currency they were priced in);
+ *  - city / country / none  → the currency shared by ALL matching active zones.
+ *
+ * When there is no single answer (no matching zone, or zones in different currencies)
+ * the result is EMPTY — `{ currencySymbol: '', currencyCode: '' }`, an honest
+ * "unknown / mixed". Admin aggregates that span currencies must not be labelled with
+ * one of them; pure money helpers that need a currency throw on EMPTY
+ * (utils/requireCurrency).
  */
 
 const { Op } = require('sequelize');
 
-const DEFAULT_CURRENCY = Object.freeze({
-    currencySymbol: '£',
-    currencyCode: 'GBP',
-});
+const EMPTY = Object.freeze({ currencySymbol: '', currencyCode: '' });
 
-const COUNTRY_ISO_TO_CURRENCY = Object.freeze({
-    GB: { currencySymbol: '£', currencyCode: 'GBP' },
-    UK: { currencySymbol: '£', currencyCode: 'GBP' },
-    US: { currencySymbol: '$', currencyCode: 'USD' },
-    AE: { currencySymbol: 'د.إ', currencyCode: 'AED' },
-    SA: { currencySymbol: '﷼', currencyCode: 'SAR' },
-    PK: { currencySymbol: 'Rs', currencyCode: 'PKR' },
-    IN: { currencySymbol: '₹', currencyCode: 'INR' },
-    IE: { currencySymbol: '€', currencyCode: 'EUR' },
-    DE: { currencySymbol: '€', currencyCode: 'EUR' },
-    FR: { currencySymbol: '€', currencyCode: 'EUR' },
-    CA: { currencySymbol: '$', currencyCode: 'CAD' },
-    AU: { currencySymbol: '$', currencyCode: 'AUD' },
-});
+function empty() {
+    return { ...EMPTY };
+}
 
 function parsePositiveInt(value) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function trimmed(value) {
+    return value != null ? String(value).trim() : '';
+}
+
+/**
+ * A currency unit row → `{ currencySymbol, currencyCode }`, or null when there is none.
+ *
+ * The ISO code (units.name) identifies the currency: Stripe, bills and ledgers need it.
+ * A unit without one is a data error, so it resolves to null (unknown) and is logged —
+ * never half a currency with an empty code. A unit with a code but no symbol displays
+ * its code (e.g. "CHF"), which is still the unit's own data.
+ */
 function fromUnit(unit) {
     if (!unit) return null;
-    const currencySymbol = unit.symbol != null ? String(unit.symbol).trim() : '';
-    const currencyCode = unit.name != null ? String(unit.name).trim() : '';
-    if (!currencySymbol && !currencyCode) return null;
+    const currencyCode = trimmed(unit.name).toUpperCase();
+    if (!currencyCode) {
+        console.error(
+            `[currency] units.id=${unit.id ?? '?'} has no ISO code (units.name); ` +
+                'its zones resolve to an unknown currency until the unit is fixed.'
+        );
+        return null;
+    }
+    return { currencySymbol: trimmed(unit.symbol) || currencyCode, currencyCode };
+}
+
+function currencyUnitInclude() {
+    const { units } = require('../models');
     return {
-        currencySymbol: currencySymbol || currencyCode,
-        currencyCode: currencyCode || '',
+        model: units,
+        as: 'currencyUnitZ',
+        attributes: ['id', 'name', 'symbol'],
+        required: false,
     };
 }
 
-function currencyKey(c) {
-    if (!c) return '';
-    return `${String(c.currencyCode || '').toUpperCase()}|${String(c.currencySymbol || '')}`;
-}
-
-function currencyFromCountryIso(shortName) {
-    const iso = shortName != null ? String(shortName).trim().toUpperCase() : '';
-    if (!iso || !COUNTRY_ISO_TO_CURRENCY[iso]) return null;
-    return { ...COUNTRY_ISO_TO_CURRENCY[iso] };
-}
-
 /**
- * Resolve a currency units.id for a country (by shortName → ISO code → units.name).
- * Prefers the lowest id when duplicates exist.
- * @param {number|string} countryId
- * @returns {Promise<number|null>}
- */
-async function resolveCurrencyUnitIdForCountry(countryId) {
-    const id = parsePositiveInt(countryId);
-    if (!id) return null;
-    const { units, countries } = require('../models');
-    const country = await countries.findByPk(id, { attributes: ['id', 'shortName'] });
-    const mapped = currencyFromCountryIso(country?.shortName);
-    if (!mapped?.currencyCode) return null;
-
-    const unit = await units.findOne({
-        where: {
-            type: 'currency',
-            name: mapped.currencyCode,
-        },
-        order: [['id', 'ASC']],
-        attributes: ['id', 'name', 'symbol'],
-    });
-    return unit?.id != null ? Number(unit.id) : null;
-}
-
-/**
- * @param {object} filters - { zoneId, cityId, countryId }
- * @param {{ applyDefault?: boolean }} [options]
+ * The currency shared by every zone matching `where`, or EMPTY when none match, when
+ * they are in different currencies, or when any of them has an unknown currency.
+ * Currencies are compared by ISO code.
+ * @param {object} where Sequelize where on zones
  * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
  */
-async function resolveDisplayCurrency(filters = {}, options = {}) {
-    const { applyDefault = true } = options;
-    const { zone, units, cities, countries } = require('../models');
-
-    const include = [{
-        model: units,
-        as: 'currencyUnitZ',
-        attributes: ['symbol', 'name'],
-        required: false,
-    }];
-
-    const zoneId = parsePositiveInt(filters.zoneId);
-    if (zoneId) {
-        const z = await zone.findByPk(zoneId, {
-            include: [
-                ...include,
-                {
-                    model: cities,
-                    attributes: ['id', 'countryId'],
-                    required: false,
-                    include: [{
-                        model: countries,
-                        attributes: ['id', 'shortName'],
-                        required: false,
-                    }],
-                },
-            ],
-            paranoid: true,
-        });
-        const fromZone = fromUnit(z?.currencyUnitZ);
-        if (fromZone) return fromZone;
-        // Zone row without currency → fall through via its city/country.
-        if (z?.cityId && !filters.cityId) {
-            filters = { ...filters, cityId: z.cityId };
-        }
-        const zoneCountryId = z?.city?.countryId ?? z?.city?.country?.id;
-        if (zoneCountryId && !filters.countryId) {
-            filters = { ...filters, countryId: zoneCountryId };
-        }
+async function sharedCurrencyOfZones(where) {
+    const { zone } = require('../models');
+    const rows = await zone.findAll({
+        where,
+        attributes: ['id', 'currencyUnitId'],
+        include: [currencyUnitInclude()],
+        order: [['id', 'ASC']],
+    });
+    if (!rows.length) return empty();
+    let shared = null;
+    for (const row of rows) {
+        const c = fromUnit(row.currencyUnitZ);
+        if (!c) return empty();
+        if (!shared) shared = c;
+        else if (shared.currencyCode !== c.currencyCode) return empty();
     }
+    return { ...shared };
+}
+
+/**
+ * One zone's currency (soft-deleted zones included: historic bookings keep the currency
+ * they were priced in). EMPTY when zoneId is missing or names no zone — never another
+ * zone's currency.
+ * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
+ */
+async function currencyOfZone(zoneId) {
+    const id = parsePositiveInt(zoneId);
+    if (!id) return empty();
+    const { zone } = require('../models');
+    const z = await zone.findByPk(id, {
+        attributes: ['id', 'currencyUnitId'],
+        include: [currencyUnitInclude()],
+        paranoid: false,
+    });
+    return fromUnit(z?.currencyUnitZ) || empty();
+}
+
+/**
+ * Currency to label an admin view filtered by zone / city / country (or unfiltered).
+ * @param {object} filters - { zoneId, cityId, countryId } (the most specific one wins)
+ * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
+ */
+async function resolveDisplayCurrency(filters = {}) {
+    const { cities } = require('../models');
+
+    if (parsePositiveInt(filters.zoneId)) return currencyOfZone(filters.zoneId);
 
     const cityId = parsePositiveInt(filters.cityId);
     if (cityId) {
-        const z = await zone.findOne({
-            where: { cityId, status: true },
-            include,
-            order: [['id', 'ASC']],
-            paranoid: true,
-        });
-        const fromCityZone = fromUnit(z?.currencyUnitZ);
-        if (fromCityZone) return fromCityZone;
-
-        const city = await cities.findByPk(cityId, {
-            attributes: ['id', 'countryId'],
-            include: [{
-                model: countries,
-                attributes: ['id', 'shortName'],
-                required: false,
-            }],
-        });
-        const cityCountryId = city?.countryId ?? city?.country?.id;
-        if (cityCountryId && !filters.countryId) {
-            filters = { ...filters, countryId: cityCountryId };
-        }
+        return sharedCurrencyOfZones({ cityId, status: true });
     }
 
     const countryId = parsePositiveInt(filters.countryId);
     if (countryId) {
-        const cityRows = await cities.findAll({
-            where: { countryId },
-            attributes: ['id'],
-        });
+        const cityRows = await cities.findAll({ where: { countryId }, attributes: ['id'] });
         const cityIds = cityRows.map((c) => c.id);
-        if (cityIds.length) {
-            const zones = await zone.findAll({
-                where: { cityId: { [Op.in]: cityIds }, status: true },
-                include,
-                order: [['id', 'ASC']],
-                paranoid: true,
-            });
-            const currencies = zones
-                .map((z) => fromUnit(z.currencyUnitZ))
-                .filter(Boolean);
-            if (currencies.length) {
-                const keys = new Set(currencies.map(currencyKey));
-                // Unanimous country currency only — mixed returns empty unless defaulted later.
-                if (keys.size === 1) return currencies[0];
-                if (!applyDefault) {
-                    return { currencySymbol: '', currencyCode: '' };
-                }
-            }
-        }
-
-        const country = await countries.findByPk(countryId, {
-            attributes: ['id', 'shortName'],
-        });
-        const fromIso = currencyFromCountryIso(country?.shortName);
-        if (fromIso) return fromIso;
+        if (!cityIds.length) return empty();
+        return sharedCurrencyOfZones({ cityId: { [Op.in]: cityIds }, status: true });
     }
 
-    const fallbackZone = await zone.findOne({
-        where: { status: true },
-        include,
-        order: [['id', 'ASC']],
-        paranoid: true,
-    });
-    const fromFallback = fromUnit(fallbackZone?.currencyUnitZ);
-    if (fromFallback) return fromFallback;
-
-    if (!applyDefault) return { currencySymbol: '', currencyCode: '' };
-    return { ...DEFAULT_CURRENCY };
+    return sharedCurrencyOfZones({ status: true });
 }
 
 module.exports = {
-    DEFAULT_CURRENCY,
-    COUNTRY_ISO_TO_CURRENCY,
+    EMPTY,
+    fromUnit,
+    currencyOfZone,
     resolveDisplayCurrency,
-    resolveCurrencyUnitIdForCountry,
+    sharedCurrencyOfZones,
 };
