@@ -104,7 +104,7 @@ function historyFor(status) {
   return PATH.slice(0, PATH.indexOf(status) + 1);
 }
 
-async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackId, acceptWindowMinutes = 30, env = process.env, argv, log = console.log }) {
+async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackId, ensureCustomerDeclaredSnapshot, acceptWindowMinutes = 30, env = process.env, argv, log = console.log }) {
   const { reset, removeOnly } = readInput(env, argv);
   assertLocalDatabase(db.sequelize);
   const { Op } = db.Sequelize;
@@ -281,6 +281,9 @@ async function seedLocalOrders({ db, moment, bcrypt, crypto, generateOrderTrackI
           date: placedAt.format('YYYY-MM-DD'), time: placedAt.format('HH:mm:ss'), bookingId: booking.id, serviceId,
         }, { transaction });
       }
+      // Accepting freezes the customer's choices (as orderManagementService does).
+      if (accepted) await ensureCustomerDeclaredSnapshot(booking.id, { transaction });
+
       // What the shop priced on the invoice.
       for (const { sub, items } of lines) {
         await db.customerSelectedService.create({
@@ -336,6 +339,7 @@ async function removeSeededOrders(db, seedCustomerIds) {
       db.bookingHistory, db.customerSelectedService, db.billingDetails, db.tip, db.proofOfDeliveries,
       db.cancelBooking, db.bookingAttempt, db.wallet, db.invoicePaymentAttempt, db.bookingRefund,
       db.OnHoldConfirmation, db.bookingPreference, db.servicePreferences,
+      db.customerOriginalPreferenceSnapshot, db.customerOriginalServiceSnapshot,
     ].filter(Boolean);
     for (const model of children) {
       await model.destroy({ where: { bookingId: ids }, force: true, transaction });
@@ -357,6 +361,8 @@ async function main() {
       crypto: require('crypto'),
       generateOrderTrackId: require('../utils/orderTrackId').generateOrderTrackId,
       acceptWindowMinutes: require('../utils/bookingTimeZone').BOOKING_ACCEPT_WINDOW_MINUTES,
+      ensureCustomerDeclaredSnapshot:
+        require('../services/Agent/customerDeclaredServicesService').ensureCustomerDeclaredSnapshot,
     });
   } finally {
     await db.sequelize.close();
