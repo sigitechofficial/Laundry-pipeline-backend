@@ -831,6 +831,7 @@ router.post(
 router.get(
     "/getPerformanceDashboard",
     validateAccessToken,
+    requireCapability("canManageFinance"),
     asyncMiddleware(agentController.getPerformanceDashboard)
 );
 router.get(

@@ -8885,7 +8885,14 @@ paths:
   /agent/getPerformanceDashboard:
     get:
       summary: Get performance dashboard
-      description: Retrieves performance metrics for the agent's dashboard
+      description: >-
+        The shop's performance over whole calendar days in the shop's own time
+        zone (its country's IANA zone). Owner and employee sessions both resolve
+        to the shop; requires the canManageFinance capability. Pickups and
+        deliveries are legs completed in the range (by their completion time).
+        Earnings and the commission summary cover the shop's paid orders placed
+        in the range (cancelled/refunded excluded), same basis as the Earning
+        Report. Money is in currency.code.
       tags:
         - Agent > Agent Business
       parameters:
@@ -8895,21 +8902,61 @@ paths:
           schema:
             type: string
           description: Access token cookie for authentication
+        - in: query
+          name: startDate
+          required: false
+          schema:
+            type: string
+            format: date
+          description: First shop-local day (YYYY-MM-DD). Send with endDate, or neither for today.
+        - in: query
+          name: endDate
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Last shop-local day, included (YYYY-MM-DD). At most 366 days.
       responses:
         '200':
-          description: Performance dashboard data retrieved successfully
+          description: Performance dashboard data
           content:
             application/json:
               example:
                 status: "1"
-                message: "Performance dashboard data retrieved successfully"
+                message: "Performance Dashboard Data"
                 data:
-                  totalOrders: 150
-                  completedOrders: 120
-                  pendingOrders: 30
-                  totalRevenue: 2500.00
-                  averageRating: 4.5
-
+                  currency: { code: "GBP", symbol: "£" }
+                  todaySummary:
+                    pickups: 14
+                    deliveries: 3
+                    paidOrders: 6
+                    earnings: 142.4
+                    previousEarnings: 14.4
+                    earningsComparison: 888.9
+                    range: { startDate: "2026-11-17", endDate: "2026-11-23", days: 7, timeZone: "Europe/London" }
+                    previousRange: { startDate: "2026-11-10", endDate: "2026-11-16" }
+                  deliveryTypeSplit:
+                    agentDriversDeliveries: 3
+                    freelanceDriverDeliveries: 0
+                    unattributedDeliveries: 0
+                  driverPerformance:
+                    - id: 2
+                      firstName: "Local"
+                      lastName: "Shop"
+                      driverType: "owner"
+                      pickups: 13
+                      deliveries: 3
+                      collectionPunctuality: { measured: 13, early: 1, onTime: 12, late: 0, unmeasured: 0, onTimePercent: 92.3, averageMinutesLate: null }
+                      deliveryPunctuality: { measured: 3, early: 1, onTime: 2, late: 0, unmeasured: 0, onTimePercent: 66.7, averageMinutesLate: null }
+                  commissionSummary:
+                    paidOrders: 6
+                    shopEarning: 142.4
+                    platformCommission: 35.6
+                    platformServiceFees: 15
+                    commissionRates:
+                      - { shopPercent: 80, platformPercent: 20, orders: 6 }
+        '400':
+          description: Invalid or half-given dates, start after end, or more than 366 days
         '401':
           description: Unauthorized
           content:
@@ -8918,6 +8965,10 @@ paths:
                 status: "0"
                 message: "Unauthorized access"
                 data: {}
+        '403':
+          description: The session lacks canManageFinance
+        '422':
+          description: The shop's country has no valid IANA time zone configured
 
 # Missing Admin APIs
   /admin/serviceCategoriesAssign:

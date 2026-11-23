@@ -7,6 +7,8 @@ const {
   classifySlotTiming,
   summarizeOrderPunctuality,
   emptyPunctuality,
+  slotWindowInZone,
+  classifyArrivalInZone,
 } = require('./bookingPunctuality');
 
 assert.strictEqual(
@@ -57,5 +59,42 @@ assert.strictEqual(
   ),
   TIMING.ON_TIME
 );
+
+// Zone-aware slot: the wall clock is the booking's operational zone, whatever
+// the server's zone is. 10:00-11:00 London in BST = 09:00-10:00 UTC.
+{
+  const slot = slotWindowInZone('2026-07-02', '10:00:00', '11:00', 'Europe/London');
+  assert.strictEqual(slot.start.toISOString(), '2026-07-02T09:00:00.000Z');
+  assert.strictEqual(slot.end.toISOString(), '2026-07-02T10:00:00.000Z');
+  const karachi = slotWindowInZone('2026-07-02', '10:00', '11:00', 'Asia/Karachi');
+  assert.strictEqual(karachi.start.toISOString(), '2026-07-02T05:00:00.000Z');
+}
+// Missing or invalid inputs: no window (caller reports the leg as unmeasured).
+assert.strictEqual(slotWindowInZone(null, '10:00', '11:00', 'Europe/London'), null);
+assert.strictEqual(slotWindowInZone('2026-07-02', null, '11:00', 'Europe/London'), null);
+assert.strictEqual(slotWindowInZone('2026-07-02', '10:00', '11:00', null), null);
+assert.strictEqual(slotWindowInZone('2026-07-02', '10:00', '11:00', 'Mars/Olympus'), null);
+assert.strictEqual(slotWindowInZone('2026-07-02', '11:00', '10:00', 'Europe/London'), null);
+assert.strictEqual(slotWindowInZone('2026-02-30', '10:00', '11:00', 'Europe/London'), null);
+
+assert.deepStrictEqual(
+  classifyArrivalInZone('2026-07-02T08:59:00Z', '2026-07-02', '10:00', '11:00', 'Europe/London'),
+  { timing: TIMING.EARLY, minutesLate: 0 }
+);
+assert.deepStrictEqual(
+  classifyArrivalInZone(new Date('2026-07-02T09:00:00Z'), '2026-07-02', '10:00', '11:00', 'Europe/London'),
+  { timing: TIMING.ON_TIME, minutesLate: 0 }
+);
+assert.deepStrictEqual(
+  classifyArrivalInZone('2026-07-02T10:00:00Z', '2026-07-02', '10:00', '11:00', 'Europe/London'),
+  { timing: TIMING.ON_TIME, minutesLate: 0 }
+);
+assert.deepStrictEqual(
+  classifyArrivalInZone('2026-07-02T10:17:20Z', '2026-07-02', '10:00', '11:00', 'Europe/London'),
+  { timing: TIMING.LATE, minutesLate: 18 }
+);
+assert.strictEqual(classifyArrivalInZone(null, '2026-07-02', '10:00', '11:00', 'Europe/London'), null);
+assert.strictEqual(classifyArrivalInZone('nope', '2026-07-02', '10:00', '11:00', 'Europe/London'), null);
+assert.strictEqual(classifyArrivalInZone('2026-07-02T10:00:00Z', '2026-07-02', '10:00', '11:00', null), null);
 
 console.log('bookingPunctuality tests passed');
