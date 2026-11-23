@@ -6334,8 +6334,8 @@ paths:
                 error: "Failed to update booking status"
   /agent/getBussinessInforMation/{userId}:
     get:
-      summary: Get business information for agent
-      description: Retrieves all machine information and active services linked to the specified agent user ID.
+      summary: Get the signed-in shop's business information
+      description: Requires a signed-in agent session (accessToken). Returns the machine catalog and the active services of the caller's own shop (a shop employee gets the shop it works for). The userId path parameter is ignored and kept only for installed app builds. Admins use GET /admin/agents/{agentId}/business-information.
       tags:
         - Agent > Agent Business
       parameters:
@@ -6344,7 +6344,7 @@ paths:
           required: true
           schema:
             type: integer
-          description: ID of the agent user to fetch information for
+          description: Ignored (legacy). The shop is always the signed-in caller's own.
       responses:
         '200':
           description: Business information fetched successfully
@@ -6401,8 +6401,8 @@ paths:
                 error: "Failed to fetch business information"
   /agent/getBussinessWrkinghours/{userId}:
     get:
-      summary: Get business working hours for agent
-      description: Retrieves business working hours for the specified agent user ID.
+      summary: Get the signed-in shop's working hours
+      description: Requires a signed-in agent session (accessToken). Returns the working hours of the caller's own shop (a shop employee gets the shop it works for) and the platform operational hours of the shop's country. The userId path parameter is ignored and kept only for installed app builds.
       tags:
         - Agent > Agent Business
       parameters:
@@ -6411,7 +6411,7 @@ paths:
           required: true
           schema:
             type: integer
-          description: ID of the agent user to fetch business working hours for
+          description: Ignored (legacy). The shop is always the signed-in caller's own.
       responses:
         '200':
           description: Business working hours fetched successfully
@@ -8546,8 +8546,8 @@ paths:
 
   /agent/getBussinessInforMation/{userId}:
     get:
-      summary: Get business information
-      description: Retrieves business information for a specific user
+      summary: Get the signed-in shop's business information
+      description: Requires a signed-in agent session (accessToken). Returns the caller's own shop; the userId path parameter is ignored (kept for installed app builds).
       tags:
         - Agent > Agent Business
       parameters:
@@ -8581,8 +8581,8 @@ paths:
 
   /agent/getBussinessWrkinghours/{userId}:
     get:
-      summary: Get business working hours
-      description: Retrieves working hours for a specific business
+      summary: Get the signed-in shop's working hours
+      description: Requires a signed-in agent session (accessToken). Returns the caller's own shop; the userId path parameter is ignored (kept for installed app builds).
       tags:
         - Agent > Agent Business
       parameters:

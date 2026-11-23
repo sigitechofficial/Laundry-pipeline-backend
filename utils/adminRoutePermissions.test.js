@@ -79,6 +79,15 @@ function run() {
         resolveAdminFeatureKey({ path: '/revenueRampPolicy' }),
         ADMIN_FEATURE_KEYS.POLICIES_MANAGEMENT
     );
+    // Admin view of a shop's business information (the agent route only serves the caller's shop).
+    assert.strictEqual(
+        resolveAdminFeatureKey({ path: '/agents/2/business-information' }),
+        ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
+    );
+    assert.strictEqual(
+        resolveAdminFeatureKey({ originalUrl: '/admin/agents/2/business-information' }),
+        ADMIN_FEATURE_KEYS.SHOP_MANAGEMENT
+    );
     assert.strictEqual(resolveAdminFeatureKey({ path: '/signOut' }), null);
     assert.strictEqual(resolveAdminFeatureKey({ path: '/not-a-real-admin-route' }), null);
 

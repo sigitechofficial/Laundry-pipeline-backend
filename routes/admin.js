@@ -33,6 +33,7 @@ const zoneCatalogController = require('../controllers/Admin/zoneCatalogControlle
 const shopRevenueController = require('../controllers/Admin/shopRevenueController');
 const shopCustomersController = require('../controllers/Admin/shopCustomersController');
 const shopPrinterController = require('../controllers/Admin/shopPrinterController');
+const shopBusinessInformationController = require('../controllers/Admin/shopBusinessInformationController');
 const serviceDiscountController = require('../controllers/Admin/serviceDiscountController');
 const campaignController = require('../controllers/Admin/campaignController');
 const promotionController = require('../controllers/Admin/promotionController');
@@ -691,6 +692,10 @@ router.get('/getAgentAddress/:userId', asyncMiddleware(adminController.getAgentA
 
 //Get Shop Address with Business Info
 router.get('/getShopAddress/:userId', asyncMiddleware(adminController.getShopAddress))
+
+//Shop business information (machine catalog + the shop's services) for any shop.
+//shopManagement read permission and zone scope come from router.use above.
+router.get('/agents/:agentId/business-information', asyncMiddleware(shopBusinessInformationController.getShopBusinessInformation))
 
 //!-----------------------------------Invoice payment failures (card auto-charge)---------//
 router.get(

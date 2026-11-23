@@ -114,6 +114,16 @@ function resolveShopAgentId(user) {
     return Number(user.id);
 }
 
+/**
+ * The shop a signed-in request acts for: the shop owner's own id, or for a shop
+ * employee the owner they work for (employeeOff). Set by validateAccessToken
+ * (attachShopAgentContext); resolved from req.user when a route attached no context.
+ * Never from a client-sent id: a URL or body id does not choose the shop.
+ */
+function shopAgentIdFromReq(req) {
+    return req?.shopAgentId ?? resolveShopAgentId(req?.user);
+}
+
 function resolveActorUserId(user) {
     if (!user || user.id == null) {
         return null;
@@ -342,6 +352,7 @@ module.exports = {
     SHOP_CAPABILITY_KEYS,
     ROLE_CAPABILITY_CEILINGS,
     resolveShopAgentId,
+    shopAgentIdFromReq,
     resolveActorUserId,
     resolveRoleId,
     isShopEmployee,

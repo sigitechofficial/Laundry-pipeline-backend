@@ -7,6 +7,7 @@ const bookingAttemptController = require("../controllers/Agent/bookingAttemptCon
 const shopReviewAgentController = require("../controllers/Agent/shopReviewController");
 const printerController = require("../controllers/Agent/printerController");
 const acceptCapacityController = require("../controllers/Agent/acceptCapacityController");
+const shopBusinessInfoController = require("../controllers/Agent/shopBusinessInfoController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const checkPermissions = require("../middlewares/checkPermission");
@@ -758,13 +759,19 @@ router.get("/getCountries", asyncMiddleware(agentController.getCountries));
 router.get("/getCities", asyncMiddleware(agentController.getCities));
 
 //!----------------------------------------------------------Bussiness Information----------------------------------------------//
+// The signed-in caller's own shop (an employee reads the shop they work for).
+// `:userId` is kept only so installed app builds still match the route; it is
+// ignored and never selects the shop (see controllers/Agent/shopBusinessInfoController.js).
+// Admins: GET /admin/agents/:agentId/business-information.
 router.get(
     "/getBussinessInforMation/:userId",
-    asyncMiddleware(agentController.getBussinessInforMation)
+    validateAccessToken,
+    asyncMiddleware(shopBusinessInfoController.getBusinessInformation)
 );
 router.get(
     "/getBussinessWrkinghours/:userId",
-    asyncMiddleware(agentController.getBussinessWrkinghours)
+    validateAccessToken,
+    asyncMiddleware(shopBusinessInfoController.getWorkingHours)
 );
 //Bussiness services info Add
 router.post(
@@ -780,7 +787,7 @@ router.patch(
 router.get(
     "/platformOperationalHours",
     validateAccessToken,
-    asyncMiddleware(agentController.getAgentPlatformOperationalHours)
+    asyncMiddleware(shopBusinessInfoController.getPlatformOperationalHours)
 );
 //!-----------------------------------------OnHold Api----------------------------------------------------------------------//
 //Get On Hold Options

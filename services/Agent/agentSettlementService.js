@@ -13,6 +13,8 @@ const { applyCashDueListQuery } = require("../../utils/adminListFilters");
 const { sendNotification } = require("../../utils/notification");
 const { shopCurrencyCode } = require("../../utils/zoneCurrency");
 const { sendEvent } = require("../../socket_io");
+// Zone scope of admin shop routes, shared with other admin shop endpoints.
+const { assertAgentInZone } = require("../Admin/adminShopZoneScope");
 
 const {
     CASH_REMITTED_REFERENCE,
@@ -131,21 +133,6 @@ async function findRecentSameAmount(agentUserId, { referenceType, type, statuses
         order: [["id", "DESC"]],
         transaction,
     });
-}
-
-/**
- * Zone managers only see and act on shops in their own zone (platform admins:
- * zoneId null = every shop). Unknown or other-zone shop → 404, like a missing id.
- */
-async function assertAgentInZone(agentUserId, zoneId) {
-    if (zoneId == null) return;
-    const shop = await addressDb.findOne({
-        where: { userId: agentUserId, addressType: SHOP_ADDRESS_TYPE },
-        attributes: ["id", "zoneId"],
-    });
-    if (!shop || Number(shop.zoneId) !== Number(zoneId)) {
-        throw new NotFoundError("Shop not found");
-    }
 }
 
 async function assertShopInZone(shopId, zoneId) {

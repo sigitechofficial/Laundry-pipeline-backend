@@ -2,7 +2,7 @@ const ResponseHelper = require("../../utils/responseHelper");
 const agentSettlementService = require("../../services/Agent/agentSettlementService");
 
 /** Zone managers are limited to their own zone's shops; platform admins → null (all). */
-const scopedZone = (req) => (req.scopedZoneId != null ? Number(req.scopedZoneId) : null);
+const { scopedZoneOf: scopedZone } = require("../../services/Admin/adminShopZoneScope");
 const agentInScope = (req) =>
     agentSettlementService.assertAgentInZone(parseInt(req.params.agentId, 10), scopedZone(req));
 const shopInScope = (req) => agentSettlementService.assertShopInZone(req.params.shopId, scopedZone(req));
