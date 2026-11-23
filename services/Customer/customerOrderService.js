@@ -60,7 +60,6 @@ const {
     hydrateRepairItemsForBooking,
 } = require('../../utils/repairBookingInclude');
 const {
-    isCollectFromOutside,
     saveCollectionImages,
     getCollectionImagesSafe,
 } = require('../../utils/bookingCollectionImages');
@@ -1752,16 +1751,15 @@ class CustomerOrderService {
         const ordertrackingNumber = generateOrderTrackId(bookingData.id);
         await bookingData.update({ orderTrackId: ordertrackingNumber });
 
-        // Optional: older customer apps never send collectionImageUrls.
-        if (isCollectFromOutside(driverInstructionOptions)) {
-            try {
-                await saveCollectionImages(bookingData.id, collectionImageUrls);
-            } catch (collectionImagesErr) {
-                console.warn(
-                    `[createBooking] collection images save failed for booking ${bookingData.id}:`,
-                    collectionImagesErr?.message || collectionImagesErr
-                );
-            }
+        // Optional photos for the driver (door, gate, where the bags are), for any handover:
+        // the website offers them on every booking. Older customer apps never send them.
+        try {
+            await saveCollectionImages(bookingData.id, collectionImageUrls);
+        } catch (collectionImagesErr) {
+            console.warn(
+                `[createBooking] collection images save failed for booking ${bookingData.id}:`,
+                collectionImagesErr?.message || collectionImagesErr
+            );
         }
 
         try {

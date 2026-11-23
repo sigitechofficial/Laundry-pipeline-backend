@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * Customer photos of where bags are left for "Collect from Outside" pickups.
- * Always optional on the server: older customer apps never send them.
+ * Customer photos for the driver (door, gate, where the bags are left). The app sends them
+ * for "Collect from Outside"; the website offers them on any handover, and createBooking
+ * keeps them whatever the handover. Always optional: older customer apps never send them.
  */
 
 const COLLECT_FROM_OUTSIDE = 'Collect from Outside';
