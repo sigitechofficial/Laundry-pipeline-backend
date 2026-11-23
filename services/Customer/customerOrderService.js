@@ -45,6 +45,7 @@ const {
     repairOption,
 } = require('../../models');
 const { zoneCurrency } = require('../../utils/zoneCurrency');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { getPublicRefundSummary } = require('../Admin/adminRefundService');
@@ -114,8 +115,6 @@ const { getPickupChargeAmount } = require('../../utils/invoicePrepaidDeduction')
 const {
     findZones,
     findZoneByPostcode,
-    zoneInclude,
-    zoneAttributes,
 } = require('../../utils/findZones');
 const zoneCatalogService = require('../Admin/zoneCatalogService');
 
@@ -3433,46 +3432,15 @@ class CustomerOrderService {
             throw new NotFoundError('No Service Details Found');
         }
 
-        // Resolve currency: prefer the customer's saved/selected address (lat/lng),
-        // fall back to the platform's default (first active) zone if not available.
-        let resolvedZone = null;
-        const parsedLat = lat !== undefined && lat !== null && lat !== '' ? parseFloat(lat) : NaN;
-        const parsedLng = lng !== undefined && lng !== null && lng !== '' ? parseFloat(lng) : NaN;
-
-        if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
-            try {
-                const matchedZones = await findZones(parsedLat, parsedLng);
-                resolvedZone = Array.isArray(matchedZones) ? matchedZones[0] : matchedZones;
-            } catch (err) {
-                console.warn('serviceDetail: zone lookup by coordinates failed, falling back to default zone:', err.message);
-            }
-        }
-
-        if (!resolvedZone) {
-            resolvedZone = await zone.findOne({
-                where: { status: true },
-                include: zoneInclude,
-                attributes: zoneAttributes,
-                order: [['id', 'ASC']],
-            });
-        }
-
-        // A zone without a currency unit falls back through resolveDisplayCurrency
-        // (zone -> city -> country -> platform default); there is no unit row then.
-        const fallbackCurrency = resolvedZone?.currencyUnitZ
-            ? null
-            : await zoneCurrency(resolvedZone?.id);
-        const currency = resolvedZone?.currencyUnitZ
-            ? {
-                  id: resolvedZone.currencyUnitZ.id,
-                  name: resolvedZone.currencyUnitZ.name,
-                  symbol: resolvedZone.currencyUnitZ.symbol,
-              }
-            : {
-                  id: null,
-                  name: fallbackCurrency.currencyCode,
-                  symbol: fallbackCurrency.currencySymbol,
-              };
+        // Currency of the prices above: the zone whose catalogue was applied
+        // (catalogZoneId — the requested zone, or the zone of the customer's coordinates).
+        // Browsing without a zone (before an address is set, or outside coverage) shows the
+        // master catalogue (pricesFinal: false). Those prices carry a currency only when
+        // every active zone shares one; otherwise none — never "the first active zone's".
+        const { currencyCode, currencySymbol } = catalogZoneId
+            ? await zoneCurrency(catalogZoneId)
+            : await resolveDisplayCurrency({});
+        const currency = { name: currencyCode, symbol: currencySymbol };
 
         return {
             message: 'Service Details',
