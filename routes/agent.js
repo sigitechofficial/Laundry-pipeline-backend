@@ -799,8 +799,9 @@ router.get(
     "/getOnHoldOptions",
     asyncMiddleware(agentController.getOnHoldOptions)
 );
-//Get Permissions
-router.get("/getPermissions", asyncMiddleware(agentController.getPermissions));
+//Get a role's default permissions (team screens; roles and their permission sets
+//are internal configuration, so signed-in shops only)
+router.get("/getPermissions", validateAccessToken, asyncMiddleware(agentController.getPermissions));
 //Get getCustomerServicesForOnHold
 router.get(
     "/getCustomerServicesForOnHold/:bookingId",

@@ -8711,16 +8711,16 @@ paths:
   /agent/getPermissions:
     get:
       summary: Get permissions
-      description: Retrieves all available permissions
+      description: Retrieves a role's default permissions. Requires a signed-in agent session.
       tags:
         - Agent > Add Roles,Permissions && ClassifiedAs
       parameters:
         - in: cookie
           name: accessToken
-          required: false
+          required: true
           schema:
             type: string
-          description: Optional access token cookie
+          description: Agent access token (cookie or accessToken header)
       responses:
         '200':
           description: Permissions retrieved successfully

@@ -67,7 +67,6 @@ const PUBLIC_ROUTES = {
   'GET /getCountries': 'country list (registration form)',
   'GET /getCities': 'city list (registration form)',
   'GET /getOnHoldOptions': 'platform on-hold reason list',
-  'GET /getPermissions': 'TODO: signed-in only (team screen); see follow-up',
   // PENDING DECISION — registration-time writes that installed app builds call
   // without a session (and, for the login "business info missing" path, the backend
   // issues none). They trust a client-sent shop id and must move behind a session
@@ -106,6 +105,7 @@ for (const key of [
   'GET /getBussinessWrkinghours/:userId',
   'GET /platformOperationalHours',
   'GET /generateStripeOnboardingLink',
+  'GET /getPermissions',
 ]) {
   const route = byKey.get(key);
   assert.ok(route, `${key} exists (installed app builds call it)`);
