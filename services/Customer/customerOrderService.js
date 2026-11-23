@@ -44,6 +44,7 @@ const {
     repairGarment,
     repairOption,
 } = require('../../models');
+const { zoneCurrency } = require('../../utils/zoneCurrency');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
 const { getPublicRefundSummary } = require('../Admin/adminRefundService');
@@ -3982,19 +3983,16 @@ class CustomerOrderService {
             })
         ]);
 
-        const currency = activeZone?.currencyUnitZ?.symbol || '$';
+        // All amounts on this card are in the zone's currency (display symbol).
+        const { currencySymbol: currency } = await zoneCurrency(activeZone?.id);
         const minOrder = activeZone?.zoneMinimumAmount ?? null;
         const serviceFee = activeZone?.serviceCharge ?? null;
 
-        let noShowFee = null;
-        if (defaultNoShowPolicy?.noShowConfig) {
-            const cfg = defaultNoShowPolicy.noShowConfig;
-            noShowFee = cfg.useUnifiedFee ? cfg.pickupNoShowFee : cfg.pickupNoShowFee;
-        }
-
-        const cancellationCfg = defaultCancellationPolicy?.cancellationConfig;
-        const cancellationFee = cancellationCfg?.prePickupAbsoluteAmount ?? null;
-        const cancellationCurrency = cancellationCfg?.prePickupAbsoluteCurrency || 'USD';
+        // Headline fees: the pickup no-show fee (the unified fee when one is set) and
+        // the pre-pickup cancellation fee.
+        const noShowFee = defaultNoShowPolicy?.noShowConfig?.pickupNoShowFee ?? null;
+        const cancellationFee =
+            defaultCancellationPolicy?.cancellationConfig?.prePickupAbsoluteAmount ?? null;
 
         return {
             message: "Home config fetched successfully",
@@ -4018,12 +4016,12 @@ class CustomerOrderService {
                 noShowFee: {
                     label: "No-Show Fee",
                     value: noShowFee,
-                    currency: defaultNoShowPolicy?.noShowConfig?.currency || 'USD'
+                    currency
                 },
                 cancellationFee: {
                     label: "Cancellation Fee",
                     value: cancellationFee,
-                    currency: cancellationCurrency
+                    currency
                 },
                 zone: {
                     id: activeZone.id,

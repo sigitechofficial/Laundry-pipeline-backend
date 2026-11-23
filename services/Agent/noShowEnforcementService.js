@@ -1,3 +1,4 @@
+const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
 const moment = require('moment-timezone');
 const { Op } = require('sequelize');
 const {
@@ -254,17 +255,18 @@ class NoShowEnforcementService {
         return orderAmount > 0 ? orderAmount : subTotal;
     }
 
-    _calculateBaseFee(config, attemptType, orderValue) {
-        if (!config) return { fee: 0, currency: 'USD' };
+    /** [zoneCurrency]: the booking zone's currency, used when the policy names none. */
+    _calculateBaseFee(config, attemptType, orderValue, zoneCurrency) {
+        if (!config) return { fee: 0, currency: zoneCurrency };
 
         if (attemptType === 'pickup' && !config.enableForPickup) {
-            return { fee: 0, currency: config.currency || 'USD', disabled: true };
+            return { fee: 0, currency: config.currency || zoneCurrency, disabled: true };
         }
         if (attemptType === 'delivery' && !config.enableForDelivery) {
-            return { fee: 0, currency: config.currency || 'USD', disabled: true };
+            return { fee: 0, currency: config.currency || zoneCurrency, disabled: true };
         }
 
-        const currency = config.currency || 'USD';
+        const currency = config.currency || zoneCurrency;
         const feeType = config.feeType || 'absolute';
         let fee = 0;
 
@@ -335,7 +337,12 @@ class NoShowEnforcementService {
     }) {
         const config = policyRecord?.noShowConfig;
         const orderValue = this._resolveOrderValue(bookingData);
-        const base = this._calculateBaseFee(config, attemptType, orderValue);
+        const base = this._calculateBaseFee(
+            config,
+            attemptType,
+            orderValue,
+            await zoneCurrencyCode(bookingData.zoneId)
+        );
 
         if (base.disabled) {
             return {
@@ -541,7 +548,8 @@ class NoShowEnforcementService {
             driverId: driverId || bookingData.driverId || null,
             noShowPolicyId: policyRecord?.id || null,
             feeAmount: 0,
-            feeCurrency: policyRecord?.noShowConfig?.currency || 'USD',
+            feeCurrency:
+                policyRecord?.noShowConfig?.currency || (await zoneCurrencyCode(bookingData.zoneId)),
         });
     }
 

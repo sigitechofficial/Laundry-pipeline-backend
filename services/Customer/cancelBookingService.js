@@ -10,6 +10,7 @@ const {
     tip,
 } = require('../../models');
 const { Op } = require('sequelize');
+const { zoneCurrencyCode, bookingCurrencyCode } = require('../../utils/zoneCurrency');
 const { snapshotPolicy } = require('../../utils/bookingPolicyAttach');
 const moment = require('moment-timezone');
 const {
@@ -146,7 +147,7 @@ class CancelBookingService {
                 bookingId: bookingData.id,
                 orderTrackId: bookingData.orderTrackId,
                 amount: chargeAmount,
-                currency: currency || 'GBP',
+                currency: currency || (await zoneCurrencyCode(bookingData.zoneId)),
                 paymentType: bookingData.paymentType || 'card',
                 customer: customerData,
                 agent: {},
@@ -597,8 +598,9 @@ class CancelBookingService {
                 courtesyCapAmount: 0,
                 courtesyCount: 1,
                 customerLeniencyEnabled: false,
-                prePickupAbsoluteCurrency: 'USD',
-                unprocessedAbsoluteCurrency: 'USD',
+                // No currency of its own: fees are in the booking zone's currency.
+                prePickupAbsoluteCurrency: null,
+                unprocessedAbsoluteCurrency: null,
             },
         };
     }
@@ -626,7 +628,8 @@ class CancelBookingService {
         let cancellationCharge = 0;
         let policyApplied = 'No Charge';
         let reason = '';
-        let currency = config.prePickupAbsoluteCurrency || 'USD';
+        const zoneCurrency = await zoneCurrencyCode(bookingData.zoneId);
+        let currency = config.prePickupAbsoluteCurrency || zoneCurrency;
 
         // Percentage fees use prepaid bill (upfront + service fee + tip), not laundry orderAmount.
         const percentageBase =
@@ -646,7 +649,7 @@ class CancelBookingService {
             cancellationCharge = result.charge;
             policyApplied = result.policyApplied;
             reason = result.reason;
-            currency = config.prePickupAbsoluteCurrency;
+            currency = config.prePickupAbsoluteCurrency || zoneCurrency;
         }
         // Unprocessed Phase (Status 4-9: through agent services added; before invoice)
         else if ([4, 5, 6, 7, 8, 9].includes(bookingStatusId)) {
@@ -663,7 +666,7 @@ class CancelBookingService {
             cancellationCharge = result.charge;
             policyApplied = result.policyApplied;
             reason = result.reason;
-            currency = config.unprocessedAbsoluteCurrency;
+            currency = config.unprocessedAbsoluteCurrency || zoneCurrency;
         }
         // Other statuses (12-18: Out for delivery, delivered, on hold, etc.)
         else {
@@ -956,7 +959,7 @@ class CancelBookingService {
                 description: `Stripe refund for cancelled booking #${
                     orderTrackId || bookingId
                 }`,
-                currency: currency || "GBP",
+                currency: currency || (await bookingCurrencyCode(bookingId)),
                 status: "completed",
             });
         } catch (walletErr) {
