@@ -2,6 +2,7 @@
  * Customer + Agent live-tracking bootstrap endpoints.
  */
 
+const { isLiveTrackingDemoEnabled } = require('../utils/liveTrackingDemo');
 const { booking } = require('../models');
 const ResponseHelper = require('../utils/responseHelper');
 const {
@@ -217,6 +218,10 @@ exports.getAgentLiveTracking = async (req, res) => {
  * Starts an in-process fake GPS stream for customer Live map QA.
  */
 exports.startDemoLiveTrackingStream = async (req, res) => {
+  // QA tooling only — never lets a driver fake their position in production.
+  if (!isLiveTrackingDemoEnabled()) {
+    throw new NotFoundError('Live tracking demo is not available');
+  }
   const bookingId = parseInt(req.params.bookingId, 10);
   const agentId = req.user?.id;
 
