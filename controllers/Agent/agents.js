@@ -227,7 +227,7 @@ const employeeCapabilityService = require('../../services/Agent/employeeCapabili
 const autoAssignService = require('../../services/Agent/autoAssignService');
 const shopAssignmentPolicyService = require('../../services/Admin/shopAssignmentPolicyService');
 const {
-    resolveShopAgentId,
+    shopAgentIdFromReq,
     resolveActorUserId,
     canManageShopOps,
 } = require('../../utils/shopAgentContext');
@@ -235,10 +235,6 @@ const {
     respondIfAlreadyAdvanced,
     buildAlreadyUpdatedPayload,
 } = require('../../utils/bookingStatusAlreadyUpdated');
-
-function shopAgentIdFromReq(req) {
-    return req.shopAgentId ?? resolveShopAgentId(req.user);
-}
 
 function actorUserIdFromReq(req) {
     return req.actorUserId ?? resolveActorUserId(req.user);
@@ -5842,88 +5838,6 @@ exports.getCities = async (req, res) => {
 
     return ResponseHelper.success(res, "Fetched All Cities", outObj);
 }
-
-//!------------------Get Bussiness Information ------------------//
-exports.getBussinessInforMation = async (req, res) => {
-    const { userId } = req.params;
-
-    const machineInfo = await machines.findAll();
-
-    const findServices = await agentSelectServices.findAll({
-        where: {
-            agentServiceId: userId,
-            status: true,
-        },
-        include: [
-            {
-                model: service,
-                attributes: ["id", "name"],
-            },
-            {
-                model: users,
-                as: "agentServices",
-                attributes: ["firstName", "lastName", "email"],
-            },
-        ],
-        attributes: ["id", "status"],
-    });
-
-    let outObj = {
-        allMachineInformation: machineInfo,
-        agentServices: findServices,
-    };
-
-    return ResponseHelper.success(res, "Information fetched", outObj);
-}
-
-exports.getBussinessWrkinghours = async (req, res) => {
-    const { userId } = req.params;
-
-    const platformOperationalHoursService = require("../../services/Admin/platformOperationalHoursService");
-    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
-    const countryCtx = await getCountryContextFromShopUserId(userId);
-    const platformOperationalHours =
-        await platformOperationalHoursService.getAll(countryCtx.countryId);
-
-    const bussinesWorkingHours = await bussinessWorkingHours.findAll({
-        where: {
-            userId: userId,
-        },
-        attributes: [
-            "id",
-            "dayOfWeek",
-            "openTime",
-            "closeTime",
-            "status",
-            "userId",
-        ],
-    });
-
-    let outObj = {
-        bussinesWorkingHours: bussinesWorkingHours,
-        platformOperationalHours,
-    };
-
-    return ResponseHelper.success(res, "Information fetched", outObj);
-}
-
-exports.getAgentPlatformOperationalHours = async (req, res) => {
-    const agentId = req.user?.id;
-    if (!agentId) {
-        throw new ValidationError("Unauthorized");
-    }
-
-    const platformOperationalHoursService = require("../../services/Admin/platformOperationalHoursService");
-    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
-    const countryCtx = await getCountryContextFromShopUserId(agentId);
-    const data = await platformOperationalHoursService.getAll(countryCtx.countryId);
-
-    return ResponseHelper.success(
-        res,
-        "Platform operational hours retrieved successfully",
-        data
-    );
-};
 
 exports.printLabelData = async (req, res) => {
     const { bookingId } = req.params;
