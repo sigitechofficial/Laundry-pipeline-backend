@@ -41,7 +41,7 @@ const {
     LAUNDRY_SHOP_MANAGER_ROLE_ID,
 } = require('../../utils/shopAgentContext');
 const { CLASSIFIED_AS } = require('../../constants/systemRoles');
-const { zoneCurrency } = require('../../utils/zoneCurrency');
+const { zoneCurrency, shopCurrency } = require('../../utils/zoneCurrency');
 const {
     SHOP_ADDRESS_TYPE,
     openAgentOwnerBookingWhere,
@@ -63,19 +63,12 @@ async function _refreshDeviceToken(userId, newToken) {
  */
 class AgentAuthService {
     /**
-     * The shop app's display currency (symbol): the zone currency of the shop's
-     * LaundaryShopAddress. A shop with no zone yet (registration in progress) gets the
-     * platform default from resolveDisplayCurrency.
+     * The shop app's display currency (symbol): the shop's zone currency
+     * (utils/zoneCurrency.shopCurrency; platform default while it has no zone yet).
      * @param {number|string} shopOwnerUserId the shop owner (an employee's employeeOff)
      */
     async _shopCurrencySymbol(shopOwnerUserId) {
-        const shopAddress = shopOwnerUserId
-            ? await addressDb.findOne({
-                  where: { userId: shopOwnerUserId, addressType: 'LaundaryShopAddress' },
-                  attributes: ['id', 'zoneId'],
-              })
-            : null;
-        return (await zoneCurrency(shopAddress?.zoneId)).currencySymbol;
+        return (await shopCurrency(shopOwnerUserId)).currencySymbol;
     }
 
     _ianaTimeZoneUpdate(data) {

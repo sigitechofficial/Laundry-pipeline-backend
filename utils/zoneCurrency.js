@@ -27,4 +27,27 @@ async function bookingCurrencyCode(bookingId) {
   return zoneCurrencyCode(row?.zoneId);
 }
 
-module.exports = { zoneCurrency, zoneCurrencyCode, bookingCurrencyCode };
+/**
+ * Currency of a shop's own money (wallet, withdrawals, settlements, the shop app):
+ * the zone of its LaundaryShopAddress. A shop with no zone yet (registration in
+ * progress) gets the platform default from resolveDisplayCurrency.
+ * @param {number|string} shopOwnerUserId the shop owner (an employee's employeeOff)
+ * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
+ */
+async function shopCurrency(shopOwnerUserId) {
+  const { addressDb } = require('../models');
+  const shopAddress = shopOwnerUserId
+    ? await addressDb.findOne({
+        where: { userId: shopOwnerUserId, addressType: 'LaundaryShopAddress' },
+        attributes: ['id', 'zoneId'],
+      })
+    : null;
+  return zoneCurrency(shopAddress?.zoneId);
+}
+
+/** ISO code of a shop's currency (see shopCurrency). */
+async function shopCurrencyCode(shopOwnerUserId) {
+  return (await shopCurrency(shopOwnerUserId)).currencyCode;
+}
+
+module.exports = { zoneCurrency, zoneCurrencyCode, bookingCurrencyCode, shopCurrency, shopCurrencyCode };
