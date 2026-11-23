@@ -507,6 +507,366 @@ exports.getAgentAddress = async (req, res) => {
     });
 }
 
+/**
+ * Canonical "visible New bookings" for an agent — the SINGLE source of truth
+ * shared by the New list AND the New badge count.
+ *
+ * Historically the New tab list (getBookingHome) applied per-row visibility
+ * filters (agent must offer every selected service, pickup must fall inside
+ * shop working hours, accept window must be open, orderExpireTime must exist,
+ * booking not already declined) while the badge counters (bookingCounts /
+ * fetchTabCounts) only ran the coarse SQL `where`. Result: badge showed N
+ * (e.g. 3) while the list was empty. Both now derive from this function so
+ * they can never drift again.
+ *
+ * @param {number} agentId
+ * @param {object} [opts]
+ * @param {string} [opts.timeZone]
+ * @param {string} [opts.clientTimeZone]
+ * @param {boolean} [opts.withDetails=false] include display joins (list) vs lean (count)
+ * @returns {Promise<Array>} filtered plain booking rows visible to this agent
+ */
+async function fetchVisibleNewBookings(agentId, opts = {}) {
+    const { timeZone, clientTimeZone, withDetails = false } = opts;
+
+    const shopAddr = await addressDb.findOne({
+        where: { userId: agentId, deletedAt: null },
+        attributes: ["id", "zoneId", "lat", "lng", "status"],
+    });
+    // A deactivated shop gets no new marketplace orders.
+    if (!shopAddr || !shopAddr.zoneId || shopAddr.status === false) return [];
+
+    const agentShopId = shopAddr.id;
+    const agentZone = shopAddr.zoneId;
+    const {
+        prepareNewBookingVisibilityForZone,
+    } = require("../../services/bookingHeldReleaseService");
+    await prepareNewBookingVisibilityForZone(agentZone);
+
+    const shopLat = parseFloat(shopAddr.lat);
+    const shopLng = parseFloat(shopAddr.lng);
+    const shopHasCoords =
+        Number.isFinite(shopLat) &&
+        Number.isFinite(shopLng) &&
+        !(Math.abs(shopLat) < 0.0001 && Math.abs(shopLng) < 0.0001);
+
+    const { getCountryContextFromShopUserId } = require("../../utils/countryTimeZone");
+    const agentCountryCtx = await getCountryContextFromShopUserId(agentId);
+    const resolvedAgentTz = timeZone || agentCountryCtx.ianaTimeZone;
+
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const marketplaceHeld = await shopAssignmentPolicyService.isMarketplaceHeld(agentId);
+    const declinedBookingIds =
+        await agentBookingDeclineService.getDeclinedBookingIdsForAgent(agentId);
+
+    const bookingWhere = {
+        bookingStatusId: 1,
+        zoneId: agentZone,
+        laundryShopId: null,
+        agentBroadcastHeld: { [Op.not]: true },
+        createdAt: { [Op.gte]: twentyFourHoursAgo },
+        [Op.or]: marketplaceHeld
+            ? [{ adminAssignedShopId: agentShopId }]
+            : [
+                  { adminAssignedShopId: null },
+                  { adminAssignedShopId: agentShopId },
+              ],
+        [Op.and]: [
+            {
+                [Op.or]: [
+                    { preferredShopAgentId: null },
+                    { preferredShopAgentId: agentId },
+                    { preferredShopBroadcastDone: true },
+                ],
+            },
+        ],
+    };
+    if (declinedBookingIds.length > 0) {
+        bookingWhere.id = { [Op.notIn]: declinedBookingIds };
+    }
+
+    const detailIncludes = [
+        {
+            model: addressDb,
+            as: "pickupAddress",
+            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+            include: [
+                { model: countries, attributes: ['id', 'name', 'shortName'] },
+                { model: cities, attributes: ['id', 'name'] },
+            ],
+        },
+        {
+            model: addressDb,
+            as: "dropOffAddress",
+            attributes: ["id", "streetAddress", "district", "province", "postalcode", "lat", "lng", "addressType"],
+            required: false,
+            include: [
+                { model: countries, attributes: ['id', 'name', 'shortName'] },
+                { model: cities, attributes: ['id', 'name'] },
+            ],
+        },
+        {
+            model: users,
+            as: 'customer',
+            attributes: ['id', 'firstName', 'lastName', 'email', 'userTypeId', 'image', 'phoneNum'],
+        },
+        {
+            model: users,
+            as: 'driver',
+            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'image'],
+        },
+        {
+            model: users,
+            as: 'deliveryDriver',
+            required: false,
+            attributes: ['id', 'firstName', 'lastName', 'image'],
+        },
+        {
+            model: zone,
+            attributes: ['id', 'name', 'zoneMinimumAmount', 'serviceCharge', 'currencyUnitId'],
+        },
+    ];
+
+    // Lightweight coords for distance sort when list details are not needed (counts).
+    const distanceIncludes = [
+        {
+            model: addressDb,
+            as: "pickupAddress",
+            attributes: ["id", "lat", "lng"],
+            required: false,
+        },
+        {
+            model: addressDb,
+            as: "dropOffAddress",
+            attributes: ["id", "lat", "lng"],
+            required: false,
+        },
+    ];
+
+    const bookingData = await booking.findAll({
+        where: bookingWhere,
+        include: withDetails ? detailIncludes : distanceIncludes,
+        attributes: ['id',
+            'orderTrackId',
+            'bookingStatusId',
+            'collectionDate',
+            'collectionTimeTo',
+            'collectionTimeFrom',
+            'driverInstructionOptions',
+            'driverInstructionOptions1',
+            'driverInstruction',
+            'paymentConfirmed',
+            "partialPayment",
+            "totalItems",
+            "totalBags",
+            "sameBagForAllServices",
+            "orderAmount",
+            "frequency",
+            "deliveryDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
+            "pickupAddresId",
+            "dropOffAddressId",
+            "laundryShopId",
+            "customerId",
+            "driverId",
+            "deliveryDriverId",
+            "createdAt",
+            "orderExpireTime",
+            "adminAssignedShopId",
+            "agentVisibleAt",
+            "placedOutsidePlatformHours",
+        ],
+    });
+
+    // Agent's actively-offered service IDs. A broadcast booking is only shown if
+    // the agent offers EVERY service the customer selected on that booking.
+    const agentServiceRows = await agentSelectServices.findAll({
+        where: { agentServiceId: agentId, status: true },
+        attributes: ["serviceId"],
+    });
+    const agentServiceIdSet = new Set(
+        agentServiceRows.map((r) => Number(r.serviceId))
+    );
+
+    const bookingIds = bookingData.map((b) => b.id);
+    const bookingServiceIds = new Map();
+    if (bookingIds.length > 0) {
+        const selectedServiceRows = await customerSelectedService.findAll({
+            where: { bookingId: { [Op.in]: bookingIds } },
+            attributes: ["bookingId", "serviceId"],
+        });
+        for (const row of selectedServiceRows) {
+            const bId = Number(row.bookingId);
+            const sId = Number(row.serviceId);
+            if (!Number.isFinite(sId) || sId <= 0) continue;
+            if (!bookingServiceIds.has(bId)) bookingServiceIds.set(bId, new Set());
+            bookingServiceIds.get(bId).add(sId);
+        }
+    }
+
+    // Per-customer shop exclusions: admin blocked this customer from this shop.
+    // Load once for all bookings so the loop below can skip them cheaply.
+    const customerShopExclusionService = require("../../services/Admin/customerShopExclusionService");
+    const customerExcludedCache = new Map();
+    async function isExcludedFromThisShop(customerId) {
+        const cid = Number(customerId);
+        if (!Number.isFinite(cid) || cid <= 0) return false;
+        if (customerExcludedCache.has(cid)) return customerExcludedCache.get(cid);
+        const result = await customerShopExclusionService.isCustomerExcludedFromShop(cid, agentShopId);
+        customerExcludedCache.set(cid, result);
+        return result;
+    }
+
+    // Slot capacity: hide orders whose pickup / delivery slot has no room left
+    // for this shop (accepting would be refused). One check per distinct slot pair.
+    const { resolveAcceptCapForShop } = require("../../utils/shopAcceptCapacity");
+    const { evaluateShopSlotCapacity } = require("../../utils/shopSlotCapacity");
+    const shopCap = await resolveAcceptCapForShop(agentId);
+    const slotRoomCache = new Map();
+    async function hasSlotRoom(plain) {
+        if (plain.adminAssignedShopId != null) return true; // admin decided
+        const key = [
+            plain.collectionDate, plain.collectionTimeFrom, plain.collectionTimeTo,
+            plain.deliveryDate, plain.deliveryTimeFrom, plain.deliveryTimeTo,
+        ].map((v) => (v instanceof Date ? v.toISOString() : String(v))).join("|");
+        if (!slotRoomCache.has(key)) {
+            const result = await evaluateShopSlotCapacity(agentId, agentShopId, plain, {
+                excludeBookingId: plain.id,
+                cap: shopCap,
+            });
+            slotRoomCache.set(key, result.allowed);
+        }
+        return slotRoomCache.get(key);
+    }
+
+    const out = [];
+    const excluded = {
+        noExpiry: 0,
+        services: 0,
+        expired: 0,
+        pickupHours: 0,
+        customerExcluded: 0,
+        slotFull: 0,
+    };
+    for (const row of bookingData) {
+        const plain = row.get({ plain: true });
+        if (!plain.orderExpireTime) {
+            excluded.noExpiry += 1;
+            continue;
+        }
+
+        // Admin excluded this customer from this shop — hide the order so the
+        // agent never sees it (the accept endpoint also blocks, but hiding is
+        // cleaner and prevents confusion).
+        if (plain.customerId && await isExcludedFromThisShop(plain.customerId)) {
+            excluded.customerExcluded += 1;
+            continue;
+        }
+
+        const requiredServiceIds = bookingServiceIds.get(Number(plain.id));
+        if (
+            !requiredServiceIds ||
+            requiredServiceIds.size === 0 ||
+            ![...requiredServiceIds].every((id) => agentServiceIdSet.has(id))
+        ) {
+            excluded.services += 1;
+            continue;
+        }
+
+        if (
+            !isBookingAcceptWindowOpen(
+                getAcceptWindowAnchor(plain),
+                plain.orderExpireTime,
+                timeZone,
+                clientTimeZone
+            )
+        ) {
+            excluded.expired += 1;
+            continue;
+        }
+
+        const pickupOk = await isPickupWithinShopWorkingHours(
+            agentId,
+            plain.collectionDate,
+            plain.collectionTimeFrom,
+            plain.collectionTimeTo,
+            resolvedAgentTz,
+            clientTimeZone,
+            agentCountryCtx.countryId
+        );
+        if (!pickupOk) {
+            excluded.pickupHours += 1;
+            continue;
+        }
+
+        if (!(await hasSlotRoom(plain))) {
+            excluded.slotFull += 1;
+            continue;
+        }
+
+        if (withDetails) {
+            const minutesLeft = getAcceptWindowMinutesRemaining(
+                getAcceptWindowAnchor(plain),
+                plain.orderExpireTime,
+                timeZone,
+                clientTimeZone
+            );
+            out.push({
+                ...plain,
+                createdAt: plain.createdAt,
+                orderExpireTime: formatOrderExpireTimeForApi(plain.orderExpireTime),
+                acceptWindowMinutes: minutesLeft,
+            });
+        } else {
+            out.push(plain);
+        }
+    }
+
+    // Distance from THIS shop to each order's pickup / delivery — then least total trip first.
+    await attachShopOrderDistances(out, shopHasCoords ? shopLat : null, shopHasCoords ? shopLng : null);
+    if (bookingData.length > 0 || out.length > 0) {
+        console.log(
+            `[new-list] agent=${agentId} zone=${agentZone} candidates=${bookingData.length} ` +
+            `visible=${out.length} excluded=${JSON.stringify(excluded)}`
+        );
+    }
+
+    return out;
+}
+
+/**
+ * Attach pickup/delivery km from the agent's shop and sort least total trip
+ * (pickup + delivery km) first. Also flags top-3 nearest pickup / delivery ranks.
+ */
+async function attachShopOrderDistances(rows, shopLat, shopLng) {
+    if (!Array.isArray(rows) || !rows.length) return rows;
+
+    const { computeShopOrderDistances } = require('../../utils/shopOrderDistanceRank');
+    for (const row of rows) {
+        // Same helper as the new-order broadcast: missing / (0,0) coordinates = unknown.
+        const { pickupDistanceKm, deliveryDistanceKm } = await computeShopOrderDistances(
+            shopLat,
+            shopLng,
+            row.pickupAddress,
+            row.dropOffAddress
+        );
+        row.pickupDistanceKm = pickupDistanceKm;
+        row.deliveryDistanceKm = deliveryDistanceKm;
+    }
+
+    const {
+        applyNearestDistanceRanks,
+    } = require('../../utils/shopOrderDistanceRank');
+    applyNearestDistanceRanks(rows);
+    return rows;
+}
+
+/*
+ * Get Agent Order Home Api
+ */
+
 /*
  * Get Agent Address - Complex Version with Business Info
  */
