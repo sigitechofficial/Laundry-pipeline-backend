@@ -42,4 +42,15 @@ assert.strictEqual(
   false
 );
 
+// Both rows are in the shop's currency, passed by the caller (no GBP default).
+assert.strictEqual(pair.credit.currency, 'GBP');
+assert.strictEqual(pair.debit.currency, 'GBP');
+const eurPair = buildAdminConnectPayoutLedger({ userId: 12, amount: 5, currency: 'eur', note: null, adminUserId: null });
+assert.strictEqual(eurPair.credit.currency, 'EUR');
+assert.strictEqual(eurPair.debit.currency, 'EUR');
+assert.throws(
+  () => buildAdminConnectPayoutLedger({ userId: 12, amount: 5, note: null, adminUserId: null }),
+  /buildAdminConnectPayoutLedger: currency code is required/
+);
+
 console.log('adminPayoutLedger tests passed');
