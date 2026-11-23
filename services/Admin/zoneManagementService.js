@@ -1,5 +1,6 @@
 const { zone, cities, countries, bussinessInformation, units, users, sequelize } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
+const { validateZoneData } = require('./zoneValidation');
 
 function normalizeZonePostcodes(raw) {
     let list = raw;
@@ -33,6 +34,7 @@ class ZoneManagementService {
      * @returns {Object} Created zone data
      */
     async addZone(zoneData) {
+            await validateZoneData(zoneData, { creating: true });
             const zoneCreate = await zone.create(zoneData);
             return zoneCreate;
     }
@@ -169,6 +171,7 @@ class ZoneManagementService {
             if (!zoneExists) {
                 throw new NotFoundError('Zone not found');
             }
+            await validateZoneData(updateData, { creating: false });
 
             const updatedZone = await zone.update(
                 updateData,
