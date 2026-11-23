@@ -1,4 +1,5 @@
 'use strict';
+const { appSessionKey } = require('./sessionKeys');
 
 /**
  * Socket.IO room auth.
@@ -111,7 +112,7 @@ const defaultDeps = {
     },
     async loadSessionTokens(userId) {
         const redisCli = require('../redis/redis');
-        return redisCli.hGetAll(`id-${userId}`);
+        return redisCli.hGetAll(appSessionKey(userId));
     },
 };
 

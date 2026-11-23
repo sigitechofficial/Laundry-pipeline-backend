@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { adminSessionKey } = require('../utils/sessionKeys');
 const { verify } = require('jsonwebtoken');
 const redisCli = require('../redis/redis');
 
@@ -42,7 +43,7 @@ async function validateAccessToken(req, res, next) {
         const validateToken = verify(accessToken, process.env.JWT_ACCESS_SECRET);
 
         // Validate token still exists in Redis (covers logout / revocation)
-        const redisToken = await redisCli.hGetAll(`tsh${validateToken.id}`);
+        const redisToken = await redisCli.hGetAll(adminSessionKey(validateToken.id));
         if (!redisToken || !redisToken[validateToken.dvToken]) {
             return res.status(403).json({
                 status: '0',

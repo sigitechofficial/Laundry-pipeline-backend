@@ -1,3 +1,4 @@
+const { adminSessionKey } = require('../../utils/sessionKeys');
 const { users, features, zone, permissions, deviceToken, roles } = require('../../models');
 const { normalizeRoleScope } = require('../../constants/systemRoles');
 const bcrypt = require('bcryptjs');
@@ -101,7 +102,7 @@ class AuthService {
 
             // Store token in Redis (session key — may be placeholder)
             if (dvToken) {
-                await redisCli.hSet(`tsh${adminData.id}`, { [dvToken]: accessToken });
+                await redisCli.hSet(adminSessionKey(adminData.id), { [dvToken]: accessToken });
             }
 
             // Prepare response data
@@ -202,7 +203,7 @@ class AuthService {
         const accessToken = signAdminAccessToken(payload);
 
         // Store in Redis
-        await redisCli.hSet(`tsh${adminData.id}`, { [dvToken]: accessToken });
+        await redisCli.hSet(adminSessionKey(adminData.id), { [dvToken]: accessToken });
 
         return {
             id: adminData.id,
@@ -229,7 +230,7 @@ class AuthService {
     async adminSignOut(adminId, dvToken) {
         try {
             // Remove token from Redis
-            await redisCli.hDel(`tsh${adminId}`, dvToken);
+            await redisCli.hDel(adminSessionKey(adminId), dvToken);
             return true;
         } catch (error) {
             throw new ValidationError('Failed to sign out. Please try again.');

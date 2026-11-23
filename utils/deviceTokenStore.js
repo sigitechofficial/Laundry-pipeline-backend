@@ -30,4 +30,23 @@ async function saveCurrentToken(userId, tokenId) {
   return { created: true };
 }
 
-module.exports = { detachFromOtherUsers, saveCurrentToken };
+/**
+ * Sign-in: the user's devices become exactly this one (one push target per account, so
+ * no duplicate notifications from stale installs), and the token leaves any other user.
+ * No-op without a token.
+ */
+async function replaceUserToken(userId, tokenId) {
+  if (!userId || !tokenId) return;
+  await deviceToken.destroy({ where: { userId } });
+  await detachFromOtherUsers(userId, tokenId);
+  await deviceToken.create({ userId, tokenId, status: true });
+}
+
+/** Sign-out: forget the given token(s) for this user. */
+async function removeUserTokens(userId, tokenIds) {
+  const ids = (Array.isArray(tokenIds) ? tokenIds : [tokenIds]).filter(Boolean);
+  if (!userId || ids.length === 0) return 0;
+  return deviceToken.destroy({ where: { userId, tokenId: ids } });
+}
+
+module.exports = { detachFromOtherUsers, saveCurrentToken, replaceUserToken, removeUserTokens };

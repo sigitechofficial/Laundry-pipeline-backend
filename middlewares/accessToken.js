@@ -1,4 +1,5 @@
 require('dotenv').config()
+const { appSessionKey } = require('../utils/sessionKeys');
 const { verify } = require('jsonwebtoken')
 const redisCli = require('../redis/redis')
 const { attachShopAgentContext } = require('../utils/shopAgentContext')
@@ -23,7 +24,7 @@ module.exports = async function validateAccessToken(req, res, next) {
             return;
         }
 
-        const redisToken = await redisCli.hGetAll(`id-${validateToken.id}`);
+        const redisToken = await redisCli.hGetAll(appSessionKey(validateToken.id));
         if (!redisToken) {
             throw new Error("Invalid Token")
         }

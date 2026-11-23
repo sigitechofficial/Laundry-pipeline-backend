@@ -9,6 +9,7 @@ const { users,
     vehicleImage,
     countries,
     driverInZones } = require('../../models')
+const { appSessionKey } = require('../../utils/sessionKeys');
 const sequelize = require('sequelize')
 const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
@@ -419,7 +420,7 @@ async function driverRegister3(req, res) {
     }, process.env.JWT_ACCESS_SECRET)
 
     if (dvToken) {
-        await redisCli.hSet(`id-${userData.id}`, { [dvToken]: accessToken })
+        await redisCli.hSet(appSessionKey(userData.id), { [dvToken]: accessToken })
     }
     const firebaseSet = await axios.get(
         "https://theshippinghack-default-rtdb.firebaseio.com/ShippingHack_driver/" +
@@ -565,7 +566,7 @@ async function driverLogin(req, res) {
     }, process.env.JWT_ACCESS_SECRET)
 
     if (dvToken) {
-        await redisCli.hSet(`id-${userData.id}`, { [dvToken]: accessToken })
+        await redisCli.hSet(appSessionKey(userData.id), { [dvToken]: accessToken })
     }
     let output = loginDataForDriver(userData, accessToken, online_status, dvToken)
     return res.json(output)
