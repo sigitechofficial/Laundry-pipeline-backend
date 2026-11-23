@@ -63,6 +63,21 @@ const tokensOf = (userId) => rows.filter((r) => r.userId === userId).map((r) => 
   assert.equal(await store.removeUserTokens(5, []), 0);
   assert.deepEqual(tokensOf(4), ['tablet'], "another user's token is untouched");
 
+  // Tokens recorded against the app install (deviceId): a rotation replaces that install's
+  // old token only; signing out of the install removes exactly its tokens.
+  await store.replaceUserToken(6, 'phone-a', 'install-phone');
+  await store.saveCurrentToken(6, 'tablet-a', 'install-tablet');
+  await store.saveCurrentToken(6, 'phone-b', 'install-phone'); // phone's token rotated
+  assert.deepEqual(tokensOf(6), ['phone-b', 'tablet-a']);
+  assert.equal(rows.find((r) => r.tokenId === 'phone-b').deviceId, 'install-phone');
+  // A token first saved without an install id gets it when the install reports it.
+  await store.saveCurrentToken(6, 'tablet-a', 'install-tablet');
+  assert.equal(rows.find((r) => r.tokenId === 'tablet-a').deviceId, 'install-tablet');
+  assert.equal(await store.removeInstallTokens(6, 'install-phone'), 1);
+  assert.deepEqual(tokensOf(6), ['tablet-a'], "the other install keeps its pushes");
+  assert.equal(await store.removeInstallTokens(6, null), 0, 'no install id: nothing removed');
+  assert.equal(await store.removeInstallTokens(null, 'install-tablet'), 0);
+
   // Session keys: app and admin sessions are distinct and stable (the key the
   // validators read is the key logouts delete).
   assert.equal(appSessionKey(7), 'id-7');

@@ -1,5 +1,6 @@
 'use strict';
 const { appSessionKey } = require('./sessionKeys');
+const { sessionFieldOf } = require('./sessionIdentity');
 
 /**
  * Socket.IO room auth.
@@ -9,7 +10,8 @@ const { appSessionKey } = require('./sessionKeys');
  * only join the room of the user its access token belongs to.
  *
  * Token check mirrors middlewares/accessToken.js (REST): JWT signature →
- * blocked-account check → Redis hash `id-<id>` keyed by dvToken → verify the
+ * blocked-account check → Redis hash `id-<id>` keyed by the install's session field
+ * (utils/appSession.js: deviceId, or a legacy dvToken) → verify the
  * stored session token. Guest tokens have no users.id and never get a room.
  *
  * Token sources (first hit wins):
@@ -139,7 +141,8 @@ function createSocketTokenVerifier(overrides = {}) {
         }
 
         const sessions = await deps.loadSessionTokens(decoded.id);
-        const stored = sessions && decoded.dvToken ? sessions[decoded.dvToken] : null;
+        const sessionField = sessionFieldOf(decoded);
+        const stored = sessions && sessionField ? sessions[sessionField] : null;
         if (!stored) {
             throw new SocketAuthError(SOCKET_AUTH_ERROR.INVALID_TOKEN, 'Session not found');
         }

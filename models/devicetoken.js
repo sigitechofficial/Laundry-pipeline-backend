@@ -19,7 +19,12 @@ module.exports = (sequelize, DataTypes) => {
     allowNull:true},
     status: {
       type:DataTypes.BOOLEAN,
-      defaultValue:false}
+      defaultValue:false},
+    // App install the token belongs to (utils/appSession.js); NULL for legacy rows.
+    deviceId: {
+      type: DataTypes.STRING(36),
+      allowNull: true,
+    },
   }, {
     sequelize,
     modelName: 'deviceToken',

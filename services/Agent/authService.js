@@ -1,12 +1,11 @@
 require("dotenv").config();
 const { appSessionKey } = require('../../utils/sessionKeys');
 const db = require('../../models');
-const { replaceUserToken, removeUserTokens } = require('../../utils/deviceTokenStore');
+const { resolveSessionIdentity, openAppSession, endAppSession } = require('../../utils/appSession');
 const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units, permissions, roles, wallet, driverInZones } = db;
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
 const otpGenerator = require('otp-generator');
 const {
@@ -46,16 +45,6 @@ const {
     SHOP_ADDRESS_TYPE,
     openAgentOwnerBookingWhere,
 } = require('../../utils/openBookingGuard');
-
-/**
- * Replaces all existing device tokens for a user with a single new one.
- * Prevents token accumulation (which causes duplicate notifications).
- */
-async function _refreshDeviceToken(userId, newToken) {
-    // Also detaches the token from any other account signed in earlier on this device
-    // (owner and staff share shop tablets), so pushes never reach the wrong person.
-    await replaceUserToken(userId, newToken);
-}
 
 /**
  * Agent Authentication Service
@@ -181,6 +170,9 @@ class AgentAuthService {
      * @returns {Object} Registration result
      */
     async registerAgentWithOTP(data, profileImg = null) {
+        // Sign-up signs this app install in (utils/appSession.js); checked before any write.
+        const identity = resolveSessionIdentity(data);
+
         // Check for existing user by email
         const userfindByEmail = await users.findOne({
             where: {
@@ -281,26 +273,11 @@ class AgentAuthService {
             });
             await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
-            // Replace all old tokens with the new one to prevent accumulation
-            if (data.dvToken) {
-                await _refreshDeviceToken(userfindByEmail.id, data.dvToken);
-            }
-
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: userfindByEmail.id,
-                email: userfindByEmail.email,
-                dvToken: data.dvToken,
-                userTypeId: userfindByEmail.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store access token in Redis
-            if (data.dvToken) {
-                await redisCli.hSet(
-                    appSessionKey(userfindByEmail.id),
-                    { [data.dvToken]: accessToken }
-                );
-            }
+            const accessToken = await openAppSession({
+                userId: userfindByEmail.id,
+                claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
+                identity,
+            });
 
             const savedTz = await this._getUserIanaTimeZone(userfindByEmail.id);
 
@@ -312,9 +289,9 @@ class AgentAuthService {
                 message: "User details updated. New OTP sent to your email."
             };
         } else {
-            // New shop account: user, OTP and device token in one transaction (no
-            // partial account on failure); OTP email only after commit. No Stripe
-            // customer: shop accounts never pay as customers.
+            // New shop account: user and OTP in one transaction (no partial account on
+            // failure); OTP email only after commit. No Stripe customer: shop accounts
+            // never pay as customers. The push token is registered with the session below.
             const otp = newSignupOtp();
             const { user: userCreate, otpRow: otpCreation } = await createUnverifiedAccount(signupPersistenceDeps(), {
                 userTypeId: 4,
@@ -331,25 +308,14 @@ class AgentAuthService {
                 },
                 passwordHash: await bcrypt.hash(data.password, 8),
                 otp,
-                dvToken: data.dvToken,
             });
             await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
-            // Generate access token
-            const accessToken = jwt.sign({
-                id: userCreate.id,
-                email: userCreate.email,
-                dvToken: data.dvToken,
-                userTypeId: userCreate.userTypeId
-            }, process.env.JWT_ACCESS_SECRET);
-
-            // Store access token in Redis
-            if (data.dvToken) {
-                await redisCli.hSet(
-                    appSessionKey(userCreate.id),
-                    { [data.dvToken]: accessToken }
-                );
-            }
+            const accessToken = await openAppSession({
+                userId: userCreate.id,
+                claims: { id: userCreate.id, email: userCreate.email, userTypeId: userCreate.userTypeId },
+                identity,
+            });
 
             const savedTz = await this._getUserIanaTimeZone(userCreate.id);
 
@@ -836,7 +802,8 @@ class AgentAuthService {
      * @param {Object} data - Login data
      * @param {string} data.email - User email
      * @param {string} data.password - User password (not required for social login)
-     * @param {string} data.dvToken - Device token
+     * @param {string} data.deviceId - App install id (UUID): the session's identity
+     * @param {string} [data.dvToken] - Push (FCM) token, optional; LEGACY builds send only this
      * @param {string} data.signedFrom - Sign in method (google, facebook, apple, or undefined for email)
      * @returns {Object} Login result
      */
@@ -846,9 +813,7 @@ class AgentAuthService {
             throw new ValidationError('Email is required');
         }
 
-        if (!data.dvToken) {
-            throw new ValidationError('Device token is required');
-        }
+        const identity = resolveSessionIdentity(data);
 
         // Validate password for non-social login
         if (!data.signedFrom && !data.password) {
@@ -1097,17 +1062,11 @@ class AgentAuthService {
                 throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
             }
 
-            await _refreshDeviceToken(socialUser.id, data.dvToken);
-
-            const accessToken = jwt.sign({
-                id: socialUser.id,
-                email: socialUser.email,
-                dvToken: data.dvToken
-            }, process.env.JWT_ACCESS_SECRET);
-
-            if (data.dvToken) {
-                await redisCli.hSet(appSessionKey(socialUser.id), { [data.dvToken]: accessToken });
-            }
+            const accessToken = await openAppSession({
+                userId: socialUser.id,
+                claims: { id: socialUser.id, email: socialUser.email },
+                identity,
+            });
 
             const featureData = await features.findAll({
                 where: { 
@@ -1143,17 +1102,11 @@ class AgentAuthService {
             });
         }
 
-        await _refreshDeviceToken(userFind.id, data.dvToken);
-
-        const accessToken = jwt.sign({
-            id: userFind.id,
-            email: userFind.email,
-            dvToken: data.dvToken
-        }, process.env.JWT_ACCESS_SECRET);
-
-        if (data.dvToken) {
-            await redisCli.hSet(appSessionKey(userFind.id), { [data.dvToken]: accessToken });
-        }
+        const accessToken = await openAppSession({
+            userId: userFind.id,
+            claims: { id: userFind.id, email: userFind.email },
+            identity,
+        });
 
         const featureData = await features.findAll({
             where: { 
@@ -1372,15 +1325,12 @@ class AgentAuthService {
     }
 
     /**
-     * Logout
-     * @param {Object} data - Logout data
+     * Logout: revoke this install's session and stop its pushes; other installs stay signed in.
+     * @param {Object} sessionUser - req.user (the verified session claims)
      * @returns {Object} Logout result
      */
-    async logout(data) {
-        // This device stops receiving the account's pushes, and its session is revoked.
-        await removeUserTokens(data.userId, data.dvToken);
-        await redisCli.hDel(appSessionKey(data.userId), data.dvToken);
-
+    async logout(sessionUser) {
+        await endAppSession(sessionUser);
         return {};
     }
 
@@ -1429,23 +1379,17 @@ class AgentAuthService {
             attributes: ['id', 'zoneId'],
         });
 
-        await _refreshDeviceToken(employeeData.id, data.dvToken);
-
-        const accessToken = jwt.sign(
-            {
+        const accessToken = await openAppSession({
+            userId: employeeData.id,
+            claims: {
                 id: employeeData.id,
                 email: employeeData.email,
-                dvToken: data.dvToken,
                 employeeOff: employeeData.employeeOff,
                 roleId: employeeData.roleId,
                 classifiedAsId: employeeData.classifiedAsId,
             },
-            process.env.JWT_ACCESS_SECRET
-        );
-
-        if (data.dvToken) {
-            await redisCli.hSet(appSessionKey(employeeData.id), { [data.dvToken]: accessToken });
-        }
+            identity: data.identity,
+        });
 
         const featureData = await features.findAll({
             where: {
@@ -1659,17 +1603,11 @@ class AgentAuthService {
 
         this._assertAgentApprovalForLogin(userData);
         
-        await _refreshDeviceToken(userData.id, data.dvToken);
-        
-        const accessToken = jwt.sign({
-            id: userData.id,
-            email: userData.email,
-            dvToken: data.dvToken
-        }, process.env.JWT_ACCESS_SECRET);
-
-        if (data.dvToken) {
-            await redisCli.hSet(appSessionKey(userData.id), { [data.dvToken]: accessToken });
-        }
+        const accessToken = await openAppSession({
+            userId: userData.id,
+            claims: { id: userData.id, email: userData.email },
+            identity: data.identity,
+        });
 
         const featureData = await features.findAll({
             where: { 
@@ -1799,17 +1737,19 @@ class AgentAuthService {
 
     /**
      * Agent Employee Login
-     * Allows an agent employee (classifiedAsId = 1) to sign in with email, password and device token.
+     * Allows an agent employee (classifiedAsId = 1) to sign in with email, password and the
+     * app install's deviceId (push token optional; LEGACY builds send only dvToken).
      * Returns a JWT, the employee's role permissions, and the agent shop info they belong to.
-     * @param {Object} data - { email, password, dvToken }
+     * @param {Object} data - { email, password, deviceId, dvToken? }
      * @returns {Object} Login result with accessToken, permissions, and agent info
      */
     async employeeLogin(data) {
-        const { email, password, dvToken } = data;
+        const { email, password } = data;
 
-        if (!email || !password || !dvToken) {
-            throw new ValidationError('Email, password and device token are required');
+        if (!email || !password) {
+            throw new ValidationError('Email and password are required');
         }
+        const identity = resolveSessionIdentity(data);
 
         const employeeData = await users.findOne({
             where: {
@@ -1896,21 +1836,19 @@ class AgentAuthService {
             attributes: ['id', 'name']
         });
 
-        const payload = {
-            id: employeeData.id,
-            email: employeeData.email,
-            dvToken,
-            employeeOff: employeeData.employeeOff,
-            roleId: employeeData.roleId,
-            classifiedAsId: employeeData.classifiedAsId
-        };
-
-        const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
-
-        await redisCli.hSet(appSessionKey(employeeData.id), { [dvToken]: accessToken });
-        // Staff receive pushes too (job assignments, staffAssignmentNotify): register
-        // this device for them exactly like the owner login does.
-        await _refreshDeviceToken(employeeData.id, dvToken);
+        // Staff receive pushes too (job assignments, staffAssignmentNotify): the install's
+        // push token, when it has one, is registered exactly like the owner login does.
+        const accessToken = await openAppSession({
+            userId: employeeData.id,
+            claims: {
+                id: employeeData.id,
+                email: employeeData.email,
+                employeeOff: employeeData.employeeOff,
+                roleId: employeeData.roleId,
+                classifiedAsId: employeeData.classifiedAsId,
+            },
+            identity,
+        });
 
         const capabilities = await getEffectiveShopCapabilities(employeeData);
 
@@ -1943,14 +1881,12 @@ class AgentAuthService {
     }
 
     /**
-     * Agent Employee Logout
-     * Removes the employee's session token from Redis.
-     * @param {Object} data - { userId, dvToken }
+     * Agent Employee Logout: revoke this install's session and stop its pushes.
+     * @param {Object} sessionUser - req.user (the verified session claims)
      * @returns {Object} Empty result
      */
-    async employeeLogout(data) {
-        await removeUserTokens(data.userId, data.dvToken);
-        await redisCli.hDel(appSessionKey(data.userId), data.dvToken);
+    async employeeLogout(sessionUser) {
+        await endAppSession(sessionUser);
         return {};
     }
 

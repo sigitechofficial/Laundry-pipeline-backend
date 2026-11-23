@@ -18,12 +18,14 @@ function otpValues(otp) {
 /**
  * New, unverified account.
  * @param {{ sequelize, users, otpVerification, deviceToken }} deps
- * @param {{ userTypeId: number, profile: object, passwordHash: string, otp: object, dvToken?: string }} input
+ * @param {{ userTypeId: number, profile: object, passwordHash: string, otp: object,
+ *           pushToken?: string, deviceId?: string }} input  pushToken: a real FCM token of the
+ *   signing-up install (deviceId), registered with the account so it gets pushes once verified.
  * @returns {Promise<{ user, otpRow }>}
  */
 async function createUnverifiedAccount(deps, input) {
   const { sequelize, users, otpVerification, deviceToken } = deps;
-  const { userTypeId, profile, passwordHash, otp, dvToken } = input;
+  const { userTypeId, profile, passwordHash, otp, pushToken, deviceId = null } = input;
 
   return sequelize.transaction(async (transaction) => {
     const user = await users.create(
@@ -31,8 +33,8 @@ async function createUnverifiedAccount(deps, input) {
       { transaction }
     );
     const otpRow = await otpVerification.create({ ...otpValues(otp), userId: user.id }, { transaction });
-    if (dvToken) {
-      await deviceToken.create({ tokenId: dvToken, status: true, userId: user.id }, { transaction });
+    if (pushToken) {
+      await deviceToken.create({ tokenId: pushToken, deviceId, status: true, userId: user.id }, { transaction });
     }
     return { user, otpRow };
   });

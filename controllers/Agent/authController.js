@@ -1,6 +1,7 @@
 const authService = require('../../services/Agent/authService');
 const ResponseHelper = require('../../utils/responseHelper');
 const { saveCurrentToken } = require('../../utils/deviceTokenStore');
+const { identityOfSession, normalizeDeviceId } = require('../../utils/appSession');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 
 // Register agent with OTP
@@ -122,11 +123,7 @@ const changePasswordOTP = async (req, res) => {
 
 // Logout
 const logout = async (req, res) => {
-    const data = { 
-        userId: req.user.id,
-        dvToken: req.user.dvToken
-    };
-    await authService.logout(data);
+    await authService.logout(req.user);
     
     // Clear the cookie
     res.clearCookie("accessToken", {
@@ -139,9 +136,10 @@ const logout = async (req, res) => {
 // Session
 const session = async (req, res) => {
     const data = {
+        ...req.body,
         userId: req.user.id,
-        dvToken: req.user.dvToken,
-        ...req.body
+        // Re-issues this install's session; the body cannot switch it to another one.
+        identity: identityOfSession(req.user, req.body),
     };
 
     const result = await authService.session(data);
@@ -204,8 +202,10 @@ const employeeLogin = async (req, res) => {
 /**
  * POST /agent/deviceToken { dvToken } — the shop app reports its current push token
  * (on start and whenever Firebase rotates it). The server otherwise only learns the
- * token at sign-in, so a rotated token silently stopped all pushes until the next login.
- * Works for owners and staff alike: the token belongs to the signed-in account.
+ * token at sign-in, so a rotated token silently stopped all pushes until the next login,
+ * and an install that had no token at sign-in (simulator, Firebase unavailable) got none.
+ * Works for owners and staff alike: the token belongs to the signed-in account and, for
+ * installs with a deviceId session, replaces that install's previous token.
  */
 const updateDeviceToken = async (req, res) => {
     const token = typeof req.body?.dvToken === 'string' ? req.body.dvToken.trim() : '';
@@ -214,17 +214,13 @@ const updateDeviceToken = async (req, res) => {
             status: '0', message: 'A valid device token is required', data: {}, error: 'INVALID_DEVICE_TOKEN',
         });
     }
-    const { created } = await saveCurrentToken(req.user.id, token);
+    const { created } = await saveCurrentToken(req.user.id, token, normalizeDeviceId(req.user.deviceId));
     return ResponseHelper.success(res, 'Device token saved', { created });
 };
 
 // Employee logout
 const employeeLogout = async (req, res) => {
-    const data = {
-        userId: req.user.id,
-        dvToken: req.user.dvToken
-    };
-    await authService.employeeLogout(data);
+    await authService.employeeLogout(req.user);
 
     res.clearCookie("accessToken", { path: "/agent" });
 
