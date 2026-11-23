@@ -186,6 +186,7 @@ const { resolveObjectURL } = require("buffer");
 const { confirmAndCapturePayment, chargeOffSession, capturePaymentIntent, getIntent } = require("../stripe");
 const { getPickupChargeAmount } = require("../../utils/invoicePrepaidDeduction");
 const { buildStripeChargePresentation } = require("../../utils/stripePaymentMetadata");
+const { zoneCurrencyCode } = require("../../utils/zoneCurrency");
 const {
     resolveBalancePaymentMethod,
     normalizePaymentType,
@@ -2345,7 +2346,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
         bookingId,
         orderTrackId: bookingfind.orderTrackId,
         amount: initialChargeAmount,
-        currency: "GBP",
+        currency: await zoneCurrencyCode(bookingfind.zoneId),
         paymentType,
         customer: bookingfind.customer || { id: bookingfind.customerId },
         agent: agentUser || { id: req.user?.id },
@@ -2951,7 +2952,7 @@ exports.createIntentUsingStripeForAgent = async (req, res) => {
         bookingId,
         orderTrackId: bookingRow.orderTrackId,
         amount: chargeAmount,
-        currency: "GBP",
+        currency: paymentSummary.currency,
         paymentType: bookingRow.paymentType || "card",
         customer: bookingRow.customer || { id: bookingRow.customerId },
         agent: agentUser || { id: req.user?.id },
@@ -4180,7 +4181,7 @@ exports.driverAddSerivces = async (req, res) => {
             userName: customerData?.firstName || 'Customer',
             orderNumber: bookings.orderTrackId || bookingId,
             finalAmount: discountedTotal.toFixed(2),
-            currency: '£'
+            currency: paymentSummary.currencySymbol
         });
 
         if (bookings.laundryShopId) {
@@ -4207,7 +4208,7 @@ exports.driverAddSerivces = async (req, res) => {
                     orderNumber: bookings.orderTrackId || bookingId,
                     customerName,
                     finalAmount: discountedTotal.toFixed(2),
-                    currency: '£'
+                    currency: paymentSummary.currencySymbol
                 });
             }
         }

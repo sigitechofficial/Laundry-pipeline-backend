@@ -16,7 +16,7 @@ const DEFAULT_FOOTER_OPTIONS = {
  * @param {string} params.orderNumber - Order tracking number
  * @param {string} params.customerName - Customer name
  * @param {number|string} params.finalAmount - Final invoice total
- * @param {string} [params.currency] - Currency symbol (default £)
+ * @param {string} params.currency - Currency symbol of the booking (required)
  * @param {string} [params.viewOrderLink] - Link to view order
  */
 module.exports = async function ({
@@ -26,7 +26,7 @@ module.exports = async function ({
   orderNumber = '',
   customerName = 'Customer',
   finalAmount = '0.00',
-  currency = '£',
+  currency,
   viewOrderLink
 }) {
   console.log('📧 Sending Agent Order Invoice Email via ZeptoMail API');

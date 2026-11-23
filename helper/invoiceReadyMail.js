@@ -8,10 +8,10 @@ const { generateInvoiceReadyTemplate } = require('./email');
  * @param {string} params.userName - Customer's first name
  * @param {string} params.orderNumber - Order tracking number
  * @param {number|string} params.finalAmount - Final total due amount
- * @param {string} params.currency - Currency symbol (default £)
+ * @param {string} params.currency - Currency symbol of the booking (required)
  * @param {string} params.payNowLink - Payment link
  */
-module.exports = async function ({ email, userName = 'Customer', orderNumber = '', finalAmount = '0.00', currency = '£', payNowLink }) {
+module.exports = async function ({ email, userName = 'Customer', orderNumber = '', finalAmount = '0.00', currency, payNowLink }) {
   console.log("📧 Sending Invoice Ready Email via ZeptoMail API");
   console.log("   To:", email);
   console.log("   Order:", orderNumber);

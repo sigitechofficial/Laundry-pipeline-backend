@@ -8,12 +8,14 @@ const { buildInvoiceBill } = require('./invoiceBill');
 
 const line = (bill, key) => bill.lines.find((l) => l.key === key);
 const keys = (bill) => bill.lines.map((l) => l.key);
+// The booking zone's currency, passed in by the caller (no default in the utils).
+const GBP = { currency: 'GBP', currencySymbol: '£' };
 
 // Order 1802-449217: card, laundry £89, fee £10, £20 minimum + £10 fee paid at booking,
 // "£50 off each item" worth £89 but limited to the £69 still to pay.
 {
   const ps = enrichPaymentSummary(
-    buildPaymentSummaryForBooking('card', { laundrySubtotal: 89, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 69 }),
+    buildPaymentSummaryForBooking('card', { ...GBP, laundrySubtotal: 89, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 69 }),
     { paymentType: 'card', billingPaymentStatus: 'Pending' }
   );
   const bill = buildInvoiceBill(ps, { offerWorth: 89, promotionDiscount: 69 });
@@ -34,7 +36,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 
 // No discount: one "Total" line, balance still to pay by card
 {
-  const ps = buildPaymentSummaryForBooking('card', { laundrySubtotal: 40, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 0 });
+  const ps = buildPaymentSummaryForBooking('card', { ...GBP, laundrySubtotal: 40, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 0 });
   const bill = buildInvoiceBill(ps);
   assert.deepStrictEqual(keys(bill), ['laundry', 'serviceFee', 'total', 'paidAtBooking', 'leftToPay']);
   assert.strictEqual(bill.leftToPay, 20);
@@ -44,7 +46,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 
 // Discount that fits: no note
 {
-  const ps = buildPaymentSummaryForBooking('card', { laundrySubtotal: 40, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 4 });
+  const ps = buildPaymentSummaryForBooking('card', { ...GBP, laundrySubtotal: 40, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 4 });
   const bill = buildInvoiceBill(ps, { offerWorth: 4, promotionDiscount: 4 });
   assert.strictEqual(line(bill, 'totalAfterDiscount').amount, 46);
   assert.strictEqual(bill.leftToPay, 16);
@@ -53,7 +55,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 
 // Cash with a minimum top-up and customer credit inside the discount
 {
-  const ps = buildPaymentSummaryForBooking('cash', { laundrySubtotal: 15, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 8 });
+  const ps = buildPaymentSummaryForBooking('cash', { ...GBP, laundrySubtotal: 15, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 8 });
   const bill = buildInvoiceBill(ps, { creditUsed: 3, offerWorth: 5, promotionDiscount: 5 });
   assert.deepStrictEqual(keys(bill), ['laundry', 'minimumTopUp', 'serviceFee', 'totalBeforeDiscount', 'discount', 'credit', 'totalAfterDiscount', 'leftToPay']);
   assert.strictEqual(line(bill, 'minimumTopUp').amount, 5);
@@ -65,7 +67,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 
 // Cash offer bigger than the bill
 {
-  const ps = buildPaymentSummaryForBooking('cash', { laundrySubtotal: 30, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 40 });
+  const ps = buildPaymentSummaryForBooking('cash', { ...GBP, laundrySubtotal: 30, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 40 });
   const bill = buildInvoiceBill(ps, { offerWorth: 60, promotionDiscount: 40 });
   assert.strictEqual(bill.leftToPay, 0);
   assert.strictEqual(bill.note, 'This offer was worth £60.00, more than this bill, so the discount is £40.00 and covers what was left to pay. The other £20.00 goes to your credit when the order is completed.');
@@ -76,7 +78,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 
 // Card laundry below the minimum: paid at booking is more than the total
 {
-  const ps = buildPaymentSummaryForBooking('card', { laundrySubtotal: 12, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 0 });
+  const ps = buildPaymentSummaryForBooking('card', { ...GBP, laundrySubtotal: 12, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 0 });
   const bill = buildInvoiceBill(ps);
   assert.strictEqual(bill.leftToPay, 0);
   assert.match(bill.note, /minimum order \(£20\.00\) is the least an order costs/);
@@ -85,7 +87,7 @@ const keys = (bill) => bill.lines.map((l) => l.key);
 // Paid invoice balance shows as its own line; worth unknown (old order) → no note
 {
   const ps = enrichPaymentSummary(
-    buildPaymentSummaryForBooking('card', { laundrySubtotal: 60, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 6 }),
+    buildPaymentSummaryForBooking('card', { ...GBP, laundrySubtotal: 60, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 6 }),
     { paymentType: 'card', billingPaymentStatus: 'Paid' }
   );
   const bill = buildInvoiceBill(ps, { offerWorth: null, promotionDiscount: 6 });
@@ -95,5 +97,21 @@ const keys = (bill) => bill.lines.map((l) => l.key);
   assert.strictEqual(bill.status, 'Nothing more to pay');
   assert.strictEqual(bill.note, null);
 }
+
+// The bill speaks the summary's currency: a EUR zone shows € and EUR, never £/GBP.
+{
+  const ps = buildPaymentSummaryForBooking('card', {
+    currency: 'EUR', currencySymbol: '€', laundrySubtotal: 40, serviceFee: 10, minimumOrderPayment: 20, driverTip: 0, discount: 0,
+  });
+  const bill = buildInvoiceBill(ps);
+  assert.strictEqual(bill.currency, 'EUR');
+  assert.strictEqual(bill.currencySymbol, '€');
+  assert.strictEqual(bill.status, '€20.00 still to pay');
+}
+
+// No currency on the summary: a caller bug, so it throws rather than guessing one.
+assert.throws(() => buildInvoiceBill({ currencySymbol: '£' }), /buildInvoiceBill: currency code is required/);
+assert.throws(() => buildInvoiceBill({ currency: 'GBP' }), /buildInvoiceBill: currency symbol is required/);
+assert.throws(() => buildInvoiceBill(), TypeError);
 
 console.log('invoiceBill.test.js passed');

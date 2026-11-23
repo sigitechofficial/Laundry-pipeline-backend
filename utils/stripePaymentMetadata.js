@@ -1,6 +1,12 @@
 /**
  * Stripe PaymentIntent description + metadata builders for reporting and support.
+ *
+ * Amounts are in the currency the caller passes (ISO code, e.g. the booking zone's
+ * "GBP" from utils/zoneCurrency); there is no default. Amounts in descriptions are
+ * written "GBP 5.50", the same as the refund presentation.
  */
+
+const { requireCurrencyCode } = require("./requireCurrency");
 
 const CHARGE_TYPE_LABELS = {
     pickup: "Pickup upfront charge",
@@ -59,9 +65,10 @@ function roundMoneyString(value) {
  * Values are truncated to Stripe limits by sanitizeStripeMetadata at charge time.
  *
  * @param {object|null|undefined} promotions
+ * @param {string} currency ISO code of the amounts (required when there is a promotion)
  * @returns {{ metadata: object, descriptionSuffix: string }}
  */
-function buildPromotionTrackingFields(promotions) {
+function buildPromotionTrackingFields(promotions, currency) {
     if (!promotions || typeof promotions !== "object") {
         return { metadata: {}, descriptionSuffix: "" };
     }
@@ -82,6 +89,7 @@ function buildPromotionTrackingFields(promotions) {
         };
     }
 
+    const currencyLabel = requireCurrencyCode(currency, "buildPromotionTrackingFields");
     const discountStr = roundMoneyString(promotions.discountAmount || 0);
     const cashbackStr = roundMoneyString(promotions.cashbackAmount || 0);
     const creditStr = roundMoneyString(promotions.creditUsed || 0);
@@ -104,9 +112,9 @@ function buildPromotionTrackingFields(promotions) {
     const suffixParts = [];
     if (codes) suffixParts.push(`Promo ${codes}`);
     else if (names) suffixParts.push(`Promo ${names}`);
-    if (Number(discountStr) > 0) suffixParts.push(`discount £${discountStr}`);
-    if (Number(creditStr) > 0) suffixParts.push(`credit £${creditStr}`);
-    if (Number(cashbackStr) > 0) suffixParts.push(`cashback £${cashbackStr}`);
+    if (Number(discountStr) > 0) suffixParts.push(`discount ${currencyLabel} ${discountStr}`);
+    if (Number(creditStr) > 0) suffixParts.push(`credit ${currencyLabel} ${creditStr}`);
+    if (Number(cashbackStr) > 0) suffixParts.push(`cashback ${currencyLabel} ${cashbackStr}`);
 
     return {
         metadata,
@@ -116,6 +124,7 @@ function buildPromotionTrackingFields(promotions) {
 
 /**
  * @param {object} params
+ * @param {string} params.currency - ISO code of the charge (required)
  * @param {object} [params.promotions] - from bookingPromotionService.stripePromoSnapshot
  * @returns {{ description: string, metadata: object, statementDescriptorSuffix: string }}
  */
@@ -124,7 +133,7 @@ function buildStripeChargePresentation({
     bookingId,
     orderTrackId,
     amount,
-    currency = "GBP",
+    currency,
     paymentType = "card",
     customer = {},
     agent = {},
@@ -134,6 +143,7 @@ function buildStripeChargePresentation({
     promotions = null,
     extra = {},
 }) {
+    const currencyLabel = requireCurrencyCode(currency, "buildStripeChargePresentation");
     const orderLabel = orderTrackId || (bookingId != null ? String(bookingId) : "");
     const customerName = formatPersonName(customer.firstName, customer.lastName);
     const agentName = formatPersonName(agent.firstName, agent.lastName);
@@ -152,7 +162,7 @@ function buildStripeChargePresentation({
         descriptionParts.push(customerName);
     }
 
-    const promoTracking = buildPromotionTrackingFields(promotions);
+    const promoTracking = buildPromotionTrackingFields(promotions, currencyLabel);
     if (promoTracking.descriptionSuffix) {
         descriptionParts.push(promoTracking.descriptionSuffix);
     }
@@ -164,7 +174,7 @@ function buildStripeChargePresentation({
         paymentStage: PAYMENT_STAGE[chargeType] || chargeType,
         isUpfrontPayment: chargeType === "pickup" ? "yes" : "no",
         amount: amountStr,
-        currency: String(currency || "GBP").toUpperCase(),
+        currency: currencyLabel,
         bookingId: bookingId != null ? String(bookingId) : "",
         orderTrackId: orderTrackId || "",
         paymentType: paymentType || "card",
@@ -254,20 +264,21 @@ function buildStripeChargePresentation({
 
 /**
  * Build Stripe presentation after a prepaid capture is refunded (full or partial).
+ * `currency`: ISO code of the refunded charge (required).
  */
 function buildStripeRefundPresentation({
     bookingId,
     orderTrackId,
     amountRefunded = 0,
     feeRetained = 0,
-    currency = "GBP",
+    currency,
     customer = {},
 }) {
     const orderLabel = orderTrackId || (bookingId != null ? String(bookingId) : "");
     const customerName = formatPersonName(customer.firstName, customer.lastName);
     const refundedStr = roundMoneyString(amountRefunded);
     const feeStr = roundMoneyString(feeRetained);
-    const currencyLabel = String(currency || "GBP").toUpperCase();
+    const currencyLabel = requireCurrencyCode(currency, "buildStripeRefundPresentation");
 
     let chargeLabel = "Prepaid retained as cancellation fee";
     if (Number(amountRefunded) > 0 && Number(feeRetained) > 0) {

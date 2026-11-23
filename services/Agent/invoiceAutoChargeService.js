@@ -328,10 +328,11 @@ async function markChargeSuccess(bookingRow, paymentIntent, amount, paymentSumma
         );
     }
 
-    await notifyPaymentSucceeded(bookingRow, amount);
+    await notifyPaymentSucceeded(bookingRow, amount, paymentSummary.currencySymbol);
 }
 
-async function notifyPaymentSucceeded(bookingRow, amount) {
+/** [currencySymbol]: the charged summary's currency (the booking zone's). */
+async function notifyPaymentSucceeded(bookingRow, amount, currencySymbol) {
     const orderLabel = bookingRow.orderTrackId || bookingRow.id;
     const amountLabel = Number(amount || 0).toFixed(2);
     const data = {
@@ -345,7 +346,7 @@ async function notifyPaymentSucceeded(bookingRow, amount) {
         sendNotification(
             bookingRow.customerId,
             "Payment successful",
-            `Payment of £${amountLabel} for order ${orderLabel} was successful.`,
+            `Payment of ${currencySymbol}${amountLabel} for order ${orderLabel} was successful.`,
             data
         ).catch((e) =>
             console.error(
@@ -360,7 +361,7 @@ async function notifyPaymentSucceeded(bookingRow, amount) {
         sendNotification(
             agentUserId,
             "Payment received",
-            `Card payment of £${amountLabel} received for order ${orderLabel}.`,
+            `Card payment of ${currencySymbol}${amountLabel} received for order ${orderLabel}.`,
             data
         ).catch((e) =>
             console.error(
@@ -590,7 +591,7 @@ async function attemptInvoiceCardCharge(bookingId, options = {}) {
             bookingId,
             orderTrackId: bookingRow.orderTrackId,
             amount: amountDue,
-            currency: "GBP",
+            currency: paymentSummary.currency,
             paymentType: bookingRow.paymentType || "card",
             customer: customer || { id: bookingRow.customerId },
             agent: { id: options.agentUserId || null },

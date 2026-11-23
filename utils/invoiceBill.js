@@ -7,11 +7,14 @@
  * (utils/invoicePaymentSummary.js) so the numbers are the same ones charged.
  */
 
+const { requireCurrencyCode, requireCurrencySymbol } = require('./requireCurrency');
+
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const money = (sym, n) => `${sym}${round(n).toFixed(2)}`;
 
 /**
- * @param {object} ps payment summary (enriched or not)
+ * @param {object} ps payment summary (enriched or not); carries the booking's
+ *   `currency` and `currencySymbol` (required, see invoicePaymentSummary)
  * @param {object} [facts]
  * @param {number} [facts.creditUsed] customer credit inside orderSummary.discount
  * @param {number|null} [facts.offerWorth] what the promotions were worth before the
@@ -24,7 +27,8 @@ const money = (sym, n) => `${sym}${round(n).toFixed(2)}`;
  *   offer: { worth: number, applied: number }|null }}
  */
 function buildInvoiceBill(ps = {}, facts = {}) {
-  const sym = ps.currencySymbol || '£';
+  const currency = requireCurrencyCode(ps.currency, 'buildInvoiceBill');
+  const sym = requireCurrencySymbol(ps.currencySymbol, 'buildInvoiceBill');
   const os = ps.orderSummary || {};
   const paid = ps.paidAtBooking || {};
   const isCash = ps.paymentType === 'cash';
@@ -103,7 +107,7 @@ function buildInvoiceBill(ps = {}, facts = {}) {
   }
 
   return {
-    currency: ps.currency || 'GBP',
+    currency,
     currencySymbol: sym,
     lines,
     leftToPay,

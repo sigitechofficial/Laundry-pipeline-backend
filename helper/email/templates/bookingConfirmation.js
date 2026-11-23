@@ -1,4 +1,5 @@
 const generateFooter = require('../partials/footer');
+const { requireCurrencySymbol } = require('../../../utils/requireCurrency');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,7 +18,7 @@ const path = require('path');
  * @param {string} data.dropoffTimeFrom - Delivery time from
  * @param {string} data.dropoffTimeTo - Delivery time to
  * @param {number} data.upfrontAmount - Minimum order hold amount
- * @param {string} data.currency - Currency symbol (default £)
+ * @param {string} data.currency - Currency symbol of the booking (required, e.g. the zone's £)
  * @param {string} data.viewBookingLink - Link to view booking
  * @param {Object} data.footerOptions - Footer customization options
  * @returns {Object} - { subject, html, inlineImages }
@@ -36,10 +37,11 @@ function generateBookingConfirmationTemplate(data) {
     dropoffTimeFrom = '',
     dropoffTimeTo = '',
     upfrontAmount = 0,
-    currency = '£',
+    currency,
     viewBookingLink = 'https://prodlaundry.sigisolutions.net/my-bookings',
     footerOptions = {}
   } = data;
+  requireCurrencySymbol(currency, 'generateBookingConfirmationTemplate');
 
   console.log('📸 Loading email images for booking confirmation inline attachment...');
   const imagePaths = {

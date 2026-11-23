@@ -213,7 +213,8 @@ async function changeBalancePaymentMethod(bookingId, opts = {}) {
         const agentUserId = await resolveAgentUserId(refreshed);
         if (agentUserId) {
             const orderRef = refreshed.orderTrackId || refreshed.id;
-            const symbol = summaryAfter?.currencySymbol || '£';
+            // The summary is in the booking zone's currency (always set).
+            const symbol = summaryAfter.currencySymbol;
             const due = Number(summaryAfter?.amountDueNow ?? 0).toFixed(2);
             const body =
                 method === 'cash'
