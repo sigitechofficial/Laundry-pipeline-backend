@@ -2,7 +2,6 @@ const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
 const { Op, UniqueConstraintError, ValidationError: SequelizeValidationError } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const stripe = require('../../controllers/stripe');
 const signupWelcomeMail = require('../../helper/signupWelcomeMail');
 const {
     ValidationError,
@@ -361,22 +360,10 @@ class CustomerService {
             throw dbError;
         }
 
-        let stripeCustomerId = null;
-        try {
-            stripeCustomerId = await stripe.createStripeCustomer(
-                `${firstName} ${lastName}`.trim(),
-                email
-            );
-            await users.update(
-                { stripeCustomerId },
-                { where: { id: user.id } }
-            );
-        } catch (stripeError) {
-            console.error(
-                '⚠️ Admin addCustomer Stripe failed (account still created):',
-                stripeError.message || stripeError
-            );
-        }
+        // No Stripe call: the customer's Stripe record is created on first payment
+        // (services/shared/stripeCustomerService.js), so a Stripe outage cannot leave
+        // this account half set up.
+        const stripeCustomerId = null;
 
         try {
             await signupWelcomeMail({

@@ -65,47 +65,15 @@ const {
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
 const { detachFromOtherUsers } = require('../../utils/deviceTokenStore');
-const db = require('../../models');
 const {
-    createUnverifiedCustomer,
-    refreshUnverifiedCustomer,
-} = require('./customerSignupPersistence');
-
-/** Real dependencies for the atomic sign-up writes (see customerSignupPersistence.js). */
-const signupDeps = () => ({
-    sequelize: db.sequelize,
-    users,
-    otpVerification,
-    deviceToken,
-    stripeApi: {
-        createCustomer: ({ name, email }) => stripe.createStripeCustomer(name, email),
-        updateCustomer: (id, params) => stripe.updateStripeCustomer(id, params),
-        deleteCustomer: (id) => stripe.deleteStripeCustomer(id),
-    },
-});
-
-/** 4-digit OTP valid for 1 minute. */
-function newSignupOtp() {
-    const requestedAt = new Date();
-    return {
-        code: otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false,
-        }),
-        requestedAt,
-        expiresAt: new Date(requestedAt.getTime() + 1 * 60 * 1000),
-    };
-}
-
-/** Sent only after the sign-up transaction committed; failure must not undo the sign-up. */
-async function sendSignupOtpEmail(email, otpCode, firstName) {
-    try {
-        await otpMail({ type: 'RegisterOTP', email, OTP: otpCode, userName: firstName });
-    } catch (mailError) {
-        console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-    }
-}
+    createUnverifiedAccount,
+    refreshUnverifiedAccount,
+} = require('../shared/signupAccountPersistence');
+const {
+    signupPersistenceDeps,
+    newSignupOtp,
+    sendSignupOtpEmail,
+} = require('../shared/signupSupport');
 const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
@@ -237,10 +205,10 @@ class CustomerAuthService {
 
             console.log('🔄 Customer exists but not verified. Updating details and resending OTP...');
 
-            // Details, Stripe record and OTP are refreshed atomically; the existing Stripe
-            // customer is renamed rather than replaced (no orphan customers).
+            // Details and OTP are refreshed atomically. No Stripe call: the Stripe customer
+            // is created on first payment (services/shared/stripeCustomerService.js).
             const otp = newSignupOtp();
-            const { otpRow, stripeCustomerId } = await refreshUnverifiedCustomer(signupDeps(), userfindByEmail, {
+            const { otpRow } = await refreshUnverifiedAccount(signupPersistenceDeps(), userfindByEmail, {
                 profile: {
                     firstName,
                     lastName,
@@ -254,7 +222,7 @@ class CustomerAuthService {
                 passwordHash: await bcrypt.hash(password, 8),
                 otp,
             });
-            await sendSignupOtpEmail(email, otp.code, firstName);
+            await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });
 
             if (dvToken) {
                 await _refreshDeviceToken(userfindByEmail.id, dvToken);
@@ -277,16 +245,18 @@ class CustomerAuthService {
             return {
                 otpId: otpRow.id,
                 userId: userfindByEmail.id,
-                stripeCustomerId: stripeCustomerId || null,
+                // Kept for API compatibility; null until the customer first pays.
+                stripeCustomerId: userfindByEmail.stripeCustomerId || null,
                 accessToken,
                 message: 'User details updated. New OTP sent to your email.'
             };
         }
 
-        // New customer: Stripe customer, user, OTP and device token are created
-        // all-or-nothing (a Stripe or database failure leaves no partial account).
+        // New customer: user, OTP and device token in one transaction (no partial
+        // account on failure). No Stripe call: created on first payment.
         const otp = newSignupOtp();
-        const { user, otpRow, stripeCustomerId } = await createUnverifiedCustomer(signupDeps(), {
+        const { user, otpRow } = await createUnverifiedAccount(signupPersistenceDeps(), {
+            userTypeId: 2,
             profile: {
                 email,
                 firstName,
@@ -301,12 +271,13 @@ class CustomerAuthService {
             otp,
             dvToken,
         });
-        await sendSignupOtpEmail(email, otp.code, firstName);
+        await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });
 
         return {
             otpId: otpRow.id,
             userId: user.id,
-            stripeCustomerId
+            // Kept for API compatibility; null until the customer first pays.
+            stripeCustomerId: null
         };
     }
 
@@ -587,14 +558,14 @@ class CustomerAuthService {
                 });
             }
 
-            const createStripeCustomer = await stripe.createStripeCustomer(email);
-
+            // No Stripe call here: the Stripe customer is created on first payment
+            // (services/shared/stripeCustomerService.js). Previously this passed the
+            // email as the customer's name and no email.
             const createUser = await users.create({
                 email,
                 userTypeId: 2,
                 verifiedAt: Date.now(),
                 status: true,
-                stripeCustomerId: createStripeCustomer,
                 signedFrom: signedFrom,
                 firstName: typeof firstName === 'string' ? firstName.trim() : firstName,
                 lastName: typeof lastName === 'string' ? lastName.trim() : lastName,

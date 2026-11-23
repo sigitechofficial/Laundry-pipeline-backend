@@ -14,7 +14,6 @@ const { detachFromOtherUsers, saveCurrentToken } = require('../../utils/deviceTo
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken')
 const path = require('path')
 const { stat } = require('fs')
-const stripe = require('../stripe')
 const { create } = require('domain')
 const customerAuthService = require('../../services/Customer/authService')
 const guestAuthService = require('../../services/Customer/guestAuthService')
@@ -84,132 +83,6 @@ async function verifyOTpSignUp(req, res) {
     return res.json(output);
 }
 
-/*
- * Register Customer 
-*/
-async function registerCustomer(req, res) {
-    const { firstName, lastName, password, dvToken, phoneNum, confirmPassword, userId, countryId, cityId, countryCode } = req.body
-    console.log("ðŸš€ ~ registerCustomer ~ req.body:", req.body)
-
-    let profileImg = null;
-    if (req.file) {
-        let tempProfileImg = req.file.path;
-        profileImg = tempProfileImg.replace(/\\/g, "/");
-    }
-
-    const userfind = await users.findOne({
-        where: {
-            id: userId
-        },
-        include: [{
-            model: otpVerification,
-            required: false,
-            attributes: ['OTP']
-        }, {
-            model: deviceToken,
-            required: false,
-            attributes: ['tokenId']
-        }],
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "phoneNum",
-            "userTypeId",
-            "verifiedAt",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ],
-    })
-    console.log("ðŸš€ ~ registerCustomer ~ userfind:", userfind)
-
-
-    if (!userfind) {
-        throw new customError("User Not Exists")
-    }
-
-    if (userfind.verifiedAt === null) {
-        return res.json(responsefunc("2", "Please verify your OTP", {}, ""))
-    }
-
-
-    if (password !== confirmPassword) {
-        throw new customError(" Passwords do not match. Please try again.")
-
-    }
-
-    const hashpass = await bcrypt.hash(password, 8)
-    console.log("ðŸš€ ~ registerCustomer ~ hashpass:", hashpass)
-
-    const stripeCustomer = await stripe.createStripeCustomer(userfind.firstName, userfind.email)
-    console.log("ðŸš€ ~ registerCustomer ~ stripeCustomer:", stripeCustomer)
-
-    await users.update({
-        firstName,
-        lastName,
-        status: true,
-        password: hashpass,
-        dvToken,
-        phoneNum,
-        ...(countryCode != null && String(countryCode).trim() !== "" ? { countryCode } : {}),
-        stripeCustomerId: stripeCustomer,
-        image: profileImg,
-        cityId,
-        countryId
-    }, {
-        where: { id: userfind.id }
-    })
-
-    const updatedUser = await users.findOne({
-        where: {
-            id: userfind.id
-        },
-        attributes: [
-            "id",
-            "firstName",
-            "lastName",
-            "email",
-            "phoneNum",
-            "userTypeId",
-            "verifiedAt",
-            [
-                sequelize.fn("date_format", sequelize.col("users.createdAt"), "%Y"),
-                "joinedOn",
-            ],
-        ]
-    })
-
-    if (dvToken) await detachFromOtherUsers(userfind.id, dvToken);
-    await deviceToken.create(({
-        tokenId: dvToken,
-        status: true,
-        userId: userfind.id
-    }))
-
-    const accessToken = jwt.sign({
-        id: userfind.id,
-        email: userfind.email,
-        dvToken: dvToken,
-        userTypeId: userfind.userTypeId
-    }, process.env.JWT_ACCESS_SECRET
-    )
-
-    if (dvToken) {
-        await redisCli.hSet(
-            `id-${userfind.id}`,
-            { [dvToken]: accessToken }
-        )
-    }
-
-
-    let outputObj = registerData(updatedUser, accessToken, false)
-
-    return res.json(outputObj)
-
-}
 
 
 
@@ -546,28 +419,6 @@ let responsefunc = (status, message, data, error) => {
 }
 
 
-let registerData = (userData, accessToken, isGuest) => {
-    return {
-        status: "1",
-        message: "User Register successful",
-        statusCode: 200,
-        data: {
-            userId: `${userData.id}`,
-            firstName: `${userData.firstName}`,
-            lastName: `${userData.lastName}`,
-            email: `${userData.email}`,
-            accessToken: `${accessToken}`,
-            userTypeId: `${userData.userTypeId}`,
-            isGuest,
-            joinedOn: userData.dataValues.joinedOn
-                ? userData.dataValues.joinedOn
-                : "2023",
-            phoneNum: `${userData.phoneNum}`,
-        },
-        error: "",
-    };
-};
-
 
 let loginData = (userData, accessToken, isGuest, zoneId = null, zoneName = null) => {
     return {
@@ -640,7 +491,6 @@ async function updateDeviceToken(req, res) {
 module.exports = {
     registerCustomerWithOTP,
     verifyOTpSignUp,
-    registerCustomer,
     loginUser,
     forgetPasswordRequest,
     verifyOTPforPassword,

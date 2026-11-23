@@ -19,6 +19,15 @@ const {
     ACCOUNT_BLOCKED_MESSAGE,
 } = require('../../utils/accountBlocked');
 const otpMail = require('../../helper/otpMail');
+const {
+    createUnverifiedAccount,
+    refreshUnverifiedAccount,
+} = require('../shared/signupAccountPersistence');
+const {
+    signupPersistenceDeps,
+    newSignupOtp,
+    sendSignupOtpEmail,
+} = require('../shared/signupSupport');
 const stripe = require('../../controllers/stripe');
 const {
     parseTimeZoneFromBody,
@@ -239,73 +248,26 @@ class AgentAuthService {
             // User exists but NOT verified - Allow updating details and resending OTP
             console.log("🔄 User exists but not verified. Updating details and resending OTP...");
             
-            // Update user details
-            const hashedPassword = await bcrypt.hash(data.password, 8);
-            await users.update({
-                firstName: data.firstName,
-                lastName: data.lastName,
-                phoneNum: data.phoneNum,
-                password: hashedPassword,
-                countryCode: data.countryCode,
-                email:data.email,
-                countryId: data.countryId,
-                cityId: data.cityId,
-                image: profileImg || userfindByEmail.image, // Keep existing image if new one not provided
-                ...this._ianaTimeZoneUpdate(data),
-            }, {
-                where: { id: userfindByEmail.id }
-            });
-
-            // Update Stripe customer name if needed
-            if (data.firstName !== userfindByEmail.firstName) {
-                const stripeCustomer = await stripe.createStripeCustomer(data.firstName, data.email);
-                await users.update({
-                    stripeCustomerId: stripeCustomer
-                }, {
-                    where: { id: userfindByEmail.id }
-                });
-            }
-
-            // Generate new OTP
-            const otp = otpGenerator.generate(4, {
-                lowerCaseAlphabets: false,
-                upperCaseAlphabets: false,
-                specialChars: false
-            });
-
-            // Send new OTP
-            try {
-                await otpMail({
-                    type: 'RegisterOTP',
+            // Details and OTP refreshed atomically; OTP email only after commit.
+            // Shop accounts never pay as customers, so no Stripe customer is created
+            // (previously a new one was created every time the first name changed).
+            const otp = newSignupOtp();
+            const { otpRow } = await refreshUnverifiedAccount(signupPersistenceDeps(), userfindByEmail, {
+                profile: {
+                    firstName: data.firstName,
+                    lastName: data.lastName,
+                    phoneNum: data.phoneNum,
+                    countryCode: data.countryCode,
                     email: data.email,
-                    OTP: otp,
-                    userName: data.firstName || 'Agent'
-                });
-            } catch (mailError) {
-                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-            }
-
-            let dt = new Date();
-            // Set OTP expiration to 1 minute from now
-            let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
-
-            // Update or create OTP record
-            if (userfindByEmail.otpVerification && userfindByEmail.otpVerification.id) {
-                await otpVerification.update({
-                    OTP: otp,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                }, {
-                    where: { userId: userfindByEmail.id }
-                });
-            } else {
-                await otpVerification.create({
-                    OTP: otp,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                    userId: userfindByEmail.id
-                });
-            }
+                    countryId: data.countryId,
+                    cityId: data.cityId,
+                    image: profileImg || userfindByEmail.image, // keep existing image if none sent
+                    ...this._ianaTimeZoneUpdate(data),
+                },
+                passwordHash: await bcrypt.hash(data.password, 8),
+                otp,
+            });
+            await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
             // Replace all old tokens with the new one to prevent accumulation
             if (data.dvToken) {
@@ -328,80 +290,38 @@ class AgentAuthService {
                 );
             }
 
-            // Get updated OTP record
-            const updatedOtp = await otpVerification.findOne({
-                where: { userId: userfindByEmail.id }
-            });
-
             const savedTz = await this._getUserIanaTimeZone(userfindByEmail.id);
 
             return {
-                otpId: updatedOtp.id,
+                otpId: otpRow.id,
                 userId: userfindByEmail.id,
                 accessToken,
                 ianaTimeZone: savedTz,
                 message: "User details updated. New OTP sent to your email."
             };
         } else {
-            // User doesn't exist - Create new user
-            let userTypeId = 4;
-            const hashedPassword = await bcrypt.hash(data.password, 8);
-            const userCreate = await users.create({
-                email: data.email,
-                firstName: data.firstName,
-                lastName: data.lastName,
-                phoneNum: data.phoneNum,
-                userTypeId,
-                password: hashedPassword,
-                status: true,
-                countryCode: data.countryCode
-            });
-
-            const stripeCustomer = await stripe.createStripeCustomer(data.firstName, data.email);
-
-            const otp = otpGenerator.generate(4, {
-                lowerCaseAlphabets: false,
-                upperCaseAlphabets: false,
-                specialChars: false
-            });
-
-            try {
-                await otpMail({
-                    type: 'RegisterOTP',
+            // New shop account: user, OTP and device token in one transaction (no
+            // partial account on failure); OTP email only after commit. No Stripe
+            // customer: shop accounts never pay as customers.
+            const otp = newSignupOtp();
+            const { user: userCreate, otpRow: otpCreation } = await createUnverifiedAccount(signupPersistenceDeps(), {
+                userTypeId: 4,
+                profile: {
                     email: data.email,
-                    OTP: otp,
-                    userName: data.firstName || 'Agent'
-                });
-            } catch (mailError) {
-                console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-            }
-
-            let dt = new Date();
-            // Set OTP expiration to 1 minute from now
-            let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
-
-            const otpCreation = await otpVerification.create({
-                OTP: otp,
-                reqAt: dt,
-                expirtAt: expirationTime,
-                userId: userCreate.id
+                    firstName: data.firstName,
+                    lastName: data.lastName,
+                    phoneNum: data.phoneNum,
+                    countryCode: data.countryCode,
+                    image: profileImg,
+                    countryId: data.countryId,
+                    cityId: data.cityId,
+                    ...this._ianaTimeZoneUpdate(data),
+                },
+                passwordHash: await bcrypt.hash(data.password, 8),
+                otp,
+                dvToken: data.dvToken,
             });
-
-            await deviceToken.create({
-                tokenId: data.dvToken,
-                status: true,
-                userId: userCreate.id
-            });
-
-            await users.update({
-                stripeCustomerId: stripeCustomer,
-                image: profileImg,
-                countryId: data.countryId,
-                cityId: data.cityId,
-                ...this._ianaTimeZoneUpdate(data),
-            }, {
-                where: { id: userCreate.id }
-            });
+            await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
             // Generate access token
             const accessToken = jwt.sign({
@@ -1110,13 +1030,12 @@ class AgentAuthService {
 
         // Social login: Create if not found
         if ((!userFind && data.signedFrom === 'google') || (!userFind && data.signedFrom === 'facebook') || (!userFind && data.signedFrom === 'apple')) {
-            const createStripeCustomer = await stripe.createStripeCustomer(data.email);
-
+            // Shop accounts never pay as customers: no Stripe customer is created for them
+            // (previously this also passed the email as the customer's name).
             const createUser = await users.create({
                 email: data.email,
                 userTypeId: 4,
                 verifiedAt: Date.now(),
-                stripeCustomerId: createStripeCustomer
             });
 
             return {

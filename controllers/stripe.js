@@ -52,9 +52,13 @@ function applyStripePresentationFields(params, stripeOptions = {}) {
 /*
  *   Create Customer
  */
-async function createStripeCustomer(name, email) {
+async function createStripeCustomer(name, email, metadata) {
     try {
-        const customerCreate = await stripe.customers.create({ name, email });
+        const customerCreate = await stripe.customers.create({
+            name,
+            email,
+            ...(metadata ? { metadata } : {}),
+        });
 
         return customerCreate.id;
     } catch (error) {
@@ -63,18 +67,8 @@ async function createStripeCustomer(name, email) {
 }
 
 /*
- *   Update Customer (e.g. name change before the account is verified)
- */
-async function updateStripeCustomer(customerId, params) {
-    try {
-        await stripe.customers.update(customerId, params);
-    } catch (error) {
-        throw new customError(error.message, error.code);
-    }
-}
-
-/*
- *   Delete Customer — compensation when a sign-up's database write fails
+ *   Delete Customer — compensation when saving a new customer id fails
+ *   (services/shared/stripeCustomerService.js)
  */
 async function deleteStripeCustomer(customerId) {
     try {
@@ -1029,7 +1023,6 @@ async function createConnectAccount(email, country = 'GB') {
 
 module.exports = {
     createStripeCustomer,
-    updateStripeCustomer,
     deleteStripeCustomer,
     createPaymentIntendForUpFrontPayments,
     createPaymentIntend,
