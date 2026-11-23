@@ -73,12 +73,27 @@ class AgentAuthService {
      * @param {number} shopOwnerId
      */
     async _shopDisplayTimeZone(shopOwnerId) {
-        const shopAddress = await addressDb.findOne({
-            where: { userId: shopOwnerId, addressType: 'LaundaryShopAddress' },
-            attributes: ['countryId', 'zoneId'],
-            order: [['id', 'ASC']],
-        });
+        return this._shopDisplayTimeZoneOf(
+            await addressDb.findOne({
+                where: { userId: shopOwnerId, addressType: 'LaundaryShopAddress' },
+                attributes: ['countryId', 'zoneId'],
+                order: [['id', 'ASC']],
+            })
+        );
+    }
+
+    async _shopDisplayTimeZoneOf(shopAddress) {
         return shopAddress ? requireShopTimeZone(shopAddress) : null;
+    }
+
+    /**
+     * The app's display zone (resolveAgentTimeZone): the shop's zone is looked up only when
+     * neither the device nor an earlier sign-in gave one, so it never blocks a sign-in that
+     * does not need it.
+     */
+    async _agentDisplayTimeZone(data, savedIanaTimeZone, shopTimeZoneOf) {
+        const fromDeviceOrSaved = resolveAgentTimeZone(data, savedIanaTimeZone, null);
+        return fromDeviceOrSaved || resolveAgentTimeZone(data, null, await shopTimeZoneOf());
     }
 
     async _getUserIanaTimeZone(userId) {
@@ -1191,10 +1206,10 @@ class AgentAuthService {
             roleId: userFind.roleId ?? null,
             classifiedAsId: userFind.classifiedAsId ?? null,
             capabilities: ownerCapabilities,
-            ianaTimeZone: resolveAgentTimeZone(
+            ianaTimeZone: await this._agentDisplayTimeZone(
                 data,
                 userFind.ianaTimeZone,
-                await this._shopDisplayTimeZone(userFind.id)
+                () => this._shopDisplayTimeZone(userFind.id)
             ),
             ...this._buildAgentApprovalConnectMeta({
                 agentApprovalStatus: userFind.agentApprovalStatus || 'approved',
@@ -1424,10 +1439,10 @@ class AgentAuthService {
         const connectAccountId = agentInfoRow?.connectAccountId || null;
         // Staff see the owner's shop currency.
         const currencyUnit = (await zoneCurrency(shopAddress?.zoneId)).currencySymbol;
-        const ianaTimeZone = resolveAgentTimeZone(
+        const ianaTimeZone = await this._agentDisplayTimeZone(
             data,
             agentData?.ianaTimeZone || employeeData.ianaTimeZone,
-            shopAddress ? await requireShopTimeZone(shopAddress) : null
+            () => this._shopDisplayTimeZoneOf(shopAddress)
         );
         const plainUser = this._withAgentTimeZone(
             this._toPlainUserForResponse(employeeData),
@@ -1653,10 +1668,10 @@ class AgentAuthService {
             }
         }
 
-        const ianaTimeZone = resolveAgentTimeZone(
+        const ianaTimeZone = await this._agentDisplayTimeZone(
             data,
             userData.ianaTimeZone,
-            await this._shopDisplayTimeZone(userData.id)
+            () => this._shopDisplayTimeZone(userData.id)
         );
         const plainUser = this._withAgentTimeZone(
             this._toPlainUserForResponse(userData),

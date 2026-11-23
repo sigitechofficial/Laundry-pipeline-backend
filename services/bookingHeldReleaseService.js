@@ -178,6 +178,21 @@ async function canReleaseHeldBooking(row) {
     return isAnyShopOpenInZone(row.zoneId);
 }
 
+/**
+ * One booking whose zone data is broken (e.g. its country has no time zone: 422) is
+ * reported and stays held; it must not stop the release of every other booking.
+ */
+async function releaseOneSafely(row) {
+    try {
+        return await releaseSingleHeldBooking(row);
+    } catch (err) {
+        console.error(
+            `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} not released: ${err.message}`
+        );
+        return false;
+    }
+}
+
 async function releaseSingleHeldBooking(row) {
     const canRelease = await canReleaseHeldBooking(row);
     if (!canRelease) return false;
@@ -300,8 +315,7 @@ async function releaseHeldBookings() {
 
     let released = 0;
     for (const row of heldBookings) {
-        const ok = await releaseSingleHeldBooking(row);
-        if (ok) released += 1;
+        if (await releaseOneSafely(row)) released += 1;
     }
 
     return { released };
@@ -328,8 +342,7 @@ async function releaseHeldBookingsForZone(zoneId) {
 
     let released = 0;
     for (const row of heldBookings) {
-        const ok = await releaseSingleHeldBooking(row);
-        if (ok) released += 1;
+        if (await releaseOneSafely(row)) released += 1;
     }
 
     if (released > 0) {

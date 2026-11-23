@@ -13,9 +13,28 @@
  * 'excluded' = every other live zone). A promotion whose zones span several zones, or
  * have none configured, stays NULL: there is no single day to show, and the next save
  * asks the admin to fix its zones. Idempotent: only NULL rows are filled.
+ *
+ * Re-anchoring: the old code turned the admin's days into instants in Europe/London
+ * (LEGACY_WRITE_ZONE below — a fact about how existing rows were written, not a business
+ * default). A promotion backfilled to another zone keeps the day and time the admin picked,
+ * now in its own zone, so startDay / endDay read back as entered. For a London zone the
+ * instants are unchanged.
  */
 const moment = require('moment-timezone');
 const { addColumnIfMissing, removeColumnIfExists } = require('../utils/migrationHelpers');
+
+/** The zone the replaced code wrote promotions.startDate / endDate in. */
+const LEGACY_WRITE_ZONE = 'Europe/London';
+
+/** Stored DATETIMEs are UTC wall clock (Sequelize timezone +00:00); read / written as strings. */
+const DB_FORMAT = 'YYYY-MM-DD HH:mm:ss';
+
+/** The same wall-clock day and time, moved from the legacy zone to the promotion's zone. */
+function reanchor(utcText, timeZone) {
+  if (utcText == null) return null;
+  const wall = moment.utc(utcText, DB_FORMAT, true).tz(LEGACY_WRITE_ZONE).format(DB_FORMAT);
+  return moment.tz(wall, DB_FORMAT, true, timeZone).utc().format(DB_FORMAT);
+}
 
 function zoneIdsOf(raw) {
   if (raw == null || raw === '') return [];
@@ -41,7 +60,10 @@ module.exports = {
 
     const select = { type: Sequelize.QueryTypes.SELECT };
     const promotions = await queryInterface.sequelize.query(
-      'SELECT id, zoneScopeMode, zoneIds FROM promotions WHERE timeZone IS NULL',
+      `SELECT id, zoneScopeMode, zoneIds,
+              DATE_FORMAT(startDate, '%Y-%m-%d %H:%i:%s') AS startDate,
+              DATE_FORMAT(endDate, '%Y-%m-%d %H:%i:%s') AS endDate
+         FROM promotions WHERE timeZone IS NULL`,
       select
     );
     if (!promotions.length) return;
@@ -71,8 +93,8 @@ module.exports = {
       const [only] = [...timeZones];
       if (timeZones.size !== 1 || !only || !moment.tz.zone(only)) continue;
       await queryInterface.sequelize.query(
-        'UPDATE promotions SET timeZone = ? WHERE id = ? AND timeZone IS NULL',
-        { replacements: [only, promo.id] }
+        'UPDATE promotions SET timeZone = ?, startDate = ?, endDate = ? WHERE id = ? AND timeZone IS NULL',
+        { replacements: [only, reanchor(promo.startDate, only), reanchor(promo.endDate, only), promo.id] }
       );
     }
   },

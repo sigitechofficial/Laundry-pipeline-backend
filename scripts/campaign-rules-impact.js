@@ -10,6 +10,7 @@
 const { promotion: Promotion, campaign: Campaign, sequelize } = require('../models');
 const { campaignBlock } = require('../services/promotions/campaignRules');
 const { attachHeldBudget } = require('../services/promotions/campaignBudget');
+const { getOperationalTimeZones } = require('../utils/countryTimeZone');
 
 (async () => {
   const now = new Date();
@@ -20,8 +21,11 @@ const { attachHeldBudget } = require('../services/promotions/campaignBudget');
     order: [['id', 'ASC']],
   }), { now });
 
+  // A campaign has no zone: its days as seen across every active zone (campaignRules).
+  const dated = rows.some((p) => p.campaign && (p.campaign.startDate || p.campaign.endDate));
+  const timeZones = dated ? await getOperationalTimeZones() : undefined;
   const stopped = rows
-    .map((p) => ({ p, stop: p.campaign ? campaignBlock(p.campaign, now) : null }))
+    .map((p) => ({ p, stop: p.campaign ? campaignBlock(p.campaign, now, { timeZones }) : null }))
     .filter((x) => x.stop);
 
   if (!stopped.length) {

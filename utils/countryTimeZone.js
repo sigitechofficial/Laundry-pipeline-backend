@@ -135,10 +135,16 @@ async function getCountryContextFromShopUserId(shopUserId) {
  * @returns {Promise<Map<number, string|null>>}
  */
 async function getZoneTimeZones(zoneIds = null) {
+  // Not required: a zone without a city / country is listed (null) so its callers report it.
   const rows = await zone.findAll({
     ...(zoneIds ? { where: { id: zoneIds }, paranoid: false } : { where: { status: true } }),
     attributes: ["id"],
-    include: zoneCountryInclude,
+    include: [{
+      model: cities,
+      required: false,
+      attributes: ["id"],
+      include: [{ model: countries, required: false, attributes: ["id", "ianaTimeZone"] }],
+    }],
   });
   return new Map(
     rows.map((row) => [Number(row.id), row.city?.country?.ianaTimeZone || null])

@@ -813,9 +813,14 @@ async function updatePromotion(id, payload, adminUserId, scope) {
     });
   }
   const stored = rowData(promo);
-  // Days are in the time zone the (possibly changed) zones share. When that zone changes, a
+  // Days are in the time zone the (possibly changed) zones share. It is derived again when the
+  // zones or days are sent (or none is stored yet), so editing e.g. the name of an "all zones"
+  // promotion is not refused because another zone opened since. When that zone changes, a
   // start / end not re-sent keeps its day and time, now in the new zone.
-  const timeZone = await promotionTimeZone({ ...stored, ...incoming });
+  const zonesOrDaysSent = ['zoneScopeMode', 'zoneIds', 'startDate', 'endDate'].some((k) => k in incoming);
+  const timeZone = zonesOrDaysSent || !promo.timeZone
+    ? await promotionTimeZone({ ...stored, ...incoming })
+    : promo.timeZone;
   if (timeZone !== promo.timeZone) {
     incoming.timeZone = timeZone;
     if (promo.timeZone) {
