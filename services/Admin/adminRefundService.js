@@ -37,6 +37,7 @@ const {
 } = require('../Agent/agentWalletService');
 const { REFUNDED } = require('../../constants/bookingStatusIds');
 const { netAgentEarning } = require('../../utils/agentEarningNet');
+const { zoneCurrency } = require('../../utils/zoneCurrency');
 const { Op } = require('sequelize');
 
 function money(n) {
@@ -310,6 +311,8 @@ async function collectChargeBuckets(bookingRow) {
 
 async function buildRefundPreview(bookingId, requestedAmount = null) {
   const bookingRow = await loadBookingForRefund(bookingId);
+  // A refund is in the booking's currency (its zone's).
+  const { currencyCode, currencySymbol } = await zoneCurrency(bookingRow.zoneId);
   const billing = bookingRow.billingDetail;
   const tipsSummary = summarizeTips(bookingRow.tips);
   const channel = classifyAgentEarningChannel(bookingRow);
@@ -374,7 +377,7 @@ async function buildRefundPreview(bookingId, requestedAmount = null) {
   }
   if (amount - refundableNow > 0.009) {
     throw new ValidationError(
-      `Refund amount £${amount.toFixed(2)} exceeds refundable £${refundableNow.toFixed(2)}`
+      `Refund amount ${currencySymbol}${amount.toFixed(2)} exceeds refundable ${currencySymbol}${refundableNow.toFixed(2)}`
     );
   }
 
@@ -475,7 +478,8 @@ async function buildRefundPreview(bookingId, requestedAmount = null) {
     bookingId: bookingRow.id,
     orderTrackId: bookingRow.orderTrackId,
     bookingStatusId: bookingRow.bookingStatusId,
-    currency: 'GBP',
+    currency: currencyCode,
+    currencySymbol,
     eligible,
     eligibilityMessage: eligible
       ? null
@@ -614,11 +618,12 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
   if (amount <= 0) throw new ValidationError('Refund amount must be greater than zero');
   if (amount - preview.refundableNow > 0.009) {
     throw new ValidationError(
-      `Refund amount exceeds refundable £${preview.refundableNow.toFixed(2)}`
+      `Refund amount exceeds refundable ${preview.currencySymbol}${preview.refundableNow.toFixed(2)}`
     );
   }
 
   const livePreview = await buildRefundPreview(bookingId, amount);
+  const refundCurrency = livePreview.currency;
   const { allocations, cardPortion, cashPortion } = allocateAmountAcrossBuckets(
     livePreview,
     amount
@@ -682,7 +687,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
             amount: refundedMajor,
             type: 'credit',
             description: `Admin refund (${alloc.kind}) for order #${orderLabel}`,
-            currency: 'GBP',
+            currency: refundCurrency,
             status: 'completed',
           });
         } catch (walletErr) {
@@ -730,7 +735,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
     mode: amount >= livePreview.refundableNow - 0.009 ? 'full' : 'partial',
     channel,
     amount,
-    currency: 'GBP',
+    currency: refundCurrency,
     reason,
     note,
     stripeRefundIds,
@@ -750,7 +755,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
       bookingId,
       agentUserId,
       amount: commissionClawback,
-      currency: 'GBP',
+      currency: refundCurrency,
       orderLabel,
       refundId: refundRow.id,
     });
@@ -758,7 +763,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
       bookingId,
       agentUserId,
       amount: cashCollectedReversal,
-      currency: 'GBP',
+      currency: refundCurrency,
       orderLabel,
       refundId: refundRow.id,
     });
@@ -766,7 +771,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
       bookingId,
       agentUserId,
       amount: extraTipClawback,
-      currency: 'GBP',
+      currency: refundCurrency,
       orderLabel,
       refundId: refundRow.id,
     });
@@ -784,7 +789,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
         bookingId,
         agentUserId,
         amount: leftoverCommission,
-        currency: 'GBP',
+        currency: refundCurrency,
         orderLabel,
         refundId: `${refundRow.id}-full`,
       });
@@ -795,7 +800,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
         bookingId,
         agentUserId,
         amount: leftoverTip,
-        currency: 'GBP',
+        currency: refundCurrency,
         orderLabel,
         refundId: `${refundRow.id}-full`,
       });
@@ -853,6 +858,7 @@ async function issueRefund(bookingId, payload = {}, adminUserId = null) {
   notifyRefundParties({
     bookingRow,
     amount,
+    currencySymbol: livePreview.currencySymbol,
     channel,
     mode: refundRow.mode,
     reason,
@@ -990,6 +996,7 @@ async function getRefundAggregatesByBookingIds(bookingIds) {
 function notifyRefundParties({
   bookingRow,
   amount,
+  currencySymbol, // the booking zone's (refund preview)
   channel,
   mode,
   reason,
@@ -1004,8 +1011,8 @@ function notifyRefundParties({
   const isFull = mode === 'full' || remainingRefundable <= 0.02;
   const customerTitle = isFull ? 'Refund issued' : 'Partial refund issued';
   const customerBody = isCash
-    ? `£${amountLabel} cash refund is recorded for order ${orderLabel}. Please collect it from the shop or driver.`
-    : `£${amountLabel} has been refunded to your card for order ${orderLabel}. It can take a few working days to appear on your statement.`;
+    ? `${currencySymbol}${amountLabel} cash refund is recorded for order ${orderLabel}. Please collect it from the shop or driver.`
+    : `${currencySymbol}${amountLabel} has been refunded to your card for order ${orderLabel}. It can take a few working days to appear on your statement.`;
 
   const payload = {
     bookingId: String(bookingRow.id),
@@ -1037,8 +1044,8 @@ function notifyRefundParties({
     const cashBack = money(cashCollectedReversal).toFixed(2);
     const agentTitle = `Refund on order ${orderLabel}`;
     const agentBody = isCash
-      ? `Admin recorded a £${amountLabel} cash refund. Return £${cashBack} cash to the customer. Your commission on this order is reduced by £${claw}.`
-      : `Admin refunded £${amountLabel} to the customer. Your commission on this order is reduced by £${claw}.`;
+      ? `Admin recorded a ${currencySymbol}${amountLabel} cash refund. Return ${currencySymbol}${cashBack} cash to the customer. Your commission on this order is reduced by ${currencySymbol}${claw}.`
+      : `Admin refunded ${currencySymbol}${amountLabel} to the customer. Your commission on this order is reduced by ${currencySymbol}${claw}.`;
     sendNotification(agentUserId, agentTitle, agentBody, {
       ...payload,
       type: 'ORDER_UPDATE',

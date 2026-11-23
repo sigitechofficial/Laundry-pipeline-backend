@@ -12,7 +12,6 @@ const {
   wallet,
   tip,
   zone,
-  units,
   bookingRefund,
 } = require("../../models");
 const { NotFoundError, ValidationError } = require("../../middlewares/universalErrorHandler");
@@ -30,6 +29,7 @@ const {
 const { presentShopOrderFinance } = require("../../utils/shopOrderFinance");
 const { emptyPunctuality } = require("../../utils/bookingPunctuality");
 const { CASH_CHANNEL_SQL } = require("../../utils/earningChannel");
+const { zoneCurrency } = require("../../utils/zoneCurrency");
 
 const COLLECTED_STATUSES = COLLECTED;
 
@@ -116,14 +116,6 @@ async function resolveShop(shopId) {
           model: zone,
           attributes: ["id", "name"],
           required: false,
-          include: [
-            {
-              model: units,
-              as: "currencyUnitZ",
-              attributes: ["symbol"],
-              required: false,
-            },
-          ],
         },
       ],
     },
@@ -145,14 +137,8 @@ async function resolveShop(shopId) {
     throw new NotFoundError("Shop address not found");
   }
 
-  const symbol = address.zone?.currencyUnitZ?.symbol;
-  const currencyCode =
-    symbol && String(symbol).trim().toUpperCase() === "£"
-      ? "GBP"
-      : symbol
-        ? String(symbol).trim()
-        : "GBP";
-  const currencySymbol = symbol && String(symbol).trim() ? String(symbol).trim() : "£";
+  // Shop money is in the shop zone's currency (code was the symbol for non-pound zones).
+  const { currencyCode, currencySymbol } = await zoneCurrency(address.zoneId);
 
   return {
     businessInfoId: shop.id,
@@ -515,7 +501,8 @@ async function latestWalletAt(agentUserId, referenceType) {
   return row?.createdAt || null;
 }
 
-async function listWalletLogs(agentUserId, referenceType, range, limit = 50) {
+/** [shopCurrency]: ISO code shown for a row that has no stored currency (the shop's). */
+async function listWalletLogs(agentUserId, referenceType, range, shopCurrency, limit = 50) {
   const where = { userId: agentUserId, referenceType };
   if (range) {
     where.createdAt = { [Op.between]: [range.start, range.end] };
@@ -554,7 +541,7 @@ async function listWalletLogs(agentUserId, referenceType, range, limit = 50) {
     return {
       id: plain.id,
       amount: money(plain.amount),
-      currency: plain.currency || "GBP",
+      currency: plain.currency || shopCurrency,
       type: plain.type,
       status: plain.status,
       description: plain.description || "",
@@ -655,9 +642,9 @@ async function getShopRevenue(shopId, rawQuery = {}) {
       };
       const [withdrawals, payouts, remittances, withdrawnInRange, payoutsInRange, remittedInRange] =
         await Promise.all([
-          listWalletLogs(shop.agentUserId, agentWalletService.WITHDRAWAL_REFERENCE, range),
-          listWalletLogs(shop.agentUserId, agentWalletService.AGENT_PAYOUT_REFERENCE, range),
-          listWalletLogs(shop.agentUserId, agentWalletService.CASH_REMITTED_REFERENCE, range),
+          listWalletLogs(shop.agentUserId, agentWalletService.WITHDRAWAL_REFERENCE, range, shop.currencyCode),
+          listWalletLogs(shop.agentUserId, agentWalletService.AGENT_PAYOUT_REFERENCE, range, shop.currencyCode),
+          listWalletLogs(shop.agentUserId, agentWalletService.CASH_REMITTED_REFERENCE, range, shop.currencyCode),
           periodWalletSum(
             shop.agentUserId,
             agentWalletService.WITHDRAWAL_REFERENCE,
