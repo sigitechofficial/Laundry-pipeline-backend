@@ -69,15 +69,26 @@ function resolveSessionIdentity(body, { required = true } = {}) {
  * The identity of an already signed-in session, for endpoints that re-issue its access token
  * (agent /session). The install comes from the verified session, never from the body; the
  * body's dvToken is only the app's current push token.
- * LEGACY (deprecated) sessions keep their old behaviour: the body's dvToken, when sent, names
- * the session, else the one the app signed in with.
+ * LEGACY (deprecated) sessions:
+ *  - an app updated to send deviceId moves its session to that install id (`replacesField`
+ *    names the legacy field to drop), so updated installs leave the legacy path without
+ *    signing in again — the caller already proved the session with its access token;
+ *  - otherwise the old behaviour: the body's dvToken, when sent, names the session, else the
+ *    one the app signed in with.
  * @param {object} sessionClaims req.user
- * @param {{ dvToken?: string }} [body]
+ * @param {{ deviceId?: string, dvToken?: string }} [body]
+ * @returns {object} as resolveSessionIdentity, plus `replacesField` when a legacy session moves
  */
 function identityOfSession(sessionClaims, body = {}) {
     const deviceId = normalizeDeviceId(sessionClaims && sessionClaims.deviceId);
     if (deviceId) return resolveSessionIdentity({ deviceId, dvToken: body && body.dvToken });
-    return resolveSessionIdentity({ dvToken: trimmed(body && body.dvToken) || trimmed(sessionClaims && sessionClaims.dvToken) });
+
+    const legacyField = trimmed(sessionClaims && sessionClaims.dvToken);
+    if (trimmed(body && body.deviceId)) {
+        const identity = resolveSessionIdentity({ deviceId: body.deviceId, dvToken: body.dvToken });
+        return legacyField ? { ...identity, replacesField: legacyField } : identity;
+    }
+    return resolveSessionIdentity({ dvToken: trimmed(body && body.dvToken) || legacyField });
 }
 
 /**

@@ -190,6 +190,9 @@ class CustomerAuthService {
                 throw new ConflictError('User with this email already exists');
             }
 
+            // This branch signs the app install in (utils/appSession.js); checked before any write.
+            const identity = resolveSessionIdentity(data);
+
             console.log('🔄 Customer exists but not verified. Updating details and resending OTP...');
 
             // Details and OTP are refreshed atomically. No Stripe call: the Stripe customer
@@ -211,15 +214,11 @@ class CustomerAuthService {
             });
             await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });
 
-            // Session for this app install (utils/appSession.js), when the app identified it.
-            const identity = resolveSessionIdentity(data, { required: false });
-            const accessToken = identity
-                ? await openAppSession({
-                    userId: userfindByEmail.id,
-                    claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
-                    identity,
-                })
-                : null;
+            const accessToken = await openAppSession({
+                userId: userfindByEmail.id,
+                claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
+                identity,
+            });
 
             return {
                 otpId: otpRow.id,
@@ -232,7 +231,8 @@ class CustomerAuthService {
         }
 
         // New customer: user, OTP and the install's push token in one transaction (no
-        // partial account on failure). No Stripe call: created on first payment.
+        // partial account on failure). No Stripe call: created on first payment. No session
+        // is opened here (that happens at OTP verification), so an id is not required yet.
         const identity = resolveSessionIdentity(data, { required: false });
         const otp = newSignupOtp();
         const { user, otpRow } = await createUnverifiedAccount(signupPersistenceDeps(), {

@@ -170,6 +170,9 @@ class AgentAuthService {
      * @returns {Object} Registration result
      */
     async registerAgentWithOTP(data, profileImg = null) {
+        // Sign-up signs this app install in (utils/appSession.js); checked before any write.
+        const identity = resolveSessionIdentity(data);
+
         // Check for existing user by email
         const userfindByEmail = await users.findOne({
             where: {
@@ -270,15 +273,11 @@ class AgentAuthService {
             });
             await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
-            // Session for this app install (utils/appSession.js), when the app identified it.
-            const identity = resolveSessionIdentity(data, { required: false });
-            const accessToken = identity
-                ? await openAppSession({
-                    userId: userfindByEmail.id,
-                    claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
-                    identity,
-                })
-                : null;
+            const accessToken = await openAppSession({
+                userId: userfindByEmail.id,
+                claims: { id: userfindByEmail.id, email: userfindByEmail.email, userTypeId: userfindByEmail.userTypeId },
+                identity,
+            });
 
             const savedTz = await this._getUserIanaTimeZone(userfindByEmail.id);
 
@@ -293,7 +292,6 @@ class AgentAuthService {
             // New shop account: user and OTP in one transaction (no partial account on
             // failure); OTP email only after commit. No Stripe customer: shop accounts
             // never pay as customers. The push token is registered with the session below.
-            const identity = resolveSessionIdentity(data, { required: false });
             const otp = newSignupOtp();
             const { user: userCreate, otpRow: otpCreation } = await createUnverifiedAccount(signupPersistenceDeps(), {
                 userTypeId: 4,
@@ -313,13 +311,11 @@ class AgentAuthService {
             });
             await sendSignupOtpEmail({ email: data.email, otpCode: otp.code, userName: data.firstName || 'Agent' });
 
-            const accessToken = identity
-                ? await openAppSession({
-                    userId: userCreate.id,
-                    claims: { id: userCreate.id, email: userCreate.email, userTypeId: userCreate.userTypeId },
-                    identity,
-                })
-                : null;
+            const accessToken = await openAppSession({
+                userId: userCreate.id,
+                claims: { id: userCreate.id, email: userCreate.email, userTypeId: userCreate.userTypeId },
+                identity,
+            });
 
             const savedTz = await this._getUserIanaTimeZone(userCreate.id);
 

@@ -50,6 +50,10 @@ async function openAppSession({ userId, claims, identity }) {
 
     const accessToken = jwt.sign({ ...claims, ...identity.claims }, process.env.JWT_ACCESS_SECRET);
     await redisCli.hSet(appSessionKey(userId), { [identity.field]: accessToken });
+    if (identity.replacesField && identity.replacesField !== identity.field) {
+        // A LEGACY session moved to its install id (identityOfSession): the old one ends.
+        await redisCli.hDel(appSessionKey(userId), identity.replacesField);
+    }
 
     if (identity.legacy) {
         console.warn(`[appSession] legacy dvToken session user=${userId}`);

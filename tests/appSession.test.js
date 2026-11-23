@@ -167,6 +167,20 @@ async function run() {
     assert.equal((await callValidator(validateAccessToken, legacyToken)).status, 403);
     assert.deepEqual(tokensOf(9), [], 'legacy logout forgets the sign-in and current tokens');
 
+    // ── LEGACY session refreshed by an updated app (/agent/session with deviceId): the
+    // session moves to the install id and the old field ends; no new sign-in needed. ──
+    const oldToken = await openAppSession({ userId: 11, claims: { id: 11 }, identity: resolveSessionIdentity({ dvToken: FCM('v1') }) });
+    const upgrade = identityOfSession(jwt.decode(oldToken), { deviceId: IPAD, dvToken: '' });
+    assert.equal(upgrade.field, IPAD);
+    assert.equal(upgrade.replacesField, FCM('v1'));
+    const newToken = await openAppSession({ userId: 11, claims: { id: 11 }, identity: upgrade });
+    assert.deepEqual(Object.keys(redis.get('id-11')), [IPAD], 'legacy field dropped');
+    assert.equal((await callValidator(validateAccessToken, oldToken)).status, 403);
+    assert.equal((await callValidator(validateAccessToken, newToken)).status, 200);
+    assert.equal(jwt.decode(newToken).deviceId, IPAD);
+    // An install-id session never moves: the body's deviceId is ignored.
+    assert.equal(identityOfSession(jwt.decode(newToken), { deviceId: PHONE }).replacesField, undefined);
+
     // A sign-in without an identity is a programming error, not a silent token-less session.
     await assert.rejects(openAppSession({ userId: 1, claims: { id: 1 }, identity: null }), /identity is required/);
 
