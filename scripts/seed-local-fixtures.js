@@ -10,9 +10,13 @@
  *    zone (via the real agent address service), business info, 3 services, opening hours
  *  - Customer    customer@justdrycleans.test — verified
  *
+ * Optional (LOCAL_FIXTURE_STRIPE_CONNECT=1, test Stripe key only): creates the shop's Stripe
+ *  Connect Express account the way real onboarding does; finish Stripe's hosted test
+ *  onboarding from the shop app (Verify & Connect).
+ *
  * Deliberately NOT done:
- *  - Stripe: no Stripe customer (created on first payment) and no Connect account. To take
- *    payouts, complete Stripe Connect onboarding in test mode from the shop app.
+ *  - Stripe customer: created on first payment, never here.
+ *  - Stripe Connect: only with LOCAL_FIXTURE_STRIPE_CONNECT=1 (above); never marked connected.
  *  - Emails/OTP: accounts are created verified, so nothing is sent.
  *
  * Guards (same as provision-local-admin): NODE_ENV must be "development", the database
@@ -57,7 +61,7 @@ async function findOrCreate(model, where, defaults, transaction) {
   return { row: await model.create({ ...where, ...defaults }, { transaction }), created: true };
 }
 
-async function seedLocalFixtures({ db, bcrypt, addressService, env = process.env, log = console.log }) {
+async function seedLocalFixtures({ db, bcrypt, addressService, stripeApi = null, env = process.env, log = console.log }) {
   const { password } = readFixtureInput(env);
   assertLocalDatabase(db.sequelize);
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -180,6 +184,20 @@ async function seedLocalFixtures({ db, bcrypt, addressService, env = process.env
   });
   note('shop business information', info.created);
 
+  // Optional: the shop's Stripe Connect (Express) account, as real onboarding creates it
+  // in agentBusinessInfo. Test mode only. The shop then completes Stripe's hosted test
+  // onboarding from the shop app (Verify & Connect) — not faked in the database.
+  if (env.LOCAL_FIXTURE_STRIPE_CONNECT === '1' && !info.row.connectAccountId) {
+    const secretKey = String(env.STRIPE_SECRET_KEY || '');
+    if (!secretKey.startsWith('sk_test_')) {
+      throw new Error('Refusing to create a Stripe Connect account: STRIPE_SECRET_KEY is not a test key.');
+    }
+    if (!stripeApi) throw new Error('stripeApi dependency is required for LOCAL_FIXTURE_STRIPE_CONNECT=1');
+    const connectAccountId = await stripeApi.createStripeConnectAccount(SHOP_EMAIL, 'GB');
+    await info.row.update({ connectAccountId, isConnectAccountConnected: false });
+    note('shop Stripe Connect account (test mode; onboard via Verify & Connect)', true);
+  }
+
   log('[local-fixtures] Done:\n  ' + report.join('\n  '));
   log(`[local-fixtures] Sign in with ${SHOP_EMAIL} (shop app) or ${CUSTOMER_EMAIL} (customer app/website)` +
     ' using LOCAL_FIXTURE_PASSWORD.');
@@ -193,7 +211,7 @@ async function main() {
   const db = require('../models');
   const addressService = require('../services/Agent/addressManagementService');
   try {
-    await seedLocalFixtures({ db, bcrypt, addressService });
+    await seedLocalFixtures({ db, bcrypt, addressService, stripeApi: require('../controllers/stripe') });
   } finally {
     await db.sequelize.close();
   }

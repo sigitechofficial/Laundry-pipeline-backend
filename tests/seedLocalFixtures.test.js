@@ -40,6 +40,27 @@ async function run() {
   );
   assert.equal(touched, false);
 
+  // Stripe Connect option refuses a live key (checked before any Stripe call).
+  let stripeCalled = false;
+  const fakeRow = { connectAccountId: null, update: async () => {} };
+  const localDb = {
+    sequelize: { config: { host: 'localhost' }, transaction: async () => ({ shop: { id: 1 }, customer: { id: 2 } }) },
+    addressDb: { findOne: async () => ({ id: 1 }) },
+    bussinessInformation: { findOne: async () => fakeRow },
+  };
+  await assert.rejects(
+    seedLocalFixtures({
+      db: localDb,
+      bcrypt: { hash: async () => 'h' },
+      addressService: {},
+      stripeApi: { createStripeConnectAccount: async () => { stripeCalled = true; } },
+      env: { NODE_ENV: 'development', LOCAL_FIXTURE_PASSWORD: 'long-enough', LOCAL_FIXTURE_STRIPE_CONNECT: '1', STRIPE_SECRET_KEY: 'sk_live_x' },
+      log: () => {},
+    }),
+    /not a test key/
+  );
+  assert.equal(stripeCalled, false);
+
   console.log('seedLocalFixtures tests passed');
 }
 
