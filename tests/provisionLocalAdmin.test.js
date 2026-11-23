@@ -60,7 +60,7 @@ async function run() {
     env: expectedEnv(),
   });
 
-  assert.deepEqual(result, { id: 8, email: 'admin@example.com' });
+  assert.deepEqual(result, { id: 8, email: 'admin@example.com', created: false });
   assert.equal(await bcrypt.compare('local-test-password', updatedValues.password), true);
   assert.equal(bcrypt.getRounds(updatedValues.password), BCRYPT_ROUNDS);
 
@@ -87,6 +87,42 @@ async function run() {
       env: expectedEnv(),
     }),
     /account must already be an active admin/
+  );
+
+  // No admin yet (fresh database, nothing seeded): created as an active super admin.
+  let createdValues;
+  const emptyUsers = {
+    async findOne() {
+      return null;
+    },
+    async create(values) {
+      createdValues = values;
+      return { id: 1, ...values };
+    },
+  };
+  const created = await provisionLocalAdmin({
+    users: emptyUsers,
+    sequelize: { config: { host: 'localhost' } },
+    bcrypt,
+    env: expectedEnv(),
+  });
+  assert.deepEqual(created, { id: 1, email: 'admin@example.com', created: true });
+  assert.equal(createdValues.userTypeId, 1);
+  assert.equal(createdValues.status, true);
+  assert.ok(createdValues.verifiedAt instanceof Date);
+  assert.equal(createdValues.classifiedAsId, undefined, 'super admin has no classifiedAsId');
+  assert.equal(await bcrypt.compare('local-test-password', createdValues.password), true);
+  assert.equal(bcrypt.getRounds(createdValues.password), BCRYPT_ROUNDS);
+
+  // Creation keeps the same guards: never against a non-local database.
+  await assert.rejects(
+    provisionLocalAdmin({
+      users: emptyUsers,
+      sequelize: { config: { host: 'db.example.com' } },
+      bcrypt,
+      env: expectedEnv(),
+    }),
+    /is not local/
   );
 
   console.log('provisionLocalAdmin tests passed');

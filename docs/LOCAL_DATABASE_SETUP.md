@@ -53,10 +53,24 @@ mysql -e "CREATE DATABASE IF NOT EXISTS laundry_pipeline CHARACTER SET utf8mb4 C
 npx sequelize-cli db:migrate
 ```
 
-Optional seeders (roles, units, etc.) after migrate:
+Verify the migrated schema covers every model column (also runs in CI as `schema-drift`):
+
+```bash
+npm run db:check-drift
+```
+
+Reference data (roles, units, statuses, catalog, permissions) after migrate — idempotent,
+safe to re-run; undo removes only seeded rows:
 
 ```bash
 npx sequelize-cli db:seed:all
+```
+
+Local admin (no admin is seeded):
+
+```bash
+NODE_ENV=development LOCAL_ADMIN_EMAIL=you@example.com LOCAL_ADMIN_PASSWORD='choose-one' \
+  npm run db:provision:local-admin
 ```
 
 ## New empty server (stage/prod-shaped)

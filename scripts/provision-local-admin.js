@@ -45,9 +45,19 @@ async function provisionLocalAdmin({ users, sequelize, bcrypt, env = process.env
   });
 
   if (!admin) {
-    throw new Error(
-      `Seeded admin "${email}" was not found. Run development migrations and seeders first.`
-    );
+    // No admin is seeded (a seeded account would ship a known password). Create the
+    // local super admin here: dev-only, local DB only, credentials from env (above).
+    // classifiedAsId stays null = super admin (see middlewares/checkPermission.js).
+    const created = await users.create({
+      firstName: 'Local',
+      lastName: 'Admin',
+      email,
+      password: await bcrypt.hash(password, BCRYPT_ROUNDS),
+      status: true,
+      userTypeId: 1,
+      verifiedAt: new Date(),
+    });
+    return { id: created.id, email: created.email, created: true };
   }
   if (admin.deletedAt) {
     throw new Error(`Refusing to modify deleted admin "${email}".`);
@@ -65,7 +75,7 @@ async function provisionLocalAdmin({ users, sequelize, bcrypt, env = process.env
     throw new Error('Admin password verification failed after update.');
   }
 
-  return { id: admin.id, email: admin.email };
+  return { id: admin.id, email: admin.email, created: false };
 }
 
 async function main() {
@@ -77,7 +87,11 @@ async function main() {
 
   try {
     const admin = await provisionLocalAdmin({ users, sequelize, bcrypt });
-    console.log(`Local admin password updated securely for ${admin.email} (id ${admin.id}).`);
+    console.log(
+      admin.created
+        ? `Local admin created for ${admin.email} (id ${admin.id}).`
+        : `Local admin password updated securely for ${admin.email} (id ${admin.id}).`
+    );
   } finally {
     await sequelize.close();
   }
