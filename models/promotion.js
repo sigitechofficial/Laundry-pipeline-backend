@@ -3,6 +3,17 @@ const { Model } = require('sequelize');
 const { jsonColumn } = require('../utils/jsonColumn');
 const { businessDay, businessClock } = require('../services/promotions/promotionTime');
 
+/**
+ * A stored start / end read in the promotion's own zone. Without a zone (an older promotion
+ * whose zones span several) there is no single day to show, so the answer is null; the
+ * stored instant itself is still returned as startDate / endDate.
+ */
+function inPromotionZone(row, read, key) {
+  const value = row.getDataValue(key);
+  const timeZone = row.getDataValue('timeZone');
+  return value == null || !timeZone ? null : read(value, timeZone);
+}
+
 module.exports = (sequelize, DataTypes) => {
   class promotion extends Model {
     static associate(models) {
@@ -65,12 +76,15 @@ module.exports = (sequelize, DataTypes) => {
 
       startDate: { type: DataTypes.DATE, allowNull: true },
       endDate: { type: DataTypes.DATE, allowNull: true },
-      // The UK calendar days the promotion runs from / to — what the admin picked.
-      startDay: { type: DataTypes.VIRTUAL, get() { return businessDay(this.getDataValue('startDate')); } },
-      endDay: { type: DataTypes.VIRTUAL, get() { return businessDay(this.getDataValue('endDate')); } },
-      // The UK times (24-hour "HH:mm") it starts / ends: 00:00 and 23:59 for whole days.
-      startTime: { type: DataTypes.VIRTUAL, get() { return businessClock(this.getDataValue('startDate')); } },
-      endTime: { type: DataTypes.VIRTUAL, get() { return businessClock(this.getDataValue('endDate')); } },
+      // The IANA zone its start / end days are in: the one its zones share (their countries'),
+      // set on save. Null only for an older promotion whose zones span several time zones.
+      timeZone: { type: DataTypes.STRING(64), allowNull: true },
+      // The calendar days the promotion runs from / to in its time zone — what the admin picked.
+      startDay: { type: DataTypes.VIRTUAL, get() { return inPromotionZone(this, businessDay, 'startDate'); } },
+      endDay: { type: DataTypes.VIRTUAL, get() { return inPromotionZone(this, businessDay, 'endDate'); } },
+      // The times (24-hour "HH:mm") it starts / ends there: 00:00 and 23:59 for whole days.
+      startTime: { type: DataTypes.VIRTUAL, get() { return inPromotionZone(this, businessClock, 'startDate'); } },
+      endTime: { type: DataTypes.VIRTUAL, get() { return inPromotionZone(this, businessClock, 'endDate'); } },
       recurringDays: jsonColumn(DataTypes, 'recurringDays', { allowNull: true }),
       recurringStartTime: { type: DataTypes.TIME, allowNull: true },
       recurringEndTime: { type: DataTypes.TIME, allowNull: true },

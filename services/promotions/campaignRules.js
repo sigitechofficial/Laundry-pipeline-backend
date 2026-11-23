@@ -6,7 +6,10 @@
  *
  * A new order may use a campaign's promotion only while the campaign is:
  *   - active (draft, paused, completed and archived all stop it),
- *   - inside its start/end days (UK calendar days, both days included),
+ *   - inside its start/end days (both days included). A campaign has no zone: the days are
+ *     the calendar days of the zone the order is in (its country's IANA zone). Where no
+ *     single zone applies (admin views, the lifecycle job), it has started once its start
+ *     day has begun in any active zone and ended once its end day is over in all of them,
  *   - within budget: spent + unpaid holds (priced amount, or the estimate until priced) leaves
  *     room for this order's estimate (the offer on a minimum order).
  *
@@ -18,7 +21,8 @@
  */
 
 const moment = require('moment-timezone');
-const { DEFAULT_PROMOTION_TIME_ZONE } = require('./promotionTime');
+const { requireOperationalTimeZone, TIME_ZONE_UNRESOLVED } = require('../../utils/bookingTimeZone');
+const { UnprocessableEntityError } = require('../../middlewares/universalErrorHandler');
 
 const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'completed', 'archived'];
 /** A promotion cannot be put into (or published in) a campaign in these statuses. */
@@ -39,9 +43,22 @@ function dayOf(value) {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 }
 
-/** Today's UK calendar day. */
-function businessToday(now = new Date()) {
-  return moment(now).tz(DEFAULT_PROMOTION_TIME_ZONE).format('YYYY-MM-DD');
+/**
+ * The calendar day ('YYYY-MM-DD') `now` falls on in each of the given IANA zones.
+ * @param {Date} now
+ * @param {string[]} timeZones operational zones (countryTimeZone.getOperationalTimeZones)
+ */
+function daysIn(now, timeZones) {
+  if (!Array.isArray(timeZones) || !timeZones.length) {
+    throw new UnprocessableEntityError('No time zone to read the campaign day in.', { code: TIME_ZONE_UNRESOLVED });
+  }
+  return timeZones.map((tz) => moment(now).tz(requireOperationalTimeZone(tz, 'the zone')).format('YYYY-MM-DD'));
+}
+
+/** Whether a campaign's end day is over in every one of the zones (both days included). */
+function campaignEndedEverywhere(endDate, now, timeZones) {
+  const end = dayOf(endDate);
+  return Boolean(end) && daysIn(now, timeZones).every((day) => day > end);
 }
 
 /** Budget already taken: committed spend plus priced holds of unpaid orders (pence). */
@@ -67,11 +84,13 @@ const REASONS = {
  * Why the campaign stops its promotion, or null when it does not.
  * @param {object|null} campaign instance or plain row (no campaign → never blocks)
  * @param {Date} now
- * @param {{ held?: boolean, budget?: boolean }} [opts] held: an order already holds it;
- *   budget: false to leave the budget to the caller (it reports its own reason)
+ * @param {{ held?: boolean, budget?: boolean, timeZones?: string[] }} [opts] held: an order
+ *   already holds it; budget: false to leave the budget to the caller (it reports its own
+ *   reason); timeZones: the order's zone's IANA zone, or every active zone's where there is no
+ *   single zone. Needed when the campaign has start / end days.
  * @returns {{ code: string, message: string }|null}
  */
-function campaignBlock(campaign, now = new Date(), { held = false, budget = true } = {}) {
+function campaignBlock(campaign, now = new Date(), { held = false, budget = true, timeZones } = {}) {
   if (!campaign) return null;
   const status = field(campaign, 'status');
   const out = (code) => ({ code, message: REASONS[code] });
@@ -79,11 +98,13 @@ function campaignBlock(campaign, now = new Date(), { held = false, budget = true
   if (held) return null; // a booked order keeps its offer whatever happens to the campaign
 
   if (status !== 'active') return out('CAMPAIGN_NOT_ACTIVE');
-  const today = businessToday(now);
   const start = dayOf(field(campaign, 'startDate'));
   const end = dayOf(field(campaign, 'endDate'));
-  if (start && today < start) return out('CAMPAIGN_NOT_STARTED');
-  if (end && today > end) return out('CAMPAIGN_ENDED');
+  if (start || end) {
+    const days = daysIn(now, timeZones);
+    if (start && days.every((day) => day < start)) return out('CAMPAIGN_NOT_STARTED');
+    if (end && days.every((day) => day > end)) return out('CAMPAIGN_ENDED');
+  }
   if (budget && budgetLeftMinor(campaign) === 0) return out('CAMPAIGN_BUDGET_EXHAUSTED');
   return null;
 }
@@ -94,6 +115,7 @@ module.exports = {
   campaignBlock,
   budgetLeftMinor,
   budgetTakenMinor,
-  businessToday,
+  daysIn,
+  campaignEndedEverywhere,
   dayOf,
 };

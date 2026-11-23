@@ -20,6 +20,7 @@ const { Op } = require('sequelize');
 const { money } = require('./moneyUtils');
 const { CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
+const { getOperationalTimeZones } = require('../../utils/countryTimeZone');
 const { heldBudgetByCampaign } = require('./campaignBudget');
 const { bookingCurrencyCode } = require('../../utils/zoneCurrency');
 
@@ -111,7 +112,11 @@ async function reserveRedemption(params, transaction) {
         const held = await heldBudgetByCampaign([camp.id], { now, excludeBookingId: bookingId || null, transaction: t });
         camp.heldBudgetMinor = held.get(Number(camp.id)) || 0;
       }
-      const stop = campaignBlock(camp, now);
+      // Campaign days on the order's zone clock (every active zone's when no zone is given).
+      const timeZones = camp && (camp.startDate || camp.endDate)
+        ? await getOperationalTimeZones(zoneId || null)
+        : undefined;
+      const stop = campaignBlock(camp, now, { timeZones });
       if (stop) {
         const code = stop.code === 'CAMPAIGN_BUDGET_EXHAUSTED' ? 'PROMOTION_BUDGET_EXHAUSTED' : 'PROMOTION_NOT_ACTIVE';
         throw new RedemptionError(code, stop.message);

@@ -26,19 +26,25 @@ Module._load = function load(request, parent, isMain) {
 };
 
 const {
-  campaignBlock, budgetLeftMinor, businessToday, dayOf, CLOSED_STATUSES,
+  campaignBlock, budgetLeftMinor, daysIn, campaignEndedEverywhere, dayOf, CLOSED_STATUSES,
 } = require('../services/promotions/campaignRules');
 const { heldBudgetByCampaign, attachHeldBudget } = require('../services/promotions/campaignBudget');
 const { builtInCheck } = require('../services/promotions/promotionEngine');
 
 const NOW = new Date('2026-12-05T12:00:00Z'); // Saturday 5 Dec 2026, UK
+const LONDON = 'Europe/London';
+const KARACHI = 'Asia/Karachi'; // UTC+5
+const AUCKLAND = 'Pacific/Auckland'; // UTC+13 in December
 const camp = (extra = {}) => ({ id: 7, status: 'active', startDate: null, endDate: null, budgetMinor: null, usedBudgetMinor: 0, ...extra });
-const codeOf = (c, opts) => (campaignBlock(c, NOW, opts) || {}).code || null;
+// An order in a London zone unless the test says otherwise.
+const codeOf = (c, opts = {}) => (campaignBlock(c, NOW, { timeZones: [LONDON], ...opts }) || {}).code || null;
 
 (async () => {
   // ─── Days ────────────────────────────────────────────────────────────────
-  assert.strictEqual(businessToday(new Date('2026-07-04T23:30:00Z')), '2026-07-05', 'UK day, not UTC (summer, after 23:00 UTC)');
-  assert.strictEqual(businessToday(NOW), '2026-12-05');
+  assert.deepStrictEqual(daysIn(new Date('2026-07-04T23:30:00Z'), [LONDON]), ['2026-07-05'], 'UK day, not UTC (summer, after 23:00 UTC)');
+  assert.deepStrictEqual(daysIn(NOW, [LONDON, AUCKLAND]), ['2026-12-05', '2026-12-06'], 'each zone on its own day');
+  assert.throws(() => daysIn(NOW, []), /No time zone/, 'no zone: refused, never assumed');
+  assert.throws(() => daysIn(NOW, [null]), /No valid IANA time zone/);
   assert.strictEqual(dayOf('2026-12-01'), '2026-12-01');
   assert.strictEqual(dayOf(new Date('2026-12-01T00:00:00Z')), '2026-12-01', 'DATEONLY returned as a Date');
   assert.strictEqual(dayOf(''), null);
@@ -56,10 +62,26 @@ const codeOf = (c, opts) => (campaignBlock(c, NOW, opts) || {}).code || null;
   assert.strictEqual(codeOf(camp({ endDate: '2026-12-05' })), null, 'runs on its end day');
   assert.strictEqual(codeOf(camp({ endDate: '2026-12-04' })), 'CAMPAIGN_ENDED', 'stops the day after its end day');
   assert.strictEqual(
-    (campaignBlock(camp({ endDate: '2026-12-04' }), new Date('2026-12-04T23:30:00Z')) || {}).code || null,
+    (campaignBlock(camp({ endDate: '2026-12-04' }), new Date('2026-12-04T23:30:00Z'), { timeZones: [LONDON] }) || {}).code || null,
     null,
     '23:30 UTC on 4 Dec is still 4 Dec in winter UK'
   );
+
+  // ─── Days in a non-UK zone: the order's own zone clock ───────────────────
+  const lateEvening = new Date('2026-12-04T20:30:00Z'); // 01:30 on 5 Dec in Karachi
+  const endedDec4 = camp({ endDate: '2026-12-04' });
+  assert.strictEqual((campaignBlock(endedDec4, lateEvening, { timeZones: [KARACHI] }) || {}).code, 'CAMPAIGN_ENDED', 'already 5 Dec in Karachi');
+  assert.strictEqual(campaignBlock(endedDec4, lateEvening, { timeZones: [LONDON] }), null, 'still 4 Dec in London');
+  assert.strictEqual(codeOf(camp({ startDate: '2026-12-06' }), { timeZones: [AUCKLAND] }), null, 'already 6 Dec in Auckland');
+  // No single zone (admin views, lifecycle job): started anywhere, ended everywhere.
+  assert.strictEqual(codeOf(camp({ endDate: '2026-12-05' }), { timeZones: [LONDON, AUCKLAND] }), null, 'not over in London yet');
+  assert.strictEqual(codeOf(camp({ startDate: '2026-12-06' }), { timeZones: [LONDON, AUCKLAND] }), null, 'started in Auckland');
+  assert.strictEqual(campaignEndedEverywhere('2026-12-05', NOW, [LONDON, AUCKLAND]), false);
+  assert.strictEqual(campaignEndedEverywhere('2026-12-05', NOW, [AUCKLAND]), true);
+  assert.strictEqual(campaignEndedEverywhere(null, NOW, [LONDON]), false, 'no end day never ends');
+  // A dated campaign without a zone to read the day in fails clearly.
+  assert.throws(() => campaignBlock(camp({ endDate: '2026-12-05' }), NOW), /No time zone/);
+  assert.strictEqual(campaignBlock(camp(), NOW), null, 'an undated campaign needs no zone');
 
   // ─── New orders: budget = spent + priced unpaid holds ────────────────────
   assert.strictEqual(budgetLeftMinor(camp()), null, 'no budget = no limit');

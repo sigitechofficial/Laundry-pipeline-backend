@@ -59,7 +59,7 @@ function buildCapacityStatus({ cap, used = 0, resetsAt = null, now = Date.now() 
 
 /** "HH:mm" of an instant on the shop's clock (its operational IANA zone). */
 function formatClock(date, timeZone) {
-  return moment(new Date(date)).tz(requireOperationalTimeZone(timeZone, "shop's")).format('HH:mm');
+  return moment(new Date(date)).tz(requireOperationalTimeZone(timeZone, 'the shop')).format('HH:mm');
 }
 
 /**

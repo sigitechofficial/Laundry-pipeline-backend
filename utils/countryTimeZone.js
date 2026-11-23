@@ -131,18 +131,38 @@ async function getCountryContextFromShopUserId(shopUserId) {
  * so one misconfigured zone fails only what depends on it.
  *
  * @param {number[]|null} zoneIds the zones to read (deleted ones included, they
- *   keep their country); null reads every live zone
+ *   keep their country); null reads every active zone
  * @returns {Promise<Map<number, string|null>>}
  */
 async function getZoneTimeZones(zoneIds = null) {
   const rows = await zone.findAll({
-    ...(zoneIds ? { where: { id: zoneIds }, paranoid: false } : {}),
+    ...(zoneIds ? { where: { id: zoneIds }, paranoid: false } : { where: { status: true } }),
     attributes: ["id"],
     include: zoneCountryInclude,
   });
   return new Map(
     rows.map((row) => [Number(row.id), row.city?.country?.ianaTimeZone || null])
   );
+}
+
+/**
+ * The operational zones a check runs in: the given zone's own, or with no zone
+ * every active zone's (validated, de-duplicated). Used where a calendar day has
+ * no single zone, e.g. whether a campaign's end day is over everywhere.
+ *
+ * @param {number|null} [zoneId]
+ * @returns {Promise<string[]>}
+ */
+async function getOperationalTimeZones(zoneId = null) {
+  if (zoneId) return [(await getCountryContextFromZoneId(zoneId)).ianaTimeZone];
+  const zoneTimeZones = await getZoneTimeZones();
+  const timeZones = [...new Set([...zoneTimeZones.entries()].map(
+    ([id, tz]) => requireOperationalTimeZone(tz, `zone ${id}`)
+  ))];
+  if (!timeZones.length) {
+    throw unresolved("No active zone exists, so there is no time zone to check the day in.");
+  }
+  return timeZones;
 }
 
 /**
@@ -218,7 +238,7 @@ async function requireShopTimeZone(shopAddress) {
       "The shop's time zone is not configured (its address has no country or zone)."
     );
   }
-  return requireOperationalTimeZone(countryRow.ianaTimeZone, "shop's");
+  return requireOperationalTimeZone(countryRow.ianaTimeZone, "the shop's country");
 }
 
 module.exports = {
@@ -226,6 +246,7 @@ module.exports = {
   getCountryContextFromZoneId,
   getCountryContextFromShopUserId,
   getZoneTimeZones,
+  getOperationalTimeZones,
   resolveBookingOperationalTimeZone,
   bookingWallClockNow,
   requireShopTimeZone,

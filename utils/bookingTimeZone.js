@@ -29,14 +29,14 @@ const PREFERRED_SHOP_WINDOW_MINUTES = 10;
  * computing in another zone would silently move times and days.
  *
  * @param {string} timeZone
- * @param {string} [owner] what the zone belongs to, for the error message
+ * @param {string} [owner] what the zone belongs to, for the error message (e.g. 'zone 3')
  * @returns {string}
  */
-function requireOperationalTimeZone(timeZone, owner = 'operational') {
+function requireOperationalTimeZone(timeZone, owner = 'this operation') {
     const tz = typeof timeZone === 'string' ? timeZone.trim() : '';
     if (!tz || !moment.tz.zone(tz)) {
         throw new UnprocessableEntityError(
-            `The ${owner} time zone is not configured (no valid IANA time zone${tz ? `: ${tz}` : ''}).`,
+            `No valid IANA time zone is configured for ${owner}${tz ? ` (got "${tz}")` : ''}.`,
             { code: TIME_ZONE_UNRESOLVED }
         );
     }

@@ -3,7 +3,13 @@
 const { campaign: Campaign, promotion: Promotion, promotionAuditLog: AuditLog } = require('../../models');
 const { Op } = require('sequelize');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
-const { CAMPAIGN_STATUSES, campaignBlock, budgetLeftMinor, businessToday, dayOf } = require('../promotions/campaignRules');
+const { CAMPAIGN_STATUSES, campaignBlock, budgetLeftMinor, campaignEndedEverywhere, dayOf } = require('../promotions/campaignRules');
+const { getOperationalTimeZones } = require('../../utils/countryTimeZone');
+
+/** Campaign days need a zone's clock only when the campaign has start / end days. */
+async function zonesForDays(rows) {
+  return rows.some((c) => dayOf(c.startDate) || dayOf(c.endDate)) ? getOperationalTimeZones() : undefined;
+}
 const { heldBudgetByCampaign } = require('../promotions/campaignBudget');
 
 /** Promotion fields the campaign screens show. */
@@ -43,7 +49,7 @@ function currencyOf(v) {
 
 async function createCampaign(payload, adminUserId) {
   _validateCampaign(payload);
-  _assertCanBeActive(payload);
+  await _assertCanBeActive(payload);
 
   const row = await Campaign.create({
     name: payload.name.trim(),
@@ -93,10 +99,12 @@ async function listCampaigns({ page = 1, limit = 50, status } = {}) {
 async function withRunning(rows, now = new Date()) {
   const list = Array.isArray(rows) ? rows : [rows];
   const held = await heldBudgetByCampaign(list.filter((c) => c.budgetMinor != null).map((c) => c.id), { now });
+  // No single zone here: the days as seen across every active zone (campaignRules).
+  const timeZones = await zonesForDays(list);
   for (const c of list) {
     c.setDataValue('heldBudgetMinor', held.get(Number(c.id)) || 0);
     c.setDataValue('budgetLeftMinor', budgetLeftMinor(c));
-    const stop = campaignBlock(c, now);
+    const stop = campaignBlock(c, now, { timeZones });
     c.setDataValue('running', !stop);
     c.setDataValue('stopReason', stop ? stop.code : null);
   }
@@ -124,7 +132,7 @@ async function updateCampaign(id, payload, adminUserId) {
   const merged = { ...row.toJSON(), ...payload };
   _validateCampaign(merged);
   _assertPromotionsInBudgetCurrency(merged, row.promotions);
-  if (payload.status !== undefined || payload.endDate !== undefined) _assertCanBeActive({ ...row.toJSON(), ...payload });
+  if (payload.status !== undefined || payload.endDate !== undefined) await _assertCanBeActive({ ...row.toJSON(), ...payload });
 
   await row.update({
     ...(payload.name !== undefined ? { name: payload.name.trim() } : {}),
@@ -201,10 +209,13 @@ function _assertPromotionsInBudgetCurrency(p, promotions = []) {
   }
 }
 
-/** Made (or kept) active, a campaign must still have days to run, or its promotions never apply. */
-function _assertCanBeActive(p) {
-  const endDay = dayOf(p.endDate);
-  if (p.status === 'active' && endDay && endDay < businessToday()) {
+/**
+ * Made (or kept) active, a campaign must still have days to run somewhere, or its
+ * promotions never apply: refused once its end day is over in every active zone.
+ */
+async function _assertCanBeActive(p) {
+  if (p.status !== 'active' || !dayOf(p.endDate)) return;
+  if (campaignEndedEverywhere(p.endDate, new Date(), await getOperationalTimeZones())) {
     throw new ValidationError('This campaign has already ended. Change the end date to make it active again.');
   }
 }

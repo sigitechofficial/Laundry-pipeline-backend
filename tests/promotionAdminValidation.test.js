@@ -11,7 +11,7 @@ const assert = require('assert');
 require('./stubSequelizeModels').install();
 
 const {
-  normalizePayload, validatePromotion, TRANSITIONS, restrictedZoneOf, typeRuleFields, assertNoOrderHistoryCondition,
+  normalizePayload, applyDateBounds, validatePromotion, TRANSITIONS, restrictedZoneOf, typeRuleFields, assertNoOrderHistoryCondition,
 } = require('../services/Admin/promotionAdminService');
 
 const base = {
@@ -69,13 +69,27 @@ bad({ ...base, activationType: 'coupon_required', couponCodes: [] }, /at least o
 bad({ ...base, couponCodes: [{ code: 'VIP123', codeType: 'customer_bound' }] }, /no customer/);
 bad({ ...base, zoneOverrides: [{ zoneId: 1 }, { zoneId: 1 }] }, /one override/);
 
-// Dates: a calendar day is the whole UK day, a full timestamp is kept
+// Dates: a calendar day is the whole day in the promotion's own time zone (the one its zones
+// share), placed once the zones are known; a full timestamp is kept.
 {
   const n = normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-15' });
+  assert.strictEqual(n.startDate, '2026-10-13', 'kept as sent until the zone is known');
+  applyDateBounds(n, 'Europe/London');
   assert.strictEqual(n.startDate.toISOString(), '2026-10-12T23:00:00.000Z');
   assert.strictEqual(n.endDate.toISOString(), '2026-10-15T22:59:59.000Z');
-  assert.strictEqual(normalizePayload({ startDate: '2026-10-12T19:00:00.000Z' }).startDate, '2026-10-12T19:00:00.000Z');
-  ok({ ...base, ...normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-13' }) });
+  // A Pakistan promotion (UTC+5): the same days are Karachi days.
+  const k = normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-15' });
+  applyDateBounds(k, 'Asia/Karachi');
+  assert.strictEqual(k.startDate.toISOString(), '2026-10-12T19:00:00.000Z');
+  assert.strictEqual(k.endDate.toISOString(), '2026-10-15T18:59:59.000Z');
+  // No zone: refused, never read as London.
+  assert.throws(() => applyDateBounds(normalizePayload({ startDate: '2026-10-13' }), null), /No valid IANA time zone/);
+  const kept = normalizePayload({ startDate: '2026-10-12T19:00:00.000Z' });
+  applyDateBounds(kept, 'Asia/Karachi');
+  assert.strictEqual(kept.startDate, '2026-10-12T19:00:00.000Z');
+  const oneDay = normalizePayload({ startDate: '2026-10-13', endDate: '2026-10-13' });
+  applyDateBounds(oneDay, 'Europe/London');
+  ok({ ...base, ...oneDay });
 }
 
 // The type decides these limits, whatever was sent
