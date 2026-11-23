@@ -110,6 +110,24 @@ async function currencyOfZone(zoneId) {
 }
 
 /**
+ * A stored ISO code (a ledger row's own currency) → `{ currencySymbol, currencyCode }`,
+ * the symbol taken from its units row. A code with no units row displays as the code
+ * itself (still the record's own data); no code → EMPTY.
+ * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
+ */
+async function currencyOfCode(code) {
+    const currencyCode = trimmed(code).toUpperCase();
+    if (!currencyCode) return empty();
+    const { units } = require('../models');
+    const unit = await units.findOne({
+        where: { type: 'currency', name: currencyCode },
+        attributes: ['id', 'name', 'symbol'],
+        order: [['id', 'ASC']],
+    });
+    return fromUnit(unit) || { currencySymbol: currencyCode, currencyCode };
+}
+
+/**
  * Currency to label an admin view filtered by zone / city / country (or unfiltered).
  * @param {object} filters - { zoneId, cityId, countryId } (the most specific one wins)
  * @returns {Promise<{ currencySymbol: string, currencyCode: string }>}
@@ -139,6 +157,7 @@ module.exports = {
     EMPTY,
     fromUnit,
     currencyOfZone,
+    currencyOfCode,
     resolveDisplayCurrency,
     sharedCurrencyOfZones,
 };

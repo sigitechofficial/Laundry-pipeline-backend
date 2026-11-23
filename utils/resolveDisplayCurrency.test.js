@@ -46,8 +46,11 @@ function matches(z, where) {
 const row = (z) => ({ id: z.id, currencyUnitId: z.unit?.id ?? null, currencyUnitZ: z.unit || null });
 
 const calls = [];
+const UNIT_ROWS = [GBP, USD];
 const models = {
-  units: {},
+  units: {
+    findOne: async ({ where }) => UNIT_ROWS.find((u) => u.type === where.type && u.name === where.name) || null,
+  },
   zone: {
     findByPk: async (id, opts) => {
       calls.push(['zone.findByPk', id, opts?.paranoid]);
@@ -78,7 +81,7 @@ const modelsPath = require.resolve(path.join(__dirname, '..', 'models'));
 require.cache[modelsPath] = { id: modelsPath, filename: modelsPath, loaded: true, exports: models };
 
 const mod = require('./resolveDisplayCurrency');
-const { resolveDisplayCurrency, currencyOfZone, sharedCurrencyOfZones, fromUnit } = mod;
+const { resolveDisplayCurrency, currencyOfZone, currencyOfCode, sharedCurrencyOfZones, fromUnit } = mod;
 
 const NONE = { currencySymbol: '', currencyCode: '' };
 const GBP_C = { currencySymbol: '£', currencyCode: 'GBP' };
@@ -136,6 +139,13 @@ const USD_C = { currencySymbol: '$', currencyCode: 'USD' };
   }
   assert.ok(errors.length >= 1 && errors.every((e) => /no ISO code/.test(e)), 'missing ISO code is logged');
   assert.equal(fromUnit(null), null);
+
+  // A stored ISO code → its unit's symbol; an unknown code displays as itself.
+  assert.deepEqual(await currencyOfCode('gbp'), GBP_C);
+  assert.deepEqual(await currencyOfCode('USD'), USD_C);
+  assert.deepEqual(await currencyOfCode('NOK'), { currencySymbol: 'NOK', currencyCode: 'NOK' });
+  assert.deepEqual(await currencyOfCode(''), NONE);
+  assert.deepEqual(await currencyOfCode(null), NONE);
 
   // Results are copies: callers cannot mutate a shared EMPTY.
   const a = await resolveDisplayCurrency({ zoneId: 404 });
