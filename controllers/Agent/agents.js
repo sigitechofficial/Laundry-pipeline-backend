@@ -4321,8 +4321,10 @@ exports.invoiceCreation = async (req, res) => {
                 model: addressDb,
                 as: "pickupAddress",
                 // lat/lng: the job screens map the pickup / drop-off point.
+                // hotelName / apartmentNumber / floor: where to go at the address.
                 attributes: [
-                    "title", "streetAddress", "district", "province", "postalcode", "addressType", "lat", "lng"
+                    "title", "streetAddress", "district", "province", "postalcode", "addressType", "lat", "lng",
+                    "hotelName", "apartmentNumber", "floor"
                 ],
                 include: [
                     { model: countries, attributes: ["name", "shortName"] },
@@ -4333,8 +4335,10 @@ exports.invoiceCreation = async (req, res) => {
                 model: addressDb,
                 as: "dropOffAddress",
                 // lat/lng: the job screens map the pickup / drop-off point.
+                // hotelName / apartmentNumber / floor: where to go at the address.
                 attributes: [
-                    "title", "streetAddress", "district", "province", "postalcode", "addressType", "lat", "lng"
+                    "title", "streetAddress", "district", "province", "postalcode", "addressType", "lat", "lng",
+                    "hotelName", "apartmentNumber", "floor"
                 ],
                 include: [
                     { model: countries, attributes: ["name", "shortName"] },
