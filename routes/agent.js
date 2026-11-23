@@ -171,9 +171,13 @@ router.post(
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
-// Generate Stripe Onboarding Link - GET with query params, no auth required
+// Stripe Connect onboarding link for the signed-in owner's own shop account.
+// A legacy ?connectAccountId= from installed builds is ignored: the account comes
+// from the caller's shop, so nobody can get a link for another shop's payouts.
 router.get(
     "/generateStripeOnboardingLink",
+    validateAccessToken,
+    requireShopOwner,
     asyncMiddleware(agentAuthController.generateStripeOnboardingLink)
 );
 

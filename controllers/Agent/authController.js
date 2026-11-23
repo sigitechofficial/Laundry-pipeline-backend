@@ -3,6 +3,7 @@ const ResponseHelper = require('../../utils/responseHelper');
 const { saveCurrentToken } = require('../../utils/deviceTokenStore');
 const { identityOfSession, normalizeDeviceId } = require('../../utils/appSession');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
+const { shopAgentIdFromReq } = require('../../utils/shopAgentContext');
 
 // Register agent with OTP
 const registerAgentWithOTP = async (req, res) => {
@@ -165,19 +166,13 @@ const updateUserProfile = async (req, res) => {
     return ResponseHelper.success(res, "Profile updated successfully", result);
 };
 
-// Generate Stripe onboarding link - Now accepts connectAccountId from query
+// Stripe onboarding link for the signed-in owner's shop (route: validateAccessToken +
+// requireShopOwner). Installed builds still send ?connectAccountId=; it is ignored —
+// the Connect account is the one stored for the caller's shop.
 const generateStripeOnboardingLink = async (req, res) => {
-    const { connectAccountId } = req.query;
-    
-    if (!connectAccountId) {
-        return ResponseHelper.error(res, "connectAccountId is required in query parameters", "Missing required parameter", 400);
-    }
-
-    const data = { 
-        connectAccountId: connectAccountId
-    };
-
-    const result = await authService.generateStripeOnboardingLink(data);
+    const result = await authService.generateStripeOnboardingLink({
+        shopOwnerId: shopAgentIdFromReq(req),
+    });
     return ResponseHelper.success(res, "Stripe onboarding link generated successfully", result);
 };
 

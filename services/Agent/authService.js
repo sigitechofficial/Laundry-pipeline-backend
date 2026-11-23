@@ -613,25 +613,30 @@ class AgentAuthService {
     }
 
     /**
-     * Generate Stripe Onboarding Link
-     * @param {Object} data - Data containing userId
+     * Generate Stripe Onboarding Link for a shop's own Connect account
+     * @param {Object} data
+     * @param {number} data.shopOwnerId - the signed-in caller's shop (shopAgentIdFromReq)
      * @returns {Object} Onboarding link result
      */
-    async generateStripeOnboardingLink(data) {
-        const { connectAccountId } = data;
-        
-        if (!connectAccountId) {
-            throw new ValidationError('connectAccountId is required');
+    async generateStripeOnboardingLink({ shopOwnerId }) {
+        if (!shopOwnerId) {
+            throw new UnauthorizedError('Sign in as the shop owner to connect Stripe');
         }
 
-        // Get business information by connectAccountId instead of agentId
+        // The signed-in owner's own shop decides the Connect account; a client-sent
+        // account id is never used (it would hand out another shop's payout onboarding).
         const businessInfo = await bussinessInformation.findOne({
-            where: { connectAccountId: connectAccountId },
-            attributes: ['id', 'connectAccountId', 'shopName', 'isConnectAccountConnected', 'agentId']
+            where: { agentId: shopOwnerId },
+            attributes: ['id', 'connectAccountId', 'shopName', 'isConnectAccountConnected', 'agentId'],
+            order: [['id', 'ASC']],
         });
 
         if (!businessInfo) {
-            throw new NotFoundError('Business information not found for this Connect account. Please contact support.');
+            throw new NotFoundError('Business information not found for this shop. Please contact support.');
+        }
+        const { connectAccountId } = businessInfo;
+        if (!connectAccountId) {
+            throw new ValidationError('This shop has no Stripe Connect account yet. Please contact support.');
         }
 
         const agentUser = await users.findByPk(businessInfo.agentId, {

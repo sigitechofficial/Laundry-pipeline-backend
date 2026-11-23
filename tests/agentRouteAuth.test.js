@@ -14,6 +14,7 @@ const assert = require('assert');
 const Module = require('module');
 
 function validateAccessToken(req, res, next) { return next(); }
+function requireShopOwner(req, res, next) { return next(); }
 const passThrough = (req, res, next) => next();
 
 /** Any controller: every exported handler is a no-op function. */
@@ -23,7 +24,7 @@ const STUBS = {
   '../middlewares/accessToken': validateAccessToken,
   '../middlewares/checkPermission': passThrough,
   '../middlewares/requireShopOwner': {
-    requireShopOwner: passThrough,
+    requireShopOwner,
     requireShopManagerOrOwner: passThrough,
     requireCapability: () => passThrough,
     requireAnyCapability: () => passThrough,
@@ -67,7 +68,6 @@ const PUBLIC_ROUTES = {
   'GET /getCities': 'city list (registration form)',
   'GET /getOnHoldOptions': 'platform on-hold reason list',
   'GET /getPermissions': 'TODO: signed-in only (team screen); see follow-up',
-  'GET /generateStripeOnboardingLink': 'TODO: signed-in only (owner); see follow-up',
   // PENDING DECISION — registration-time writes that installed app builds call
   // without a session (and, for the login "business info missing" path, the backend
   // issues none). They trust a client-sent shop id and must move behind a session
@@ -89,6 +89,7 @@ function routeTable(app) {
         key: `${method.toUpperCase()} ${layer.route.path}`,
         authenticated: handles.includes(validateAccessToken),
         authFirst: handles[0] === validateAccessToken,
+        ownerOnly: handles.includes(requireShopOwner),
       });
     }
   }
@@ -99,16 +100,20 @@ const routes = routeTable(agentRouter);
 const byKey = new Map(routes.map((r) => [r.key, r]));
 assert.ok(routes.length > 100, `route table loaded (${routes.length} routes)`);
 
-// The shop business-information routes: session required, checked before anything else.
+// Shop routes that used to be open: session required, checked before anything else.
 for (const key of [
   'GET /getBussinessInforMation/:userId',
   'GET /getBussinessWrkinghours/:userId',
   'GET /platformOperationalHours',
+  'GET /generateStripeOnboardingLink',
 ]) {
   const route = byKey.get(key);
   assert.ok(route, `${key} exists (installed app builds call it)`);
   assert.ok(route.authenticated && route.authFirst, `${key} requires a session first`);
 }
+
+// Stripe Connect onboarding is the owner's payout account: owner only.
+assert.ok(byKey.get('GET /generateStripeOnboardingLink').ownerOnly, 'Stripe onboarding link: owner only');
 
 const unauthenticated = routes.filter((r) => !r.authenticated).map((r) => r.key).sort();
 const expectedPublic = Object.keys(PUBLIC_ROUTES).sort();
