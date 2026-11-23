@@ -2,7 +2,7 @@ const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
 const { Op, UniqueConstraintError, ValidationError: SequelizeValidationError } = require('sequelize');
 const bcrypt = require('bcryptjs');
-const signupWelcomeMail = require('../../helper/signupWelcomeMail');
+const { enqueueEmail } = require('../email/emailOutbox');
 const {
     ValidationError,
     NotFoundError,
@@ -366,13 +366,13 @@ class CustomerService {
         const stripeCustomerId = null;
 
         try {
-            await signupWelcomeMail({
+            await enqueueEmail('signupWelcome', {
                 email,
                 userName: firstName || 'Customer',
-            });
+            }, { dedupeKey: `signupWelcome:user:${user.id}` });
         } catch (mailError) {
             console.error(
-                '⚠️ Admin addCustomer welcome email failed (non-blocking):',
+                '⚠️ Admin addCustomer welcome email could not be queued:',
                 mailError.message || mailError
             );
         }

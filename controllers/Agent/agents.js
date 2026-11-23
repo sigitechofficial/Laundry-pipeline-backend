@@ -224,6 +224,7 @@ const {
 } = require("../../utils/fieldDriverPrivacy");
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
+const { enqueueEmail } = require('../../services/email/emailOutbox');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
@@ -2557,22 +2558,18 @@ exports.driverStatusArrived = async (req, res) => {
     }
     sendNotification(customerId, title, body, data);
 
-    // Send driver arrived email (non-blocking)
+    // Driver arrived email: queued (sent by the email outbox worker, with retries).
     try {
-        const driverArrivedMail = require('../../helper/driverArrivedMail');
         const customerData = await users.findOne({
             where: { id: customerId },
             attributes: ['firstName', 'email']
         });
-        if (customerData?.email) {
-            await driverArrivedMail({
-                email: customerData.email,
-                userName: customerData.firstName || 'Customer'
-            });
-            console.log('✅ Driver arrived email sent to:', customerData.email);
-        }
+        await enqueueEmail('driverArrived', {
+            email: customerData?.email,
+            userName: customerData?.firstName || 'Customer'
+        });
     } catch (emailError) {
-        console.error('⚠️ Failed to send driver arrived email (non-blocking):', emailError.message);
+        console.error('⚠️ Failed to queue driver arrived email:', emailError.message);
     }
 
     syncLiveTrackingSafe(bookingId, 5, { reason: 'pickup_arrived' });
@@ -4170,26 +4167,21 @@ exports.driverAddSerivces = async (req, res) => {
         }
     );
 
-    // Send invoice ready email to customer + order invoice email to agent (non-blocking)
+    // Invoice ready email to customer + order invoice email to agent: queued (email outbox).
     try {
-        const invoiceReadyMail = require('../../helper/invoiceReadyMail');
-        const agentInvoiceMail = require('../../helper/agentInvoiceMail');
         const customerData = await users.findOne({
             where: { id: customerId },
             attributes: ['firstName', 'lastName', 'email']
         });
         const customerName = [customerData?.firstName, customerData?.lastName].filter(Boolean).join(' ') || 'Customer';
 
-        if (customerData?.email) {
-            await invoiceReadyMail({
-                email: customerData.email,
-                userName: customerData.firstName || 'Customer',
-                orderNumber: bookings.orderTrackId || bookingId,
-                finalAmount: discountedTotal.toFixed(2),
-                currency: '£'
-            });
-            console.log('✅ Invoice ready email sent to:', customerData.email);
-        }
+        await enqueueEmail('invoiceReady', {
+            email: customerData?.email,
+            userName: customerData?.firstName || 'Customer',
+            orderNumber: bookings.orderTrackId || bookingId,
+            finalAmount: discountedTotal.toFixed(2),
+            currency: '£'
+        });
 
         if (bookings.laundryShopId) {
             const shopAddress = await addressDb.findOne({
@@ -4208,23 +4200,19 @@ exports.driverAddSerivces = async (req, res) => {
                     attributes: ['firstName', 'email']
                 });
 
-                if (agentData?.email) {
-                    const shopName = shopAddress.bussinessInformations?.[0]?.shopName || 'Your shop';
-                    await agentInvoiceMail({
-                        email: agentData.email,
-                        agentName: agentData.firstName || 'Agent',
-                        shopName,
-                        orderNumber: bookings.orderTrackId || bookingId,
-                        customerName,
-                        finalAmount: discountedTotal.toFixed(2),
-                        currency: '£'
-                    });
-                    console.log('✅ Agent order invoice email sent to:', agentData.email);
-                }
+                await enqueueEmail('agentInvoice', {
+                    email: agentData?.email,
+                    agentName: agentData?.firstName || 'Agent',
+                    shopName: shopAddress.bussinessInformations?.[0]?.shopName || 'Your shop',
+                    orderNumber: bookings.orderTrackId || bookingId,
+                    customerName,
+                    finalAmount: discountedTotal.toFixed(2),
+                    currency: '£'
+                });
             }
         }
     } catch (emailError) {
-        console.error('⚠️ Failed to send invoice emails (non-blocking):', emailError.message);
+        console.error('⚠️ Failed to queue invoice emails:', emailError.message);
     }
 
     const paymentFlags = buildCollectPaymentFlags({
