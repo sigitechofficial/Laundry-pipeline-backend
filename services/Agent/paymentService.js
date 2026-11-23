@@ -1,6 +1,5 @@
 require("dotenv").config();
 const { booking, billingDetails } = require('../../models');
-const { createPaymentIntentForAgent } = require('../../controllers/stripe');
 const { 
     UnauthorizedError, 
     NotFoundError, 
@@ -13,31 +12,6 @@ const {
  * Handles all agent payment related business logic
  */
 class AgentPaymentService {
-
-    /**
-     * Create Intent Using Stripe For Agent
-     * @param {Object} data - Payment intent data
-     * @param {number} data.amount - Payment amount
-     * @param {string} data.customerId - Customer ID
-     * @param {string} data.savedPaymentMethodId - Saved payment method ID
-     * @returns {Object} Payment intent result
-     */
-    async createIntentUsingStripeForAgent(data) {
-        const { amount, customerId, savedPaymentMethodId } = data;
-        console.log("Amount ------------------------>", amount)
-        const intent = await createPaymentIntentForAgent(amount, customerId, savedPaymentMethodId);
-        console.log("🚀 ~ createIntentUsingStripe ~ intent:", intent)
-
-        const intentData = {
-            intentId: intent.id,
-            amount: intent.amount,
-            customerId: customerId,
-        };
-
-        return {
-            intentData,
-        };
-    }
 
     /**
      * Booking Invoice Generated Status Updated

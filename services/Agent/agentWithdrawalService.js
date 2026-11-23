@@ -329,6 +329,8 @@ async function transferToAgentConnectAccount(agentUserId, amount, idempotencyKey
             ...metadata,
         },
         {
+            // The shop's money is in its zone's currency (as its wallet rows are).
+            currency: await zoneCurrencyCode(shop.zoneId),
             description: presentation.description,
             transferGroup: presentation.transferGroup,
         }
@@ -715,6 +717,7 @@ async function approveWithdrawal(withdrawalId, options = {}) {
                 approvedByAdminId: options.adminUserId || null,
             },
             {
+                currency: entry.currency, // the withdrawal's own currency
                 description: presentation.description,
                 transferGroup: presentation.transferGroup,
             }

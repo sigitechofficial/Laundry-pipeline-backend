@@ -104,7 +104,7 @@ const {
 
 
 // Import stripe functions
-const { attachPaymentMethodToCustomer, getIntent, createPaymentIntend, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
+const { attachPaymentMethodToCustomer, getIntent, createSetupIntent, createEphemeralKey, paymentIntentGet, createAuthorizationHold } = require('../../controllers/stripe');
 const { ensureStripeCustomer } = require('../shared/stripeCustomerService');
 const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
 const extraTipService = require('./extraTipService');
