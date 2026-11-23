@@ -17,6 +17,7 @@
  */
 
 const { toDecimal, toMinor, fromMinor, money, percentOfMinor, allocateMinor } = require('./moneyUtils');
+const { currencySymbolOf } = require('../../utils/currencySymbols');
 
 const PERCENT_ONLY = ['percentage_discount', 'first_order_discount', 'first_x_orders_discount'];
 const AMOUNT_ONLY = ['fixed_amount_discount', 'delivery_discount', 'fixed_price', 'bundle'];
@@ -28,15 +29,13 @@ const BASKET_TYPES = [
 ];
 const SUPPORTED_BENEFIT_TYPES = [...new Set([...DELIVERY_TYPES, ...ITEM_TYPES, ...BASKET_TYPES, 'cashback'])];
 
-const CURRENCY_SYMBOLS = { GBP: '£', USD: '$', EUR: '€' };
-
 /**
- * Display symbol of an ISO code (a promotion's own currency, which is always stored).
- * An unknown code shows as "XYZ "; a missing one shows no symbol — never a guessed one.
+ * Display symbol of an ISO code (a promotion's own currency, which is always stored), from
+ * the currency units (utils/currencySymbols, warmed by the promotion loaders). A code
+ * without a unit shows as "XYZ "; a missing one shows no symbol — never a guessed one.
  */
 function currencySymbol(currency) {
-  if (!currency) return '';
-  return CURRENCY_SYMBOLS[String(currency).toUpperCase()] || `${currency} `;
+  return currencySymbolOf(currency);
 }
 
 /** 'delivery' | 'item' | 'basket' | 'cashback' | null (unsupported). */

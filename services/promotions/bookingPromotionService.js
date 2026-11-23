@@ -36,7 +36,7 @@ const ledger = require('./redemptionService');
 const credit = require('./customerCreditService');
 const { COMPLETED, CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 const { lineItemNames, displayLineName } = require('./promotionReportService');
-const { bookingCurrency } = require('../../utils/zoneCurrency');
+const { bookingCurrency, bookingCurrencyCode } = require('../../utils/zoneCurrency');
 
 const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 
@@ -404,12 +404,17 @@ async function priceCreditAtInvoice({ bookingId, allowance }) {
   }
   try {
     const amount = isPromotionsCheckoutEnabled(b.zoneId)
-      ? await credit.holdForBooking({ customerId: b.customerId, bookingId, amount: Math.max(0, allowance) })
+      ? await credit.holdForBooking({
+        customerId: b.customerId,
+        bookingId,
+        amount: Math.max(0, allowance),
+        currency: await bookingCurrencyCode(bookingId),
+      })
       : (before.amount ? (await credit.releaseForBooking(bookingId, 'Credit switched off'), 0) : 0);
     return { amount, previous: before.amount };
   } catch (err) {
     // Lock conflict or similar: keep the previous hold (the transaction rolled back).
-    console.error(`[credit] booking ${bookingId}: pricing failed, keeping £${before.amount}`, err.message);
+    console.error(`[credit] booking ${bookingId}: pricing failed, keeping the held ${before.amount}`, err.message);
     return { amount: before.amount, previous: before.amount };
   }
 }
@@ -506,6 +511,7 @@ async function issueCashbackForBooking(bookingId) {
         promotionId: r.promotionId,
         redemptionId: r.id,
         amount: Number(r.cashbackAmount),
+        currency: r.currency, // the order's (its zone's), stored on the redemption
         description: `Cashback from order #${bookingId}${r.promotion?.name ? ` (${r.promotion.name})` : ''}`,
       });
       if (created) {
@@ -562,6 +568,7 @@ async function issueDiscountCreditForBooking(bookingId) {
         bookingId,
         promotionId: r.promotionId,
         amount,
+        currency: r.currency, // the order's (its zone's), stored on the redemption
         description: `Unused discount from order #${bookingId}${r.promotion?.name ? ` (${r.promotion.name})` : ''}`,
       });
       if (created) {

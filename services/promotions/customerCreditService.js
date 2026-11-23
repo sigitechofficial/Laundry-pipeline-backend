@@ -9,6 +9,12 @@
  *
  * SPEND: HELD (invoice priced) → COMMITTED (invoice paid) | RELEASED (cancelled / re-priced).
  * Every write locks the customer's lots, and every movement has a unique idempotency key.
+ *
+ * Currency: every entry stores its own. Credit earned on an order is in that order's
+ * currency (its redemption's / zone's); a reversal, restore or expiry is in the currency
+ * of the entry it moves; an invoice only spends lots in its own currency. Admin
+ * adjustments use the customer's credit currency (see customerCreditCurrency). Nothing
+ * falls back to a platform currency.
  */
 
 const { Op } = require('sequelize');
@@ -18,7 +24,9 @@ const {
   sequelize,
 } = require('../../models');
 const { toMinor, fromMinor } = require('./moneyUtils');
-const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
+const { zoneCurrency } = require('../../utils/zoneCurrency');
+const { currencyOfCode } = require('../../utils/resolveDisplayCurrency');
+const { requireCurrencyCode } = require('../../utils/requireCurrency');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,17 +60,18 @@ function inTransaction(fn, outer) {
   return sequelize.transaction((t) => fn(t));
 }
 
-const liveLotWhere = (customerId, now) => ({
+const liveLotWhere = (customerId, now, currency) => ({
   customerId,
   type: LOT_TYPES,
+  ...(currency ? { currency } : {}),
   remainingAmount: { [Op.gt]: 0 },
   [Op.or]: [{ expiresAt: null }, { expiresAt: { [Op.gt]: now } }],
 });
 
-/** The customer's live lots, soonest expiry first, locked for this transaction. */
-async function lockLots(customerId, t, now = new Date()) {
+/** The customer's live lots (in `currency`, when given), soonest expiry first, locked. */
+async function lockLots(customerId, t, currency = null, now = new Date()) {
   return Entry.findAll({
-    where: liveLotWhere(customerId, now),
+    where: liveLotWhere(customerId, now, currency),
     order: [[sequelize.literal('expiresAt IS NULL'), 'ASC'], ['expiresAt', 'ASC'], ['id', 'ASC']],
     lock: t.LOCK.UPDATE,
     transaction: t,
@@ -114,6 +123,29 @@ async function restoreAllocations(entry, t) {
 
 // ─── Read ───────────────────────────────────────────────────────────────────
 
+/**
+ * ISO code of the customer's credit: the currency of their latest credit entry; for a
+ * customer without any, the currency of the zone of their default address. '' when
+ * neither exists — the currency is then unknown, never a platform guess.
+ */
+async function customerCreditCurrency(customerId, transaction) {
+  const latest = await Entry.findOne({
+    where: { customerId },
+    attributes: ['currency'],
+    order: [['id', 'DESC']],
+    transaction,
+  });
+  if (latest?.currency) return String(latest.currency).toUpperCase();
+  const { addressDb } = require('../../models');
+  const address = await addressDb.findOne({
+    where: { userId: customerId, isDefault: true },
+    attributes: ['id', 'zoneId'],
+    order: [['id', 'DESC']],
+    transaction,
+  });
+  return (await zoneCurrency(address?.zoneId)).currencyCode;
+}
+
 /** { balance, held, expiringSoon: { amount, expiresAt } | null } — held = on unpaid invoices. */
 async function getBalance(customerId, now = new Date()) {
   const lots = await Entry.findAll({
@@ -129,8 +161,9 @@ async function getBalance(customerId, now = new Date()) {
   return {
     balance: fromMinor(balanceMinor),
     held: fromMinor(heldMinor),
-    // The credit's own currency; a customer with no credit sees the platform's.
-    currency: lots[0]?.currency || held[0]?.currency || (await resolveDisplayCurrency({})).currencyCode,
+    // The credit's own currency; for a customer with no credit, their address zone's;
+    // null when unknown (the balance is then 0).
+    currency: lots[0]?.currency || held[0]?.currency || (await customerCreditCurrency(customerId)) || null,
     expiringSoon: soon.length
       ? { amount: fromMinor(soon.reduce((s, l) => s + toMinor(l.remainingAmount), 0)), expiresAt: soon[0].expiresAt }
       : null,
@@ -169,6 +202,7 @@ async function getHistory(customerId, { page = 1, limit = 20 } = {}) {
           : HISTORY_TEXT[e.type],
       description: e.description || null,
       amount: Number(e.amount),
+      currency: e.currency,
       remainingAmount: e.remainingAmount != null ? Number(e.remainingAmount) : null,
       expiresAt: e.expiresAt,
       bookingId: e.bookingId,
@@ -179,7 +213,7 @@ async function getHistory(customerId, { page = 1, limit = 20 } = {}) {
   };
 }
 
-/** Credit used on a booking's invoice (held or committed), positive £. */
+/** Credit used on a booking's invoice (held or committed), positive, in its currency. */
 async function spentOnBooking(bookingId, transaction) {
   const rows = await Entry.findAll({
     where: { bookingId, type: 'SPEND', status: ['HELD', 'COMMITTED'] },
@@ -198,9 +232,10 @@ async function spentOnBooking(bookingId, transaction) {
  * Credit a cashback lot. Idempotent per booking + promotion.
  * @returns {{ entry: object|null, created: boolean }}
  */
-async function earnCashback({ customerId, bookingId, promotionId, redemptionId = null, amount, description }, transaction) {
+async function earnCashback({ customerId, bookingId, promotionId, redemptionId = null, amount, currency, description }, transaction) {
   const amountMinor = toMinor(amount);
   if (!customerId || amountMinor <= 0) return { entry: null, created: false };
+  const code = requireCurrencyCode(currency, 'earnCashback');
   return inTransaction(async (t) => {
     const idempotencyKey = keys.cashback(bookingId, promotionId);
     const existing = await Entry.findOne({ where: { idempotencyKey }, transaction: t });
@@ -211,6 +246,7 @@ async function earnCashback({ customerId, bookingId, promotionId, redemptionId =
       status: 'POSTED',
       amount: fromMinor(amountMinor),
       remainingAmount: fromMinor(amountMinor),
+      currency: code,
       expiresAt: expiresAtFrom(),
       bookingId,
       promotionId,
@@ -229,9 +265,10 @@ async function earnCashback({ customerId, bookingId, promotionId, redemptionId =
  * Idempotent per booking + promotion. Taken back on a full refund, like cashback.
  * @returns {{ entry: object|null, created: boolean }}
  */
-async function creditUnusedDiscount({ customerId, bookingId, promotionId, amount, description }, transaction) {
+async function creditUnusedDiscount({ customerId, bookingId, promotionId, amount, currency, description }, transaction) {
   const amountMinor = toMinor(amount);
   if (!customerId || !bookingId || amountMinor <= 0) return { entry: null, created: false };
+  const code = requireCurrencyCode(currency, 'creditUnusedDiscount');
   return inTransaction(async (t) => {
     const idempotencyKey = keys.discountCredit(bookingId, promotionId);
     const existing = await Entry.findOne({ where: { idempotencyKey }, transaction: t });
@@ -242,6 +279,7 @@ async function creditUnusedDiscount({ customerId, bookingId, promotionId, amount
       status: 'POSTED',
       amount: fromMinor(amountMinor),
       remainingAmount: fromMinor(amountMinor),
+      currency: code,
       expiresAt: expiresAtFrom(),
       bookingId,
       promotionId,
@@ -261,9 +299,11 @@ const isDiscountCredit = (e) => String(e?.idempotencyKey || '').startsWith('disc
  * Hold up to `amount` of the customer's credit against a booking's unpaid invoice.
  * The hold is min(amount, credit available incl. this hold); an unchanged hold is kept as is,
  * a changed one is replaced. A paid (committed) spend is frozen and returned as is.
- * @returns {number} the credit now held (£)
+ * `currency` is the booking's (its zone's): only lots in it can pay the invoice.
+ * @returns {number} the credit now held (in that currency)
  */
-async function holdForBooking({ customerId, bookingId, amount }, transaction) {
+async function holdForBooking({ customerId, bookingId, amount, currency: bookingCurrency }, transaction) {
+  const currency = requireCurrencyCode(bookingCurrency, `holdForBooking(booking ${bookingId})`);
   return inTransaction(async (t) => {
     await lockCustomerLots(customerId, t);
     const committed = await Entry.findOne({ where: { bookingId, type: 'SPEND', status: 'COMMITTED' }, lock: t.LOCK.UPDATE, transaction: t });
@@ -272,7 +312,7 @@ async function holdForBooking({ customerId, bookingId, amount }, transaction) {
     const existing = await Entry.findOne({ where: { bookingId, type: 'SPEND', status: 'HELD' }, lock: t.LOCK.UPDATE, transaction: t });
     const existingMinor = existing ? toMinor(Math.abs(Number(existing.amount))) : 0;
     const wantMinor = Math.max(0, toMinor(amount));
-    const live = customerId ? await lockLots(customerId, t) : [];
+    const live = customerId ? await lockLots(customerId, t, currency) : [];
     const targetMinor = customerId
       ? Math.min(wantMinor, live.reduce((s, l) => s + toMinor(l.remainingAmount), 0) + existingMinor)
       : 0;
@@ -282,7 +322,7 @@ async function holdForBooking({ customerId, bookingId, amount }, transaction) {
     if (targetMinor <= 0) return 0;
 
     // Read again after the release above, which may have refilled them.
-    const fresh = await lockLots(customerId, t);
+    const fresh = await lockLots(customerId, t, currency);
     const availableMinor = fresh.reduce((s, l) => s + toMinor(l.remainingAmount), 0);
     const takeMinor = Math.min(targetMinor, availableMinor);
     if (takeMinor <= 0) return 0;
@@ -292,6 +332,7 @@ async function holdForBooking({ customerId, bookingId, amount }, transaction) {
       type: 'SPEND',
       status: 'HELD',
       amount: -fromMinor(takeMinor),
+      currency,
       bookingId,
       idempotencyKey: keys.spend(bookingId),
       description: `Used on order #${bookingId}`,
@@ -357,6 +398,7 @@ async function reverseCashbackForBooking(bookingId, reason, transaction) {
         type: 'REVERSE',
         status: 'POSTED',
         amount: -fromMinor(leftMinor),
+        currency: lot.currency,
         bookingId,
         promotionId: lot.promotionId,
         sourceEntryId: lot.id,
@@ -390,6 +432,7 @@ async function restoreSpendForBooking(bookingId, reason, transaction) {
         status: 'POSTED',
         amount: fromMinor(amountMinor),
         remainingAmount: fromMinor(amountMinor),
+        currency: s.currency,
         expiresAt: expiresAtFrom(),
         bookingId,
         sourceEntryId: s.id,
@@ -427,6 +470,7 @@ async function expireLots({ now = new Date(), limit = 500 } = {}) {
           type: 'EXPIRE',
           status: 'POSTED',
           amount: -fromMinor(leftMinor),
+          currency: lot.currency,
           sourceEntryId: lot.id,
           bookingId: lot.bookingId,
           idempotencyKey,
@@ -445,9 +489,13 @@ async function expireLots({ now = new Date(), limit = 500 } = {}) {
 
 // ─── Admin ──────────────────────────────────────────────────────────────────
 
+/** Most credit support can add or remove in one adjustment, in the credit's currency. */
+const MAX_ADJUST_MINOR = 100000;
+
 /**
- * Admin adds (+) or removes (−) credit, with a reason. Removing never takes more than the
- * customer has. Optional idempotencyKey makes a retried request safe.
+ * Admin adds (+) or removes (−) credit, with a reason, in the customer's credit currency
+ * (customerCreditCurrency). Removing never takes more than the customer has in it.
+ * Optional idempotencyKey makes a retried request safe.
  */
 async function adjust({ customerId, amount, reason, actorId = null, idempotencyKey = null }, transaction) {
   if (!Number.isFinite(Number(amount))) throw new ValidationError('Amount must be a number');
@@ -455,8 +503,17 @@ async function adjust({ customerId, amount, reason, actorId = null, idempotencyK
   const why = String(reason || '').trim().slice(0, 500);
   if (!customerId) throw new ValidationError('customerId is required');
   if (!amountMinor) throw new ValidationError('Amount must not be zero');
-  if (Math.abs(amountMinor) > 100000) throw new ValidationError('Amount must be £1,000 or less');
   if (!why) throw new ValidationError('A reason is required');
+  const code = await customerCreditCurrency(customerId, transaction);
+  if (!code) {
+    throw new ValidationError(
+      "This customer has no credit and no default address in a zone yet, so the credit's currency is unknown. Add an address first."
+    );
+  }
+  const { currencySymbol } = await currencyOfCode(code);
+  if (Math.abs(amountMinor) > MAX_ADJUST_MINOR) {
+    throw new ValidationError(`Amount must be ${currencySymbol}${fromMinor(MAX_ADJUST_MINOR).toLocaleString('en-GB')} or less`);
+  }
   return inTransaction(async (t) => {
     if (idempotencyKey) {
       const existing = await Entry.findOne({ where: { idempotencyKey }, transaction: t });
@@ -469,6 +526,7 @@ async function adjust({ customerId, amount, reason, actorId = null, idempotencyK
         status: 'POSTED',
         amount: fromMinor(amountMinor),
         remainingAmount: fromMinor(amountMinor),
+        currency: code,
         expiresAt: expiresAtFrom(),
         idempotencyKey,
         description: 'Credit added by support',
@@ -477,16 +535,17 @@ async function adjust({ customerId, amount, reason, actorId = null, idempotencyK
         actorType: 'admin',
       }, { transaction: t });
     }
-    const lots = await lockLots(customerId, t);
+    const lots = await lockLots(customerId, t, code);
     const availableMinor = lots.reduce((s, l) => s + toMinor(l.remainingAmount), 0);
     if (-amountMinor > availableMinor) {
-      throw new ValidationError(`The customer only has £${fromMinor(availableMinor).toFixed(2)} credit to remove`);
+      throw new ValidationError(`The customer only has ${currencySymbol}${fromMinor(availableMinor).toFixed(2)} credit to remove`);
     }
     const entry = await Entry.create({
       customerId,
       type: 'ADJUST',
       status: 'POSTED',
       amount: fromMinor(amountMinor),
+      currency: code,
       idempotencyKey,
       description: 'Credit removed by support',
       reason: why,
@@ -503,6 +562,7 @@ module.exports = {
   keys,
   expiryDays,
   getBalance,
+  customerCreditCurrency,
   getHistory,
   spentOnBooking,
   earnCashback,

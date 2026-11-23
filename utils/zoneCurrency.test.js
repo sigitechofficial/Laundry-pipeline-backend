@@ -14,15 +14,15 @@ const zones = {
   [EUR_ZONE]: { id: EUR_ZONE, cityId: null, currencyUnitZ: { symbol: '€', name: 'EUR' } },
   [UNITLESS_ZONE]: { id: UNITLESS_ZONE, cityId: null, currencyUnitZ: null },
 };
-const FIRST_ACTIVE_ZONE = { id: 1, currencyUnitZ: { symbol: '£', name: 'GBP' } };
 const shops = { 11: { id: 50, zoneId: EUR_ZONE }, 12: { id: 51, zoneId: null } };
 const addressQueries = [];
 
 const models = {
   zone: {
     findByPk: async (id) => zones[id] || null,
-    findOne: async () => FIRST_ACTIVE_ZONE, // resolveDisplayCurrency's "first active zone"
-    findAll: async () => [],
+    // Another active zone exists: a booking / shop without a zone must never get its currency.
+    findOne: async () => { throw new Error('zoneCurrency must not look up any other zone'); },
+    findAll: async () => { throw new Error('zoneCurrency must not look up any other zone'); },
   },
   units: {},
   cities: { findByPk: async () => null, findAll: async () => [] },
@@ -58,15 +58,19 @@ const {
   assert.equal(await shopCurrencyCode(11), 'EUR');
   assert.deepEqual(addressQueries.at(-1), { userId: 11, addressType: 'LaundaryShopAddress' });
 
-  // No zone yet / no shop / no owner: the platform fallback of resolveDisplayCurrency.
-  assert.equal(await shopCurrencyCode(12), 'GBP', 'shop without a zone');
-  assert.equal(await shopCurrencyCode(99), 'GBP', 'owner without a shop address');
+  // No zone yet / no shop / no owner: no currency yet — empty, never a platform guess.
+  const NONE = { currencySymbol: '', currencyCode: '' };
+  assert.deepEqual(await shopCurrency(12), NONE, 'shop without a zone');
+  assert.equal(await shopCurrencyCode(99), '', 'owner without a shop address');
   const queriesBefore = addressQueries.length;
-  assert.equal(await shopCurrencyCode(null), 'GBP', 'no owner');
+  assert.equal(await shopCurrencyCode(null), '', 'no owner');
   assert.equal(addressQueries.length, queriesBefore, 'no owner: no address lookup');
+  assert.deepEqual(await zoneCurrency(null), NONE, 'no zone');
+  assert.deepEqual(await zoneCurrency(404), NONE, 'zone id that does not exist');
+  assert.equal(await bookingCurrencyCode(901), '', 'booking that does not exist');
 
-  // A zone without a currency unit falls through, never to a hard-coded literal here.
-  assert.equal(await zoneCurrencyCode(UNITLESS_ZONE), 'GBP');
+  // A zone whose unit row is missing resolves to unknown, never to another zone's currency.
+  assert.deepEqual(await zoneCurrency(UNITLESS_ZONE), NONE);
 
   console.log('zoneCurrency.test.js passed');
 })().catch((err) => {

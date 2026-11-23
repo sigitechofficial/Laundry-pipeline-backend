@@ -2,10 +2,10 @@ require("dotenv").config();
 const axios = require('axios');
 const turf = require('@turf/turf');
 const { Op } = require('sequelize');
-const { zone, cities, countries, units, users } = require('../../models');
+const { zone, cities, countries } = require('../../models');
 const { NotFoundError, ValidationError } = require('../../middlewares/universalErrorHandler');
 const { applyAgentCommissionToZonePayload } = require('../../utils/agentCommission');
-const { resolveCurrencyUnitIdForCountry } = require('../../utils/resolveDisplayCurrency');
+const { validateZoneData } = require('./zoneValidation');
 const googleMapsGeocodeService = require('./googleMapsGeocodeService');
 const {
     normalizeCountryIso,
@@ -333,47 +333,6 @@ class PostcodeZoneService {
     }
 
     /**
-     * Validate zone data before creation
-     * @param {Object} data - Zone data
-     */
-    async validateZoneData(data) {
-        // Validate city exists
-        if (data.cityId) {
-            const cityExists = await cities.findByPk(data.cityId);
-            if (!cityExists) {
-                throw new NotFoundError('City not found');
-            }
-        }
-
-        // Validate currencyUnitId if provided
-        if (data.currencyUnitId) {
-            const currencyUnit = await units.findByPk(data.currencyUnitId);
-            if (!currencyUnit) {
-                throw new NotFoundError('Currency unit not found');
-            }
-            if (currencyUnit.type && String(currencyUnit.type).toLowerCase() !== 'currency') {
-                throw new ValidationError('currencyUnitId must reference a currency unit');
-            }
-        }
-
-        // Validate distanceUnitId if provided
-        if (data.distanceUnitId) {
-            const distanceUnit = await units.findByPk(data.distanceUnitId);
-            if (!distanceUnit) {
-                throw new NotFoundError('Distance unit not found');
-            }
-        }
-
-        // Validate zoneAdminId if provided
-        if (data.zoneAdminId) {
-            const adminUser = await users.findByPk(data.zoneAdminId);
-            if (!adminUser) {
-                throw new NotFoundError('Zone admin user not found');
-            }
-        }
-    }
-
-    /**
      * Normalize a postcode string for consistent comparison.
      */
     normalizePostcode(postcode) {
@@ -674,17 +633,8 @@ class PostcodeZoneService {
             status: zoneData.status !== undefined ? zoneData.status : true
         };
 
-        // Default currency from city → country when client omits currencyUnitId
-        // (prevents accidental GBP / wrong unit id for US zones, etc.).
-        if (data.currencyUnitId == null || data.currencyUnitId === '') {
-            const city = await cities.findByPk(data.cityId, {
-                attributes: ['id', 'countryId'],
-            });
-            if (city?.countryId) {
-                const resolvedId = await resolveCurrencyUnitIdForCountry(city.countryId);
-                if (resolvedId) data.currencyUnitId = resolvedId;
-            }
-        }
+        // The currency is the admin's explicit choice (the form pre-selects one to confirm);
+        // validateZoneData rejects a zone without one. It is never inferred here.
 
         applyAgentCommissionToZonePayload(data);
         if (
@@ -705,8 +655,8 @@ class PostcodeZoneService {
             lastPoint: data.coordinates.coordinates[0]?.[data.coordinates.coordinates[0].length - 1]
         });
 
-        // Validate zone data (city, units, admin)
-        await this.validateZoneData(data);
+        // Validate zone data (currency, city, units, admin)
+        await validateZoneData(data, { creating: true });
 
         // Create zone
         const zoneCreate = await zone.create(data);
@@ -806,7 +756,7 @@ class PostcodeZoneService {
 
         const updatePayload = { ...otherZoneData };
         applyAgentCommissionToZonePayload(updatePayload);
-        await this.validateZoneData(updatePayload);
+        await validateZoneData(updatePayload, { creating: false });
 
         const [affectedRows] = await zone.update(updatePayload, { where: { id: zoneId } });
         // 0 rows can mean "values already equal" — still treat as success

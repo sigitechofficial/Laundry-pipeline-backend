@@ -9,6 +9,7 @@ const {
 } = require('../../models');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { isPromotionsCheckoutEnabled } = require('../promotions/checkoutFlag');
+const { resolveDisplayCurrency, sharedCurrencyOfZones } = require('../../utils/resolveDisplayCurrency');
 
 /** Apply decimal math safely */
 function money(val) {
@@ -104,8 +105,10 @@ async function findApplicableDiscounts(zoneId, selector = {}) {
 
 /**
  * Sync best-discount picker against a preloaded rules list (no DB).
+ * `currencySymbol`: the priced zone's currency (catalogCurrencySymbol), shown in a flat
+ * discount's label; '' shows the amount alone — never a guessed symbol.
  */
-function pickBestDiscountFromRules(rules, zoneId, selector, basePrice) {
+function pickBestDiscountFromRules(rules, zoneId, selector, basePrice, currencySymbol = '') {
   // Legacy is switched off where Promotions run at checkout (docs/PROMOTIONS_CHECKOUT_PLAN.md,
   // Phase 6): catalog prices stay full and the promotions engine discounts on the invoice.
   if (isPromotionsCheckoutEnabled(zoneId)) {
@@ -159,9 +162,17 @@ function pickBestDiscountFromRules(rules, zoneId, selector, basePrice) {
       label:
         discountType === 'percentage'
           ? `${discountValue}% OFF`
-          : `£${Number(discountValue).toFixed(2)} OFF`,
+          : `${currencySymbol}${Number(discountValue).toFixed(2)} OFF`,
     },
   };
+}
+
+/**
+ * Symbol of the currency catalog prices are shown in: the zone's; without a zone (master
+ * catalogue) the currency every active zone shares, else '' (resolveDisplayCurrency).
+ */
+async function catalogCurrencySymbol(zoneId) {
+  return (await resolveDisplayCurrency({ zoneId })).currencySymbol;
 }
 
 /**
@@ -169,16 +180,17 @@ function pickBestDiscountFromRules(rules, zoneId, selector, basePrice) {
  */
 async function applyBestDiscount(zoneId, selector, basePrice) {
   const rules = await loadActiveDiscountRules();
-  return pickBestDiscountFromRules(rules, zoneId, selector, basePrice);
+  const currencySymbol = rules.length ? await catalogCurrencySymbol(zoneId) : '';
+  return pickBestDiscountFromRules(rules, zoneId, selector, basePrice, currencySymbol);
 }
 
 /**
  * Decorate a priced catalog row with discount fields for agent/customer UI.
  * `price` becomes the discounted amount when a rule applies.
  */
-function decoratePriceWithDiscount(row, rules, zoneId, selector) {
+function decoratePriceWithDiscount(row, rules, zoneId, selector, currencySymbol = '') {
   const base = parseFloat(row.price) || 0;
-  const result = pickBestDiscountFromRules(rules, zoneId, selector, base);
+  const result = pickBestDiscountFromRules(rules, zoneId, selector, base, currencySymbol);
   if (!result.appliedDiscount) {
     return {
       ...row,
@@ -300,9 +312,19 @@ async function resolvePricedItems(targetType, targetIds) {
   return [];
 }
 
-async function assertFlatWithinCatalogPrices(targetType, targetIds, discountValue) {
+/** Currency of a discount's zones (selected ones, or every active zone); '' when mixed. */
+async function discountCurrencySymbol(p) {
+  const ids = (p.zoneMode || 'all') === 'specific' && Array.isArray(p.zoneIds) ? p.zoneIds.map(Number) : [];
+  const shared = ids.length
+    ? await sharedCurrencyOfZones({ id: { [Op.in]: ids } })
+    : await resolveDisplayCurrency({});
+  return shared.currencySymbol;
+}
+
+async function assertFlatWithinCatalogPrices(targetType, targetIds, discountValue, currencySymbol = '') {
   const amount = parseFloat(discountValue);
   if (!Number.isFinite(amount) || amount <= 0) return;
+  const sym = currencySymbol;
 
   const priced = await resolvePricedItems(targetType, targetIds);
   if (!priced.length) {
@@ -324,8 +346,8 @@ async function assertFlatWithinCatalogPrices(targetType, targetIds, discountValu
   if (amount > cheapest.price) {
     const kindLabel = cheapest.kind === 'addon' ? 'add-on' : 'item';
     throw new ValidationError(
-      `Flat discount £${amount.toFixed(2)} exceeds the price of ${kindLabel} "${cheapest.name}" ` +
-        `(£${cheapest.price.toFixed(2)}). Lower the discount to £${cheapest.price.toFixed(2)} or below, ` +
+      `Flat discount ${sym}${amount.toFixed(2)} exceeds the price of ${kindLabel} "${cheapest.name}" ` +
+        `(${sym}${cheapest.price.toFixed(2)}). Lower the discount to ${sym}${cheapest.price.toFixed(2)} or below, ` +
         'remove that target, or switch to a percentage discount.'
     );
   }
@@ -497,7 +519,7 @@ async function _validateAsync(p) {
   }
 
   if (p.discountType === 'flat') {
-    await assertFlatWithinCatalogPrices(targetType, targetIds, val);
+    await assertFlatWithinCatalogPrices(targetType, targetIds, val, await discountCurrencySymbol(p));
   }
 }
 
@@ -512,6 +534,7 @@ module.exports = {
   loadActiveDiscountRules,
   pickBestDiscountFromRules,
   decoratePriceWithDiscount,
+  catalogCurrencySymbol,
   resolveTargetLabel,
   normalizeTargetIds,
   resolvePricedItems,

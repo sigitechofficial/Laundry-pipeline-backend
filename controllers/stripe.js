@@ -2,6 +2,16 @@ require("dotenv").config();
 const { STRIPE_PUBLISHABLE_KEY, STRIPE_SECRET_KEY } = process.env;
 const stripe = require("stripe")(STRIPE_SECRET_KEY);
 const customError = require("../middlewares/customError");
+const { requireCurrencyCode } = require("../utils/requireCurrency");
+
+/**
+ * Stripe currency of a charge or transfer: the record's own ISO code (a booking's zone
+ * currency, a withdrawal's currency), lower-cased as Stripe expects. There is no
+ * default: a missing currency throws before anything reaches Stripe.
+ */
+function stripeCurrency(code, where) {
+    return requireCurrencyCode(code, where).toLowerCase();
+}
 
 
 // Amount to Cents
@@ -80,75 +90,16 @@ async function deleteStripeCustomer(customerId) {
 
 
 //!==============================Payment Intents=========================//
-/*
- *   Create PaymenIntend for Upfront Payments with AccountId of Connect Account
- */
-async function createPaymentIntendForUpFrontPayments(
-    amount,
-    customerId,
-    accountId
-) {
-    console.log("🚀 ~ amount:", amount);
-    console.log("ðŸš€ ~ accountId:", accountId);
-    try {
-        const paymentIntent = await stripe.paymentIntents.create({
-            amount: convertToCents(amount),
-            currency: "gbp",
-            setup_future_usage: "off_session",
-            customer: customerId,
-            // capture_method: "manual",
-            automatic_payment_methods: {
-                enabled: true,
-            },
-            application_fee_amount: 50,
-            transfer_data: {
-                destination: accountId, // Replace with the Connect account ID
-            },
-        });
-
-        return paymentIntent;
-    } catch (error) {
-        throw new customError(`${error.message} `, 200);
-    }
-}
-
-
-/*
- *   Create PaymentIntent (with optional payment method for off-session use)
- */
-async function createPaymentIntend(amount, customerId, paymentMethodId = null) {
-    try {
-        const params = {
-            amount: convertToCents(amount),
-            currency: 'usd',
-            customer: customerId,
-            capture_method: 'manual',
-        };
-
-        // If payment method provided, attach it to avoid automatic payment methods
-        if (paymentMethodId) {
-            params.payment_method = paymentMethodId;
-            params.off_session = true;
-            params.confirm = false;
-        }
-
-        const paymentIntent = await stripe.paymentIntents.create(params);
-        return paymentIntent;
-    } catch (error) {
-        throw new customError(`${error.message} `, 200);
-    }
-}
-
-
 /**
  * Authorize (hold) amount on a saved card without capturing.
  * Status should become `requires_capture` on success.
  *
- * @param {number} amount - major currency units (e.g. GBP)
+ * @param {number} amount - major units of the charge currency
  * @param {string} customerId - Stripe customer ID
  * @param {string} paymentMethodId
  * @param {string} [idempotencyKey]
- * @param {object} [stripeOptions] - presentation / metadata fields
+ * @param {object} stripeOptions - buildStripeChargePresentation output: presentation /
+ *   metadata fields and `currency`, the booking's ISO code (required)
  */
 async function createAuthorizationHold(
     amount,
@@ -170,7 +121,7 @@ async function createAuthorizationHold(
     try {
         const params = {
             amount: convertToCents(amount),
-            currency: "gbp",
+            currency: stripeCurrency(stripeOptions?.currency, "createAuthorizationHold"),
             customer: customerId,
             payment_method: paymentMethodId,
             capture_method: "manual",
@@ -404,6 +355,8 @@ async function cancelPaymentIntent(paymentIntentId, options = {}) {
  *   @param {string} customerId - Stripe customer ID
  *   @param {string} paymentMethodId - Saved payment method ID
  *   @param {string} idempotencyKey - Optional idempotency key for preventing duplicate charges
+ *   @param {Object} stripeOptions - presentation / metadata fields and `currency`, the ISO
+ *     code of the charge (the booking's zone currency; required)
  *   @returns {Object} Stripe PaymentIntent object
  */
 async function chargeOffSession(
@@ -413,10 +366,12 @@ async function chargeOffSession(
     idempotencyKey = null,
     stripeOptions = {}
 ) {
+    // Outside the try: a missing currency is a caller bug, not a Stripe error.
+    const currency = stripeCurrency(stripeOptions?.currency, "chargeOffSession");
     try {
         const params = {
             amount: convertToCents(amount),
-            currency: 'gbp',
+            currency,
             customer: customerId,
             payment_method: paymentMethodId,
             off_session: true,
@@ -599,7 +554,7 @@ async function confirmAndCapturePayment(paymentIntentId, paymentMethodId, custom
 /**
  * Refund a succeeded PaymentIntent (full or partial).
  * @param {string} paymentIntentId
- * @param {number} [amount] - major currency units (e.g. GBP). Omit for full refund.
+ * @param {number} [amount] - major units of the charge's own currency. Omit for full refund.
  * @param {{ reason?: string, idempotencyKey?: string, metadata?: object }} [options]
  */
 async function refundPaymentIntent(paymentIntentId, amount, options = {}) {
@@ -678,34 +633,6 @@ async function refundPaymentIntent(paymentIntentId, amount, options = {}) {
     } catch (error) {
         if (error instanceof customError) throw error;
         throw new customError(`Stripe Refund Error: ${error.message}`, 400);
-    }
-}
-
-/*
- *    Create PaymentIntent for Agent
- */
-async function createPaymentIntentForAgent(
-    newAmount,
-    customerId,
-    savedPaymentMethodId,
-    stripeOptions = {}
-) {
-    try {
-        const params = {
-            amount: convertToCents(newAmount),
-            currency: 'gbp',
-            customer: customerId,
-            payment_method: savedPaymentMethodId,
-            off_session: true,
-            confirm: true,
-        };
-
-        applyStripePresentationFields(params, stripeOptions);
-
-        const paymentIntent = await stripe.paymentIntents.create(params);
-        return paymentIntent
-    } catch (error) {
-        throw new customError(`${error.message} `, 200)
     }
 }
 
@@ -874,7 +801,9 @@ async function checkConnectAccountStatus(accountId) {
  * to that Connect account's payout schedule.
  */
 /**
- * @param {object} [stripeOptions]
+ * @param {object} stripeOptions
+ * @param {string} stripeOptions.currency ISO code of the transferred money (the shop's zone
+ *   currency / the withdrawal's own currency; required)
  * @param {string} [stripeOptions.description] shown in the dashboard Transfers
  *   list — pass a human-readable "who / which shop / by whom" string.
  * @param {string} [stripeOptions.transferGroup] Stripe transfer_group, lets the
@@ -897,7 +826,7 @@ async function transferToConnectAccount(
 
     const params = {
         amount: amountInCents,
-        currency: "gbp",
+        currency: stripeCurrency(stripeOptions?.currency, "transferToConnectAccount"),
         destination: accountId,
         description:
             metadata.transferKind === "admin_payout"
@@ -1024,8 +953,6 @@ async function createConnectAccount(email, country = 'GB') {
 module.exports = {
     createStripeCustomer,
     deleteStripeCustomer,
-    createPaymentIntendForUpFrontPayments,
-    createPaymentIntend,
     createSetupIntent,
     createEphemeralKey,
     paymentIntentGet,
@@ -1038,7 +965,6 @@ module.exports = {
     cancelPaymentIntent,
     updatePaymentIntentPresentation,
     refundPaymentIntent,
-    createPaymentIntentForAgent,
     attachPaymentMethodToCustomer,
     listCustomerCardPaymentMethods,
     retrievePaymentMethod,

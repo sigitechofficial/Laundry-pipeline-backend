@@ -73,10 +73,15 @@ function calcDiscount(couponData, laundryAmount) {
     return roundMoney(Math.min(discountAmt, orderAmount));
 }
 
+/**
+ * @param {string} [currencySymbol] the booking's currency symbol (its zone's), used in
+ *   rejectReason; '' shows the amount alone — never a guessed symbol.
+ */
 function evaluateCouponAgainstLaundry({
     couponData,
     laundryAmount,
     deferMinOrderWhenLaundryUnknown = false,
+    currencySymbol = '',
 } = {}) {
     const laundry = roundMoney(laundryAmount);
     const minRaw = couponData?.minOrderAmount;
@@ -105,7 +110,7 @@ function evaluateCouponAgainstLaundry({
             minOrderMet: false,
             minOrderDeferred: false,
             rejected: true,
-            rejectReason: `Minimum laundry / services total of £${minOrderAmount.toFixed(2)} required for this coupon`,
+            rejectReason: `Minimum laundry / services total of ${currencySymbol}${minOrderAmount.toFixed(2)} required for this coupon`,
         };
     }
 

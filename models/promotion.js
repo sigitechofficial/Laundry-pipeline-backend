@@ -46,7 +46,8 @@ module.exports = (sequelize, DataTypes) => {
       discountMode: { type: DataTypes.ENUM('percent', 'amount'), allowNull: true },
       benefitConfig: jsonColumn(DataTypes, 'benefitConfig', { allowNull: true }),
       maxDiscountCap: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
-      currency: { type: DataTypes.STRING(3), allowNull: false, defaultValue: 'GBP' },
+      // The admin's choice, or the currency its zones share (defaultPromotionCurrency).
+      currency: { type: DataTypes.STRING(3), allowNull: false, validate: { is: /^[A-Z]{3}$/ } },
 
       targetType: {
         type: DataTypes.ENUM('all', 'service', 'category', 'subCategory', 'addon', 'delivery', 'basket'),

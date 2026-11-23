@@ -74,6 +74,14 @@ module.exports = (sequelize, DataTypes) => {
     allowNull: true,
     comment: 'Optional zone override for customer → support phone',
   },
+  // The zone's currency (→ units, type 'currency'). Every amount in the zone — bills,
+  // Stripe charges, wallets, reports — is in it, and there is no platform default, so
+  // a zone must have one (migration 20261123160000-zones-currency-unit-required).
+  // Association: units.hasMany(zone, { as: 'currencyUnitZ' }) in models/units.js.
+  currencyUnitId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
   }, {
     sequelize,
     modelName: 'zone',

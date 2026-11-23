@@ -28,13 +28,13 @@ const stripeService = require("../../controllers/stripe");
 const agentWalletService = require("./agentWalletService");
 const { AGENT_WITHDRAWAL_REQUEST_PREFIX } = require("../../utils/adminPayoutLedger");
 const { zoneCurrency, zoneCurrencyCode } = require("../../utils/zoneCurrency");
+const runtimeSettings = require("../Admin/runtimeSettingsService");
 
 const {
     AGENT_PAYOUT_REFERENCE,
     WITHDRAWAL_REFERENCE,
 } = agentWalletService;
 
-const MIN_WITHDRAWAL_GBP = 1;
 const SHOP_ADDRESS_TYPE = "LaundaryShopAddress";
 
 function instantWithdrawEnabled() {
@@ -55,13 +55,25 @@ function normalizeAmount(amount) {
     if (Math.abs(parsed * 100 - amountInCents) > 0.000001) {
         throw new ValidationError("amount cannot have more than 2 decimal places");
     }
-    if (amountInCents < MIN_WITHDRAWAL_GBP * 100) {
-        throw new ValidationError(
-            `Minimum withdrawal amount is £${MIN_WITHDRAWAL_GBP.toFixed(2)}`
-        );
+    if (amountInCents <= 0) {
+        throw new ValidationError("amount must be greater than 0");
     }
 
     return amountInCents / 100;
+}
+
+/**
+ * The smallest withdrawal, in the shop's own currency: runtime setting
+ * shopMinWithdrawalMinor (minor units, e.g. 100 = 1.00), applied to whatever currency
+ * the shop's zone uses — not a pound amount.
+ */
+async function assertMinimumWithdrawal(amount, currencySymbol) {
+    const minMinor = await runtimeSettings.getInteger("shopMinWithdrawalMinor");
+    if (Math.round(amount * 100) < minMinor) {
+        throw new ValidationError(
+            `Minimum withdrawal amount is ${currencySymbol}${(minMinor / 100).toFixed(2)}`
+        );
+    }
 }
 
 async function resolveShopByUserId(agentUserId, transaction = null, lock = false) {
@@ -329,6 +341,8 @@ async function transferToAgentConnectAccount(agentUserId, amount, idempotencyKey
             ...metadata,
         },
         {
+            // The shop's money is in its zone's currency (as its wallet rows are).
+            currency: await zoneCurrencyCode(shop.zoneId),
             description: presentation.description,
             transferGroup: presentation.transferGroup,
         }
@@ -482,6 +496,7 @@ async function requestWithdrawal(agentUserId, rawAmount, options = {}) {
     const shop = await resolveShopByUserId(agentUserId);
     // A withdrawal is shop money: the shop zone's currency.
     const { currencyCode, currencySymbol } = await zoneCurrency(shop.zoneId);
+    await assertMinimumWithdrawal(amount, currencySymbol);
     const businessInfo = await loadBusinessInfo(shop.id);
     if (!businessInfo?.connectAccountId) {
         await ensureShopConnectAccount(shop.id);
@@ -715,6 +730,7 @@ async function approveWithdrawal(withdrawalId, options = {}) {
                 approvedByAdminId: options.adminUserId || null,
             },
             {
+                currency: entry.currency, // the withdrawal's own currency
                 description: presentation.description,
                 transferGroup: presentation.transferGroup,
             }
@@ -828,7 +844,6 @@ async function rejectWithdrawal(withdrawalId, options = {}) {
 }
 
 module.exports = {
-    MIN_WITHDRAWAL_GBP,
     requestWithdrawal,
     withdrawAgentEarnings,
     listPendingWithdrawals,

@@ -40,10 +40,11 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 0,
       },
+      // The refunded charge's currency (the booking zone's); never defaulted.
       currency: {
         type: DataTypes.STRING(10),
         allowNull: false,
-        defaultValue: 'GBP',
+        validate: { notEmpty: true },
       },
       reason: {
         type: DataTypes.STRING(500),

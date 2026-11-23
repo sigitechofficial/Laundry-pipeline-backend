@@ -210,6 +210,7 @@ class BannerService {
     const { isPromotionsCheckoutEnabled } = require('../promotions/checkoutFlag');
     const { isLive } = require('../promotions/promotionEngine');
     const { buildOfferLabel } = require('../promotions/promotionEngine');
+    await require('../../utils/currencySymbols').warmCurrencySymbols();
     const { campaignBlock } = require('../promotions/campaignRules');
     const { attachHeldBudget } = require('../promotions/campaignBudget');
     const { promotion, campaign } = require('../../models');

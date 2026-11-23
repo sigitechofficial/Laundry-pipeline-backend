@@ -17,6 +17,7 @@ const {
 const base = {
   name: 'Test', benefitType: 'percentage_discount', discountValue: 10, zoneScopeMode: 'all',
   activationType: 'automatic', visibility: 'public', repricingPolicy: 'recalculate', priority: 50, perCustomerLimit: 1,
+  currency: 'GBP',
 };
 const ok = (p) => assert.doesNotThrow(() => validatePromotion(p));
 const bad = (p, re) => assert.throws(() => validatePromotion(p), re);
@@ -39,6 +40,12 @@ const bad = (p, re) => assert.throws(() => validatePromotion(p), re);
 }
 
 ok(base);
+// The currency is the admin's or the zones' shared one — never missing, never guessed.
+bad({ ...base, currency: null }, /Choose the promotion's currency/);
+bad({ ...base, currency: 'GB' }, /3-letter ISO code/);
+bad({ ...base, currency: '£' }, /3-letter ISO code/);
+assert.strictEqual(normalizePayload({ currency: ' usd ' }).currency, 'USD');
+assert.strictEqual(normalizePayload({ currency: '' }).currency, null);
 bad({ ...base, benefitType: 'buy_x_get_y' }, /not supported/);
 bad({ ...base, discountValue: 150 }, /exceed 100/);
 bad({ ...base, benefitType: 'category_discount', discountValue: 150, targetIds: [1] }, /exceed 100/);
