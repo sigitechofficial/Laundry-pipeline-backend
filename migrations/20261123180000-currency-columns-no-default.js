@@ -30,7 +30,7 @@ const COLUMNS = [
   ['promotions', 'currency', 'GBP'],
   ['reschedule_policy_configs', 'atPickupAbsoluteCurrency', 'USD'],
   ['reschedule_policy_configs', 'atDeliveryAbsoluteCurrency', 'USD'],
-  ['wallets', 'currency', 'GBP'],
+  ['wallets', 'currency', '$'], // as created by 20250120124117-create-wallet
 ];
 
 async function currentDefault(queryInterface, table, column) {

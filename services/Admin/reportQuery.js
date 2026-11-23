@@ -141,6 +141,12 @@ function asInt(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Currency to label a report with: the filtered zone's, or the one shared by every active
+ * zone in the filtered city / country / platform. Empty ({ currencySymbol: '',
+ * currencyCode: '' }) when those zones use different currencies — totals across
+ * currencies are never labelled with one of them.
+ */
 async function resolveReportCurrency(filters = {}) {
     return resolveDisplayCurrency({
         zoneId: filters.zoneId,
