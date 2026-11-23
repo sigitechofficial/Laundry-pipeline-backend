@@ -13,7 +13,6 @@ module.exports = async function ({ type, email, OTP, userName = 'User' }) {
   console.log("📧 Sending OTP Email via ZeptoMail API");
   console.log("   Type:", type);
   console.log("   To:", email);
-  console.log("   OTP:", OTP);
   console.log("   User:", userName);
 
   try {

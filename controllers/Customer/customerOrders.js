@@ -26,6 +26,7 @@ const {
     cities,
 } = require("../../models");
 const sequelize = require("sequelize");
+const { redact } = require("../../utils/redact");
 const { Op } = require("sequelize");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -326,7 +327,7 @@ async function getBookingSlots(req, res) {
  */
 async function createIntentUsingStripe(req, res) {
     console.log("=== Create Setup Intent Using Stripe ===");
-    console.log("Request Body:", JSON.stringify(req.body, null, 2));
+    console.log("Request Body:", JSON.stringify(redact(req.body), null, 2));
     console.log("User ID:", req.user?.id);
     
     // Stripe customer is resolved server-side from the authenticated user
@@ -667,7 +668,6 @@ async function testEmail(req, res) {
             specialChars: false
         });
 
-        console.log("   Generated OTP:", testOTP);
 
         // Send test email using otpMail (full template)
         await otpMail({

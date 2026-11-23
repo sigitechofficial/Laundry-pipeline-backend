@@ -302,7 +302,6 @@ class CustomerAuthService {
             }
         });
 
-        console.log("🚀 ~ verifyOTpSignUp ~ userData:", userData);
 
         if (!userData) {
             throw new NotFoundError("User not found");
