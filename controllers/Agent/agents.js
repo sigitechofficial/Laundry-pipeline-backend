@@ -40,6 +40,8 @@ const {
     preferenceTypes,
     preferenceValues
 } = require("../../models");
+const runtimeSettingsService = require('../../services/Admin/runtimeSettingsService');
+const { paymentWindowEndsAt, remainingMinutes } = require('../../utils/invoicePaymentWindow');
 const sequelize = require("sequelize");
 const { redact } = require("../../utils/redact");
 const { Op } = require("sequelize");
@@ -4558,11 +4560,13 @@ exports.invoiceCreation = async (req, res) => {
         throw new NotFoundError("No invoice data found");
     }
 
-    // Time calculations (1 hour ahead in Karachi)
-    const nowInKarachi = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
-    const currentKarachiTime = new Date(nowInKarachi);
-    const futureTime = new Date(currentKarachiTime.getTime() + 60 * 60 * 1000); // +1 hour
-    const remainingTime = Math.floor((futureTime - currentKarachiTime) / 60000); // ~60 min
+    // Payment window: an absolute deadline from pickup completion (runtime setting),
+    // the same on every device. Null before pickup.
+    const invoicePaymentWindowEnds = paymentWindowEndsAt(
+        invoiceDetails[0]?.pickupCompletedAt,
+        await runtimeSettingsService.getInteger("invoicePaymentWindowMinutes")
+    );
+    const remainingTime = remainingMinutes(invoicePaymentWindowEnds);
 
     // Flatten invoiceDetails and deduplicate servicePreferences
     const bookingData = invoiceDetails[0]?.toJSON();
@@ -4745,6 +4749,7 @@ exports.invoiceCreation = async (req, res) => {
         // Optional (older apps ignore it): promotions on this invoice, per item original → after.
         promotionSummary: await bookingPromotionService.customerPromotionSummary(bookingId).catch(() => null),
         remainingTime,
+        invoicePaymentWindowEndsAt: invoicePaymentWindowEnds ? invoicePaymentWindowEnds.toISOString() : null,
         customerHasResponded,
         amountDueNow: paymentSummaryWithFlags.amountDueNow,
         ...paymentFlags,
