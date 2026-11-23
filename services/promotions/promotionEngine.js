@@ -252,7 +252,7 @@ function builtInCheck(promo, context, zoneOverride, usage, { skipUsageLimits = f
     const short = fromMinor(toMinor(minSubtotal) - toMinor(subtotal));
     const where = offerItemsOnly ? ' on the items in this offer' : '';
     return reject('MINIMUM_SUBTOTAL', `Spend ${sym}${money(short)} more${where} to use this offer`, 'PROMOTION_MIN_SPEND_NOT_MET', {
-      requiredMinor: toMinor(minSubtotal), currentMinor: toMinor(subtotal), currency: promo.currency || 'GBP',
+      requiredMinor: toMinor(minSubtotal), currentMinor: toMinor(subtotal), currency: promo.currency,
     });
   }
   if (promo.maxSubtotal != null && toDecimal(promo.maxSubtotal) > 0 && subtotal > toDecimal(promo.maxSubtotal)) {
@@ -428,7 +428,8 @@ async function evaluatePromotions(context, held = null) {
     })),
     couponErrors,
     nearEligible,
-    currency: 'GBP',
+    // The basket's currency: the zone's (contextBuilder).
+    currency: context.zone?.currency,
     subtotal: fromMinor(subtotalMinor),
     subtotalMinor,
     deliveryFee: fromMinor(deliveryFeeMinor),

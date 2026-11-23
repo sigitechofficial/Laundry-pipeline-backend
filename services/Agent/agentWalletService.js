@@ -4,7 +4,6 @@ const {
     addressDb,
     bussinessInformation,
     wallet,
-    units,
     zone,
     tip,
     bookingRefund,
@@ -21,6 +20,8 @@ const { RATE_SNAPSHOT_ATTRIBUTES } = require("../../utils/bookingRateSnapshot");
 const { classifyAgentEarningChannel, isMixedPayChannel } = require("../../utils/earningChannel");
 const { netAgentEarning } = require("../../utils/agentEarningNet");
 const { REFUNDED } = require("../../constants/bookingStatusIds");
+const { zoneCurrencyCode, shopCurrencyCode } = require("../../utils/zoneCurrency");
+const { requireCurrencyCode } = require("../../utils/requireCurrency");
 
 const COMMISSION_REFERENCE = "booking_commission";
 const COMMISSION_CLAWBACK_REFERENCE = "commission_clawback";
@@ -39,7 +40,6 @@ const EXTRA_TIP_CLAWBACK_REFERENCE = "extra_tip_clawback";
 // Debit when an agent requests / completes a withdrawal to Stripe Connect.
 const WITHDRAWAL_REFERENCE = "agent_withdrawal";
 const CUSTOMER_REFUND_REFERENCE = "customer_refund";
-const DEFAULT_CURRENCY = "GBP";
 const MIN_WITHDRAWAL_AMOUNT = 1;
 
 async function resolveShopOwnerUserId(laundryShopId) {
@@ -50,26 +50,12 @@ async function resolveShopOwnerUserId(laundryShopId) {
     return shop?.userId || null;
 }
 
+/**
+ * ISO code of a booking's money (its zone's currency). Used to store wallet rows;
+ * this used to store the zone's symbol (e.g. a dollar sign) for non-pound zones.
+ */
 async function resolveCurrencyForBooking(bookingRow) {
-    if (!bookingRow?.zoneId) return DEFAULT_CURRENCY;
-    const zoneRow = await zone.findByPk(bookingRow.zoneId, {
-        attributes: ["id", "currencyUnitId"],
-        include: [
-            {
-                model: units,
-                as: "currencyUnitZ",
-                attributes: ["symbol", "name"],
-                required: false,
-            },
-        ],
-    });
-    const symbol = zoneRow?.currencyUnitZ?.symbol;
-    if (symbol && String(symbol).trim()) {
-        return String(symbol).trim().toUpperCase() === "£"
-            ? "GBP"
-            : String(symbol).trim();
-    }
-    return DEFAULT_CURRENCY;
+    return zoneCurrencyCode(bookingRow?.zoneId);
 }
 
 async function hasWalletEntry(bookingId, referenceType, type) {
@@ -154,7 +140,7 @@ async function clawbackCommissionForRefund({
     bookingId,
     agentUserId,
     amount,
-    currency = "GBP",
+    currency, // ISO code of the refund (required)
     orderLabel,
     refundId,
 }) {
@@ -162,6 +148,7 @@ async function clawbackCommissionForRefund({
     if (!(claw > 0) || !agentUserId) {
         return { recorded: false, amount: 0, reason: "noop" };
     }
+    currency = requireCurrencyCode(currency, "clawbackCommissionForRefund");
     const net = await getNetCommissionForBooking(bookingId);
     const apply = parseFloat(Math.min(claw, net).toFixed(2));
     if (apply <= 0) {
@@ -208,7 +195,7 @@ async function reverseCashCollectedForRefund({
     bookingId,
     agentUserId,
     amount,
-    currency = "GBP",
+    currency, // ISO code of the refund (required)
     orderLabel,
     refundId,
 }) {
@@ -216,6 +203,7 @@ async function reverseCashCollectedForRefund({
     if (!(claw > 0) || !agentUserId) {
         return { recorded: false, amount: 0, reason: "noop" };
     }
+    currency = requireCurrencyCode(currency, "reverseCashCollectedForRefund");
     const net = await getNetCashCollectedForBooking(bookingId);
     const apply = parseFloat(Math.min(claw, net).toFixed(2));
     if (apply <= 0) {
@@ -261,7 +249,7 @@ async function clawbackExtraTipForRefund({
     bookingId,
     agentUserId,
     amount,
-    currency = "GBP",
+    currency, // ISO code of the refund (required)
     orderLabel,
     refundId,
 }) {
@@ -269,6 +257,7 @@ async function clawbackExtraTipForRefund({
     if (!(claw > 0) || !agentUserId) {
         return { recorded: false, amount: 0, reason: "noop" };
     }
+    currency = requireCurrencyCode(currency, "clawbackExtraTipForRefund");
     const net = await getNetExtraTipForBooking(bookingId);
     const apply = parseFloat(Math.min(claw, net).toFixed(2));
     if (apply <= 0) {
@@ -867,27 +856,8 @@ async function getWalletSummary(agentUserId) {
         businessInfo?.isConnectAccountConnected
     );
 
-    let currency = DEFAULT_CURRENCY;
-    if (shop.zoneId) {
-        const zoneRow = await zone.findByPk(shop.zoneId, {
-            attributes: ["id"],
-            include: [
-                {
-                    model: units,
-                    as: "currencyUnitZ",
-                    attributes: ["symbol"],
-                    required: false,
-                },
-            ],
-        });
-        const symbol = zoneRow?.currencyUnitZ?.symbol;
-        if (symbol) {
-            currency =
-                String(symbol).trim().toUpperCase() === "£"
-                    ? "GBP"
-                    : String(symbol).trim();
-        }
-    }
+    // Shop money is in the shop zone's currency (ISO code).
+    const currency = await zoneCurrencyCode(shop.zoneId);
 
     const commissionCredits = await wallet.count({
         where: {
@@ -1504,7 +1474,8 @@ async function listAdminSettlementLedger(agentUserId, options = {}) {
             hasPrevPage: page > 1,
         },
         statement: {
-            currency: enrichedAsc[0]?.currency || DEFAULT_CURRENCY,
+            // Rows carry their own currency; an empty ledger shows the shop's.
+            currency: enrichedAsc[0]?.currency || (await shopCurrencyCode(agentUserId)),
             openingBalance: oldestOnPage ? oldestOnPage.balanceBefore : 0,
             closingBalance: newestOnPage
                 ? newestOnPage.balanceAfter

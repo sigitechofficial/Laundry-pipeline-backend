@@ -18,6 +18,7 @@ const {
   sequelize,
 } = require('../../models');
 const { toMinor, fromMinor } = require('./moneyUtils');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,18 +118,19 @@ async function restoreAllocations(entry, t) {
 async function getBalance(customerId, now = new Date()) {
   const lots = await Entry.findAll({
     where: liveLotWhere(customerId, now),
-    attributes: ['remainingAmount', 'expiresAt'],
+    attributes: ['remainingAmount', 'expiresAt', 'currency'],
     order: [[sequelize.literal('expiresAt IS NULL'), 'ASC'], ['expiresAt', 'ASC']],
   });
   const balanceMinor = lots.reduce((s, l) => s + toMinor(l.remainingAmount), 0);
-  const held = await Entry.findAll({ where: { customerId, type: 'SPEND', status: 'HELD' }, attributes: ['amount'] });
+  const held = await Entry.findAll({ where: { customerId, type: 'SPEND', status: 'HELD' }, attributes: ['amount', 'currency'] });
   const heldMinor = held.reduce((s, e) => s + Math.abs(toMinor(e.amount)), 0);
   const soonLimit = new Date(now.getTime() + 30 * DAY_MS);
   const soon = lots.filter((l) => l.expiresAt && new Date(l.expiresAt) <= soonLimit);
   return {
     balance: fromMinor(balanceMinor),
     held: fromMinor(heldMinor),
-    currency: 'GBP',
+    // The credit's own currency; a customer with no credit sees the platform's.
+    currency: lots[0]?.currency || held[0]?.currency || (await resolveDisplayCurrency({})).currencyCode,
     expiringSoon: soon.length
       ? { amount: fromMinor(soon.reduce((s, l) => s + toMinor(l.remainingAmount), 0)), expiresAt: soon[0].expiresAt }
       : null,

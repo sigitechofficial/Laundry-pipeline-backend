@@ -9,7 +9,7 @@
  * PromotionContext shape (built server-side by contextBuilder):
  * {
  *   customer: { id, orderCount, isFirstOrder, type: 'new'|'returning'|'inactive', segments },
- *   zone: { id, currency, timezone },
+ *   zone: { id, currency, currencySymbol, timezone },
  *   basket: { subtotal, itemCount, deliveryFee, lineItems: [{ serviceId, categoryId, subCategoryId, addonId, qty, price }] },
  *   timing: { collectionDay, deliveryDay, bookingTime, turnaroundType },
  *   couponCodes: ['CODE1'],
@@ -23,6 +23,11 @@ const { toDecimal } = require('./moneyUtils');
 const { localClock, isWithinWindow, normalizeHHMM } = require('./promotionTime');
 
 const CUSTOMER_TYPES = ['new', 'returning', 'inactive'];
+
+/** The basket's currency symbol (the zone's, set by contextBuilder); none when not known. */
+function basketSymbol(ctx) {
+  return ctx.zone?.currencySymbol || '';
+}
 const PAYMENT_METHODS = ['card', 'cash'];
 
 /**
@@ -81,11 +86,12 @@ const handlers = {
     const subtotal = toDecimal(ctx.basket?.subtotal);
     const required = toDecimal(condition.value);
     const pass = subtotal >= required;
+    const sym = basketSymbol(ctx);
     return pass
       ? { pass: true }
       : {
           pass: false,
-          reason: `Subtotal £${subtotal.toFixed(2)} below minimum £${required.toFixed(2)}`,
+          reason: `Subtotal ${sym}${subtotal.toFixed(2)} below minimum ${sym}${required.toFixed(2)}`,
           code: 'PROMOTION_MIN_SPEND_NOT_MET',
           meta: { requiredMinor: Math.round(required * 100), currentMinor: Math.round(subtotal * 100) },
         };
@@ -95,7 +101,7 @@ const handlers = {
     const subtotal = toDecimal(ctx.basket?.subtotal);
     const max = toDecimal(condition.value);
     const pass = subtotal <= max;
-    return pass ? { pass: true } : { pass: false, reason: `Subtotal exceeds maximum £${max.toFixed(2)}` };
+    return pass ? { pass: true } : { pass: false, reason: `Subtotal exceeds maximum ${basketSymbol(ctx)}${max.toFixed(2)}` };
   },
 
   MINIMUM_QUANTITY(condition, ctx) {

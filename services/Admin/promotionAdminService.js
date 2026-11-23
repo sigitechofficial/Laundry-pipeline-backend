@@ -19,6 +19,8 @@ const { normalizeHHMM, businessDayBound } = require('../promotions/promotionTime
 const { CLOSED_STATUSES, campaignBlock } = require('../promotions/campaignRules');
 const { attachHeldBudget } = require('../promotions/campaignBudget');
 const { BOOKED_HOLD_SQL } = require('../promotions/bookedHold');
+const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 
 const CAMPAIGN_SUMMARY = ['id', 'name', 'status', 'startDate', 'endDate', 'budgetMinor', 'usedBudgetMinor', 'ownerPromotionId'];
 
@@ -126,8 +128,9 @@ const INT_FIELDS = ['campaignId', 'priority', 'globalUsageLimit', 'perCustomerLi
 const ITEM_TYPES = ['item_discount', 'category_discount', 'service_discount', 'bundle'];
 /** Item / add-on / category / service / all — chosen by targetType. */
 const TARGET_TYPE_PICKED = ['item_discount', 'bundle'];
+// No currency here: a promotion without one gets its zones' (defaultPromotionCurrency).
 const DEFAULTS = {
-  currency: 'GBP', targetType: 'basket', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public',
+  targetType: 'basket', zoneScopeMode: 'all', activationType: 'automatic', visibility: 'public',
   priority: 50, stackable: false, perCustomerLimit: 1, repricingPolicy: 'recalculate',
 };
 
@@ -595,8 +598,20 @@ async function writeChildren(promotionId, data, adminUserId, t, { replace }) {
 
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
+/**
+ * Currency of a new promotion that names none: the currency its selected zones share;
+ * for all zones (or zones in different currencies) the platform's (resolveDisplayCurrency).
+ */
+async function defaultPromotionCurrency(data) {
+  const zoneIds = data.zoneScopeMode === 'selected' && Array.isArray(data.zoneIds) ? data.zoneIds : [];
+  const codes = new Set(await Promise.all(zoneIds.map((id) => zoneCurrencyCode(id))));
+  if (codes.size === 1) return [...codes][0];
+  return (await resolveDisplayCurrency({})).currencyCode;
+}
+
 async function createPromotion(payload, adminUserId, scope) {
   const data = applyZoneRestriction({ ...DEFAULTS, ...normalizePayload(payload) }, scope);
+  if (data.currency == null) data.currency = await defaultPromotionCurrency(data);
   if (data.discountMode == null && data.benefitType !== 'free_delivery') data.discountMode = resolveDiscountMode(data);
   Object.assign(data, typeRuleFields(data));
   assertNoOrderHistoryCondition(data.benefitType, data.conditions);

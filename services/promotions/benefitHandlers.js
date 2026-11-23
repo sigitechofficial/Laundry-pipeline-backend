@@ -30,8 +30,13 @@ const SUPPORTED_BENEFIT_TYPES = [...new Set([...DELIVERY_TYPES, ...ITEM_TYPES, .
 
 const CURRENCY_SYMBOLS = { GBP: '£', USD: '$', EUR: '€' };
 
+/**
+ * Display symbol of an ISO code (a promotion's own currency, which is always stored).
+ * An unknown code shows as "XYZ "; a missing one shows no symbol — never a guessed one.
+ */
 function currencySymbol(currency) {
-  return CURRENCY_SYMBOLS[String(currency || 'GBP').toUpperCase()] || `${currency} `;
+  if (!currency) return '';
+  return CURRENCY_SYMBOLS[String(currency).toUpperCase()] || `${currency} `;
 }
 
 /** 'delivery' | 'item' | 'basket' | 'cashback' | null (unsupported). */
@@ -58,7 +63,7 @@ function effectiveValues(promotion, zoneOverride) {
     discountValue: toDecimal(pick('discountValue')),
     maxDiscountCap: cap != null && toDecimal(cap) > 0 ? toDecimal(cap) : null,
     minSubtotal: min != null ? toDecimal(min) : null,
-    currency: (zoneOverride && zoneOverride.currency) || promotion.currency || 'GBP',
+    currency: (zoneOverride && zoneOverride.currency) || promotion.currency,
   };
 }
 

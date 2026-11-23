@@ -1,5 +1,7 @@
 'use strict';
 
+const { requireCurrencyCode } = require('./requireCurrency');
+
 const AGENT_PAYOUT_REFERENCE = 'agent_payout';
 const WITHDRAWAL_REFERENCE = 'agent_withdrawal';
 const ADMIN_PAYOUT_PROCESSING_PREFIX = 'Admin payout to Stripe Connect';
@@ -29,16 +31,19 @@ function adminPayoutDescriptions(note, adminUserId) {
  * already succeeded, leaving the credit stuck "pending" with real money sent
  * and no ledger record of it. The credit is the canonical transfer record; the
  * debit is the paired internal "sent out" entry.
+ *
+ * `currency`: ISO code of the shop's money (the wallet summary's); required.
  */
 function buildAdminConnectPayoutLedger({
     userId,
     amount,
-    currency = 'GBP',
+    currency,
     note,
     adminUserId,
     stripeTransferId,
 }) {
     const parsed = roundMoney(amount);
+    currency = requireCurrencyCode(currency, 'buildAdminConnectPayoutLedger');
     const descriptions = adminPayoutDescriptions(note, adminUserId);
     return {
         credit: {

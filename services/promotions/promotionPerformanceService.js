@@ -15,7 +15,7 @@
 
 const { QueryTypes } = require('sequelize');
 const { sequelize } = require('../../models');
-const { buildPeriodRange, sqlDateTime } = require('../Admin/reportQuery');
+const { buildPeriodRange, sqlDateTime, resolveReportCurrency } = require('../Admin/reportQuery');
 
 const EXPORT_MAX_ROWS = 5000;
 const PROMOTION_STATUSES = ['draft', 'pending_approval', 'approved', 'scheduled', 'active', 'paused', 'expired', 'archived'];
@@ -225,7 +225,8 @@ async function promotionPerformance(raw = {}, { restrictedZoneId = null } = {}) 
         benefitType: b.benefitType, promotions: int(b.promotions), uses: int(b.uses), cost: round(b.cost),
       })),
     },
-    currency: { currencySymbol: '£', currencyCode: 'GBP' },
+    // The report filter's currency (zone, else the platform's).
+    currency: await resolveReportCurrency({ zoneId }),
     filters: {
       period: range.period, startDate: range.startDate, endDate: range.endDate, zoneId,
       search, status, benefitType, campaignId: raw.campaignId || null, onlyUsed, sort: sort.key, dir: sort.dir,
@@ -379,7 +380,8 @@ async function campaignPerformance(raw = {}, { restrictedZoneId = null } = {}) {
       topSpender: top ? { id: Number(top.id), name: top.name, cost: round(top.cost) } : null,
       notInCampaign: { promotions: int(noCampaign?.promotions), uses: int(noCampaign?.uses), cost: round(noCampaign?.cost) },
     },
-    currency: { currencySymbol: '£', currencyCode: 'GBP' },
+    // The report filter's currency (zone, else the platform's).
+    currency: await resolveReportCurrency({ zoneId }),
     filters: {
       period: range.period, startDate: range.startDate, endDate: range.endDate, zoneId,
       search, status, objective: rep.objective || null, channel: rep.channel || null, onlyUsed, sort: sort.key, dir: sort.dir,
@@ -398,7 +400,7 @@ function mapCampaignRow(r) {
     channel: r.channel || null,
     startDate: r.startDate,
     endDate: r.endDate,
-    currency: r.currency || 'GBP',
+    currency: r.currency,
     budget,
     budgetUsed,
     budgetRemaining: budget != null ? round(Math.max(0, budget - budgetUsed)) : null,

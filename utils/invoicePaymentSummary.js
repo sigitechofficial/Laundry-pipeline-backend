@@ -4,7 +4,12 @@
  * Card: minimum + service fee + prepaid tip collected at pickup; credited on final invoice.
  * Invoice-time tip increases are not prepaid — they add to amount due.
  * Cash: nothing at pickup; minimum (as laundry floor), service fee, and tip due at delivery.
+ *
+ * Amounts are in the booking's currency: callers pass `currency` (ISO code) and
+ * `currencySymbol` from the booking zone (utils/zoneCurrency); there is no default.
  */
+
+const { requireCurrencyCode, requireCurrencySymbol } = require("./requireCurrency");
 
 function roundMoney(value) {
     const n = parseFloat(value);
@@ -59,10 +64,12 @@ function buildPaymentSummary({
     driverTip,
     prepaidDriverTip,
     discount = 0,
-    currency = "GBP",
-    currencySymbol = "£",
+    currency,
+    currencySymbol,
     paymentType = "card",
 }) {
+    currency = requireCurrencyCode(currency, "buildPaymentSummary");
+    currencySymbol = requireCurrencySymbol(currencySymbol, "buildPaymentSummary");
     const laundry = roundMoney(laundrySubtotal);
     const service = roundMoney(serviceFee);
     const minimum = roundMoney(minimumOrderPayment);
@@ -113,9 +120,11 @@ function buildCashPaymentSummary({
     minimumOrderPayment,
     driverTip,
     discount = 0,
-    currency = "GBP",
-    currencySymbol = "£",
+    currency,
+    currencySymbol,
 }) {
+    currency = requireCurrencyCode(currency, "buildCashPaymentSummary");
+    currencySymbol = requireCurrencySymbol(currencySymbol, "buildCashPaymentSummary");
     const laundry = roundMoney(laundrySubtotal);
     const service = roundMoney(serviceFee);
     const minimum = roundMoney(minimumOrderPayment);

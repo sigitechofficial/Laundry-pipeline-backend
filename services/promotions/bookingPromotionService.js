@@ -36,6 +36,7 @@ const ledger = require('./redemptionService');
 const credit = require('./customerCreditService');
 const { COMPLETED, CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 const { lineItemNames, displayLineName } = require('./promotionReportService');
+const { bookingCurrency } = require('../../utils/zoneCurrency');
 
 const normalizeCode = (code) => String(code ?? '').trim().toUpperCase();
 
@@ -471,10 +472,11 @@ async function reverseForBooking(bookingId, reason) {
 function notifyCashback(customerId, bookingId, amount) {
   try {
     const { sendNotification } = require('../../utils/notification');
-    Promise.resolve(sendNotification(
+    // In the booking's currency (its zone's).
+    bookingCurrency(bookingId).then(({ currencySymbol }) => sendNotification(
       customerId,
       'Cashback added',
-      `£${amount.toFixed(2)} cashback from your order is now in your credit. It is used automatically on your next order.`,
+      `${currencySymbol}${amount.toFixed(2)} cashback from your order is now in your credit. It is used automatically on your next order.`,
       { bookingId: String(bookingId), type: 'cashback_credited' }
     )).catch((err) => console.warn(`[credit] cashback notification failed for booking ${bookingId}:`, err?.message || err));
   } catch (err) {
@@ -522,10 +524,11 @@ async function issueCashbackForBooking(bookingId) {
 function notifyDiscountCredit(customerId, bookingId, amount) {
   try {
     const { sendNotification } = require('../../utils/notification');
-    Promise.resolve(sendNotification(
+    // In the booking's currency (its zone's).
+    bookingCurrency(bookingId).then(({ currencySymbol }) => sendNotification(
       customerId,
       'Discount added to your credit',
-      `£${amount.toFixed(2)} of your offer could not come off this order, so it is now in your credit. It is used automatically on your next order.`,
+      `${currencySymbol}${amount.toFixed(2)} of your offer could not come off this order, so it is now in your credit. It is used automatically on your next order.`,
       { bookingId: String(bookingId), type: 'discount_credited' }
     )).catch((err) => console.warn(`[credit] discount credit notification failed for booking ${bookingId}:`, err?.message || err));
   } catch (err) {
@@ -697,7 +700,9 @@ async function customerPromotionSummary(bookingId) {
   ]);
   if (!holds.length && !adjustments.length) {
     // A refunded order's holds are reversed, but its cashback story still shows.
-    const cashback = creditView.earned > 0 ? cashbackView([], creditView) : null;
+    const cashback = creditView.earned > 0
+      ? cashbackView([], creditView, (await bookingCurrency(bookingId)).currencySymbol)
+      : null;
     return { state: 'none', message: null, total: 0, promotions: [], lines: [], cashback, creditUsed: creditView.creditUsed };
   }
 
@@ -786,7 +791,9 @@ async function customerPromotionSummary(bookingId) {
   const shownLines = targetedOnly ? lineView.filter((l) => l.discount > 0) : lineView;
 
   const cashbackHolds = holds.filter((h) => h.promotion?.benefitType === 'cashback');
-  const cashback = cashbackHolds.length ? cashbackView(cashbackHolds, creditView) : null;
+  const cashback = cashbackHolds.length
+    ? cashbackView(cashbackHolds, creditView, (await bookingCurrency(bookingId)).currencySymbol)
+    : null;
   const onlyCashback = cashbackHolds.length === holds.length && !totalMinor;
   return {
     state,
@@ -820,9 +827,11 @@ async function bookingCreditView(bookingId) {
   };
 }
 
-/** Cashback on a booking: pending until delivery, then credited (or taken back on refund). */
-function cashbackView(cashbackHolds, creditView) {
-  const sym = '£';
+/**
+ * Cashback on a booking: pending until delivery, then credited (or taken back on refund).
+ * [sym]: the booking's currency symbol (its zone's).
+ */
+function cashbackView(cashbackHolds, creditView, sym) {
   const priced = fromMinor(cashbackHolds.reduce((t, h) => t + toMinor(h.cashbackAmount || 0), 0));
   if (creditView.takenBack) {
     return {

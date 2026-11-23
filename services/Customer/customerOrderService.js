@@ -2144,7 +2144,7 @@ class CustomerOrderService {
                 bookingId: bookingData.id,
                 orderTrackId: ordertrackingNumber,
                 amount: holdAmount,
-                currency: "GBP",
+                currency: (await zoneCurrency(zoneId)).currencyCode,
                 paymentType: "card",
                 customer: customerRow || { id: userId },
                 agent: {},
@@ -2436,7 +2436,7 @@ class CustomerOrderService {
                 dropoffTimeFrom: normalizedDeliveryTimeFrom,
                 dropoffTimeTo: normalizedDeliveryTimeTo,
                 upfrontAmount: parsedUpfront,
-                currency: '£'
+                currency: (await zoneCurrency(zoneId)).currencySymbol
             }, { dedupeKey: `bookingConfirmation:${ordertrackingNumber}` });
         } catch (emailError) {
             console.error('⚠️ Failed to queue booking confirmation email:', emailError.message);
@@ -3061,10 +3061,10 @@ class CustomerOrderService {
             parseFloat(billing.upfrontAmount) ||
             parseFloat(bookingPlain.zone?.zoneMinimumAmount) ||
             0;
-        const currencySymbol =
-            bookingPlain.zone?.currencyUnitZ?.symbol || "£";
-        const currency =
-            bookingPlain.zone?.currencyUnitZ?.name || "GBP";
+        // The bill is in the booking zone's currency.
+        const { currencySymbol, currencyCode: currency } = await zoneCurrency(
+            bookingPlain.zoneId ?? bookingPlain.zone?.id
+        );
 
         const paymentSummary = enrichPaymentSummary(
             buildPaymentSummaryForBooking(bookingPlain.paymentType, {
@@ -3457,13 +3457,22 @@ class CustomerOrderService {
             });
         }
 
+        // A zone without a currency unit falls back through resolveDisplayCurrency
+        // (zone -> city -> country -> platform default); there is no unit row then.
+        const fallbackCurrency = resolvedZone?.currencyUnitZ
+            ? null
+            : await zoneCurrency(resolvedZone?.id);
         const currency = resolvedZone?.currencyUnitZ
             ? {
                   id: resolvedZone.currencyUnitZ.id,
                   name: resolvedZone.currencyUnitZ.name,
                   symbol: resolvedZone.currencyUnitZ.symbol,
               }
-            : { id: null, name: null, symbol: '$' };
+            : {
+                  id: null,
+                  name: fallbackCurrency.currencyCode,
+                  symbol: fallbackCurrency.currencySymbol,
+              };
 
         return {
             message: 'Service Details',

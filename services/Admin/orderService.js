@@ -32,6 +32,7 @@ const {
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
 const invoiceManagementService = require('../Agent/invoiceManagementService');
+const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
 const {
     COMPLETED,
     CANCELLED,
@@ -1180,6 +1181,10 @@ class OrderService {
                     },
                 ],
             });
+            // An attempt carries its fee currency; one without is in the booking zone's.
+            const bookingFeeCurrency = attempts.some((row) => !row.feeCurrency)
+                ? await zoneCurrencyCode(plain.zoneId)
+                : null;
             enriched.attempts = attempts.map((row) => {
                 const a = row.get ? row.get({ plain: true }) : row;
                 const charged = Number(a.feeAmount || 0) > 0 && a.feeWaived !== true;
@@ -1199,7 +1204,7 @@ class OrderService {
                         ? Boolean(a.failureChargesFee)
                         : Boolean(a.failReason?.chargesFee),
                     feeAmount: Number(a.feeAmount || 0),
-                    feeCurrency: a.feeCurrency || 'GBP',
+                    feeCurrency: a.feeCurrency || bookingFeeCurrency,
                     feeWaived: Boolean(a.feeWaived),
                     feeWaiveReason: a.feeWaiveReason || null,
                     feeCharged: charged,

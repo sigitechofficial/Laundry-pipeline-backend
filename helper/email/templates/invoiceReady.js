@@ -1,4 +1,5 @@
 const generateFooter = require('../partials/footer');
+const { requireCurrencySymbol } = require('../../../utils/requireCurrency');
 const fs = require('fs');
 const path = require('path');
 
@@ -8,7 +9,7 @@ const path = require('path');
  * @param {string} data.userName - Customer's first name
  * @param {string} data.orderNumber - Order tracking number
  * @param {number|string} data.finalAmount - Final total due amount
- * @param {string} data.currency - Currency symbol (default £)
+ * @param {string} data.currency - Currency symbol of the booking (required, e.g. the zone's £)
  * @param {string} data.payNowLink - Payment link
  * @param {Object} data.footerOptions - Footer customization options
  * @returns {Object} - { subject, html, inlineImages }
@@ -18,10 +19,11 @@ function generateInvoiceReadyTemplate(data) {
     userName = 'Customer',
     orderNumber = '',
     finalAmount = '0.00',
-    currency = '£',
+    currency,
     payNowLink = 'https://prodlaundry.sigisolutions.net/pay',
     footerOptions = {}
   } = data;
+  requireCurrencySymbol(currency, 'generateInvoiceReadyTemplate');
 
   console.log('📸 Loading email images for invoice ready inline attachment...');
   const imagePaths = {

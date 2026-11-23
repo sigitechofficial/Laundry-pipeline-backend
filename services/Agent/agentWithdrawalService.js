@@ -27,6 +27,7 @@ const {
 const stripeService = require("../../controllers/stripe");
 const agentWalletService = require("./agentWalletService");
 const { AGENT_WITHDRAWAL_REQUEST_PREFIX } = require("../../utils/adminPayoutLedger");
+const { zoneCurrency, zoneCurrencyCode } = require("../../utils/zoneCurrency");
 
 const {
     AGENT_PAYOUT_REFERENCE,
@@ -69,7 +70,7 @@ async function resolveShopByUserId(agentUserId, transaction = null, lock = false
             userId: agentUserId,
             addressType: SHOP_ADDRESS_TYPE,
         },
-        attributes: ["id", "userId"],
+        attributes: ["id", "userId", "zoneId"],
         transaction,
         ...(lock && transaction ? { lock: transaction.LOCK.UPDATE } : {}),
     });
@@ -479,6 +480,8 @@ async function requestWithdrawal(agentUserId, rawAmount, options = {}) {
 
     // Heal missing Connect account so payout destination exists by default.
     const shop = await resolveShopByUserId(agentUserId);
+    // A withdrawal is shop money: the shop zone's currency.
+    const { currencyCode, currencySymbol } = await zoneCurrency(shop.zoneId);
     const businessInfo = await loadBusinessInfo(shop.id);
     if (!businessInfo?.connectAccountId) {
         await ensureShopConnectAccount(shop.id);
@@ -491,7 +494,7 @@ async function requestWithdrawal(agentUserId, rawAmount, options = {}) {
         const available = await computeAvailableBalance(agentUserId, transaction);
         if (amount > available + 0.001) {
             throw new ValidationError(
-                `Withdrawal exceeds available balance (£${available.toFixed(2)})`
+                `Withdrawal exceeds available balance (${currencySymbol}${available.toFixed(2)})`
             );
         }
 
@@ -501,7 +504,7 @@ async function requestWithdrawal(agentUserId, rawAmount, options = {}) {
                 bookingId: null,
                 referenceType: WITHDRAWAL_REFERENCE,
                 amount,
-                currency: "GBP",
+                currency: currencyCode,
                 type: "debit",
                 status: "pending",
                 description: note
@@ -523,7 +526,7 @@ async function requestWithdrawal(agentUserId, rawAmount, options = {}) {
     return {
         withdrawalId: withdrawalEntry.id,
         amount,
-        currency: "GBP",
+        currency: withdrawalEntry.currency,
         status: "pending",
         message: "Withdrawal requested. Waiting for admin approval.",
         wallet: summary,
@@ -587,7 +590,7 @@ async function listPendingWithdrawals(options = {}) {
                   userId: { [Op.in]: ownerIds },
                   addressType: SHOP_ADDRESS_TYPE,
               },
-              attributes: ["id", "userId"],
+              attributes: ["id", "userId", "zoneId"],
               include: [
                   {
                       model: bussinessInformation,
@@ -607,10 +610,23 @@ async function listPendingWithdrawals(options = {}) {
         const biz = Array.isArray(businessRows) ? businessRows[0] : businessRows;
         shopByOwner.set(Number(shop.userId), {
             shopId: shop.id,
+            zoneId: shop.zoneId ?? null,
             shopName: biz?.shopName || null,
             connectAccountId: biz?.connectAccountId || null,
             isConnectAccountConnected: Boolean(biz?.isConnectAccountConnected),
         });
+    }
+
+    // Rows carry their own currency; one without falls back to its shop's zone currency.
+    const currencyByZone = new Map();
+    const fallbackCurrencyByRow = new Map();
+    for (const row of rows) {
+        if (row.currency) continue;
+        const zoneId = shopByOwner.get(Number(row.userId))?.zoneId ?? null;
+        if (!currencyByZone.has(zoneId)) {
+            currencyByZone.set(zoneId, await zoneCurrencyCode(zoneId));
+        }
+        fallbackCurrencyByRow.set(row.id, currencyByZone.get(zoneId));
     }
 
     const totalPages = count > 0 ? Math.ceil(count / limit) : 0;
@@ -629,7 +645,7 @@ async function listPendingWithdrawals(options = {}) {
                 agentEmail: plain.user?.email || null,
                 agentPhone: plain.user?.phoneNum || null,
                 amount: parseFloat(plain.amount || 0),
-                currency: plain.currency || "GBP",
+                currency: plain.currency || fallbackCurrencyByRow.get(plain.id),
                 description: plain.description || "",
                 status: plain.status,
                 createdAt: plain.createdAt,
@@ -759,7 +775,7 @@ async function approveWithdrawal(withdrawalId, options = {}) {
         withdrawalId: entry.id,
         stripeTransferId: transfer.id,
         amount,
-        currency: entry.currency || "GBP",
+        currency: entry.currency || (await zoneCurrencyCode(shop.zoneId)),
         status: "completed",
         shopId: shop.id,
         agentUserId: entry.userId,
@@ -803,7 +819,7 @@ async function rejectWithdrawal(withdrawalId, options = {}) {
     return {
         withdrawalId: entry.id,
         amount: parseFloat(entry.amount || 0),
-        currency: entry.currency || "GBP",
+        currency: entry.currency || (await zoneCurrencyCode(shop.zoneId)),
         status: "failed",
         shopId: shop.id,
         agentUserId: entry.userId,

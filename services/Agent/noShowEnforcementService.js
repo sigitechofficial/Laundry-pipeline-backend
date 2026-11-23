@@ -105,7 +105,7 @@ class NoShowEnforcementService {
         bookingData,
         attemptType,
         feeAmount = 0,
-        feeCurrency = 'GBP',
+        feeCurrency, // ISO code of the fee (calculateNoShowFee always sets it)
         maxAttemptsReached = false,
     }) {
         try {
@@ -184,7 +184,8 @@ class NoShowEnforcementService {
             };
         }
 
-        const currency = feeResult.currency || 'GBP';
+        // calculateNoShowFee always sets it: the policy's currency, else the zone's.
+        const currency = feeResult.currency;
 
         try {
             const idempotencyKey = `noshow-${attemptType}-booking-${bookingData.id}-attempt-${attemptId}`;
@@ -950,7 +951,7 @@ class NoShowEnforcementService {
                     bookingData,
                     attemptType: 'pickup',
                     feeAmount: feeResult.feeAmount,
-                    feeCurrency: feeResult.currency || 'GBP',
+                    feeCurrency: feeResult.currency,
                     maxAttemptsReached: true,
                 });
 
@@ -1009,7 +1010,7 @@ class NoShowEnforcementService {
                 bookingData,
                 attemptType: 'pickup',
                 feeAmount: feeResult.feeAmount,
-                feeCurrency: feeResult.currency || 'GBP',
+                feeCurrency: feeResult.currency,
                 maxAttemptsReached: false,
             });
 
@@ -1065,7 +1066,7 @@ class NoShowEnforcementService {
             bookingData,
             attemptType: 'delivery',
             feeAmount: feeResult.feeAmount,
-            feeCurrency: feeResult.currency || 'GBP',
+            feeCurrency: feeResult.currency,
             maxAttemptsReached: false,
         });
 

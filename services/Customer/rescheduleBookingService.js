@@ -29,6 +29,7 @@ const {
 const { sendEvent } = require('../../socket_io');
 const { chargeOffSession } = require('../../controllers/stripe');
 const { buildStripeChargePresentation } = require('../../utils/stripePaymentMetadata');
+const { zoneCurrencyCode } = require('../../utils/zoneCurrency');
 const { isShopOpenNow, isAnyShopOpenInZone, isPlatformOpenNow, isShopEligibleForBroadcast } = require('../../utils/shopWorkingHours');
 const {
     getOrderExpireTime,
@@ -656,7 +657,8 @@ class RescheduleBookingService {
                             bookingId,
                             orderTrackId: bookingData.orderTrackId,
                             amount: chargeAmount,
-                            currency: feeDetails.currency || "GBP",
+                            // calculateRescheduleFee always sets it (policy's, else the zone's).
+                            currency: feeDetails.currency,
                             paymentType: bookingData.paymentType || "card",
                             customer: customerData,
                             agent: {},
@@ -896,12 +898,14 @@ class RescheduleBookingService {
     async calculateRescheduleFee(bookingData, activePolicy, customerId) {
         const statusId = bookingData.bookingStatusId;
         const config = activePolicy?.rescheduleConfig;
+        // Fees are in the policy's currency when it names one, else the booking zone's.
+        const zoneCurrency = await zoneCurrencyCode(bookingData.zoneId);
 
         // No policy or no config → free reschedule
         if (!config) {
             return {
                 rescheduleCharge: 0,
-                currency: 'GBP',
+                currency: zoneCurrency,
                 policyApplied: 'Free Reschedule',
                 message: 'No reschedule charges applied (no active policy)'
             };
@@ -911,7 +915,7 @@ class RescheduleBookingService {
         if (config.isActive === false) {
             return {
                 rescheduleCharge: 0,
-                currency: config.atPickupAbsoluteCurrency || config.atDeliveryAbsoluteCurrency || 'GBP',
+                currency: config.atPickupAbsoluteCurrency || config.atDeliveryAbsoluteCurrency || zoneCurrency,
                 policyApplied: 'Free Reschedule',
                 message: 'No reschedule charges applied (reschedule policy config is inactive)'
             };
@@ -923,19 +927,19 @@ class RescheduleBookingService {
         if (bookingData.pickupRescheduleRequired && bookingData.pickupDriverLate) {
             return {
                 rescheduleCharge: 0,
-                currency: config.atPickupAbsoluteCurrency || 'GBP',
+                currency: config.atPickupAbsoluteCurrency || zoneCurrency,
                 policyApplied: 'Free Reschedule — Driver Late',
                 message: 'No charge — the driver arrived after the scheduled pickup time'
             };
         }
 
         let charge = 0;
-        let currency = 'GBP';
+        let currency = zoneCurrency;
         let policyApplied = 'Free Reschedule';
 
         // ── Phase A: pre-pickup (status 1, 2, 3) ────────────────────────────────
         if ([1, 2, 3].includes(statusId)) {
-            currency = config.atPickupAbsoluteCurrency || 'GBP';
+            currency = config.atPickupAbsoluteCurrency || zoneCurrency;
 
             // Check courtesy count for pre-pickup phase
             if (config.atPickupCourtesyCountEnabled) {
@@ -968,7 +972,7 @@ class RescheduleBookingService {
 
         // ── Phase B: post-pickup through delivery (status 4–10, 12–13, 15 delivery failed) ─────────
         else if ([4, 5, 6, 7, 8, 9, 10, 12, 13, 15].includes(statusId)) {
-            currency = config.atDeliveryAbsoluteCurrency || 'GBP';
+            currency = config.atDeliveryAbsoluteCurrency || zoneCurrency;
 
             // Check courtesy count for post-pickup phase
             if (config.atDeliveryCourtesyCountEnabled) {

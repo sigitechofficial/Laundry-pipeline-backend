@@ -1,4 +1,5 @@
 const generateFooter = require('../partials/footer');
+const { requireCurrencySymbol } = require('../../../utils/requireCurrency');
 const fs = require('fs');
 const path = require('path');
 
@@ -10,7 +11,7 @@ const path = require('path');
  * @param {string} data.orderNumber - Order tracking number
  * @param {string} data.customerName - Customer's name
  * @param {number|string} data.finalAmount - Final invoice total
- * @param {string} data.currency - Currency symbol (default £)
+ * @param {string} data.currency - Currency symbol of the booking (required, e.g. the zone's £)
  * @param {string} data.viewOrderLink - Link to view order in agent panel
  * @param {Object} data.footerOptions - Footer customization options
  * @returns {Object} - { subject, html, inlineImages }
@@ -22,10 +23,11 @@ function generateAgentOrderInvoiceTemplate(data) {
     orderNumber = '',
     customerName = 'Customer',
     finalAmount = '0.00',
-    currency = '£',
+    currency,
     viewOrderLink = 'https://prodlaundry.sigisolutions.net/agent/orders',
     footerOptions = {}
   } = data;
+  requireCurrencySymbol(currency, 'generateAgentOrderInvoiceTemplate');
 
   const imagePaths = {
     logo: path.join(__dirname, '../../images/laundry Logo.png'),

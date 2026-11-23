@@ -16,7 +16,7 @@ const { generateBookingConfirmationTemplate } = require('./email');
  * @param {string} params.dropoffTimeFrom - Delivery time from
  * @param {string} params.dropoffTimeTo - Delivery time to
  * @param {number} params.upfrontAmount - Minimum order hold amount
- * @param {string} params.currency - Currency symbol (default £)
+ * @param {string} params.currency - Currency symbol of the booking (required)
  * @param {string} params.viewBookingLink - Link to view booking
  */
 module.exports = async function (params) {
@@ -33,7 +33,7 @@ module.exports = async function (params) {
     dropoffTimeFrom = '',
     dropoffTimeTo = '',
     upfrontAmount = 0,
-    currency = '£',
+    currency,
     viewBookingLink
   } = params;
 

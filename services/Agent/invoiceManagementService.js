@@ -47,6 +47,7 @@ const {
 } = require("../../utils/invoiceLineTotals");
 const { buildPaymentSummaryForBooking, enrichPaymentSummary, resolveBalancePaymentMethod } = require("../../utils/invoicePaymentSummary");
 const { attachInvoiceBill } = require("../../utils/invoiceBill");
+const { zoneCurrency } = require("../../utils/zoneCurrency");
 const {
     resolveAgentCommissionBase,
     calculateAgentCommissionAmounts,
@@ -642,9 +643,12 @@ class AgentInvoiceManagementService {
         const tipAmount = bookingTipAmountFromTips(bookingRow.tips);
 
         const existingBilling = await billingDetails.findOne({ where: { bookingId } });
+        const bookingZoneId = bookingRow?.zoneId ?? bookingRow?.zone?.id ?? null;
+        // The bill is in the booking zone's currency.
+        const { currencyCode, currencySymbol } = await zoneCurrency(bookingZoneId);
         const resolved = await this.resolveInvoiceDiscount({
             bookingId,
-            zoneId: bookingRow?.zoneId ?? bookingRow?.zone?.id ?? null,
+            zoneId: bookingZoneId,
             paymentType: bookingRow.paymentType,
             servicesSubtotal,
             storedDiscount: existingBilling?.discount,
@@ -654,6 +658,8 @@ class AgentInvoiceManagementService {
                 minimumOrderPayment: parsedZoneMinimum,
                 driverTip: tipAmount,
                 prepaidDriverTip: existingBilling?.prepaidTipAmount,
+                currency: currencyCode,
+                currencySymbol,
             },
         });
         const existingDiscount = resolved.discount;
@@ -677,6 +683,8 @@ class AgentInvoiceManagementService {
                 driverTip: tipAmount,
                 prepaidDriverTip: existingBilling?.prepaidTipAmount,
                 discount: existingDiscount,
+                currency: currencyCode,
+                currencySymbol,
             }),
             {
                 paymentType: bookingRow.paymentType,
@@ -1008,16 +1016,22 @@ class AgentInvoiceManagementService {
         const tipAmount = bookingTipAmountFromTips(bookingData.tips);
 
         // Authoritative laundry discount: reserved coupon + promotions (same as finalize).
+        const draftZoneId = bookingData.zoneId ?? bookingData.zone?.id ?? null;
+        // The bill is in the booking zone's currency.
+        const { currencyCode: draftCurrency, currencySymbol: draftCurrencySymbol } =
+            await zoneCurrency(draftZoneId);
         const draftSummaryInput = {
             laundrySubtotal: servicesSubtotal,
             serviceFee: parseFloat(billing.serviceCharge || 0),
             minimumOrderPayment: parseFloat(billing.upfrontAmount || 0),
             driverTip: tipAmount,
             prepaidDriverTip: billing.prepaidTipAmount,
+            currency: draftCurrency,
+            currencySymbol: draftCurrencySymbol,
         };
         const resolvedDraft = await this.resolveInvoiceDiscount({
             bookingId,
-            zoneId: bookingData.zoneId ?? bookingData.zone?.id ?? null,
+            zoneId: draftZoneId,
             paymentType: bookingData.paymentType,
             servicesSubtotal,
             storedDiscount: billing.discount,

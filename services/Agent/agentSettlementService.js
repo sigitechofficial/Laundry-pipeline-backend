@@ -11,6 +11,7 @@ const agentWithdrawalService = require("./agentWithdrawalService");
 const { buildAdminConnectPayoutLedger } = require("../../utils/adminPayoutLedger");
 const { applyCashDueListQuery } = require("../../utils/adminListFilters");
 const { sendNotification } = require("../../utils/notification");
+const { shopCurrencyCode } = require("../../utils/zoneCurrency");
 const { sendEvent } = require("../../socket_io");
 
 const {
@@ -18,7 +19,6 @@ const {
     ADMIN_SETTLEMENT_REFERENCE,
 } = agentWalletService;
 
-const DEFAULT_CURRENCY = "GBP";
 const SHOP_ADDRESS_TYPE = "LaundaryShopAddress";
 
 function parsePositiveId(value, label) {
@@ -258,7 +258,7 @@ async function submitCashRemittance(agentUserId, { amount, note }) {
             bookingId: null,
             referenceType: CASH_REMITTED_REFERENCE,
             amount: parseFloat(parsedAmount.toFixed(2)),
-            currency: summary.currency || DEFAULT_CURRENCY,
+            currency: summary.currency,
             type: "credit",
             status: "pending",
             description: note
@@ -303,12 +303,14 @@ async function listAgentRemittances(agentUserId, options = {}) {
         failed: "Rejected by admin",
     };
 
+    // Rows carry their own currency; one without falls back to the shop's.
+    const shopCurrency = await shopCurrencyCode(agentUserId);
     const remittances = rows.map((row) => {
         const plain = row.get ? row.get({ plain: true }) : row;
         return {
             id: plain.id,
             amount: parseFloat(plain.amount || 0),
-            currency: plain.currency || DEFAULT_CURRENCY,
+            currency: plain.currency || shopCurrency,
             status: plain.status, // pending | completed | failed
             statusLabel: STATUS_LABEL[plain.status] || plain.status,
             description: plain.description || null,
@@ -441,10 +443,10 @@ async function updateRemittanceStatus(remittanceId, status, adminNote, adminUser
     // they know it landed (or was declined) without re-polling. Never fail the
     // status update because a notification failed.
     try {
-        const amountLabel = `${summary.currency || 'GBP'} ${parseFloat(entry.amount || 0).toFixed(2)}`;
+        const amountLabel = `${summary.currency} ${parseFloat(entry.amount || 0).toFixed(2)}`;
         const confirmed = status === 'completed';
         const title = confirmed ? 'Cash remittance confirmed' : 'Cash remittance rejected';
-        const stillDue = `${summary.currency || 'GBP'} ${Number(summary.cashDueToPlatform || 0).toFixed(2)}`;
+        const stillDue = `${summary.currency} ${Number(summary.cashDueToPlatform || 0).toFixed(2)}`;
         const body = confirmed
             ? `Admin confirmed your ${amountLabel} cash payment. Cash still due: ${stillDue}.`
             : `Admin could not confirm your ${amountLabel} cash remittance${adminNote ? `: ${adminNote}` : ''}. It has been returned to pending cash due.`;
@@ -532,7 +534,7 @@ async function adminRecordCashSettlement(agentUserId, { amount, note, adminUserI
         bookingId: null,
         referenceType: CASH_REMITTED_REFERENCE,
         amount: parseFloat(parsedAmount.toFixed(2)),
-        currency: summary.currency || DEFAULT_CURRENCY,
+        currency: summary.currency,
         type: "credit",
         status: "completed",
         description: note
@@ -578,7 +580,7 @@ async function adminRecordAdjustment(agentUserId, { amount, direction, note, adm
         bookingId: null,
         referenceType: ADMIN_SETTLEMENT_REFERENCE,
         amount: parseFloat(parsedAmount.toFixed(2)),
-        currency: summary.currency || DEFAULT_CURRENCY,
+        currency: summary.currency,
         type: normalizedDirection,
         status: "completed",
         description: `Admin settlement adjustment${adminUserId ? ` (admin #${adminUserId})` : ""}: ${String(note || "").trim()}`.slice(0, 255),
@@ -636,7 +638,7 @@ async function recordAgentPayout(agentUserId, { amount, note, adminUserId }) {
             );
         }
 
-        const currencyCode = summary.currency || DEFAULT_CURRENCY;
+        const currencyCode = summary.currency;
         const pendingPair = buildAdminConnectPayoutLedger({
             userId: agentUserId,
             amount: parsedAmount,
