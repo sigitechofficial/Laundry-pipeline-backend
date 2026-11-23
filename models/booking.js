@@ -177,11 +177,11 @@ module.exports = (sequelize, DataTypes) => {
     allowNull:false
   },
   onHoldReason:{
-    type:DataTypes.ENUM('Missing or Damaged Items .Items lost or damaged, requiring customer verification.',
+    type:DataTypes.ENUM('Missing or Damaged Items. Items lost or damaged, requiring customer verification.',
       'Special Instructions Pending. Waiting for customer confirmation on delicate fabrics, stains, or specific washing preferences.',
-      'Damaged or Shrinking Risk . Items that may shrink, bleed color, or have pre-existing damage, requiring approval before proceeding.',
+      'Damaged or Shrinking Risk. Items that may shrink, bleed color, or have pre-existing damage, requiring approval before proceeding.',
       'Incorrect Tagging or Sorting. Mislabeling or mixing up orders requiring manual sorting.',
-      'Damage Liability Waiver Needed.sDelicate or high-risk items need the customer to sign a waiver before cleaning.',
+      'Damage Liability Waiver Needed. Delicate or high-risk items need the customer to sign a waiver before cleaning.',
       'Other'
     ),
     allowNull:true,
