@@ -1,5 +1,7 @@
 require("dotenv").config();
+const { appSessionKey } = require('../../utils/sessionKeys');
 const db = require('../../models');
+const { replaceUserToken, removeUserTokens } = require('../../utils/deviceTokenStore');
 const { users, userType, booking, otpVerification, agentSelectServices, deviceToken, features, bussinessInformation, bussinessWorkingHours, service, machines, machineCount, addressDb, zone, units, permissions, roles, wallet, driverInZones } = db;
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
@@ -49,9 +51,9 @@ const {
  * Prevents token accumulation (which causes duplicate notifications).
  */
 async function _refreshDeviceToken(userId, newToken) {
-    if (!newToken) return;
-    await deviceToken.destroy({ where: { userId } });
-    await deviceToken.create({ tokenId: newToken, status: true, userId });
+    // Also detaches the token from any other account signed in earlier on this device
+    // (owner and staff share shop tablets), so pushes never reach the wrong person.
+    await replaceUserToken(userId, newToken);
 }
 
 /**
@@ -150,7 +152,7 @@ class AgentAuthService {
     async _revokeAllAgentSessions(userId) {
         if (!userId) return;
         try {
-            await redisCli.del(`id-${userId}`);
+            await redisCli.del(appSessionKey(userId));
         } catch (err) {
             console.error('⚠️ Failed to revoke agent sessions:', err.message);
         }
@@ -285,7 +287,7 @@ class AgentAuthService {
             // Store access token in Redis
             if (data.dvToken) {
                 await redisCli.hSet(
-                    `id-${userfindByEmail.id}`,
+                    appSessionKey(userfindByEmail.id),
                     { [data.dvToken]: accessToken }
                 );
             }
@@ -334,7 +336,7 @@ class AgentAuthService {
             // Store access token in Redis
             if (data.dvToken) {
                 await redisCli.hSet(
-                    `id-${userCreate.id}`,
+                    appSessionKey(userCreate.id),
                     { [data.dvToken]: accessToken }
                 );
             }
@@ -1092,7 +1094,7 @@ class AgentAuthService {
             }, process.env.JWT_ACCESS_SECRET);
 
             if (data.dvToken) {
-                await redisCli.hSet(`id-${socialUser.id}`, { [data.dvToken]: accessToken });
+                await redisCli.hSet(appSessionKey(socialUser.id), { [data.dvToken]: accessToken });
             }
 
             const featureData = await features.findAll({
@@ -1138,7 +1140,7 @@ class AgentAuthService {
         }, process.env.JWT_ACCESS_SECRET);
 
         if (data.dvToken) {
-            await redisCli.hSet(`id-${userFind.id}`, { [data.dvToken]: accessToken });
+            await redisCli.hSet(appSessionKey(userFind.id), { [data.dvToken]: accessToken });
         }
 
         const featureData = await features.findAll({
@@ -1363,16 +1365,9 @@ class AgentAuthService {
      * @returns {Object} Logout result
      */
     async logout(data) {
-        // Remove device token from database
-        deviceToken.destroy({
-            where: { 
-                tokenId: data.dvToken, 
-                userId: data.userId 
-            }
-        });
-
-        // Remove from Redis
-        await redisCli.hDel(`tsh${data.userId}`, data.dvToken);
+        // This device stops receiving the account's pushes, and its session is revoked.
+        await removeUserTokens(data.userId, data.dvToken);
+        await redisCli.hDel(appSessionKey(data.userId), data.dvToken);
 
         return {};
     }
@@ -1437,7 +1432,7 @@ class AgentAuthService {
         );
 
         if (data.dvToken) {
-            await redisCli.hSet(`id-${employeeData.id}`, { [data.dvToken]: accessToken });
+            await redisCli.hSet(appSessionKey(employeeData.id), { [data.dvToken]: accessToken });
         }
 
         const featureData = await features.findAll({
@@ -1660,7 +1655,7 @@ class AgentAuthService {
         }, process.env.JWT_ACCESS_SECRET);
 
         if (data.dvToken) {
-            await redisCli.hSet(`id-${userData.id}`, { [data.dvToken]: accessToken });
+            await redisCli.hSet(appSessionKey(userData.id), { [data.dvToken]: accessToken });
         }
 
         const featureData = await features.findAll({
@@ -1898,7 +1893,10 @@ class AgentAuthService {
 
         const accessToken = jwt.sign(payload, process.env.JWT_ACCESS_SECRET);
 
-        await redisCli.hSet(`id-${employeeData.id}`, { [dvToken]: accessToken });
+        await redisCli.hSet(appSessionKey(employeeData.id), { [dvToken]: accessToken });
+        // Staff receive pushes too (job assignments, staffAssignmentNotify): register
+        // this device for them exactly like the owner login does.
+        await _refreshDeviceToken(employeeData.id, dvToken);
 
         const capabilities = await getEffectiveShopCapabilities(employeeData);
 
@@ -1935,7 +1933,8 @@ class AgentAuthService {
      * @returns {Object} Empty result
      */
     async employeeLogout(data) {
-        await redisCli.hDel(`id-${data.userId}`, data.dvToken);
+        await removeUserTokens(data.userId, data.dvToken);
+        await redisCli.hDel(appSessionKey(data.userId), data.dvToken);
         return {};
     }
 
@@ -2041,7 +2040,7 @@ class AgentAuthService {
             });
 
             // Clear all Redis sessions for this user
-            await redisCli.del(`id-${userId}`);
+            await redisCli.del(appSessionKey(userId));
 
             // Soft-delete the user
             await users.destroy({

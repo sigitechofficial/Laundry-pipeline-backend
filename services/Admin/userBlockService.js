@@ -6,6 +6,7 @@
  * Logged-in apps are refused on the next API call (JWT middleware checks status).
  * Refuses if the user still has incomplete orders.
  */
+const { appSessionKey } = require('../../utils/sessionKeys');
 const crypto = require('crypto');
 const { users, booking, addressDb, recurringPlan } = require('../../models');
 const { Op } = require('sequelize');
@@ -90,7 +91,7 @@ async function countOpenBookingsForBlock(user, userType) {
 
 async function revokeAppSessions(userId) {
     try {
-        await redisCli.del(`id-${userId}`);
+        await redisCli.del(appSessionKey(userId));
     } catch (err) {
         console.warn(`[block] Redis session revoke failed for user ${userId}:`, err.message);
     }

@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { appSessionKey } = require('../utils/sessionKeys');
 const { verify } = require("jsonwebtoken");
 const redisCli = require("../redis/redis");
 const guestAuthService = require("../services/Customer/guestAuthService");
@@ -53,7 +54,7 @@ module.exports = async function validateAccessTokenOrGuest(req, res, next) {
             return;
         }
 
-        const redisToken = await redisCli.hGetAll(`id-${decoded.id}`);
+        const redisToken = await redisCli.hGetAll(appSessionKey(decoded.id));
         if (!redisToken || Object.keys(redisToken).length === 0) {
             throw new Error("Invalid Token");
         }

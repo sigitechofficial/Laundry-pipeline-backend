@@ -143,6 +143,13 @@ router.get(
     asyncMiddleware(agentAuthController.logout)
 );
 
+// The app reports its current push token (start + Firebase token rotation)
+router.post(
+    "/deviceToken",
+    validateAccessToken,
+    asyncMiddleware(agentAuthController.updateDeviceToken)
+);
+
 //Delete agent account and all related data
 router.delete(
     "/deleteAccount",

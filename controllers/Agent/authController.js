@@ -1,5 +1,7 @@
 const authService = require('../../services/Agent/authService');
 const ResponseHelper = require('../../utils/responseHelper');
+const { saveCurrentToken } = require('../../utils/deviceTokenStore');
+const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 
 // Register agent with OTP
 const registerAgentWithOTP = async (req, res) => {
@@ -199,6 +201,23 @@ const employeeLogin = async (req, res) => {
     return ResponseHelper.success(res, "Employee login successful", result);
 };
 
+/**
+ * POST /agent/deviceToken { dvToken } — the shop app reports its current push token
+ * (on start and whenever Firebase rotates it). The server otherwise only learns the
+ * token at sign-in, so a rotated token silently stopped all pushes until the next login.
+ * Works for owners and staff alike: the token belongs to the signed-in account.
+ */
+const updateDeviceToken = async (req, res) => {
+    const token = typeof req.body?.dvToken === 'string' ? req.body.dvToken.trim() : '';
+    if (!isValidFcmRegistrationToken(token)) {
+        return res.status(400).json({
+            status: '0', message: 'A valid device token is required', data: {}, error: 'INVALID_DEVICE_TOKEN',
+        });
+    }
+    const { created } = await saveCurrentToken(req.user.id, token);
+    return ResponseHelper.success(res, 'Device token saved', { created });
+};
+
 // Employee logout
 const employeeLogout = async (req, res) => {
     const data = {
@@ -236,5 +255,6 @@ module.exports = {
     generateStripeOnboardingLink,
     employeeLogin,
     employeeLogout,
+    updateDeviceToken,
     deleteAccount
 };

@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { appSessionKey } = require('../../utils/sessionKeys');
 const { users, userType, booking, otpVerification, deviceToken, countries, cities, zone, units } = require('../../models');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
@@ -64,7 +65,7 @@ const {
     UnauthorizedError,
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
-const { detachFromOtherUsers } = require('../../utils/deviceTokenStore');
+const { replaceUserToken } = require('../../utils/deviceTokenStore');
 const { customerLoginVerification } = require('../../utils/customerLoginVerification');
 const {
     createUnverifiedAccount,
@@ -85,11 +86,8 @@ const {
  * Prevents token accumulation (which causes duplicate notifications).
  */
 async function _refreshDeviceToken(userId, newToken) {
-    if (!newToken) return;
-    await deviceToken.destroy({ where: { userId } });
     // The same phone may have been signed in to another account: it is this user's now.
-    await detachFromOtherUsers(userId, newToken);
-    await deviceToken.create({ tokenId: newToken, status: true, userId });
+    await replaceUserToken(userId, newToken);
 }
 
 /**
@@ -238,7 +236,7 @@ class CustomerAuthService {
 
             if (dvToken) {
                 await redisCli.hSet(
-                    `id-${userfindByEmail.id}`,
+                    appSessionKey(userfindByEmail.id),
                     { [dvToken]: accessToken }
                 );
             }
@@ -349,7 +347,7 @@ class CustomerAuthService {
 
             // Store token in Redis
             await redisCli.hSet(
-                `id-${userData.id}`,
+                appSessionKey(userData.id),
                 { [finalDvToken]: accessToken }
             );
 
@@ -409,7 +407,7 @@ class CustomerAuthService {
 
             // Store token in Redis
             await redisCli.hSet(
-                `id-${userData.id}`,
+                appSessionKey(userData.id),
                 { [finalDvToken]: accessToken }
             );
 
@@ -630,7 +628,7 @@ class CustomerAuthService {
 
             // Store token in Redis
             await redisCli.hSet(
-                `id-${userData.id}`,
+                appSessionKey(userData.id),
                 { [finalDvToken]: accessToken }
             );
 
@@ -730,7 +728,7 @@ class CustomerAuthService {
 
             // Store in Redis
             await redisCli.hSet(
-                `id-${socialUserFind.id}`,
+                appSessionKey(socialUserFind.id),
                 { [finalDvToken]: accessToken }
             );
 
@@ -820,7 +818,7 @@ class CustomerAuthService {
 
         // Store in Redis
         await redisCli.hSet(
-            `id-${userFind.id}`,
+            appSessionKey(userFind.id),
             { [finalDvToken]: accessToken }
         );
 

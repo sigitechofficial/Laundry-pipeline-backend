@@ -1,5 +1,6 @@
 require("dotenv").config();
-const { users, userType, booking, otpVerification, deviceToken, countries, cities } = require('../../models')
+const { appSessionKey } = require('../../utils/sessionKeys');
+const { users, userType, booking, otpVerification, countries, cities } = require('../../models')
 const sequelize = require('sequelize')
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
@@ -10,7 +11,7 @@ const otpGenerator = require('otp-generator')
 const customError = require('../../middlewares/customError')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
-const { detachFromOtherUsers, saveCurrentToken } = require('../../utils/deviceTokenStore')
+const { saveCurrentToken, removeUserTokens } = require('../../utils/deviceTokenStore')
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken')
 const path = require('path')
 const { stat } = require('fs')
@@ -228,32 +229,13 @@ async function resendOTP(req, res) {
     *          8. Log out
 */
 async function logout(req, res) {
-    //return res.json(req.user);
-    // removing the device token from DB: the one signed in with, and the app's current one
-    // (newer apps send it; it differs when the push token changed after sign-in).
+    // Forget this device's push tokens — the one signed in with and the app's current
+    // one (newer apps send it; it differs when the push token changed after sign-in) —
+    // and revoke the session. asyncMiddleware reports failures.
     const currentToken = typeof req.query?.dvToken === 'string' ? req.query.dvToken.trim() : '';
-    deviceToken.destroy({
-        where: { tokenId: [req.user.dvToken, currentToken].filter(Boolean), userId: req.user.id },
-    });
-    // removing from redis
-    redisCli
-        .hDel(`tsh${req.user.id}`, req.user.dvToken)
-        .then((upData) => {
-            return res.json({
-                status: "1",
-                message: "Log-out successfully",
-                data: {},
-                error: "",
-            });
-        })
-        .catch((err) => {
-            return res.json({
-                status: "0",
-                message: "Internal server error",
-                data: {},
-                error: "There is some error logging out. Please try again",
-            });
-        });
+    await removeUserTokens(req.user.id, [req.user.dvToken, currentToken]);
+    await redisCli.hDel(appSessionKey(req.user.id), req.user.dvToken);
+    return res.json({ status: "1", message: "Log-out successfully", data: {}, error: "" });
 }
 
 
@@ -399,7 +381,8 @@ async function deleteAccount(req, res) {
     });
 
     try {
-        await redisCli.hDel(`tsh${userId}`, req.user.dvToken);
+        // The account is gone: end every session, not just this device's.
+        await redisCli.del(appSessionKey(userId));
     } catch (err) {
         console.error('Redis cleanup on delete account:', err.message);
     }
