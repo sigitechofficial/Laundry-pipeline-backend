@@ -155,6 +155,19 @@ NODE_ENV=development LOCAL_ADMIN_EMAIL=you@example.com LOCAL_ADMIN_PASSWORD='cho
   npm run db:provision:local-admin   # creates (or resets) your local super admin
 ```
 
+Optional — ready-to-use local test data (zone, shop, customer) for the apps:
+
+```bash
+NODE_ENV=development LOCAL_FIXTURE_PASSWORD='choose-one' npm run db:seed:local-fixtures
+```
+
+Creates a "London (local dev)" zone, a verified + approved shop `shop@justdrycleans.test`
+(address in the zone, 3 services, opening hours) and a verified customer
+`customer@justdrycleans.test`, both using `LOCAL_FIXTURE_PASSWORD`. Idempotent; development
++ local DB only; sends no email. No Stripe objects are created: the customer's Stripe record
+is made on first payment, and shop payouts need Stripe Connect onboarding (test mode) from
+the shop app.
+
 - Seeders are **idempotent**: running `db:seed` again inserts only what is missing, and
   `db:seed:undo:all` removes only seeded rows (never admin-created data).
 - No admin account is seeded — a seeded account would ship a known password. The provision
@@ -293,6 +306,7 @@ Optional health probe via API: **http://localhost:3010/health/redis**
 | `npm run db:seed` | Run seeders (idempotent; safe to re-run) |
 | `npm run db:check-drift` | Fail if a model uses a table/column that migrations do not create |
 | `npm run db:provision:local-admin` | Create or reset the local super admin (dev + local DB only) |
+| `npm run db:seed:local-fixtures` | Local test zone, shop and customer (dev + local DB only) |
 | `npm test` | Run included unit tests |
 
 ---
