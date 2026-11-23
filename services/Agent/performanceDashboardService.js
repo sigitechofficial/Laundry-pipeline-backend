@@ -92,7 +92,8 @@ class PerformanceDashboardService {
         );
     }
 
-    async _completedLegs(shopId, from, to) {
+    /** One row per pickup / delivery the shop completed in [from, to) (see legSelect). */
+    async completedLegs(shopId, from, to) {
         return dbModels.sequelize.query(
             `${legSelect('pickup')}
              UNION ALL
@@ -120,7 +121,7 @@ class PerformanceDashboardService {
 
         const [currency, legs, current, previous, rates, team] = await Promise.all([
             zoneCurrency(shopAddress.zoneId),
-            this._completedLegs(shopId, range.from, range.to),
+            this.completedLegs(shopId, range.from, range.to),
             this._paidOrderTotals(shopId, range.from, range.to),
             this._paidOrderTotals(shopId, range.previous.from, range.previous.to),
             this._paidOrderRates(shopId, range.from, range.to),

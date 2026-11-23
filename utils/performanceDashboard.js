@@ -195,6 +195,9 @@ module.exports = {
     driverSide,
     percentChange,
     money,
+    emptyPunctuality,
+    addArrival,
+    finalizePunctuality,
     summarizeLegs,
     buildCommissionSummary,
 };

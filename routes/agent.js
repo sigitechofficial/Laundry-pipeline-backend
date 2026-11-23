@@ -837,16 +837,19 @@ router.get(
 router.get(
     "/getOrderSummaryDashboard",
     validateAccessToken,
+    requireCapability("canManageFinance"), // reports: finance access, as in the app
     asyncMiddleware(agentController.getOrderSummaryDashboard)
 );
 router.get(
     "/getShopPerformanceDashboard",
     validateAccessToken,
+    requireCapability("canManageFinance"), // reports: finance access, as in the app
     asyncMiddleware(agentController.getShopPerformanceDashboard)
 );
 router.get(
     "/getEarningReportDashboard",
     validateAccessToken,
+    requireCapability("canManageFinance"), // reports: finance access, as in the app
     asyncMiddleware(agentController.getEarningReportDashboard)
 );
 router.get(
