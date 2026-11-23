@@ -65,6 +65,7 @@ const {
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
 const { detachFromOtherUsers } = require('../../utils/deviceTokenStore');
+const { customerLoginVerification } = require('../../utils/customerLoginVerification');
 const {
     createUnverifiedAccount,
     refreshUnverifiedAccount,
@@ -687,7 +688,6 @@ class CustomerAuthService {
                 ]
             });
 
-            console.log("socialUserFind------------>", socialUserFind);
 
             if (!socialUserFind) {
                 // The email exists but was registered with email/password — give a helpful message
@@ -752,9 +752,7 @@ class CustomerAuthService {
         }
 
         // Regular email/password login
-        let otpId = 0;
 
-        console.log("User Find------------>", userFind);
 
         // Check if user exists before accessing properties
         if (!userFind) {
@@ -764,23 +762,23 @@ class CustomerAuthService {
         if (!userFind.status) {
             throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
+            // users.verifiedAt is the source of truth; the OTP row only matters for an
+            // unverified account (its id routes the app to OTP verification).
             const otpData = await otpVerification.findOne(
                 { where: { userId: userFind.id } },
                 { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
             );
-            if (!otpData) {
-                throw new UnauthorizedError("User Not Verified", "user not verified by otp");
+            const verification = customerLoginVerification(userFind, otpData);
+            if (!verification.verified) {
+                if (!verification.otpId) {
+                    throw new UnauthorizedError("User Not Verified", "user not verified by otp");
+                }
+                throw new UnauthorizedError("Please verify your email to continue", {
+                    userId: userFind.id,
+                    otpId: verification.otpId,
+                    email: userFind.email
+                });
             }
-            otpId = otpData.id;
-        }
-
-        // Check email verification
-        if (!userFind.verifiedAt) {
-            throw new UnauthorizedError("Please verify your email to continue", { 
-                userId: userFind.id, 
-                otpId, 
-                email: userFind.email 
-            });
         }
 
         // Check user data completeness
