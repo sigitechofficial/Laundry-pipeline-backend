@@ -1835,6 +1835,7 @@ class AgentAuthService {
                 'userTypeId',
                 'agentApprovalStatus',
                 'rejectionReason',
+                'ianaTimeZone',
             ],
             include: [
                 {
@@ -1854,7 +1855,14 @@ class AgentAuthService {
                 addressType: 'LaundaryShopAddress',
             },
             attributes: ['id', 'zoneId'],
+            include: [{ model: db.countries, attributes: ['ianaTimeZone'], required: false }],
         });
+
+        // Staff work on the shop's clock: same timezone fields the owner app gets
+        // (login `ianaTimeZone`, getAgentAddress `shopOperationalTimeZone`). Without
+        // them the app fell back to UTC and bucketed Today/Tomorrow on UTC days.
+        const shopOperationalTimeZone = shopAddress?.country?.ianaTimeZone || null;
+        const shopTimeZone = agentData?.ianaTimeZone || shopOperationalTimeZone;
 
         // Get permissions for the employee's role — only Agent/Agent Employee/both features
         const permissionData = await permissions.findAll({
@@ -1908,6 +1916,8 @@ class AgentAuthService {
             classifiedAsId: employeeData.classifiedAsId,
             employeeOff: employeeData.employeeOff,
             addressId: shopAddress ? String(shopAddress.id) : null,
+            ianaTimeZone: shopTimeZone,
+            shopOperationalTimeZone,
             isEmployee: true,
             isManager: Number(employeeData.roleId) === LAUNDRY_SHOP_MANAGER_ROLE_ID,
             isDriver: Number(employeeData.roleId) === LAUNDRY_SHOP_DRIVER_ROLE_ID,
