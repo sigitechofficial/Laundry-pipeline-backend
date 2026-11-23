@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { statusBuckets, legPunctuality } = require('../services/Agent/shopReportsService');
+const { statusBuckets, legPunctuality } = require('./shopReports');
 
 // Statuses by id: every order lands in exactly one bucket. Issue Resolved (23)
 // counts as completed; Refunded (21) is its own bucket (it used to read as
@@ -33,4 +33,3 @@ const { statusBuckets, legPunctuality } = require('../services/Agent/shopReports
 }
 
 console.log('shopReports.test.js: all assertions passed');
-process.exit(0);
