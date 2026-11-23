@@ -1170,6 +1170,20 @@ class NoShowEnforcementService {
         );
         syncLiveTrackingSafe(bookingId, nextStatus, 'unattended_complete');
 
+        // Same leg snapshot as the attended pickup/delivery endpoints: who
+        // completed the leg and when (staff activity, punctuality, the invoice
+        // payment window and the performance dashboard all read it).
+        try {
+            const { recordLegCompletion } = require('../../utils/legCompletion');
+            await recordLegCompletion({
+                bookingId,
+                leg: normalizedType,
+                actorUserId: driverUserId,
+            });
+        } catch (err) {
+            console.warn('[markAttemptUnattended] legCompletion failed:', err?.message || err);
+        }
+
         if (historyDate && historyTime) {
             if (normalizedType === 'pickup') {
                 await bookingHistory.bulkCreate([
