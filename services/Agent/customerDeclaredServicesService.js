@@ -124,16 +124,36 @@ const snapshotInclude = [
  * Idempotent. Never freeze priced invoice lines as customer intent — those
  * replace live CSS after AgentAddSerivces. Prefer unpriced service-level rows
  * (including deactivated originals), then earliest row per serviceId.
+ *
+ * Concurrency: the freeze runs under a row lock on the booking, so simultaneous
+ * callers (the app loads an invoice twice on open; accept + read) cannot each see
+ * "no snapshot yet" and insert a copy — that duplicated the customer's services in
+ * the shop app. Pass `transaction` when the caller already holds one (recurring
+ * generation locks the source booking): the work then joins it instead of waiting
+ * on that lock from a second connection.
  */
-async function ensureCustomerDeclaredSnapshot(bookingId) {
+async function ensureCustomerDeclaredSnapshot(bookingId, { transaction } = {}) {
+    if (transaction) return freezeCustomerSelections(bookingId, transaction);
+    return dbModels.sequelize.transaction((t) => freezeCustomerSelections(bookingId, t));
+}
+
+async function freezeCustomerSelections(bookingId, transaction) {
+    await dbModels.booking.findByPk(bookingId, {
+        attributes: ['id'],
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+    });
+
     const existing = await customerOriginalServiceSnapshot.count({
         where: { bookingId },
+        transaction,
     });
     if (existing > 0) return;
 
     const allRows = await customerSelectedService.findAll({
         where: { bookingId },
         order: [['id', 'ASC']],
+        transaction,
     });
     if (!allRows.length) return;
 
@@ -152,10 +172,11 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
             bags: snapshotBags(svc),
             categoryPrice: svc.categoryPrice ?? null,
             serviceInstruction: svc.serviceInstruction ?? null,
-        });
+        }, { transaction });
 
         const prefs = await bookingPreference.findAll({
             where: { bookingId, customerSelectedServiceId: svc.id },
+            transaction,
         });
         if (prefs.length > 0) {
             await customerOriginalPreferenceSnapshot.bulkCreate(
@@ -166,13 +187,15 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
                     preferenceValueId: p.preferenceValueId ?? null,
                     parentPreferenceValueId: p.parentPreferenceValueId ?? null,
                     preferenceInstruction: p.preferenceInstruction ?? null,
-                }))
+                })),
+                { transaction }
             );
         }
     }
 
     const bookingLevelPrefs = await bookingPreference.findAll({
         where: { bookingId, customerSelectedServiceId: null },
+        transaction,
     });
     if (bookingLevelPrefs.length > 0) {
         await customerOriginalPreferenceSnapshot.bulkCreate(
@@ -183,7 +206,8 @@ async function ensureCustomerDeclaredSnapshot(bookingId) {
                 preferenceValueId: p.preferenceValueId ?? null,
                 parentPreferenceValueId: p.parentPreferenceValueId ?? null,
                 preferenceInstruction: p.preferenceInstruction ?? null,
-            }))
+            })),
+            { transaction }
         );
     }
 }

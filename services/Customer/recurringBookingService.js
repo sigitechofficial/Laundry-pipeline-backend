@@ -216,7 +216,8 @@ async function loadIntentRowsForClone(sourceBookingId, transaction) {
     const {
       ensureCustomerDeclaredSnapshot,
     } = require('../Agent/customerDeclaredServicesService');
-    await ensureCustomerDeclaredSnapshot(sourceBookingId);
+    // Joins the caller's transaction: it holds the source booking's row lock.
+    await ensureCustomerDeclaredSnapshot(sourceBookingId, { transaction });
   } catch (err) {
     console.warn(
       `[recurring] snapshot ensure failed for ${sourceBookingId}:`,
