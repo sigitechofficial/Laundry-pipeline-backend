@@ -21,6 +21,7 @@ const { money } = require('./moneyUtils');
 const { CANCELLED, REFUNDED } = require('../../constants/bookingStatusIds');
 const { campaignBlock, budgetLeftMinor } = require('./campaignRules');
 const { heldBudgetByCampaign } = require('./campaignBudget');
+const { bookingCurrencyCode } = require('../../utils/zoneCurrency');
 
 const RESERVATION_TTL_MINUTES = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -188,7 +189,7 @@ async function reserveRedemption(params, transaction) {
       status: 'RESERVED',
       discountAmount: discountAmount != null ? money(discountAmount) : null,
       estimatedAmount: estimatedAmount != null ? money(estimatedAmount) : null,
-      currency: promo.currency || 'GBP',
+      currency: promo.currency,
       zoneId: zoneId || null,
       idempotencyKey: idempotencyKey || null,
       reservedAt: now,
@@ -389,9 +390,11 @@ function classifyAdjustment(benefitType, lineType) {
  *
  * @param {number} bookingId
  * @param {Array} appliedPromotions — evaluatePromotions().applied
- * @param {{ currency?: string, transaction?: object }} [options]
+ * @param {{ currency?: string, transaction?: object }} [options] currency: ISO code of the
+ *   amounts; defaults to the booking's (its zone's) currency.
  */
 async function writeOrderAdjustments(bookingId, appliedPromotions, options = {}) {
+  const currency = options.currency || (await bookingCurrencyCode(bookingId));
   return inTransaction(async (t) => {
     await OrderAdjustment.destroy({
       where: {
@@ -417,7 +420,7 @@ async function writeOrderAdjustments(bookingId, appliedPromotions, options = {})
           lineItemId: adj.lineItemId || null,
           lineDescription: adj.lineDescription || null,
           amount: money(adj.amountMinor != null ? adj.amountMinor / 100 : adj.amount),
-          currency: options.currency || 'GBP',
+          currency,
           label: adj.label || promo.promotionName,
           description: adj.description || null,
           appliedBy: 'system',

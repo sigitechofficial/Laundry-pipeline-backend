@@ -41,6 +41,7 @@ require.cache[modelsPath] = { id: modelsPath, filename: modelsPath, loaded: true
 const {
   zoneCurrency,
   zoneCurrencyCode,
+  bookingCurrency,
   bookingCurrencyCode,
   shopCurrency,
   shopCurrencyCode,
@@ -50,6 +51,7 @@ const {
   assert.deepEqual(await zoneCurrency(EUR_ZONE), { currencySymbol: '€', currencyCode: 'EUR' });
   assert.equal(await zoneCurrencyCode(EUR_ZONE), 'EUR');
   assert.equal(await bookingCurrencyCode(900), 'EUR', 'a booking is in its zone currency');
+  assert.deepEqual(await bookingCurrency(900), { currencySymbol: '€', currencyCode: 'EUR' });
 
   // Shop money: the zone of the shop's LaundaryShopAddress.
   assert.deepEqual(await shopCurrency(11), { currencySymbol: '€', currencyCode: 'EUR' });

@@ -20,11 +20,16 @@ async function zoneCurrencyCode(zoneId) {
   return (await zoneCurrency(zoneId)).currencyCode;
 }
 
-/** ISO code of a booking's currency (looked up through its zone). */
-async function bookingCurrencyCode(bookingId) {
+/** A booking's currency (looked up through its zone). */
+async function bookingCurrency(bookingId) {
   const { booking } = require('../models');
   const row = await booking.findByPk(bookingId, { attributes: ['zoneId'], paranoid: false });
-  return zoneCurrencyCode(row?.zoneId);
+  return zoneCurrency(row?.zoneId);
+}
+
+/** ISO code of a booking's currency (looked up through its zone). */
+async function bookingCurrencyCode(bookingId) {
+  return (await bookingCurrency(bookingId)).currencyCode;
 }
 
 /**
@@ -50,4 +55,11 @@ async function shopCurrencyCode(shopOwnerUserId) {
   return (await shopCurrency(shopOwnerUserId)).currencyCode;
 }
 
-module.exports = { zoneCurrency, zoneCurrencyCode, bookingCurrencyCode, shopCurrency, shopCurrencyCode };
+module.exports = {
+  zoneCurrency,
+  zoneCurrencyCode,
+  bookingCurrency,
+  bookingCurrencyCode,
+  shopCurrency,
+  shopCurrencyCode,
+};

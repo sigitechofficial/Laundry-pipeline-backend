@@ -5,6 +5,7 @@ const { Op } = require('sequelize');
 const { ValidationError, NotFoundError } = require('../../middlewares/universalErrorHandler');
 const { CAMPAIGN_STATUSES, campaignBlock, budgetLeftMinor, businessToday, dayOf } = require('../promotions/campaignRules');
 const { heldBudgetByCampaign } = require('../promotions/campaignBudget');
+const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 
 /** Promotion fields the campaign screens show. */
 const PROMOTION_SUMMARY = [
@@ -45,7 +46,8 @@ async function createCampaign(payload, adminUserId) {
     objective: payload.objective || null,
     channel: payload.channel || null,
     budgetMinor: blankToNull(payload.budgetMinor) == null ? null : Number(payload.budgetMinor),
-    currency: payload.currency || 'GBP',
+    // A campaign has no zone: without its own currency it is in the platform's.
+    currency: payload.currency || (await resolveDisplayCurrency({})).currencyCode,
     startDate: blankToNull(payload.startDate),
     endDate: blankToNull(payload.endDate),
     status: payload.status || 'draft',

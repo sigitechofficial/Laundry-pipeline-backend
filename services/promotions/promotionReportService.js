@@ -258,7 +258,7 @@ async function campaignReport(campaignId, { from, to, restrictedZoneId = null, i
       spent,
       remaining: budget != null ? money(Math.max(0, budget - spent)) : null,
       percentUsed: budget ? Math.min(100, Math.round((spent / budget) * 1000) / 10) : null,
-      currency: camp.currency || 'GBP',
+      currency: camp.currency,
     },
   };
   if (!ids.length) return { ...base, summary: await ledgerSummary([0], restrictedZoneId), promotions: [], byZone: [], byDay: [] };

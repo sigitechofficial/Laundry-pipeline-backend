@@ -18,6 +18,7 @@ const {
 } = require('../../models');
 const { CANCELLED } = require('../../constants/bookingStatusIds');
 const { getCountryContextFromZoneId } = require('../../utils/countryTimeZone');
+const { zoneCurrency } = require('../../utils/zoneCurrency');
 const { resolvePrice } = require('../Admin/zoneCatalogService');
 const { ValidationError } = require('../../middlewares/universalErrorHandler');
 const { toDecimal, toMinor, fromMinor } = require('./moneyUtils');
@@ -59,8 +60,12 @@ async function loadZoneFacts(zoneId) {
   const row = await Zone.findByPk(id, { attributes: ['id', 'zoneMinimumAmount'] });
   if (!row) throw new ValidationError('Zone not found');
   const country = await getCountryContextFromZoneId(id).catch(() => null);
+  const { currencyCode, currencySymbol } = await zoneCurrency(id);
   return {
     id,
+    // The basket's currency (ISO code + display symbol).
+    currency: currencyCode,
+    currencySymbol,
     timezone: resolveTimeZone(country?.ianaTimeZone),
     // Minimum order: what a booking's hold is estimated on before the shop prices it.
     minOrderMinor: Math.max(0, Math.round(Number(row.zoneMinimumAmount || 0) * 100)),
@@ -160,7 +165,13 @@ async function buildPromotionContext(input = {}) {
     customer,
     // The booking being priced (if any): its own holds are not counted as earlier usage.
     bookingId: input.customerAsOf?.excludeBookingId ? Number(input.customerAsOf.excludeBookingId) : null,
-    zone: { id: zone.id, timezone: zone.timezone, minOrderMinor: zone.minOrderMinor },
+    zone: {
+      id: zone.id,
+      currency: zone.currency,
+      currencySymbol: zone.currencySymbol,
+      timezone: zone.timezone,
+      minOrderMinor: zone.minOrderMinor,
+    },
     basket: {
       subtotal: rawSubtotal != null ? rawSubtotal : fromMinor(subtotalMinor),
       itemCount: lineItems.reduce((s, li) => s + li.qty, 0),
