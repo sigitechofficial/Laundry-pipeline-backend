@@ -14,7 +14,7 @@ const { Op } = require('sequelize');
 const models = require('../models');
 const walletService = require('../services/Agent/agentWalletService');
 const settlement = require('../services/Agent/agentSettlementService');
-const { resolveAgentReportRange } = require('../utils/agentReportRange');
+const { resolveShopReportPeriod } = require('../utils/shopDayRange');
 
 const { sequelize, wallet } = models;
 const OWNER = 44;
@@ -115,15 +115,16 @@ async function main() {
   check('transactions: default view unchanged (payouts/withdrawals only), scope=all shows the settlement ledger',
     oldView.transactions.length === 0 && fullView.transactions.length >= 7, `default=${oldView.transactions.length} all=${fullView.transactions.length}`);
 
-  // ── Report ranges ──
-  const now = new Date(2026, 9, 9, 15, 0, 0);
-  const custom = resolveAgentReportRange('custom', { startDate: '2026-09-01', endDate: '2026-09-07' }, now);
-  check('custom range covers both whole days', custom.start.getDate() === 1 && custom.end.getDate() === 7 && custom.end.getHours() === 23);
-  const week = resolveAgentReportRange('week', {}, now);
-  check('week starts on Monday', week.start.getDay() === 1 && week.start.getDate() === 5);
-  assert.throws(() => resolveAgentReportRange('custom', { startDate: '2026-09-07', endDate: '2026-09-01' }, now));
-  assert.throws(() => resolveAgentReportRange('custom', { startDate: '2024-01-01', endDate: '2026-01-01' }, now));
-  assert.throws(() => resolveAgentReportRange('decade', {}, now));
+  // ── Report ranges (shop time) ──
+  const now = new Date('2026-10-09T14:00:00Z');
+  const tz = 'Europe/London';
+  const custom = resolveShopReportPeriod('custom', { startDate: '2026-09-01', endDate: '2026-09-07' }, tz, now);
+  check('custom range covers both whole days', custom.startDate === '2026-09-01' && custom.endDate === '2026-09-07' && custom.days === 7);
+  const week = resolveShopReportPeriod('week', {}, tz, now);
+  check('week starts on Monday', week.startDate === '2026-10-05');
+  assert.throws(() => resolveShopReportPeriod('custom', { startDate: '2026-09-07', endDate: '2026-09-01' }, tz, now));
+  assert.throws(() => resolveShopReportPeriod('custom', { startDate: '2024-01-01', endDate: '2026-01-01' }, tz, now));
+  assert.throws(() => resolveShopReportPeriod('decade', {}, tz, now));
   check('bad ranges refused (reversed, over a year, unknown period)', true);
 }
 

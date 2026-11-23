@@ -76,3 +76,34 @@ assert.throws(() => resolveShopDayRange({}, null), /invalid IANA time zone/);
 assert.throws(() => resolveShopDayRange({}, 'Mars/Olympus'), /invalid IANA time zone/);
 
 console.log('shopDayRange tests passed');
+
+// Report periods are calendar spans in the shop's zone ending today.
+{
+  const { resolveShopReportPeriod, reportTrendBuckets } = require('./shopDayRange');
+  const now = new Date('2026-11-25T23:30:00Z'); // Wed 25 Nov in London, Thu 26 Nov in Karachi
+  const week = resolveShopReportPeriod('week', {}, LONDON, now);
+  assert.strictEqual(week.startDate, '2026-11-23'); // Monday
+  assert.strictEqual(week.endDate, '2026-11-25');
+  assert.strictEqual(week.days, 3);
+  assert.strictEqual(week.previous.startDate, '2026-11-20');
+  const karachiWeek = resolveShopReportPeriod('week', {}, KARACHI, now);
+  assert.strictEqual(karachiWeek.endDate, '2026-11-26');
+  const month = resolveShopReportPeriod('month', {}, LONDON, now);
+  assert.strictEqual(month.startDate, '2026-11-01');
+  const year = resolveShopReportPeriod('year', {}, LONDON, now);
+  assert.strictEqual(year.startDate, '2026-01-01');
+  assert.throws(() => resolveShopReportPeriod('decade', {}, LONDON, now));
+  assert.throws(() => resolveShopReportPeriod('custom', { startDate: '2026-11-01' }, LONDON, now));
+
+  const days = reportTrendBuckets('today', resolveShopReportPeriod('today', {}, LONDON, now), LONDON);
+  assert.strictEqual(days.length, 7);
+  assert.strictEqual(days[6].label, '25 Nov');
+  assert.strictEqual(days[0].label, '19 Nov');
+  assert.strictEqual(days[6].to.toISOString(), '2026-11-26T00:00:00.000Z');
+  const weeks = reportTrendBuckets('week', week, LONDON);
+  assert.strictEqual(weeks[6].label, 'w/c 23 Nov');
+  const months = reportTrendBuckets('month', month, LONDON);
+  assert.strictEqual(months[6].label, 'Nov 2026');
+  assert.strictEqual(months[0].label, 'May 2026');
+}
+console.log('shopDayRange.test.js: report periods passed');

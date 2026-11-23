@@ -5,7 +5,7 @@ const { ValidationError } = require('../middlewares/universalErrorHandler');
 
 const DAY_FORMAT = 'YYYY-MM-DD';
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-/** Same ceiling as the other shop reports (utils/agentReportRange.js). */
+/** Longest range any shop report accepts. */
 const MAX_RANGE_DAYS = 366;
 
 function assertTimeZone(timeZone) {
@@ -85,7 +85,72 @@ function resolveShopDayRange(query = {}, timeZone, now = new Date()) {
     return { timeZone, ...current, previous };
 }
 
+const REPORT_PERIODS = Object.freeze(['today', 'week', 'month', 'year', 'custom']);
+
+/**
+ * Range of a shop report period, in the shop's own time zone:
+ * today | week (Monday to today) | month (1st to today) | year (1 Jan to today)
+ * | custom (startDate + endDate, see resolveShopDayRange). `previous` is the
+ * same number of days immediately before (month-to-date compares with the
+ * same number of days before the 1st).
+ *
+ * @param {string} period
+ * @param {{ startDate?: string, endDate?: string }} query
+ * @param {string} timeZone IANA zone of the shop
+ * @param {Date} [now]
+ */
+function resolveShopReportPeriod(period, query = {}, timeZone, now = new Date()) {
+    assertTimeZone(timeZone);
+    if (!REPORT_PERIODS.includes(period)) {
+        throw new ValidationError(`Invalid period. Use: ${REPORT_PERIODS.join(', ')}.`);
+    }
+    if (period === 'custom') {
+        const hasBoth = query.startDate && query.endDate;
+        if (!hasBoth) throw new ValidationError('Pick a start date and an end date.');
+        return { period, ...resolveShopDayRange(query, timeZone, now) };
+    }
+    const today = moment.tz(now, timeZone).startOf('day');
+    const start = {
+        today: today.clone(),
+        week: today.clone().startOf('isoWeek'),
+        month: today.clone().startOf('month'),
+        year: today.clone().startOf('year'),
+    }[period];
+    return {
+        period,
+        ...resolveShopDayRange(
+            { startDate: start.format(DAY_FORMAT), endDate: today.format(DAY_FORMAT) },
+            timeZone,
+            now,
+        ),
+    };
+}
+
+/**
+ * Seven trend buckets ending with the period's last day, in the shop's zone:
+ * days for today/custom, Monday-start weeks for week, months for month, years
+ * for year. Each bucket: { label, from (inclusive), to (exclusive) }.
+ */
+function reportTrendBuckets(period, range, timeZone, count = 7) {
+    assertTimeZone(timeZone);
+    const unit = { today: 'day', custom: 'day', week: 'isoWeek', month: 'month', year: 'year' }[period];
+    if (!unit) throw new ValidationError(`Invalid period. Use: ${REPORT_PERIODS.join(', ')}.`);
+    const step = unit === 'isoWeek' ? 'week' : unit;
+    const label = { day: 'DD MMM', isoWeek: '[w/c] DD MMM', month: 'MMM YYYY', year: 'YYYY' }[unit];
+    const last = moment.tz(range.endDate, DAY_FORMAT, true, timeZone).startOf(unit);
+    const buckets = [];
+    for (let i = count - 1; i >= 0; i -= 1) {
+        const from = last.clone().subtract(i, step).startOf(unit);
+        const to = from.clone().add(1, step).startOf(unit);
+        buckets.push({ label: from.format(label), from: from.toDate(), to: to.toDate() });
+    }
+    return buckets;
+}
+
 module.exports = {
     MAX_RANGE_DAYS,
+    REPORT_PERIODS,
     resolveShopDayRange,
+    resolveShopReportPeriod,
+    reportTrendBuckets,
 };
