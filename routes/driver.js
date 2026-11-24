@@ -1,6 +1,7 @@
 const express=require('express')
 const router =express()
 const asyncMiddleware=require('../middlewares/asyncHandler')
+const { otpIssueIpLimit, otpVerifyIpLimit, passwordResetIpLimit } = require('../middlewares/otpRateLimit')
 const multer=require('multer')
 const path=require('path')
 const validateAccessToken=require('../middlewares/accessToken')
@@ -63,7 +64,7 @@ router.post('/uploadVehImages', validateAccessToken, uploadVeh.array('vehImages'
 //Driver registration Step 3
 router.post('/driverRegisterStep3',uploadLic.fields([{name: 'frontImage', maxCount: 1}, {name: 'backImage', maxCount: 1} ]) , asyncMiddleware(driverController.driverRegister3))
 //Resend OTP
-router.post('/resendotp',asyncMiddleware(driverController.resendOTP))
+router.post('/resendotp',otpIssueIpLimit,asyncMiddleware(driverController.resendOTP))
 //upload Vehicle Images
 router.post('/uploadVehImages', validateAccessToken, uploadVeh.array('vehImages', 10), asyncMiddleware(driverController.uploadVehicleImages))
 //Get All vehicle Types
@@ -73,11 +74,11 @@ router.post('/uploadLicenseImages', validateAccessToken, uploadLic.fields([{name
 //Login Driver
 router.post('/driverLogin', asyncMiddleware(driverController.driverLogin))
 //Forget Password Request
-router.post('/forgetpasswordrequest', asyncMiddleware(driverController.forgetPasswordRequest));
+router.post('/forgetpasswordrequest', otpIssueIpLimit, asyncMiddleware(driverController.forgetPasswordRequest));
 //Verify Otp for Password
-router.post('/verifyotpforpass', asyncMiddleware(driverController.verifyOTPforPassword));
+router.post('/verifyotpforpass', otpVerifyIpLimit, asyncMiddleware(driverController.verifyOTPforPassword));
 //Change Password
-router.post('/changepasswordotp', asyncMiddleware(driverController.changePasswordOTP));
+router.post('/changepasswordotp', passwordResetIpLimit, asyncMiddleware(driverController.changePasswordOTP));
 //Session API
 router.post('/session',validateAccessToken,asyncMiddleware(driverController.session))
 

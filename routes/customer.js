@@ -7,6 +7,7 @@ const shopReviewController=require('../controllers/Customer/shopReviewController
 const extraTipController=require('../controllers/Customer/extraTipController')
 const adminController=require('../controllers/Admin/admin')
 const asyncMiddleware=require('../middlewares/asyncHandler')
+const { otpIssueIpLimit, otpVerifyIpLimit, passwordResetIpLimit } = require('../middlewares/otpRateLimit')
 const multer=require('multer')
 const path=require('path')
 const crypto=require('crypto')
@@ -107,11 +108,11 @@ router.post('/verifyOTpSignUp',asyncMiddleware(customerAuthControllers.verifyOTp
 //User login
 router.post('/loginUser',asyncMiddleware(customerAuthControllers.loginUser))
 //forgot password request through otp send to mail
-router.post('/forgetPasswordRequest',asyncMiddleware(customerAuthControllers.forgetPasswordRequest))
+router.post('/forgetPasswordRequest',otpIssueIpLimit,asyncMiddleware(customerAuthControllers.forgetPasswordRequest))
 //Verify OTP to change password
-router.post('/verifyOTPforPassword',asyncMiddleware(customerAuthControllers.verifyOTPforPassword))
+router.post('/verifyOTPforPassword',otpVerifyIpLimit,asyncMiddleware(customerAuthControllers.verifyOTPforPassword))
 //Change Password
-router.post('/changePasswordOTP',asyncMiddleware(customerAuthControllers.changePasswordOTP))
+router.post('/changePasswordOTP',passwordResetIpLimit,asyncMiddleware(customerAuthControllers.changePasswordOTP))
 //logout user and destroy the Token in redis
 router.get('/logout',validateAccessToken,asyncMiddleware(customerAuthControllers.logout))
 // App reports its current push token (start + token refresh)
@@ -125,7 +126,7 @@ router.post('/guest/start', asyncMiddleware(customerAuthControllers.startGuestSe
 router.get('/guest/session', validateGuestAccessToken, asyncMiddleware(customerAuthControllers.guestSession))
 router.get('/guest/logout', validateGuestAccessToken, asyncMiddleware(customerAuthControllers.guestLogout))
 //Resend OTP
-router.post('/resendOTP',asyncMiddleware(customerAuthControllers.resendOTP))
+router.post('/resendOTP',otpIssueIpLimit,asyncMiddleware(customerAuthControllers.resendOTP))
 //!------------------------------------Drawer-------------------------------//
 //get Profile
 router.get('/getUserProfile',validateAccessToken,asyncMiddleware(customerAuthControllers.getUserProfile));
