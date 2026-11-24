@@ -245,7 +245,10 @@ paths:
         another account) and never picks the account. The code must be the account's current code:
         issued, not used, not expired (1 minute), compared exactly. It is single use. Every guess
         counts; the 5th wrong guess invalidates the code (429) and a new code must be requested
-        (resend). Limited per client IP (429). Lifecycle: services/shared/passwordReset.js.
+        (resend). Limited per client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Customer > Auth
       requestBody:
@@ -468,11 +471,17 @@ paths:
       description: >-
         Emails a 4-digit code to the customer account with this email. Password reset lifecycle (services/shared/passwordReset.js), the same for customers,
         shop agents and drivers: a new code (4 digits, valid 1 minute) replaces any earlier
-        code and ends an earlier verified reset; at most 5 codes per account per hour (429),
-        counting resends and sign-up re-issues. Trade-off: these requests need no sign-in, so
-        anyone who knows the email can use the allowance up and delay this account's reset
-        until the hour ends; without the cap, the 5-guess limit per code would not bound
-        guessing. After verification the new password must be set within 10 minutes.
+        code and ends an earlier verified reset. The code is a password-reset code: it verifies
+        only through verifyOTPforPassword, never through sign-up verification. Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        After verification the new password must be set within 10 minutes.
         The response's otpId and userId are passed to verifyOTPforPassword and changePasswordOTP.
         Limited per client IP (429).
       tags:
@@ -516,7 +525,9 @@ paths:
     post:
       summary: Verify the password reset code
       description: >-
-        The code must be the account's current, unexpired code. It is single use: on success it
+        The code must be the account's current, unexpired password-reset code (forgetPasswordRequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. It is single use: on success it
         is used up and the reset is open for 10 minutes (changePasswordOTP), a window of its own
         for typing and confirming the new password. A userId that is sent must be the code's
         owner (401). Every guess counts;
@@ -4054,7 +4065,10 @@ paths:
         picks the account. The code must be the account's current code: issued, not used, not
         expired (1 minute), compared exactly. It is single use. Every guess counts; the 5th wrong
         guess invalidates the code (429) and a new code must be requested (resend). Limited per
-        client IP (429). Lifecycle: services/shared/passwordReset.js.
+        client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Driver > Driver Auth
       requestBody:
@@ -4139,10 +4153,20 @@ paths:
       description: >-
         Emails a new code for the driver account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
-        found). A new code replaces the earlier one and ends a reset in progress. At most 5 codes
-        per account per hour, counting forget-password requests and sign-up re-issues (429); these
-        requests need no sign-in, so the allowance of an account can be used up by others, which
-        delays that account's reset until the hour ends. Limited per client IP (429).
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        the purpose of the code it replaces: a password-reset code for a verified account (it can
+        only be resetting its password); for an account not verified yet, a password-reset code
+        when its current code is one, otherwise a sign-up code. A code verifies only through the
+        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Driver > Driver Auth
       requestBody:
@@ -4215,6 +4239,19 @@ paths:
       tags:
         - Driver > Driver Auth
       summary: forget password request
+      description: >-
+        Emails a 4-digit password-reset code (valid 1 minute) to the driver account with this
+        email; it replaces any earlier code and ends an earlier verified reset. It verifies only
+        through verifyotpforpass, never through sign-up verification (verifyotp). Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing. Lifecycle:
+        services/shared/passwordReset.js.
       requestBody:
         content:
           application/json:
@@ -4571,6 +4608,10 @@ paths:
       tags:
         - Driver > Driver Auth
       summary: verify OTP forgetpassword
+      description: >-
+        The code must be the account's current, unexpired password-reset code (forgetpasswordrequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. Lifecycle: services/shared/passwordReset.js.
       requestBody:
         content:
           application/json:
@@ -4984,7 +5025,10 @@ paths:
         another account) and never picks the account. The code must be the account's current code:
         issued, not used, not expired (1 minute), compared exactly. It is single use. Every guess
         counts; the 5th wrong guess invalidates the code (429) and a new code must be requested
-        (resend). Limited per client IP (429). Lifecycle: services/shared/passwordReset.js.
+        (resend). Limited per client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Agent > Auth
       requestBody:
@@ -5296,11 +5340,17 @@ paths:
       description: >-
         Emails a 4-digit code to the shop owner account with this email. Password reset lifecycle (services/shared/passwordReset.js), the same for customers,
         shop agents and drivers: a new code (4 digits, valid 1 minute) replaces any earlier
-        code and ends an earlier verified reset; at most 5 codes per account per hour (429),
-        counting resends and sign-up re-issues. Trade-off: these requests need no sign-in, so
-        anyone who knows the email can use the allowance up and delay this account's reset
-        until the hour ends; without the cap, the 5-guess limit per code would not bound
-        guessing. After verification the new password must be set within 10 minutes.
+        code and ends an earlier verified reset. The code is a password-reset code: it verifies
+        only through verifyOTPforPassword, never through sign-up verification. Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        After verification the new password must be set within 10 minutes.
         The response's otpId and userId are passed to verifyOTPforPassword and changePasswordOTP.
         Limited per client IP (429).
       tags:
@@ -5344,7 +5394,9 @@ paths:
     post:
       summary: Verify the password reset code
       description: >-
-        The code must be the account's current, unexpired code. It is single use: on success it
+        The code must be the account's current, unexpired password-reset code (forgetPasswordRequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. It is single use: on success it
         is used up and the reset is open for 10 minutes (changePasswordOTP), a window of its own
         for typing and confirming the new password. A userId that is sent must be the code's
         owner (401). Every guess counts;
@@ -6836,10 +6888,20 @@ paths:
       description: >-
         Emails a new code for the customer account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
-        found). A new code replaces the earlier one and ends a reset in progress. At most 5 codes
-        per account per hour, counting forget-password requests and sign-up re-issues (429); these
-        requests need no sign-in, so the allowance of an account can be used up by others, which
-        delays that account's reset until the hour ends. Limited per client IP (429).
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        the purpose of the code it replaces: a password-reset code for a verified account (it can
+        only be resetting its password); for an account not verified yet, a password-reset code
+        when its current code is one, otherwise a sign-up code. A code verifies only through the
+        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Customer > Auth
       requestBody:
@@ -7257,10 +7319,20 @@ paths:
       description: >-
         Emails a new code for the shop owner account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
-        found). A new code replaces the earlier one and ends a reset in progress. At most 5 codes
-        per account per hour, counting forget-password requests and sign-up re-issues (429); these
-        requests need no sign-in, so the allowance of an account can be used up by others, which
-        delays that account's reset until the hour ends. Limited per client IP (429).
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        the purpose of the code it replaces: a password-reset code for a verified account (it can
+        only be resetting its password); for an account not verified yet, a password-reset code
+        when its current code is one, otherwise a sign-up code. A code verifies only through the
+        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Agent > Auth
       requestBody:
@@ -9734,8 +9806,11 @@ components:
   responses:
     OtpTooManyRequests:
       description: >-
-        Too many requests: codes issued for this account this hour (5), wrong guesses at this
-        code (5; the code is invalidated), or requests from this client IP in 15 minutes.
+        Too many requests: codes issued for this account this hour (5) or day (10), the wait
+        before a new code after repeated wrong guesses at this account (15 minutes after the
+        second locked code, doubling up to 24 hours), wrong guesses at this code (5; the code is
+        invalidated), or requests from this client IP in 15 minutes. retryAfterSeconds: when a
+        new code can be requested.
       content:
         application/json:
           examples:
