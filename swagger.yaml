@@ -111,6 +111,12 @@ paths:
       description: |
         Run one probe only. Path values:
         `mysql` | `redis` | `firebase` | `stripe` | `zeptomail`
+
+        `firebase` reports each configured Firebase project (`data.projects[]`: role, projectId,
+        status, databaseURL) and, for each ready project, `rtdb` — a bounded authenticated probe
+        of its Realtime Database (`status`: ok | missing | denied | unreachable | error,
+        `httpStatus`, `latencyMs`, `error`, `circuit`). It fails when any project's RTDB does
+        not answer (e.g. FIREBASE_DATABASE_URL set before the instance exists).
       tags:
         - Health
       parameters:
@@ -196,6 +202,10 @@ paths:
                   type: string
                   example: abcdefgh123456
                   description: Device token for notifications
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 countryId:
                   type: integer
                   example: 1
@@ -388,6 +398,10 @@ paths:
                   type: string
                   example: device-token-xyz
                   description: Device token for registered login (optional for guest)
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 lat:
                   type: number
                   description: Optional; with `lng`, zone is included in login response
@@ -2084,6 +2098,10 @@ paths:
                   type: string
                   example: "device-token-abc"
                   description: Optional device token for tracking admin sessions
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
       responses:
         '200':
           description: Admin authenticated successfully
@@ -3986,6 +4004,10 @@ paths:
                 dvToken:
                   type: string
                   example: hdhdjhehjhsjhuehejjh
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 userId:
                   type: integer
                   example: '6'
@@ -4974,6 +4996,10 @@ paths:
                   type: string
                   example: "device-token-xyz"
                   description: Device token for push notifications
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 countryId:
                   type: integer
                   example: 1
@@ -5250,6 +5276,10 @@ paths:
                   type: string
                   example: "device-token-xyz"
                   description: Device token used for tracking sessions and notifications
+                firebaseProjectId:
+                  type: string
+                  example: justdrycleansltd
+                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 signedFrom:
                   type: string
                   enum: [google, facebook, apple]
@@ -9811,6 +9841,108 @@ paths:
                 data: {}
 
 
+  /customer/deviceToken:
+    post:
+      tags: [Customer]
+      summary: Report the app's current push token
+      description: Saves the install's current FCM token (on start and on rotation) with the Firebase project that issued it.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenReport'
+      responses:
+        '200':
+          description: Token saved (`data.created`, `data.firebaseProjectId`)
+        '400':
+          description: INVALID_DEVICE_TOKEN, INVALID_FIREBASE_PROJECT_ID or FIREBASE_PROJECT_NOT_CONFIGURED
+  /agent/deviceToken:
+    post:
+      tags: [Agent]
+      summary: Report the shop app's current push token
+      description: Same as POST /customer/deviceToken for shop owners and staff.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenReport'
+      responses:
+        '200':
+          description: Token saved (`data.created`, `data.firebaseProjectId`)
+        '400':
+          description: INVALID_DEVICE_TOKEN, INVALID_FIREBASE_PROJECT_ID or FIREBASE_PROJECT_NOT_CONFIGURED
+  /admin/notification-preferences/register-fcm:
+    post:
+      tags: [Admin]
+      summary: Register / refresh the admin panel's web-push token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenReport'
+      responses:
+        '200':
+          description: Registered (`registered`, `tokenPreview`, `firebaseProjectId`)
+        '400':
+          description: Invalid token, INVALID_FIREBASE_PROJECT_ID or FIREBASE_PROJECT_NOT_CONFIGURED
+  /customer/live-tracking/{bookingId}:
+    get:
+      tags: [Customer]
+      summary: Live-tracking reader session for the customer map
+      description: >-
+        Mints a Firebase custom token in the caller's Firebase project and names that project's
+        Realtime Database. Callers that omit firebaseProjectId are on the legacy project.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LiveTrackingBookingId'
+        - $ref: '#/components/parameters/FirebaseProjectIdQuery'
+      responses:
+        '200':
+          description: Session (`data` = LiveTrackingSession plus agent, active, location, route, reason)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveTrackingSession'
+        '400':
+          description: INVALID_FIREBASE_PROJECT_ID
+        '503':
+          description: FIREBASE_NOT_CONFIGURED or FIREBASE_PROJECT_NOT_CONFIGURED
+  /agent/live-tracking/{bookingId}:
+    get:
+      tags: [Agent]
+      summary: Live-tracking publisher session for the assigned driver
+      description: >-
+        Mints a Firebase custom token in the driver app's Firebase project and records that project
+        as the session's publisher; the backend relays the driver's location/route to the other
+        configured projects' Realtime Databases.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/LiveTrackingBookingId'
+        - $ref: '#/components/parameters/FirebaseProjectIdQuery'
+      responses:
+        '200':
+          description: Session (`data` = LiveTrackingSession plus publishIntervalMs, distanceFilterMeters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveTrackingSession'
+        '400':
+          description: INVALID_FIREBASE_PROJECT_ID
+        '403':
+          description: Not the assigned driver
+        '503':
+          description: FIREBASE_NOT_CONFIGURED or FIREBASE_PROJECT_NOT_CONFIGURED
 components:
   responses:
     OtpTooManyRequests:
@@ -9836,7 +9968,63 @@ components:
                 error: "Too many OTP requests. Please wait and try again"
                 data:
                   retryAfterSeconds: 1800
+  parameters:
+    LiveTrackingBookingId:
+      name: bookingId
+      in: path
+      required: true
+      schema:
+        type: integer
+    FirebaseProjectIdQuery:
+      name: firebaseProjectId
+      in: query
+      required: false
+      description: The app's Firebase project (Firebase.app().options.projectId). Omitted = legacy project.
+      schema:
+        type: string
+        example: justdrycleansltd
   schemas:
+    PushTokenReport:
+      type: object
+      required: [dvToken]
+      properties:
+        dvToken:
+          type: string
+          description: Current FCM registration token
+        firebaseProjectId:
+          type: string
+          example: justdrycleansltd
+          description: Firebase project that issued dvToken; must be configured on this server. Omitted by older builds.
+    LiveTrackingSession:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        bookingId:
+          type: integer
+        rtdbPath:
+          type: string
+          example: liveTracking/123
+        firebaseProjectId:
+          type: string
+          example: justdrycleansltd
+          description: Project the custom token belongs to (sign in on the default Firebase app)
+        databaseUrl:
+          type: string
+          example: https://justdrycleansltd-default-rtdb.europe-west1.firebasedatabase.app
+          description: RTDB to open with FirebaseDatabase.instanceFor(app, databaseURL)
+        databaseURL:
+          type: string
+          description: Same as databaseUrl (kept for older builds)
+        firebaseAuthToken:
+          type: string
+          nullable: true
+        firebaseUid:
+          type: string
+          nullable: true
+        destination:
+          type: object
+          nullable: true
     HealthReadyResponse:
       type: object
       properties:

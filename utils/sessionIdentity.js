@@ -8,6 +8,7 @@
  */
 
 const { isValidFcmRegistrationToken } = require('./fcmToken');
+const { normalizeFirebaseProjectId } = require('./firebaseProjectId');
 const { ValidationError } = require('../middlewares/universalErrorHandler');
 
 const DEVICE_ID_ERROR = Object.freeze({
@@ -29,9 +30,24 @@ function normalizeDeviceId(value) {
 }
 
 /**
- * Which session a sign-in opens, from the request body's `deviceId` and `dvToken`.
+ * The Firebase project the body's push token belongs to (`firebaseProjectId`), or null when
+ * the client does not say (builds from before projects were reported).
+ * `valid: false` when present but not a Firebase project id: the token cannot be routed, so
+ * the caller drops it (the sign-in itself must not fail over a push detail).
+ */
+function pushTokenProjectOf(body) {
+    try {
+        return { valid: true, projectId: normalizeFirebaseProjectId(body && body.firebaseProjectId) };
+    } catch (err) {
+        return { valid: false, projectId: null, code: err.code };
+    }
+}
+
+/**
+ * Which session a sign-in opens, from the request body's `deviceId` and `dvToken`
+ * (plus `firebaseProjectId`, the project that issued the push token).
  *
- * @param {{ deviceId?: string, dvToken?: string }} body
+ * @param {{ deviceId?: string, dvToken?: string, firebaseProjectId?: string }} body
  * @param {{ required?: boolean }} [options] required (default true): refuse a sign-in with
  *   neither. Pass false only where a session is an optional by-product (signup re-submits).
  * @returns {null | {
@@ -39,26 +55,40 @@ function normalizeDeviceId(value) {
  *   claims: object,         // what the JWT carries to find it again
  *   deviceId: string|null,  // the install, null on the legacy path
  *   pushToken: string|null, // a real FCM token to deliver pushes to, if the app has one
+ *   firebaseProjectId: string|null, // project that issued pushToken; null = not reported
  *   legacy: boolean,
  * }}
+ * A malformed firebaseProjectId never fails the sign-in: the push token is dropped (a token
+ * whose project is unknown cannot be routed) and the session opens without one; the app
+ * registers it again on its next token report.
  * @throws {ValidationError} deviceId present but not a UUID; or neither given when required.
  */
 function resolveSessionIdentity(body, { required = true } = {}) {
     const rawDeviceId = trimmed(body && body.deviceId);
     const dvToken = trimmed(body && body.dvToken);
-    const pushToken = isValidFcmRegistrationToken(dvToken) ? dvToken : null;
+    let pushToken = isValidFcmRegistrationToken(dvToken) ? dvToken : null;
+    let firebaseProjectId = null;
+    if (pushToken) {
+        const reported = pushTokenProjectOf(body);
+        if (reported.valid) {
+            firebaseProjectId = reported.projectId;
+        } else {
+            console.warn(`[session] push token dropped at sign-in: firebaseProjectId rejected (${reported.code})`);
+            pushToken = null;
+        }
+    }
 
     if (rawDeviceId) {
         const deviceId = normalizeDeviceId(rawDeviceId);
         if (!deviceId) {
             throw new ValidationError('deviceId must be a UUID', { code: DEVICE_ID_ERROR.INVALID });
         }
-        return { field: deviceId, claims: { deviceId }, deviceId, pushToken, legacy: false };
+        return { field: deviceId, claims: { deviceId }, deviceId, pushToken, firebaseProjectId, legacy: false };
     }
 
     // LEGACY (deprecated): builds without deviceId identify the session by dvToken.
     if (dvToken) {
-        return { field: dvToken, claims: { dvToken }, deviceId: null, pushToken, legacy: true };
+        return { field: dvToken, claims: { dvToken }, deviceId: null, pushToken, firebaseProjectId, legacy: true };
     }
 
     if (!required) return null;
@@ -80,15 +110,16 @@ function resolveSessionIdentity(body, { required = true } = {}) {
  * @returns {object} as resolveSessionIdentity, plus `replacesField` when a legacy session moves
  */
 function identityOfSession(sessionClaims, body = {}) {
+    const firebaseProjectId = body && body.firebaseProjectId;
     const deviceId = normalizeDeviceId(sessionClaims && sessionClaims.deviceId);
-    if (deviceId) return resolveSessionIdentity({ deviceId, dvToken: body && body.dvToken });
+    if (deviceId) return resolveSessionIdentity({ deviceId, dvToken: body && body.dvToken, firebaseProjectId });
 
     const legacyField = trimmed(sessionClaims && sessionClaims.dvToken);
     if (trimmed(body && body.deviceId)) {
-        const identity = resolveSessionIdentity({ deviceId: body.deviceId, dvToken: body.dvToken });
+        const identity = resolveSessionIdentity({ deviceId: body.deviceId, dvToken: body.dvToken, firebaseProjectId });
         return legacyField ? { ...identity, replacesField: legacyField } : identity;
     }
-    return resolveSessionIdentity({ dvToken: trimmed(body && body.dvToken) || legacyField });
+    return resolveSessionIdentity({ dvToken: trimmed(body && body.dvToken) || legacyField, firebaseProjectId });
 }
 
 /**
@@ -106,4 +137,5 @@ module.exports = {
     resolveSessionIdentity,
     identityOfSession,
     sessionFieldOf,
+    pushTokenProjectOf,
 };

@@ -134,6 +134,49 @@ jobs:
             echo "app_name=laundry-api-stage" >> "$GITHUB_OUTPUT"
           fi
 
+      # Firebase Admin credential of the PRIMARY project (secret FIREBASE_SERVICE_ACCOUNT_JSON,
+      # the service-account JSON) and its RTDB URL (variable FIREBASE_DATABASE_URL), per
+      # environment. Both unset: the server's Firebase config is left as is.
+      # The key never travels through step outputs or remote environment variables (they leak
+      # into process argv / PM2 dumps): it is written to a 600 file here, copied by scp into a
+      # 700 drop directory on the server, consumed by scripts/firebase-server-credentials.sh
+      # (installed as secrets/firebase/primary.json, 600) and shredded. The deploy only receives
+      # the drop file's PATH. The RTDB URL must point at an existing instance: deploying before
+      # the database exists would make every live-tracking request wait on RTDB timeouts.
+      - name: Prepare Firebase credential
+        id: firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_DATABASE_URL: ${{ vars.FIREBASE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "FIREBASE_SERVICE_ACCOUNT_JSON not set for this environment: server Firebase config left as is"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          mkdir -p .firebase-deploy
+          chmod 700 .firebase-deploy
+          OUT=.firebase-deploy/firebase-primary.json node -e '
+            (async () => {
+              let j;
+              try { j = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON); } catch (e) { console.error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON"); process.exit(1); }
+              for (const k of ["project_id", "client_email", "private_key"]) if (typeof j[k] !== "string" || !j[k]) { console.error("FIREBASE_SERVICE_ACCOUNT_JSON has no " + k); process.exit(1); }
+              const url = (process.env.FIREBASE_DATABASE_URL || "").trim().replace(/\/+$/, "");
+              if (!/^https:\/\/\S+$/.test(url) || !url.includes(j.project_id)) { console.error("Set variable FIREBASE_DATABASE_URL to " + j.project_id + "\u0027s RTDB URL"); process.exit(1); }
+              // Unauthenticated shallow read: an existing (locked) instance answers 401/403, a
+              // missing one 404. Refuse to point the server at a database that does not exist.
+              let status = 0;
+              try { status = (await fetch(url + "/.json?shallow=true", { signal: AbortSignal.timeout(15000) })).status; } catch (e) { console.error("RTDB " + url + " unreachable: " + e.message); process.exit(1); }
+              if (status === 404) { console.error("RTDB " + url + " does not exist (HTTP 404). Create it (scripts/provisionLiveTrackingRtdb.js) before setting FIREBASE_DATABASE_URL."); process.exit(1); }
+              require("fs").writeFileSync(process.env.OUT, JSON.stringify(j), { mode: 0o600 });
+              console.log("Firebase primary project: " + j.project_id + " rtdb=" + url + " (HTTP " + status + ")");
+            })();
+          '
+          chmod 600 .firebase-deploy/firebase-primary.json
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
       - name: Upload release + deploy script (SCP)
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -147,6 +190,44 @@ jobs:
           target: ${{ steps.target.outputs.deploy_root }}/incoming/
           overwrite: true
           strip_components: 0
+
+      # Private (700) drop directory for the credential file, created before scp writes into it.
+      - name: Prepare Firebase credential drop directory
+        if: steps.firebase.outputs.present == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_ROOT: ${{ steps.target.outputs.deploy_root }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          envs: DEPLOY_ROOT
+          script: |
+            set -euo pipefail
+            umask 077
+            mkdir -p "$DEPLOY_ROOT/secrets/firebase/incoming"
+            chmod 700 "$DEPLOY_ROOT/secrets" "$DEPLOY_ROOT/secrets/firebase" "$DEPLOY_ROOT/secrets/firebase/incoming"
+
+      - name: Upload Firebase credential (SCP, 600 file in 700 directory)
+        if: steps.firebase.outputs.present == 'true'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 60s
+          source: .firebase-deploy/firebase-primary.json
+          target: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
+          tar_tmp_path: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
+          overwrite: true
+          strip_components: 1
+
+      - name: Remove local Firebase credential copy
+        if: always()
+        run: rm -rf .firebase-deploy
 
       - name: Rename incoming package + run remote deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -162,6 +243,9 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           OPS_CONTROL_TOKEN: ${{ secrets.OPS_CONTROL_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT_FILE: ${{ steps.firebase.outputs.present == 'true' && format('{0}/secrets/firebase/incoming/firebase-primary.json', steps.target.outputs.deploy_root) || '' }}
+          FIREBASE_DATABASE_URL_VALUE: ${{ vars.FIREBASE_DATABASE_URL }}
+          FIREBASE_LEGACY_DATABASE_URL_VALUE: ${{ vars.FIREBASE_LEGACY_DATABASE_URL }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -169,7 +253,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 60s
           command_timeout: 55m
-          envs: RELEASE_ID,LIVE_PATH,APP_URL,PM2_APP_NAME,DEPLOY_ROOT,APP_NAME,GITHUB_RUN_NUMBER,GITHUB_RUN_ID,GITHUB_ACTOR,GITHUB_REF_NAME,OPS_CONTROL_TOKEN
+          envs: RELEASE_ID,LIVE_PATH,APP_URL,PM2_APP_NAME,DEPLOY_ROOT,APP_NAME,GITHUB_RUN_NUMBER,GITHUB_RUN_ID,GITHUB_ACTOR,GITHUB_REF_NAME,OPS_CONTROL_TOKEN,FIREBASE_SERVICE_ACCOUNT_FILE,FIREBASE_DATABASE_URL_VALUE,FIREBASE_LEGACY_DATABASE_URL_VALUE
           script: |
             set -euo pipefail
             export HOME=/home/sigisolutions
@@ -208,4 +292,5 @@ jobs:
             export RELEASE_ID LIVE_PATH APP_URL PM2_APP_NAME DEPLOY_ROOT APP_NAME
             export GITHUB_RUN_NUMBER GITHUB_RUN_ID GITHUB_ACTOR GITHUB_REF_NAME
             export OPS_CONTROL_TOKEN
+            export FIREBASE_SERVICE_ACCOUNT_FILE FIREBASE_DATABASE_URL_VALUE FIREBASE_LEGACY_DATABASE_URL_VALUE
             bash "$DEPLOY_ROOT/remote-deploy-api.sh"

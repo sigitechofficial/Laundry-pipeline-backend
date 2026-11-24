@@ -6,6 +6,7 @@ const redisCli = require('../../redis/redis');
 const { signAdminAccessToken } = require('../../utils/adminJwt');
 const { Op } = require('sequelize');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
+const { reportedPushProject } = require('../../utils/pushTokenProject');
 
 // Universal error handling
 const { 
@@ -17,8 +18,9 @@ const {
 
 /**
  * Persist FCM registration for push. Session/redis may still use a placeholder dvToken.
+ * `firebaseProjectId`: the (validated) Firebase project that issued the token, or null.
  */
-async function upsertAdminFcmToken(userId, dvToken) {
+async function upsertAdminFcmToken(userId, dvToken, firebaseProjectId = null) {
     const trimmed = typeof dvToken === 'string' ? dvToken.trim() : '';
     if (!isValidFcmRegistrationToken(trimmed)) {
         await deviceToken.destroy({
@@ -33,6 +35,7 @@ async function upsertAdminFcmToken(userId, dvToken) {
     await deviceToken.destroy({ where: { userId } });
     await deviceToken.create({
         tokenId: trimmed,
+        firebaseProjectId,
         status: true,
         userId,
     });
@@ -46,7 +49,7 @@ class AuthService {
      * @returns {Object} Admin data with access token and features
      */
     async adminSignIn(signInData) {
-            const { email, password, dvToken } = signInData;
+            const { email, password, dvToken, firebaseProjectId } = signInData;
 
             // Find the admin data based on email, status, and userTypeId
             const adminData = await users.findOne({
@@ -69,7 +72,14 @@ class AuthService {
 
             // Only store real FCM tokens for push; placeholders stay session-only (Redis)
             if (dvToken) {
-                await upsertAdminFcmToken(adminData.id, dvToken);
+                // A project this server holds no key for must not block sign-in: skip the push
+                // token (the panel re-registers it from Alert Settings / next sign-in).
+                const project = reportedPushProject({ firebaseProjectId });
+                if (project.ok) {
+                    await upsertAdminFcmToken(adminData.id, dvToken, project.firebaseProjectId);
+                } else {
+                    console.warn(`[adminSignIn] push token of admin=${adminData.id} not stored: ${project.message}`);
+                }
             }
 
             // Get admin features
@@ -240,7 +250,7 @@ class AuthService {
     /**
      * Register / refresh FCM token for an already-logged-in admin (Alert Settings).
      */
-    async registerFcmToken(adminId, dvToken) {
+    async registerFcmToken(adminId, dvToken, firebaseProjectId = null) {
         if (!adminId) {
             throw new ValidationError('Admin id required');
         }
@@ -249,9 +259,14 @@ class AuthService {
                 'No valid FCM token. Allow browser notifications, open the site over HTTPS, then try again.'
             );
         }
-        const ok = await upsertAdminFcmToken(adminId, dvToken);
+        const project = reportedPushProject({ firebaseProjectId });
+        if (!project.ok) {
+            throw new ValidationError(project.message, { code: project.error });
+        }
+        const ok = await upsertAdminFcmToken(adminId, dvToken, project.firebaseProjectId);
         return {
             registered: ok,
+            firebaseProjectId: project.firebaseProjectId,
             tokenPreview: `${String(dvToken).trim().slice(0, 12)}…${String(dvToken).trim().slice(-8)}`,
         };
     }

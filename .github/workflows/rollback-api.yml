@@ -130,6 +130,14 @@ jobs:
               --exclude="config/config.json" --exclude="firebase.json" \
               "$DEPLOY_SOURCE/" "$LIVE_PATH/"
 
+            # Firebase credentials live outside the tree ($DEPLOY_ROOT/secrets/firebase) and
+            # survive rollbacks; a release from before multi-project Firebase reads only
+            # ./firebase.json, so point FIREBASE_DATABASE_URL back at its (legacy) RTDB.
+            if [ -f "$DEPLOY_ROOT/firebase-server-credentials.sh" ]; then
+              LIVE_PATH="$LIVE_PATH" DEPLOY_ROOT="$DEPLOY_ROOT" \
+                bash "$DEPLOY_ROOT/firebase-server-credentials.sh" downgrade "$DEPLOY_SOURCE"
+            fi
+
             cd "$LIVE_PATH"
             npm ci --omit=dev || npm install --production
             if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then

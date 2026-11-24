@@ -10,6 +10,7 @@ const axios = require('axios');
 const db = require('../models');
 const redisClient = require('../redis/redis');
 const { getFirebaseDiagnostics } = require('../utils/notification');
+const rtdbAccess = require('../utils/rtdbAccess');
 const { validateTokenConfig } = require('../helper/zeptomailApi');
 
 const ZEPTOMAIL_API_URL = 'https://api.zeptomail.com/v1.1/email';
@@ -229,32 +230,70 @@ async function checkRedis() {
   }
 }
 
+/**
+ * Firebase Admin, per configured project (primary + optional legacy, utils/firebaseProjects.js).
+ * Each ready project's Realtime Database is probed too (bounded, authenticated shallow read,
+ * utils/rtdbAccess.js): Admin initialises fine against an RTDB URL whose instance does not
+ * exist, and then every live-tracking call to it times out.
+ * ok only when every configured project is ready and its RTDB answers; `projects` reports each.
+ */
 async function checkFirebase() {
   const started = nowMs();
   try {
     const diagnostics = getFirebaseDiagnostics();
-    const ok = !!(diagnostics.firebaseReady && diagnostics.parseOk && !diagnostics.nodeTooOld);
+    const projects = (diagnostics.projects || []).map((p) => ({
+      role: p.role,
+      projectId: p.projectId || null,
+      status: p.ready ? 'ok' : 'fail',
+      error: p.error || null,
+      credentialSource: p.credentialSource,
+      fileExists: p.fileExists,
+      parseOk: p.parseOk,
+      privateKeyLooksValid: p.privateKeyLooksValid,
+      databaseURL: p.databaseURL || null,
+      databaseUrlSource: p.databaseUrlSource || null,
+    }));
+    const allReady = projects.length > 0 && projects.every((p) => p.status === 'ok');
+    await Promise.all(
+      projects.map(async (p) => {
+        if (p.status !== 'ok' || !p.projectId) return;
+        const probe = await rtdbAccess.probe(p.projectId);
+        p.rtdb = { ...probe, circuit: rtdbAccess.breakerState(p.projectId) };
+      })
+    );
+    const rtdbDown = projects.filter((p) => p.rtdb && p.rtdb.status !== 'ok');
+    const ok = !!(allReady && !diagnostics.nodeTooOld && rtdbDown.length === 0);
     let hint = diagnostics.hint || null;
     if (!diagnostics.fileExists) {
-      hint = 'firebase.json is missing next to the app root. Deploy/copy the service account JSON and restart.';
+      hint =
+        'Primary Firebase credential missing: set FIREBASE_CREDENTIALS_PATH (deploy secret FIREBASE_SERVICE_ACCOUNT_JSON) or place firebase.json at the app root, then restart.';
     } else if (!diagnostics.parseOk) {
       hint =
-        'firebase.json is invalid JSON (often broken private_key newlines on cPanel). Fix the file/secret and restart PM2.';
-    } else if (!diagnostics.firebaseReady) {
-      hint =
-        'firebase.json parses but Admin SDK init failed. Check private_key formatting and Node version, then restart.';
+        'Primary Firebase credential is invalid JSON (often broken private_key newlines). Fix the secret/file and restart PM2.';
+    } else if (!allReady) {
+      hint = `Firebase project(s) not ready: ${projects
+        .filter((p) => p.status !== 'ok')
+        .map((p) => `${p.role} (${p.error})`)
+        .join('; ')}`;
     } else if (diagnostics.nodeTooOld) {
       hint = 'Upgrade Node to >=22 for Firebase Admin 14.';
+    } else if (rtdbDown.length > 0) {
+      hint = `Realtime Database not usable: ${rtdbDown
+        .map((p) => `${p.role} ${p.projectId} ${p.rtdb.status} (${p.databaseURL}: ${p.rtdb.error})`)
+        .join('; ')}. Live tracking on that project is skipped until it answers; provision it with scripts/provisionLiveTrackingRtdb.js or fix its FIREBASE_*DATABASE_URL.`;
     }
 
     return result(
       ok ? 'ok' : 'fail',
-      diagnostics.hint || (ok ? 'Firebase Admin ready' : 'Firebase Admin not ready'),
+      ok
+        ? `Firebase Admin + RTDB ready (${projects.map((p) => `${p.role}=${p.projectId}`).join(', ')})`
+        : hint || 'Firebase Admin not ready',
       {
         latencyMs: nowMs() - started,
         critical: false,
         checkType: 'live',
         projectId: diagnostics.projectId || null,
+        projects,
         appsInitialized: diagnostics.appsInitialized,
         firebaseReady: diagnostics.firebaseReady,
         parseOk: diagnostics.parseOk,
@@ -273,7 +312,7 @@ async function checkFirebase() {
       critical: false,
       checkType: 'live',
       ...fields,
-      hint: 'Unexpected Firebase diagnostics failure. Check utils/notification.js and firebase.json.',
+      hint: 'Unexpected Firebase diagnostics failure. Check utils/firebaseProjects.js and the Firebase credential files.',
       details: fields
     });
   }

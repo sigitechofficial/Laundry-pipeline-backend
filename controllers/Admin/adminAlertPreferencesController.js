@@ -84,12 +84,12 @@ exports.sendDemo = async (req, res) => {
 
 /**
  * POST /admin/notification-preferences/register-fcm
- * Body: { dvToken: string } — refresh FCM token without re-login
+ * Body: { dvToken: string, firebaseProjectId?: string } — refresh FCM token without re-login
  */
 exports.registerFcm = async (req, res) => {
     const adminUserId = req.user?.id;
     const dvToken = req.body?.dvToken || req.body?.token;
     const authService = require('../../services/Admin/authService');
-    const data = await authService.registerFcmToken(adminUserId, dvToken);
+    const data = await authService.registerFcmToken(adminUserId, dvToken, req.body?.firebaseProjectId);
     return ResponseHelper.success(res, 'FCM token registered for admin alerts', data);
 };

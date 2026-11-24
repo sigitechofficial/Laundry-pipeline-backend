@@ -16,13 +16,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
-const { cert, getApps, initializeApp } = require('firebase-admin/app');
-const { getDatabase } = require('firebase-admin/database');
-const fs = require('fs');
-const path = require('path');
-
-const ROOT = path.join(__dirname, '..');
-const SA_PATH = path.join(ROOT, 'firebase.json');
+const firebaseProjects = require('../utils/firebaseProjects');
 
 function parseArgs(argv) {
   const out = {
@@ -218,19 +212,11 @@ async function main() {
     process.exit(1);
   }
 
-  if (!fs.existsSync(SA_PATH)) {
-    throw new Error(`Missing ${SA_PATH}`);
-  }
-  const sa = JSON.parse(fs.readFileSync(SA_PATH, 'utf8'));
-  const databaseURL =
-    process.env.FIREBASE_DATABASE_URL ||
-    'https://laundry-app-bf43c-default-rtdb.firebaseio.com';
-
-  if (!getApps().length) {
-    initializeApp({
-      credential: cert(sa),
-      databaseURL,
-    });
+  // Same Firebase config as the server (utils/firebaseProjects.js); the demo writes to the
+  // RTDB of every configured project so a customer app on any of them sees it.
+  const projects = firebaseProjects.readyProjects();
+  if (projects.length === 0) {
+    throw new Error('No Firebase project configured (FIREBASE_CREDENTIALS_PATH or ./firebase.json)');
   }
 
   let metaInfo;
@@ -345,7 +331,15 @@ async function main() {
     );
   }
 
-  const ref = getDatabase().ref(`liveTracking/${args.bookingId}`);
+  const nodes = projects.map((p) =>
+    firebaseProjects.databaseFor(p.projectId).ref(`liveTracking/${args.bookingId}`)
+  );
+  const ref = {
+    child: (name) => ({
+      set: (value) => Promise.all(nodes.map((n) => n.child(name).set(value))),
+      update: (value) => Promise.all(nodes.map((n) => n.child(name).update(value))),
+    }),
+  };
   const now = Date.now();
 
   await ref.child('meta').set({

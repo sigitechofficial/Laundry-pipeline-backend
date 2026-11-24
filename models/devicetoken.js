@@ -25,6 +25,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(36),
       allowNull: true,
     },
+    // Firebase project that issued tokenId (utils/firebaseProjects.js); NULL = not known yet,
+    // routed legacy-first and recorded on first successful send (utils/fcmRouting.js).
+    firebaseProjectId: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
   }, {
     sequelize,
     modelName: 'deviceToken',

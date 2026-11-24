@@ -77,7 +77,7 @@ const {
     UnauthorizedError,
     UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
-const { resolveSessionIdentity, openAppSession } = require('../../utils/appSession');
+const { resolveSessionIdentity, openAppSession, signupPushToken } = require('../../utils/appSession');
 const { customerLoginVerification } = require('../../utils/customerLoginVerification');
 const {
     createUnverifiedAccount,
@@ -272,7 +272,7 @@ class CustomerAuthService {
             },
             passwordHash: await bcrypt.hash(password, 8),
             otp,
-            pushToken: identity ? identity.pushToken : null,
+            ...signupPushToken(identity),
             deviceId: identity ? identity.deviceId : null,
         });
         await sendSignupOtpEmail({ email, otpCode: otp.code, userName: firstName });

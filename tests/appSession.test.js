@@ -89,11 +89,24 @@ const rejectsCode = (fn, code) => assert.throws(fn, (e) => e.name === 'Validatio
 async function run() {
     // ── Identity from a sign-in body ──────────────────────────────────────────────────
     const idNoPush = resolveSessionIdentity({ deviceId: IPAD });
-    assert.deepEqual(idNoPush, { field: IPAD, claims: { deviceId: IPAD }, deviceId: IPAD, pushToken: null, legacy: false });
+    assert.deepEqual(idNoPush, { field: IPAD, claims: { deviceId: IPAD }, deviceId: IPAD, pushToken: null, firebaseProjectId: null, legacy: false });
 
     const idPhone = resolveSessionIdentity({ deviceId: ` ${PHONE} `, dvToken: FCM('phone') });
     assert.equal(idPhone.field, PHONE_ID, 'deviceId is canonical lower case');
     assert.equal(idPhone.pushToken, FCM('phone'));
+
+    // A malformed firebaseProjectId drops the push token; the sign-in itself still succeeds.
+    const warn = console.warn;
+    console.warn = () => {};
+    const idBadProject = resolveSessionIdentity({ deviceId: PHONE, dvToken: FCM('phone'), firebaseProjectId: 'Bad_ID!' });
+    console.warn = warn;
+    assert.equal(idBadProject.field, PHONE_ID);
+    assert.equal(idBadProject.pushToken, null);
+    assert.equal(idBadProject.firebaseProjectId, null);
+    assert.equal(
+        resolveSessionIdentity({ deviceId: PHONE, dvToken: FCM('phone'), firebaseProjectId: 'justdrycleansltd' }).firebaseProjectId,
+        'justdrycleansltd'
+    );
 
     // A placeholder push token is not a push address (and never the session id when a deviceId is sent).
     assert.equal(resolveSessionIdentity({ deviceId: IPAD, dvToken: 'no-fcm-token' }).pushToken, null);
@@ -105,7 +118,7 @@ async function run() {
 
     // LEGACY: dvToken-only builds — the session is named by that token, exactly as before.
     const idLegacy = resolveSessionIdentity({ dvToken: FCM('old') });
-    assert.deepEqual(idLegacy, { field: FCM('old'), claims: { dvToken: FCM('old') }, deviceId: null, pushToken: FCM('old'), legacy: true });
+    assert.deepEqual(idLegacy, { field: FCM('old'), claims: { dvToken: FCM('old') }, deviceId: null, pushToken: FCM('old'), firebaseProjectId: null, legacy: true });
     assert.equal(resolveSessionIdentity({ dvToken: 'device-1' }).pushToken, null, 'legacy placeholder: session yes, push no');
 
     // ── Session field from token claims ───────────────────────────────────────────────

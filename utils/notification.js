@@ -1,132 +1,62 @@
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const { cert, getApps, initializeApp } = require('firebase-admin/app');
-const { getMessaging } = require('firebase-admin/messaging');
 const { deviceToken } = require('../models');
 const { Op } = require('sequelize');
+const firebaseProjects = require('./firebaseProjects');
+const { deliverRouted } = require('./fcmRouting');
 
-// Initialize Firebase Admin SDK only when a local service-account file exists.
-// Guard prevents "already exists" crash on hot reload.
-// Use readFileSync+JSON.parse (not require) so a fixed firebase.json can be
-// picked up without relying on Node's require cache after a bad boot.
-const firebaseCredPath = path.join(__dirname, '../firebase.json');
-let firebaseReady = false;
-let firebaseInitError = null;
-
-/**
- * RTDB URL — set FIREBASE_DATABASE_URL in env after enabling Realtime Database
- * in the Firebase console (e.g. https://laundry-app-bf43c-default-rtdb.firebaseio.com).
- */
-function getFirebaseDatabaseUrl() {
-  const fromEnv = (process.env.FIREBASE_DATABASE_URL || '').trim();
-  if (fromEnv) return fromEnv;
-  // Sensible default for project laundry-app-bf43c; override via env if region differs.
-  return 'https://laundry-app-bf43c-default-rtdb.firebaseio.com';
-}
+// Firebase Admin lives in utils/firebaseProjects.js (primary + optional legacy project).
+// Initialise at load so a broken credential shows up in the boot log, not on the first push.
+firebaseProjects.ensureFirebaseReady();
 
 function ensureFirebaseReady() {
-  if (firebaseReady && getApps().length) {
-    return true;
-  }
-  if (getApps().length) {
-    firebaseReady = true;
-    firebaseInitError = null;
-    return true;
-  }
-  if (!fs.existsSync(firebaseCredPath)) {
-    firebaseReady = false;
-    firebaseInitError = 'firebase.json not found';
-    return false;
-  }
-  try {
-    const serviceAccount = JSON.parse(fs.readFileSync(firebaseCredPath, 'utf8'));
-    const databaseURL = getFirebaseDatabaseUrl();
-    initializeApp({
-      credential: cert(serviceAccount),
-      databaseURL,
-    });
-    firebaseReady = true;
-    firebaseInitError = null;
-    console.log(
-      '[Firebase] Admin initialized OK project_id=%s databaseURL=%s',
-      serviceAccount.project_id || '?',
-      databaseURL
-    );
-    return true;
-  } catch (err) {
-    firebaseReady = false;
-    firebaseInitError = err.message;
-    console.warn(
-      'Firebase Admin not initialized (invalid or missing firebase.json):',
-      err.message
-    );
-    return false;
-  }
+  firebaseProjects.ensureFirebaseReady();
+  return firebaseProjects.isAnyProjectReady();
 }
 
-ensureFirebaseReady();
-
 /**
- * Safe diagnostics for firebase.json + Admin SDK (no secrets leaked).
+ * Safe diagnostics for the Firebase credentials + Admin SDK (no secrets leaked).
+ * Top-level fields describe the primary project (shape kept for existing callers);
+ * `projects` lists every configured project.
  */
 function getFirebaseDiagnostics() {
-  // Retry init if file was fixed after a failed boot (common on stage deploys).
-  ensureFirebaseReady();
-
-  const fileExists = fs.existsSync(firebaseCredPath);
-  let parseOk = false;
-  let parseError = null;
-  let projectId = null;
-  let clientEmail = null;
-  let privateKeyLooksValid = null;
-  let filePreview = null;
-
-  if (fileExists) {
-    try {
-      const raw = fs.readFileSync(firebaseCredPath, 'utf8');
-      filePreview = raw.slice(0, 80).replace(/\s+/g, ' ');
-      const sa = JSON.parse(raw);
-      parseOk = true;
-      projectId = sa.project_id || null;
-      clientEmail = sa.client_email || null;
-      const pk = typeof sa.private_key === 'string' ? sa.private_key : '';
-      privateKeyLooksValid =
-        pk.includes('BEGIN PRIVATE KEY') && (pk.includes('\\n') || pk.includes('\n'));
-    } catch (err) {
-      parseError = err.message;
-    }
-  }
+  // Retries init if a credential file was fixed after a failed boot (common on stage deploys).
+  const ready = ensureFirebaseReady();
+  const projects = firebaseProjects.projectDiagnostics();
+  const primary = projects.find((p) => p.role === firebaseProjects.ROLE.PRIMARY) || {};
 
   const nodeMajor = Number(String(process.versions.node || '0').split('.')[0]);
   const nodeTooOld = nodeMajor > 0 && nodeMajor < 22;
+  const failing = projects.filter((p) => !p.ready);
 
   return {
-    firebaseReady,
-    firebaseInitError,
-    appsInitialized: getApps().length,
-    credPath: firebaseCredPath,
-    databaseURL: getFirebaseDatabaseUrl(),
-    fileExists,
-    parseOk,
-    parseError,
-    projectId,
-    clientEmail,
-    privateKeyLooksValid,
-    filePreview,
+    firebaseReady: Boolean(primary.ready),
+    anyProjectReady: ready,
+    firebaseInitError: primary.error || null,
+    appsInitialized: projects.filter((p) => p.ready).length,
+    credentialSource: primary.credentialSource || null,
+    databaseURL: primary.databaseURL || null,
+    fileExists: Boolean(primary.fileExists),
+    parseOk: Boolean(primary.parseOk),
+    parseError: primary.parseError || null,
+    projectId: primary.projectId || null,
+    clientEmail: primary.clientEmail || null,
+    privateKeyLooksValid: primary.privateKeyLooksValid ?? null,
+    projects,
     nodeVersion: process.version,
     nodeMajor,
     nodeTooOld,
     firebaseAdminHint: nodeTooOld
       ? 'Firebase Admin 14 requires Node 22 or newer.'
       : null,
-    hint: !parseOk
-      ? 'firebase.json is invalid JSON (keys/values must be quoted). Fix FIREBASE_CONTENT_STAGE secret or replace the file on the server.'
-      : !firebaseReady
-        ? 'JSON parses but Admin SDK is not ready — check private_key newlines and restart PM2.'
-        : nodeTooOld
-          ? 'Firebase initialized, but Firebase Admin 14 requires Node 22 or newer.'
-          : 'Firebase Admin looks ready.'
+    hint: !primary.fileExists
+      ? 'Primary Firebase credential file is missing (FIREBASE_CREDENTIALS_PATH, or ./firebase.json when unset).'
+      : !primary.parseOk
+        ? 'Primary Firebase credential is invalid JSON (keys/values must be quoted). Fix the deploy secret or the file on the server.'
+        : failing.length
+          ? `Firebase not ready for: ${failing.map((p) => `${p.role} (${p.error})`).join('; ')}`
+          : nodeTooOld
+            ? 'Firebase initialized, but Firebase Admin 14 requires Node 22 or newer.'
+            : 'Firebase Admin looks ready.'
   };
 }
 
@@ -176,9 +106,54 @@ function buildMulticastMessage({ title, body, data = {}, tokens, tagPrefix = 'de
   };
 }
 
+function tokenPreview(token) {
+  return `${token.slice(0, 12)}…${token.slice(-8)}`;
+}
+
+/** Route each token to its Firebase project (utils/fcmRouting.js). */
+function deliver(entries, { title, body, data, tagPrefix, dryRun }) {
+  return deliverRouted({
+    entries,
+    buildMessage: (tokens) => buildMulticastMessage({ title, body, data, tokens, tagPrefix }),
+    messagingFor: firebaseProjects.messagingFor,
+    readyProjectIds: firebaseProjects.configuredProjectIds(),
+    unclassifiedOrder: firebaseProjects.unclassifiedTokenOrder(),
+    dryRun: Boolean(dryRun),
+  });
+}
+
+function summarize(outcomes) {
+  const failedTokens = outcomes
+    .filter((o) => o.verdict !== 'delivered')
+    .map((o) => {
+      const last = o.attempts[o.attempts.length - 1] || {};
+      return {
+        token: o.token,
+        code: last.code || o.reason || 'unknown-error',
+        message: last.message || o.reason || 'Unknown FCM error',
+        verdict: o.verdict,
+        attempts: o.attempts,
+      };
+    });
+  const deliveredByProject = {};
+  for (const o of outcomes) {
+    if (o.verdict === 'delivered') {
+      deliveredByProject[o.deliveredProjectId] = (deliveredByProject[o.deliveredProjectId] || 0) + 1;
+    }
+  }
+  return {
+    successCount: outcomes.filter((o) => o.verdict === 'delivered').length,
+    failureCount: failedTokens.length,
+    failedTokens,
+    deliveredByProject,
+  };
+}
+
 /**
- * Send a push directly to one or more raw FCM registration tokens (debug / ops).
- * Does not touch the deviceToken DB.
+ * Send a push directly to one or more raw FCM registration tokens (debug / ops / admin fallback).
+ * Does not touch the deviceToken DB. Tokens go to `options.firebaseProjectId` first when given,
+ * else are routed like unclassified tokens (legacy project, then primary).
+ * `options.dryRun` validates the send with FCM without delivering it.
  */
 async function sendNotificationToTokens(tokens, title, body, data = {}, options = {}) {
   const logPrefix = '[FCM-DEBUG]';
@@ -187,18 +162,15 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
     .map((t) => (typeof t === 'string' ? t.trim() : ''))
     .filter(Boolean);
 
-  ensureFirebaseReady();
   const diag = getFirebaseDiagnostics();
   console.log(`${logPrefix} send start`, {
     tokenCount: tokenList.length,
-    tokenPreviews: tokenList.map((t) => `${t.slice(0, 12)}…${t.slice(-8)}`),
+    tokenPreviews: tokenList.map(tokenPreview),
     title,
     body,
     dataKeys: Object.keys(data || {}),
-    firebaseReady: diag.firebaseReady,
-    projectId: diag.projectId,
-    parseOk: diag.parseOk,
-    parseError: diag.parseError
+    projects: diag.projects.map((p) => ({ role: p.role, projectId: p.projectId, ready: p.ready })),
+    dryRun: Boolean(options.dryRun)
   });
 
   if (!tokenList.length) {
@@ -211,54 +183,55 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
   }
 
   if (!ensureFirebaseReady()) {
-    console.error(`${logPrefix} Firebase not ready — aborting send`, diag);
+    console.error(`${logPrefix} Firebase not ready — aborting send`, diag.hint);
     return {
       sent: false,
       reason: 'FIREBASE_NOT_CONFIGURED',
-      diagnostics: getFirebaseDiagnostics(),
+      diagnostics: diag,
       durationMs: Date.now() - startedAt
     };
   }
 
-  const message = buildMulticastMessage({
-    title,
-    body,
-    data,
-    tokens: tokenList,
-    tagPrefix: options.tagPrefix || 'debug'
-  });
-
   try {
-    const response = await getMessaging().sendEachForMulticast(message);
-    const results = response.responses.map((resp, index) => {
-      const token = tokenList[index];
-      if (resp.success) {
+    const outcomes = await deliver(
+      tokenList.map((token) => ({ token, projectId: options.firebaseProjectId || null })),
+      { title, body, data, tagPrefix: options.tagPrefix || 'debug', dryRun: options.dryRun }
+    );
+    const results = outcomes.map((o) => {
+      if (o.verdict === 'delivered') {
         return {
           success: true,
-          messageId: resp.messageId,
-          tokenPreview: `${token.slice(0, 12)}…${token.slice(-8)}`
+          messageId: o.messageId,
+          firebaseProjectId: o.deliveredProjectId,
+          tokenPreview: tokenPreview(o.token)
         };
       }
+      const last = o.attempts[o.attempts.length - 1] || {};
       return {
         success: false,
-        tokenPreview: `${token.slice(0, 12)}…${token.slice(-8)}`,
-        code: resp.error?.code || 'unknown-error',
-        message: resp.error?.message || 'Unknown FCM error',
-        errorInfo: resp.error?.errorInfo || null
+        tokenPreview: tokenPreview(o.token),
+        code: last.code || o.reason,
+        message: last.message || o.reason,
+        verdict: o.verdict,
+        attempts: o.attempts
       };
     });
+    const summary = summarize(outcomes);
 
     console.log(`${logPrefix} send done`, {
-      successCount: response.successCount,
-      failureCount: response.failureCount,
+      successCount: summary.successCount,
+      failureCount: summary.failureCount,
+      deliveredByProject: summary.deliveredByProject,
       results,
       durationMs: Date.now() - startedAt
     });
 
     return {
-      sent: response.successCount > 0,
-      successCount: response.successCount,
-      failureCount: response.failureCount,
+      sent: summary.successCount > 0,
+      dryRun: Boolean(options.dryRun),
+      successCount: summary.successCount,
+      failureCount: summary.failureCount,
+      deliveredByProject: summary.deliveredByProject,
       tokenCount: tokenList.length,
       results,
       diagnostics: diag,
@@ -282,11 +255,38 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
 }
 
 /**
+ * Apply what a send learned about the user's tokens: record each token's real project
+ * (self-healing unclassified / mis-recorded rows) and delete tokens no project accepts.
+ * `dryRun`: a validate-only send changes nothing; the counts say what a real send would do.
+ */
+async function applyDeliveryOutcomes(userId, outcomes, { dryRun = false } = {}) {
+  const learned = outcomes.filter(
+    (o) => o.verdict === 'delivered' && o.deliveredProjectId !== o.recordedProjectId
+  );
+  const dead = outcomes.filter((o) => o.verdict === 'dead').map((o) => o.token);
+  if (dryRun) {
+    return { reclassified: 0, removed: 0, wouldReclassify: learned.length, wouldRemove: dead.length };
+  }
+  for (const o of learned) {
+    await deviceToken.update(
+      { firebaseProjectId: o.deliveredProjectId },
+      { where: { userId, tokenId: o.token } }
+    );
+  }
+  if (dead.length > 0) {
+    await deviceToken.destroy({ where: { userId, tokenId: { [Op.in]: dead } } });
+  }
+  return { reclassified: learned.length, removed: dead.length };
+}
+
+/**
  * Send a notification to a user
  * @param {string} userId - The ID of the user to send the notification to
  * @param {string} title - The title of the notification
  * @param {string} body - The body of the notification
  * @param {object} data - Additional data to send with the notification
+ * @param {{ throwOnFailure?: boolean, dryRun?: boolean }} [options] dryRun: FCM validate_only,
+ *   and the deviceToken table is left untouched (no reclassification, no cleanup).
  */
 async function sendNotification(userId, title, body, data = {}, options = {}) {
   try {
@@ -303,20 +303,18 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
         diagnostics: getFirebaseDiagnostics()
       };
       if (throwOnFailure) {
-        throw new Error('Firebase Admin is not configured (missing firebase.json)');
+        throw new Error('Firebase Admin is not configured (no Firebase credential)');
       }
       return result;
     }
 
-    // Retrieve device tokens for the user
+    // Retrieve device tokens for the user, with the Firebase project each belongs to
     const tokens = await deviceToken.findAll({
       where: { userId, status: true },
-      attributes: ['tokenId']
+      attributes: ['tokenId', 'firebaseProjectId']
     });
 
-    console.log("🚀 ~ sendNotification ~ tokens:", tokens);
-
-    const { isValidFcmRegistrationToken, isStaleTokenError } = require('./fcmToken');
+    const { isValidFcmRegistrationToken } = require('./fcmToken');
     const validTokenRows = (tokens || []).filter((t) =>
       isValidFcmRegistrationToken(t.tokenId)
     );
@@ -324,7 +322,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       .map((t) => t.tokenId)
       .filter((id) => !isValidFcmRegistrationToken(id));
 
-    if (invalidTokenIds.length > 0) {
+    if (invalidTokenIds.length > 0 && !options.dryRun) {
       await deviceToken.destroy({
         where: {
           userId,
@@ -334,7 +332,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
     }
 
     if (!validTokenRows.length) {
-      console.log(`No device tokens found for user ++++++++++++++++++++++++++ ${userId}`);
+      console.log(`[FCM] no device tokens for user ${userId}`);
       const result = {
         sent: false,
         reason: 'NO_TOKENS',
@@ -349,60 +347,63 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       return result;
     }
 
-    const tokenIds = validTokenRows.map(token => token.tokenId);
-    const message = buildMulticastMessage({
+    // One entry per distinct token (the same token cannot be on two rows of one user).
+    const seen = new Set();
+    const entries = [];
+    for (const row of validTokenRows) {
+      if (seen.has(row.tokenId)) continue;
+      seen.add(row.tokenId);
+      entries.push({ token: row.tokenId, projectId: row.firebaseProjectId || null });
+    }
+
+    const outcomes = await deliver(entries, {
       title,
       body,
       data,
-      tokens: tokenIds,
-      tagPrefix: String(userId)
+      tagPrefix: String(userId),
+      dryRun: options.dryRun
     });
+    const summary = summarize(outcomes);
+    const applied = await applyDeliveryOutcomes(userId, outcomes, { dryRun: Boolean(options.dryRun) });
 
-    // Send the notification
-    const response = await getMessaging().sendEachForMulticast(message);
-    console.log('Successfully sent message:', response);
-
-    const failedTokens = response.responses
-      .map((resp, index) => ({ resp, token: tokenIds[index] }))
-      .filter(({ resp }) => !resp.success)
-      .map(({ resp, token }) => ({
-        token,
-        code: resp.error?.code || 'unknown-error',
-        message: resp.error?.message || 'Unknown FCM error'
-      }));
-
-    const invalidTokens = failedTokens
-      .filter(item => isStaleTokenError(item))
-      .map(item => item.token);
-    const keptFailures = failedTokens.filter(item => !isStaleTokenError(item));
+    const keptFailures = summary.failedTokens.filter((f) => f.verdict === 'kept');
     if (keptFailures.length > 0) {
-      // Not the token's fault (APNs/auth/quota/payload): keep the tokens, report the cause.
+      // Not the token's fault (APNs/auth/quota/payload, or a project this server holds no
+      // key for): keep the tokens, report the cause.
       console.warn(
         `[FCM] send to user ${userId} failed for ${keptFailures.length} token(s); tokens kept:`,
-        [...new Set(keptFailures.map(f => `${f.code}: ${f.message}`))].join(' | ')
+        [...new Set(keptFailures.map((f) => `${f.code}: ${f.message}`))].join(' | ')
       );
     }
 
-    if (invalidTokens.length > 0) {
-      await deviceToken.destroy({
-        where: {
-          userId,
-          tokenId: { [Op.in]: invalidTokens }
-        }
-      });
-    }
+    console.log(
+      `[FCM] user ${userId}: delivered=${summary.successCount}/${entries.length}`,
+      summary.deliveredByProject,
+      applied.reclassified || applied.removed ? applied : ''
+    );
 
     const result = {
-      sent: response.successCount > 0,
+      sent: summary.successCount > 0,
       userId,
-      tokenCount: tokenIds.length,
-      successCount: response.successCount,
-      failureCount: response.failureCount,
-      failedTokens
+      tokenCount: entries.length,
+      successCount: summary.successCount,
+      failureCount: summary.failureCount,
+      deliveredByProject: summary.deliveredByProject,
+      dryRun: Boolean(options.dryRun),
+      reclassifiedTokens: applied.reclassified,
+      removedTokens: applied.removed,
+      ...(options.dryRun
+        ? { wouldReclassifyTokens: applied.wouldReclassify, wouldRemoveTokens: applied.wouldRemove + invalidTokenIds.length }
+        : {}),
+      failedTokens: summary.failedTokens
     };
 
-    if (throwOnFailure && response.successCount === 0) {
-      throw new Error(`Notification send failed for all tokens: ${JSON.stringify(failedTokens)}`);
+    if (throwOnFailure && summary.successCount === 0) {
+      throw new Error(
+        `Notification send failed for all tokens: ${JSON.stringify(
+          summary.failedTokens.map((f) => ({ code: f.code, verdict: f.verdict }))
+        )}`
+      );
     }
 
     return result;
@@ -423,7 +424,6 @@ module.exports = {
   sendNotification,
   sendNotificationToTokens,
   getFirebaseDiagnostics,
-  getFirebaseDatabaseUrl,
   ensureFirebaseReady,
-  isFirebaseReady: () => firebaseReady
-}; 
+  isFirebaseReady: () => firebaseProjects.isAnyProjectReady()
+};

@@ -1,28 +1,65 @@
 /**
- * Provision Firebase Realtime Database for live tracking using the existing
- * service-account firebase.json (Admin SDK credentials).
+ * Provision the Firebase Realtime Database used for live tracking, with a project's
+ * service-account credential (Admin SDK):
  *
- * - Creates default RTDB instance if missing (us-central1)
- * - Deploys firebase/database.rules.json
- * - Upserts FIREBASE_DATABASE_URL into .env
+ * - creates the project's default RTDB instance (<project_id>-default-rtdb) if missing,
+ *   in the region given by --location / FIREBASE_RTDB_LOCATION (required only to create)
+ * - deploys firebase/database.rules.json
+ * - prints the database URL; --write-env=<file> also upserts it into that env file as
+ *   FIREBASE_DATABASE_URL (--role=legacy: FIREBASE_LEGACY_DATABASE_URL)
  *
- * Run: node scripts/provisionLiveTrackingRtdb.js
+ * The project comes from the credential (project_id); nothing project-specific is in code.
+ * Credential: --credentials=<file>, else FIREBASE_CREDENTIALS_PATH
+ * (--role=legacy: FIREBASE_LEGACY_CREDENTIALS_PATH), else ./firebase.json.
+ *
+ * Run:
+ *   FIREBASE_RTDB_LOCATION=europe-west1 \
+ *     node scripts/provisionLiveTrackingRtdb.js --credentials=/secure/path/new-project.json
  */
 
 'use strict';
 
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { cert, getApp, getApps, initializeApp } = require('firebase-admin/app');
+const { cert, initializeApp } = require('firebase-admin/app');
 
 const ROOT = path.join(__dirname, '..');
-const SA_PATH = path.join(ROOT, 'firebase.json');
 const RULES_PATH = path.join(ROOT, 'firebase', 'database.rules.json');
-const ENV_PATH = path.join(ROOT, '.env');
-const PROJECT_ID = 'laundry-app-bf43c';
-const INSTANCE_ID = `${PROJECT_ID}-default-rtdb`;
-const LOCATION = process.env.FIREBASE_RTDB_LOCATION || 'us-central1';
+
+function parseArgs(argv) {
+  const out = {};
+  for (const a of argv) {
+    const m = /^--([a-z-]+)(?:=(.*))?$/.exec(a);
+    if (m) out[m[1]] = m[2] === undefined ? true : m[2];
+  }
+  return out;
+}
+
+const ARGS = parseArgs(process.argv.slice(2));
+const ROLE = ARGS.role === 'legacy' ? 'legacy' : 'primary';
+const ENV_KEY = ROLE === 'legacy' ? 'FIREBASE_LEGACY_DATABASE_URL' : 'FIREBASE_DATABASE_URL';
+
+function resolveFromRoot(p) {
+  return path.isAbsolute(p) ? p : path.join(ROOT, p);
+}
+
+function credentialPath() {
+  const fromArg = typeof ARGS.credentials === 'string' ? ARGS.credentials : '';
+  const fromEnv = (
+    process.env[ROLE === 'legacy' ? 'FIREBASE_LEGACY_CREDENTIALS_PATH' : 'FIREBASE_CREDENTIALS_PATH'] || ''
+  ).trim();
+  return resolveFromRoot(fromArg || fromEnv || 'firebase.json');
+}
+
+const SA_PATH = credentialPath();
+const ENV_PATH = typeof ARGS['write-env'] === 'string' ? resolveFromRoot(ARGS['write-env']) : null;
+const LOCATION = (typeof ARGS.location === 'string' ? ARGS.location : process.env.FIREBASE_RTDB_LOCATION || '').trim();
+// Set from the credential in main().
+let PROJECT_ID = null;
+let INSTANCE_ID = null;
 
 function httpJson(method, url, headers = {}, body = null) {
   return new Promise((resolve, reject) => {
@@ -67,12 +104,8 @@ function httpJson(method, url, headers = {}, body = null) {
 }
 
 async function getAccessToken(sa) {
-  if (!getApps().length) {
-    initializeApp({
-      credential: cert(sa),
-    });
-  }
-  const cred = getApp().options.credential;
+  const app = initializeApp({ credential: cert(sa) }, `provision-${sa.project_id}`);
+  const cred = app.options.credential;
   const result = await cred.getAccessToken();
   const token = result?.access_token || result?.accessToken;
   if (!token) {
@@ -89,6 +122,32 @@ function regionalDatabaseUrl() {
   return `https://${INSTANCE_ID}.${LOCATION}.firebasedatabase.app`;
 }
 
+const RTDB_API = 'firebasedatabase.googleapis.com';
+
+function isServiceDisabled(res) {
+  const details = res?.body?.error?.details || [];
+  return res.status === 403 && details.some((d) => d && d.reason === 'SERVICE_DISABLED');
+}
+
+/** A new project has the RTDB management API off: switch it on (Service Usage API). */
+async function enableRtdbApi(token) {
+  const url = `https://serviceusage.googleapis.com/v1/projects/${PROJECT_ID}/services/${RTDB_API}:enable`;
+  const res = await httpJson('POST', url, { Authorization: `Bearer ${token}` }, {});
+  if (res.status >= 400) {
+    throw new Error(
+      `${RTDB_API} is disabled and could not be enabled (HTTP ${res.status}): ` +
+        `${res.body?.error?.message || res.raw}. Enable it in Google Cloud console and re-run.`
+    );
+  }
+  console.log(`[provision] enabled ${RTDB_API}; waiting for it to propagate…`);
+  for (let i = 0; i < 12; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const probe = await listInstances(token);
+    if (!isServiceDisabled(probe)) return probe;
+  }
+  throw new Error(`${RTDB_API} still reported disabled after enabling — re-run in a few minutes.`);
+}
+
 async function listInstances(token) {
   const url = `https://firebasedatabase.googleapis.com/v1beta/projects/${PROJECT_ID}/locations/-/instances`;
   return httpJson('GET', url, { Authorization: `Bearer ${token}` });
@@ -98,11 +157,12 @@ async function createInstance(token) {
   const url =
     `https://firebasedatabase.googleapis.com/v1beta/projects/${PROJECT_ID}` +
     `/locations/${LOCATION}/instances?databaseId=${encodeURIComponent(INSTANCE_ID)}`;
+  // <project>-default-rtdb is the project's default instance (any billing plan).
   return httpJson(
     'POST',
     url,
     { Authorization: `Bearer ${token}` },
-    { type: 'USER_OWNED' }
+    { type: 'DEFAULT_DATABASE' }
   );
 }
 
@@ -112,6 +172,7 @@ async function deployRules(token, databaseURL, rulesJson) {
 }
 
 function upsertEnv(key, value) {
+  if (!ENV_PATH) return false;
   let text = '';
   if (fs.existsSync(ENV_PATH)) {
     text = fs.readFileSync(ENV_PATH, 'utf8');
@@ -125,6 +186,7 @@ function upsertEnv(key, value) {
     text += `\n# Firebase Realtime Database (live agent tracking)\n${line}\n`;
   }
   fs.writeFileSync(ENV_PATH, text, 'utf8');
+  return true;
 }
 
 function pickDatabaseUrl(instance) {
@@ -141,11 +203,11 @@ async function main() {
   }
 
   const sa = JSON.parse(fs.readFileSync(SA_PATH, 'utf8'));
-  if (sa.project_id !== PROJECT_ID) {
-    console.warn(
-      `[warn] service account project_id=${sa.project_id} expected=${PROJECT_ID}`
-    );
+  if (!sa.project_id) {
+    throw new Error(`Service account ${path.basename(SA_PATH)} has no project_id`);
   }
+  PROJECT_ID = sa.project_id;
+  INSTANCE_ID = `${PROJECT_ID}-default-rtdb`;
 
   const rules = JSON.parse(fs.readFileSync(RULES_PATH, 'utf8'));
   console.log(`[provision] authenticating as ${sa.client_email}`);
@@ -153,6 +215,9 @@ async function main() {
 
   console.log(`[provision] listing RTDB instances for ${PROJECT_ID}…`);
   let list = await listInstances(token);
+  if (isServiceDisabled(list)) {
+    list = await enableRtdbApi(token);
+  }
   if (list.status === 403 || list.status === 401) {
     throw new Error(
       `Cannot list RTDB instances (HTTP ${list.status}). ` +
@@ -167,6 +232,12 @@ async function main() {
   let instance = instances.find((i) => i.name?.includes(INSTANCE_ID));
 
   if (!instance) {
+    if (!LOCATION) {
+      throw new Error(
+        `${INSTANCE_ID} does not exist yet: pass --location=<region> or FIREBASE_RTDB_LOCATION ` +
+          '(e.g. europe-west1) to create it'
+      );
+    }
     console.log(`[provision] creating instance ${INSTANCE_ID} in ${LOCATION}…`);
     const created = await createInstance(token);
     if (created.status >= 400) {
@@ -205,7 +276,7 @@ async function main() {
 
   const candidates = Array.from(
     new Set(
-      [instance?.databaseUrl, classicDatabaseUrl(), regionalDatabaseUrl()].filter(
+      [instance?.databaseUrl, classicDatabaseUrl(), LOCATION ? regionalDatabaseUrl() : null].filter(
         Boolean
       )
     )
@@ -235,15 +306,20 @@ async function main() {
     );
   }
 
-  upsertEnv('FIREBASE_DATABASE_URL', databaseURL);
-  console.log('[provision] wrote FIREBASE_DATABASE_URL to .env');
+  if (upsertEnv(ENV_KEY, databaseURL)) {
+    console.log(`[provision] wrote ${ENV_KEY} to ${ENV_PATH}`);
+  } else {
+    console.log(`[provision] set ${ENV_KEY}=${databaseURL} in the server env (not written: no --write-env)`);
+  }
   console.log('[provision] DONE');
   console.log(
     JSON.stringify(
       {
         projectId: PROJECT_ID,
         instanceId: INSTANCE_ID,
+        location: instance?.name ? instance.name.split('/')[3] : LOCATION || null,
         databaseURL,
+        envKey: ENV_KEY,
         rulesDeployed: true,
       },
       null,

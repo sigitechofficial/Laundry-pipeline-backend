@@ -12,6 +12,7 @@ const customError = require('../../middlewares/customError')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const { saveCurrentToken } = require('../../utils/deviceTokenStore')
+const { reportedPushProject } = require('../../utils/pushTokenProject')
 const { endAppSession, normalizeDeviceId } = require('../../utils/appSession')
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken')
 const path = require('path')
@@ -27,7 +28,7 @@ const { ValidationError } = require('../../middlewares/universalErrorHandler')
   * Combine Register with OTP
 */
 async function registerCustomerWithOTP(req, res) {
-    const { firstName, lastName, password, deviceId, dvToken, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
+    const { firstName, lastName, password, deviceId, dvToken, firebaseProjectId, phoneNum, confirmPassword, countryId, cityId, email, countryCode } = req.body;
 
     let profileImg = null;
     if (req.file) {
@@ -42,6 +43,7 @@ async function registerCustomerWithOTP(req, res) {
         password,
         deviceId,
         dvToken,
+        firebaseProjectId,
         phoneNum,
         confirmPassword,
         countryId,
@@ -62,7 +64,7 @@ async function registerCustomerWithOTP(req, res) {
    * verify OTp for SignUp
 */
 async function verifyOTpSignUp(req, res) {
-    const { otpId, OTP, userId, deviceId, dvToken } = req.body;
+    const { otpId, OTP, userId, deviceId, dvToken, firebaseProjectId } = req.body;
 
     // Call service to handle business logic
     const result = await customerAuthService.verifyOTpSignUp({
@@ -70,7 +72,8 @@ async function verifyOTpSignUp(req, res) {
         OTP,
         userId,
         deviceId,
-        dvToken
+        dvToken,
+        firebaseProjectId
     });
 
     // Set cookie
@@ -100,6 +103,7 @@ async function loginUser(req, res) {
         signedFrom,
         deviceId,
         dvToken,
+        firebaseProjectId,
         firstName,
         lastName,
         phoneNum,
@@ -116,6 +120,7 @@ async function loginUser(req, res) {
         signedFrom,
         deviceId,
         dvToken,
+        firebaseProjectId,
         firstName,
         lastName,
         phoneNum,
@@ -462,7 +467,7 @@ let VerifyOTPData = (userData, accessToken, isGuest) => {
 
 
 /**
- * POST /customer/deviceToken { dvToken } — the app reports its current push token (on start
+ * POST /customer/deviceToken { dvToken, firebaseProjectId? } — the app reports its current push token (on start
  * and whenever Firebase gives it a new one), so pushes reach the phone after a token change
  * or when it had none at sign-in. For installs with a deviceId session the token replaces
  * that install's previous one.
@@ -472,8 +477,14 @@ async function updateDeviceToken(req, res) {
     if (!isValidFcmRegistrationToken(token)) {
         return res.status(400).json({ status: "0", message: "A valid device token is required", data: {}, error: "INVALID_DEVICE_TOKEN" });
     }
-    const { created } = await saveCurrentToken(req.user.id, token, normalizeDeviceId(req.user.deviceId));
-    return res.json({ status: "1", message: "Device token saved", data: { created }, error: "" });
+    const project = reportedPushProject(req.body);
+    if (!project.ok) {
+        return res.status(400).json({ status: "0", message: project.message, data: {}, error: project.error });
+    }
+    const { created } = await saveCurrentToken(
+        req.user.id, token, normalizeDeviceId(req.user.deviceId), project.firebaseProjectId
+    );
+    return res.json({ status: "1", message: "Device token saved", data: { created, firebaseProjectId: project.firebaseProjectId }, error: "" });
 }
 
 //!--------------------------Exports------------------------------------//
