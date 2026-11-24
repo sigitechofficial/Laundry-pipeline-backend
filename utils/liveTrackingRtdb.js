@@ -11,6 +11,7 @@
 const { addressDb, users, booking } = require('../models');
 const firebaseProjects = require('./firebaseProjects');
 const liveTrackingBridge = require('./liveTrackingBridge');
+const rtdbAccess = require('./rtdbAccess');
 
 const LIVE_TRACKING_ROOT = 'liveTracking';
 /** Awaiting collection — demo / pre-trip pickup (one step before “I’m on the way”). */
@@ -40,51 +41,35 @@ function legForStatus(statusId) {
 }
 
 /**
- * RTDB calls never settle when an instance is missing or unreachable (the SDK keeps retrying),
- * so every per-project call is bounded: one project's RTDB being down must not hang the
- * endpoint or block the other project.
+ * Every RTDB call goes through utils/rtdbAccess.js: bounded by a timeout (the SDK never
+ * settles a call to a missing/unreachable instance) and circuit-broken per project, so one
+ * project's RTDB being down neither hangs the endpoint nor makes every request pay the
+ * timeout, and never blocks the other project.
  */
-const RTDB_TIMEOUT_MS = Math.max(500, Number(process.env.LIVE_TRACKING_RTDB_TIMEOUT_MS) || 5000);
+const { withTimeout } = rtdbAccess;
 
-function withTimeout(promise, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${RTDB_TIMEOUT_MS}ms`)), RTDB_TIMEOUT_MS);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-/** RTDB handle of one project, or null when it is not configured / not reachable. */
-function getDb(projectId) {
-  if (!projectId) return null;
-  try {
-    return firebaseProjects.databaseFor(projectId);
-  } catch (err) {
-    console.warn(`[liveTracking] database for ${projectId} unavailable:`, err.message);
-    return null;
-  }
-}
-
-/** Every configured project's RTDB, primary first: [{ projectId, db }]. */
+/** Every configured project, primary first: [{ projectId }]. */
 function trackingDbs() {
-  return firebaseProjects
-    .readyProjects()
-    .map((p) => ({ projectId: p.projectId, db: getDb(p.projectId) }))
-    .filter((x) => x.db);
+  return firebaseProjects.readyProjects().map((p) => ({ projectId: p.projectId }));
 }
 
 function trackingRefIn(db, bookingId) {
   return db.ref(`${LIVE_TRACKING_ROOT}/${bookingId}`);
 }
 
-/** Run `fn(ref, projectId)` on the booking in every project; collect per-project results. */
+/**
+ * Run `fn(ref, projectId)` on the booking in every project; collect per-project results.
+ * A project whose circuit is open fails at once (ok: false) instead of waiting.
+ */
 async function forEachProject(bookingId, fn) {
-  return Promise.all(trackingDbs().map(async ({ projectId, db }) => {
+  return Promise.all(trackingDbs().map(async ({ projectId }) => {
     try {
-      const value = await withTimeout(fn(trackingRefIn(db, bookingId), projectId), `RTDB ${projectId}`);
+      const value = await rtdbAccess.guarded(projectId, 'RTDB', (db) => fn(trackingRefIn(db, bookingId), projectId));
       return { projectId, ok: true, value };
     } catch (err) {
-      console.warn(`[liveTracking] booking=${bookingId} project=${projectId}:`, err.message);
+      if (err.code !== 'RTDB_CIRCUIT_OPEN') {
+        console.warn(`[liveTracking] booking=${bookingId} project=${projectId}:`, err.message);
+      }
       return { projectId, ok: false, error: err.message };
     }
   }));
@@ -362,9 +347,9 @@ async function cleanupStaleLiveTrackingSessions({ maxAgeMs = 6 * 60 * 60 * 1000 
   const dbs = trackingDbs();
   if (dbs.length === 0) return { ok: false, deleted: 0 };
   let deleted = 0;
-  for (const { projectId, db } of dbs) {
+  for (const { projectId } of dbs) {
     try {
-      deleted += await withTimeout(cleanupProject(db, maxAgeMs), `RTDB cleanup ${projectId}`);
+      deleted += await cleanupProject(projectId, maxAgeMs);
     } catch (err) {
       console.warn(`[liveTracking] cleanup project=${projectId} failed:`, err.message);
     }
@@ -373,17 +358,16 @@ async function cleanupStaleLiveTrackingSessions({ maxAgeMs = 6 * 60 * 60 * 1000 
   return { ok: true, deleted };
 }
 
-async function cleanupProject(db, maxAgeMs) {
-  const root = db.ref(LIVE_TRACKING_ROOT);
-  const snap = await root.once('value');
-  if (!snap.exists()) return 0;
+/** Prune one project's stale sessions, reading only each session's meta (not GPS/route). */
+async function cleanupProject(projectId, maxAgeMs) {
+  const metas = await rtdbAccess.readChildMetas(projectId, LIVE_TRACKING_ROOT);
+  if (metas.size === 0) return 0;
 
   const now = Date.now();
   const updates = {};
   let deleted = 0;
 
-  snap.forEach((child) => {
-    const meta = child.child('meta').val() || {};
+  metas.forEach((meta, key) => {
     const endedAt = meta.endedAt ? Number(meta.endedAt) : null;
     const startedAt = meta.startedAt ? Number(meta.startedAt) : null;
     const active = meta.active === true;
@@ -394,13 +378,13 @@ async function cleanupProject(db, maxAgeMs) {
       active && startedAt && now - startedAt > 24 * 60 * 60 * 1000;
 
     if (isStaleInactive || isOrphanActive) {
-      updates[child.key] = null;
+      updates[key] = null;
       deleted += 1;
     }
   });
 
   if (deleted > 0) {
-    await root.update(updates);
+    await rtdbAccess.guarded(projectId, 'RTDB cleanup', (db) => db.ref(LIVE_TRACKING_ROOT).update(updates));
   }
   return deleted;
 }
@@ -411,13 +395,14 @@ async function cleanupProject(db, maxAgeMs) {
  */
 async function getLiveTrackingSnapshot(bookingId, projectId = null) {
   const target = projectId || (firebaseProjects.readyProjects()[0] || {}).projectId;
-  const db = getDb(target);
-  if (!db) return null;
+  if (!target || !firebaseProjects.getProject(target)) return null;
   try {
-    const snap = await withTimeout(trackingRefIn(db, bookingId).once('value'), `RTDB ${target}`);
+    const snap = await rtdbAccess.guarded(target, 'RTDB snapshot', (db) => trackingRefIn(db, bookingId).once('value'));
     return snap.exists() ? snap.val() : null;
   } catch (err) {
-    console.warn(`[liveTracking] snapshot booking=${bookingId} project=${target}:`, err.message);
+    if (err.code !== 'RTDB_CIRCUIT_OPEN') {
+      console.warn(`[liveTracking] snapshot booking=${bookingId} project=${target}:`, err.message);
+    }
     return null;
   }
 }

@@ -31,15 +31,8 @@ function fakeDb() {
           listeners.set(p, (listeners.get(p) || []).filter((x) => x !== cb));
         },
         async once() {
-          // Root read for reconcile: children of liveTracking.
-          const children = [];
-          for (const [k, v] of data) {
-            const m = /^liveTracking\/([^/]+)\/meta$/.exec(k);
-            if (m && p === 'liveTracking') children.push({ key: m[1], meta: v });
-          }
-          return {
-            forEach(fn) { children.forEach((c) => fn({ key: c.key, child: () => ({ val: () => c.meta }) })); },
-          };
+          if (p === 'liveTracking') throw new Error('reconcile must not download the whole liveTracking tree');
+          return snap(p, data.has(p) ? data.get(p) : null);
         },
       };
     },
@@ -48,20 +41,42 @@ function fakeDb() {
 
 const dbs = { 'new-project': fakeDb(), 'old-project': fakeDb() };
 let ready = ['new-project', 'old-project'];
+const unreadable = new Set();
+const project = (projectId) => ({
+  projectId,
+  databaseURL: `https://${projectId}.rtdb.test`,
+  app: { options: { credential: { getAccessToken: async () => ({ access_token: 't', expires_in: 3600 }) } } },
+});
+// REST shallow listing (rtdbAccess.childKeys): keys under liveTracking in the fake project.
+global.fetch = async (url) => {
+  const u = new URL(url);
+  const projectId = u.hostname.replace('.rtdb.test', '');
+  assert.strictEqual(u.pathname, '/liveTracking.json');
+  assert.strictEqual(u.searchParams.get('shallow'), 'true');
+  if (unreadable.has(projectId)) return { status: 503, json: async () => ({ error: 'down' }) };
+  const keys = {};
+  for (const k of dbs[projectId].data.keys()) {
+    const m = /^liveTracking\/([^/]+)\//.exec(k);
+    if (m) keys[m[1]] = true;
+  }
+  return { status: 200, json: async () => (Object.keys(keys).length ? keys : null) };
+};
 const projectsPath = require.resolve(path.join(__dirname, '..', 'utils', 'firebaseProjects'));
 require.cache[projectsPath] = {
   id: projectsPath,
   filename: projectsPath,
   loaded: true,
   exports: {
-    readyProjects: () => ready.map((projectId) => ({ projectId })),
-    getProject: (id) => (ready.includes(id) ? { projectId: id } : null),
+    readyProjects: () => ready.map(project),
+    getProject: (id) => (ready.includes(id) ? project(id) : null),
     databaseFor: (id) => dbs[id],
   },
 };
 
 const originalLog = console.log;
 console.log = () => {};
+console.warn = () => {};
+const rtdbAccess = require('../utils/rtdbAccess');
 const bridge = require('../utils/liveTrackingBridge');
 const tick = () => new Promise((r) => setImmediate(r));
 
@@ -108,9 +123,30 @@ const tick = () => new Promise((r) => setImmediate(r));
   // Reconcile from RTDB meta (primary): active sessions with a publisher are relayed, others stopped.
   await NEW.ref('liveTracking/7/meta').set({ active: true, publisherProjectId: 'old-project' });
   await NEW.ref('liveTracking/8/meta').set({ active: false, publisherProjectId: 'old-project' });
-  const rec = await bridge.reconcileBridges();
+  let rec = await bridge.reconcileBridges();
   assert.strictEqual(rec.active, 1);
   assert.deepStrictEqual(bridge.activeBridges(), [{ bookingId: '7', sourceProjectId: 'old-project' }]);
+
+  // Union over projects: a session whose meta write only reached the legacy RTDB stays relayed.
+  await OLD.ref('liveTracking/10/meta').set({ active: true, startedAt: 100, publisherProjectId: 'old-project' });
+  // Projects disagree: the most recent meta wins (closed later in the legacy RTDB).
+  await NEW.ref('liveTracking/11/meta').set({ active: true, startedAt: 100, publisherProjectId: 'old-project' });
+  await OLD.ref('liveTracking/11/meta').set({ active: false, startedAt: 100, endedAt: 200, publisherProjectId: 'old-project' });
+  rec = await bridge.reconcileBridges();
+  assert.deepStrictEqual(bridge.activeBridges().map((b) => b.bookingId).sort(), ['10', '7']);
+
+  // One project unreadable: the other's metas still drive reconcile.
+  unreadable.add('new-project');
+  rec = await bridge.reconcileBridges();
+  assert.deepStrictEqual(rec.unreadable, ['new-project']);
+  assert.deepStrictEqual(bridge.activeBridges().map((b) => b.bookingId).sort(), ['10', '7']);
+  // No project readable: running bridges are left alone.
+  unreadable.add('old-project');
+  await assert.rejects(() => bridge.reconcileBridges(), /no project readable/);
+  assert.strictEqual(bridge.activeBridges().length, 2);
+  unreadable.clear();
+  rtdbAccess.resetForTests();
+  bridge.stopBridge(10);
 
   // Unknown publisher project, and single-project servers: nothing to bridge.
   assert.strictEqual(bridge.ensureBridge(9, 'third-project').active, false);

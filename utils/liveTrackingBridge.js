@@ -24,18 +24,11 @@
  */
 
 const firebaseProjects = require('./firebaseProjects');
+// Bounded + circuit-broken RTDB calls: a dead target project fails fast instead of
+// accumulating a pending write per GPS update.
+const rtdbAccess = require('./rtdbAccess');
 
 const LIVE_TRACKING_ROOT = 'liveTracking';
-const RTDB_TIMEOUT_MS = Math.max(500, Number(process.env.LIVE_TRACKING_RTDB_TIMEOUT_MS) || 5000);
-
-/** RTDB calls to a missing/unreachable instance never settle: bound them. */
-function withTimeout(promise, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${RTDB_TIMEOUT_MS}ms`)), RTDB_TIMEOUT_MS);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
 const RELAYED_CHILDREN = Object.freeze(['location', 'route']);
 
 /** bookingId -> { sourceProjectId, detach } */
@@ -57,8 +50,9 @@ async function relay(bookingId, child, value, targetProjectIds) {
   await Promise.all(
     targetProjectIds.map(async (projectId) => {
       try {
-        await withTimeout(firebaseProjects.databaseFor(projectId).ref(path).set(value), `relay to ${projectId}`);
+        await rtdbAccess.guarded(projectId, 'relay to', (db) => db.ref(path).set(value));
       } catch (err) {
+        if (err.code === 'RTDB_CIRCUIT_OPEN') return;
         console.warn(`[liveTrackingBridge] relay ${path} -> ${projectId} failed:`, err.message);
       }
     })
@@ -129,10 +123,20 @@ function ensureBridge(bookingId, sourceProjectId) {
   return { active: true, sourceProjectId, targets };
 }
 
+/** Latest activity of a session meta: a (re)open moves startedAt, a close sets endedAt. */
+function metaAge(meta) {
+  return Math.max(Number(meta.startedAt) || 0, Number(meta.endedAt) || 0);
+}
+
 /**
  * Bring the running bridges in line with the sessions in RTDB: every active session with a
  * publisher on a configured project is relayed, everything else is stopped.
- * Reads the session list from the primary project (meta is written to every project).
+ *
+ * The backend writes meta to every project, but a write can fail in one of them (partial
+ * failure, a project's RTDB down), so the session list is the union over every project that
+ * could be read; where projects disagree about a booking, its most recent meta wins. Only
+ * metas are read (never location/route payloads). While a project cannot be read, bridges
+ * the readable projects know nothing about are kept; when none can be read, all are kept.
  */
 async function reconcileBridges() {
   const projects = firebaseProjects.readyProjects();
@@ -140,24 +144,45 @@ async function reconcileBridges() {
     for (const id of [...bridges.keys()]) stopBridge(id);
     return { ok: true, active: 0, reason: 'SINGLE_PROJECT' };
   }
-  const snap = await withTimeout(
-    firebaseProjects.databaseFor(projects[0].projectId).ref(LIVE_TRACKING_ROOT).once('value'),
-    `reconcile read ${projects[0].projectId}`
-  );
-  const wanted = new Map();
-  snap.forEach((child) => {
-    const meta = child.child('meta').val() || {};
-    if (meta.active === true && meta.publisherProjectId) {
-      wanted.set(child.key, meta.publisherProjectId);
+  const reads = await Promise.all(projects.map(async ({ projectId }) => {
+    try {
+      return { projectId, ok: true, metas: await rtdbAccess.readChildMetas(projectId, LIVE_TRACKING_ROOT) };
+    } catch (err) {
+      return { projectId, ok: false, error: err.message };
     }
+  }));
+  const readable = reads.filter((r) => r.ok);
+  if (readable.length === 0) {
+    throw new Error(`no project readable (${reads.map((r) => `${r.projectId}: ${r.error}`).join('; ')})`);
+  }
+
+  const latest = new Map();
+  for (const { metas } of readable) {
+    metas.forEach((meta, id) => {
+      const prev = latest.get(id);
+      if (!prev || metaAge(meta) > metaAge(prev)) latest.set(id, meta);
+    });
+  }
+  const wanted = new Map();
+  latest.forEach((meta, id) => {
+    if (meta.active === true && meta.publisherProjectId) wanted.set(id, meta.publisherProjectId);
   });
+
+  // With a project unreadable, a running bridge the readable ones know nothing about may
+  // still be live there: only stop what a readable project positively shows as not relayable.
+  const complete = readable.length === reads.length;
   for (const id of [...bridges.keys()]) {
-    if (!wanted.has(id)) stopBridge(id);
+    if (wanted.has(id)) continue;
+    if (complete || latest.has(id)) stopBridge(id);
   }
   for (const [id, source] of wanted) {
     ensureBridge(id, source);
   }
-  return { ok: true, active: bridges.size };
+  return {
+    ok: true,
+    active: bridges.size,
+    unreadable: reads.filter((r) => !r.ok).map((r) => r.projectId),
+  };
 }
 
 function activeBridges() {
