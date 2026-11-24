@@ -37,6 +37,8 @@ const {
   PasswordResetError,
   codeState,
   resetState,
+  resetInProgress,
+  RESET_IN_PROGRESS_MS,
   toId,
   sequelizeResetStore,
   redisCodeLimiter,
@@ -539,7 +541,8 @@ async function run() {
     assert.equal(row(300).codePurpose, RESET);
     await rejectsWith(reset.verifySignupCode({ otpId: 300, code: verifiedResend.code, userTypeIds: CUSTOMER }), 'invalidated');
     await reset.verifyResetCode({ otpId: 300, code: verifiedResend.code, userTypeIds: CUSTOMER });
-    // Not verified: the resend keeps the purpose of the code it replaces.
+    // Not verified: a sign-up code is resent as a sign-up code; a reset requested within
+    // RESET_IN_PROGRESS_MS is resent as a reset code.
     const signup = await reset.issueCode({ userId: 40, purpose: SIGNUP });
     assert.equal((await reset.issueResendCode({ userId: 40 })).purpose, SIGNUP);
     await reset.issueCode({ userId: 40, purpose: RESET });
@@ -551,6 +554,74 @@ async function run() {
     row(signup.otpId).codePurpose = null;
     assert.equal((await reset.issueResendCode({ userId: 40 })).purpose, SIGNUP);
     await rejectsWith(reset.issueResendCode({ userId: 999 }), 'not_found');
+  }
+
+  // ── O-12-R3-1: an unverified account's reset ends, so its sign-up can still be verified ──
+  {
+    // resetInProgress: a reset code requested within RESET_IN_PROGRESS_MS, or a verified reset
+    // still open; nothing else.
+    const at = new Date('2026-11-24T10:00:00Z');
+    const ago = (ms) => new Date(at.getTime() - ms);
+    assert.equal(resetInProgress(null, at), false);
+    assert.equal(resetInProgress({ codePurpose: SIGNUP, reqAt: at }, at), false);
+    assert.equal(resetInProgress({ codePurpose: null, reqAt: at }, at), false, 'a completed reset');
+    assert.equal(resetInProgress({ codePurpose: RESET, reqAt: ago(RESET_IN_PROGRESS_MS - 1) }, at), true);
+    assert.equal(resetInProgress({ codePurpose: RESET, reqAt: ago(RESET_IN_PROGRESS_MS) }, at), false);
+    assert.equal(resetInProgress({ codePurpose: RESET, reqAt: null }, at), false, 'no request time: not held');
+    assert.equal(resetInProgress({
+      codePurpose: RESET, reqAt: ago(RESET_IN_PROGRESS_MS), verifiedAtForgetCase: true, resetExpiresAt: new Date(at.getTime() + 1),
+    }, at), true, 'a verified reset still open');
+    assert.equal(resetInProgress({
+      codePurpose: RESET, reqAt: ago(RESET_IN_PROGRESS_MS), verifiedAtForgetCase: true, resetExpiresAt: ago(1),
+    }, at), false, 'a verified reset that expired');
+  }
+  {
+    // Completed: forget → reset → (login sends it to email verification) → resend → sign-up
+    // verify succeeds, at once (the reset purpose ended with the reset, not with time).
+    const { reset, row, state } = makeWorld();
+    assert.ok(!state.users.get(20).verifiedAt, 'customer 20 never verified its sign-up');
+    await reset.issueCode({ userId: 20, purpose: SIGNUP });
+    const forgot = await reset.issueCode({ userId: 20, purpose: RESET });
+    await reset.verifyResetCode({ otpId: forgot.otpId, code: forgot.code, userTypeIds: CUSTOMER });
+    await reset.resetPassword({ otpId: forgot.otpId, password: 'n3w', userTypeIds: CUSTOMER });
+    assert.equal(row(forgot.otpId).codePurpose, null, 'the reset purpose ended with the reset');
+    const resend = await reset.issueResendCode({ userId: 20 });
+    assert.equal(resend.purpose, SIGNUP);
+    assert.equal(row(resend.otpId).codePurpose, SIGNUP);
+    assert.deepEqual(
+      await reset.verifySignupCode({ otpId: resend.otpId, code: resend.code, userTypeIds: CUSTOMER }),
+      { otpId: forgot.otpId, userId: 20 }
+    );
+  }
+  {
+    // Abandoned before the code was verified: resends within RESET_IN_PROGRESS_MS stay reset
+    // codes (the forgot-password screen after the code expired); after it, a sign-up code.
+    const { reset, advance } = makeWorld();
+    await reset.issueCode({ userId: 40, purpose: RESET });
+    advance(OTP_TTL_MS + 1);
+    const onResetScreen = await reset.issueResendCode({ userId: 40 });
+    assert.equal(onResetScreen.purpose, RESET);
+    advance(RESET_IN_PROGRESS_MS - 1);
+    assert.equal((await reset.issueResendCode({ userId: 40 })).purpose, RESET, 'held from the last request');
+    advance(RESET_IN_PROGRESS_MS);
+    const later = await reset.issueResendCode({ userId: 40 });
+    assert.equal(later.purpose, SIGNUP);
+    await reset.verifySignupCode({ userId: 40, code: later.code, userTypeIds: DRIVER });
+  }
+  {
+    // Abandoned after the code was verified: held while the verified reset is open, then a
+    // sign-up code.
+    const { reset, advance } = makeWorld();
+    const forgot = await reset.issueCode({ userId: 10, purpose: RESET });
+    advance(30 * 1000);
+    await reset.verifyResetCode({ otpId: forgot.otpId, code: forgot.code, userTypeIds: AGENT });
+    advance(RESET_IN_PROGRESS_MS - 10 * 1000); // past the request hold, the reset still open
+    const open = await reset.issueResendCode({ userId: 10 });
+    assert.equal(open.purpose, RESET);
+    advance(RESET_IN_PROGRESS_MS);
+    const abandoned = await reset.issueResendCode({ userId: 10 });
+    assert.equal(abandoned.purpose, SIGNUP);
+    await reset.verifySignupCode({ otpId: abandoned.otpId, code: abandoned.code, userTypeIds: AGENT });
   }
 
   // ── HTTP mapping keeps each API's statuses ──
@@ -626,7 +697,11 @@ async function run() {
     assert.deepEqual(updates[2].where, {
       id: 5, userId: 10, verifiedAtForgetCase: true, resetExpiresAt: { [Op.gte]: now },
     });
-    assert.deepEqual(updates[2].values, { verifiedAtForgetCase: false, resetExpiresAt: null });
+    assert.deepEqual(
+      updates[2].values,
+      { verifiedAtForgetCase: false, resetExpiresAt: null, codePurpose: null },
+      'the reset purpose ends with the reset, in the same conditional update'
+    );
     await store.setPassword(10, 'h', { id: 'tx' });
     assert.deepEqual(updates[3], { values: { password: 'h' }, where: { id: 10 }, users: true });
     await store.consumeWithoutCheck(5, SIGNUP, { verifiedAtForgetCase: false, resetExpiresAt: null });

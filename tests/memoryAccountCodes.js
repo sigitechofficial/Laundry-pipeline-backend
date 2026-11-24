@@ -107,7 +107,7 @@ function makeAccountCodeWorld({ users } = {}) {
       assert.ok(tx && tx.pending, 'consumed inside the transaction');
       const r = byId(otpId);
       if (!r || r.userId !== userId || r.verifiedAtForgetCase !== true || !live(at)(r.resetExpiresAt)) return false;
-      tx.pending.push(() => Object.assign(r, { verifiedAtForgetCase: false, resetExpiresAt: null }));
+      tx.pending.push(() => Object.assign(r, { verifiedAtForgetCase: false, resetExpiresAt: null, codePurpose: null }));
       return true;
     },
     async setPassword(userId, hash, tx) {

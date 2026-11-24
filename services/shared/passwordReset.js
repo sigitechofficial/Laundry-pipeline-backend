@@ -12,8 +12,12 @@
  *                         whatever the earlier code had reached (wrong guesses, a verified reset).
  *                         Every code is issued for one PURPOSE (otpCode.CODE_PURPOSES, stored in
  *                         codePurpose): sign-up verification, only ever for an account that is not
- *                         verified yet, or password reset. A resend keeps the purpose of the code
- *                         it replaces (a verified account can only be resetting its password).
+ *                         verified yet, or password reset. A resend issues a reset code to a
+ *                         verified account (it can only be resetting its password) and to an
+ *                         unverified one only while a reset is in progress (resetInProgress:
+ *                         RESET_IN_PROGRESS_MS after its last code was requested, or while its
+ *                         verified reset is open); otherwise the unverified account is verifying
+ *                         its sign-up and gets a sign-up code.
  *                         Issuing is bounded per account (CODE_ISSUE_LIMITS, FAILED_GUESS_BACKOFF),
  *                         so the per-code guess limit cannot be reset at will by asking for new
  *                         codes; see "Guessing bound" below.
@@ -29,7 +33,8 @@
  *                         the limit, use one code twice or use a code for the other purpose.
  *   3. resetPassword    — sets the password of the verified code's owner, never of a client
  *                         userId (one that is sent must name the owner). The verified reset is
- *                         consumed, and every session of the account ends
+ *                         consumed and the reset purpose ends with it (codePurpose = NULL, in the
+ *                         same conditional UPDATE), and every session of the account ends
  *                         (utils/appSession.endAllAppSessions) in the same transaction.
  *
  * A used, invalidated or superseded code is OTP = NULL; codeState() classifies such a row as
@@ -77,6 +82,18 @@ const MAX_FAILED_ATTEMPTS = 5;
  * emailed code can be entered (otpCode.OTP_TTL_MS). Documented in swagger.yaml.
  */
 const PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * How long after its last code was requested (otpVerifications.reqAt) a password reset of an
+ * account that is not verified yet still counts as in progress, so that a resend gives it
+ * another reset code (the forgot-password screen's resend after the 1-minute code expired).
+ * After that, or once the reset is completed, the account is verifying its sign-up again
+ * (login sends it to email verification) and a resend gives it a sign-up code. Without this
+ * bound, an abandoned reset would leave every later resend a reset code that sign-up
+ * verification refuses. A verified reset in progress is also bounded by its own
+ * resetExpiresAt. Documented in swagger.yaml with the resend endpoints.
+ */
+const RESET_IN_PROGRESS_MS = PASSWORD_RESET_WINDOW_MS;
 
 /**
  * New codes (forget-password requests, resends, sign-up re-issues) per account per window; each
@@ -172,6 +189,17 @@ function resetState(row, now) {
   if (row.verifiedAtForgetCase !== true && row.verifiedAtForgetCase !== 1) return 'not_verified';
   if (isPast(row.resetExpiresAt, now)) return 'reset_expired';
   return 'ready';
+}
+
+/**
+ * Whether the row holds a password reset still in progress: its code was issued for a reset
+ * and either requested less than RESET_IN_PROGRESS_MS ago or verified with the reset still open.
+ * A completed reset has no purpose left (resetPassword clears it).
+ */
+function resetInProgress(row, now, holdMs = RESET_IN_PROGRESS_MS) {
+  if (!row || row.codePurpose !== CODE_PURPOSES.PASSWORD_RESET) return false;
+  if (resetState(row, now) === 'ready') return true;
+  return Boolean(row.reqAt) && new Date(row.reqAt).getTime() + holdMs > now.getTime();
 }
 
 // A code of another purpose is, for this flow, no valid code (the apps' existing 400).
@@ -318,10 +346,10 @@ function createPasswordReset({
   }
 
   /**
-   * Resend: a new code for the purpose of the account's current one. A verified account can
-   * only be resetting its password; an account not verified yet keeps its code's purpose
-   * (sign-up, or a password reset it asked for), and is verifying its sign-up when its row has
-   * no purpose (no code yet, or one issued before purposes were recorded).
+   * Resend: a new code for what the account is doing. A verified account can only be resetting
+   * its password. An account not verified yet is resetting its password only while its reset
+   * is in progress (resetInProgress); otherwise (a sign-up code, no purpose, no row, a reset
+   * completed or abandoned) it is verifying its sign-up.
    * @returns {Promise<{ otpId: number, code: string, created: boolean, purpose: string }>}
    */
   async function issueResendCode({ userId }) {
@@ -330,7 +358,7 @@ function createPasswordReset({
     let purpose = CODE_PURPOSES.PASSWORD_RESET;
     if (!account.verifiedAt) {
       const row = await store.findAccountCode(account.id);
-      purpose = row && isCodePurpose(row.codePurpose) ? row.codePurpose : CODE_PURPOSES.SIGNUP;
+      purpose = resetInProgress(row, now()) ? CODE_PURPOSES.PASSWORD_RESET : CODE_PURPOSES.SIGNUP;
     }
     return issueCode({ userId: account.id, purpose });
   }
@@ -406,7 +434,7 @@ function createPasswordReset({
 function sequelizeResetStore({ sequelize, users, otpVerification }) {
   const { Op } = require('sequelize');
   const CODE_ATTRIBUTES = [
-    'id', 'userId', 'OTP', 'codePurpose', 'expirtAt', 'failedAttempts', 'verifiedAtForgetCase', 'resetExpiresAt',
+    'id', 'userId', 'OTP', 'codePurpose', 'reqAt', 'expirtAt', 'failedAttempts', 'verifiedAtForgetCase', 'resetExpiresAt',
   ];
   const USED_UP = { OTP: null, failedAttempts: 0 };
   const affected = (result) => Array.isArray(result) && result[0] > 0;
@@ -505,9 +533,10 @@ function sequelizeResetStore({ sequelize, users, otpVerification }) {
       );
     },
 
+    /** The verified reset is used up and the reset purpose ends with it. */
     async consumeVerifiedReset(otpId, userId, now, transaction) {
       return affected(await otpVerification.update(
-        { verifiedAtForgetCase: false, resetExpiresAt: null },
+        { verifiedAtForgetCase: false, resetExpiresAt: null, codePurpose: null },
         {
           where: { id: otpId, userId, verifiedAtForgetCase: true, resetExpiresAt: { [Op.gte]: now } },
           transaction,
@@ -651,6 +680,7 @@ function toHttpError(err, statusByReason = {}, messageByReason = {}) {
 module.exports = {
   MAX_FAILED_ATTEMPTS,
   PASSWORD_RESET_WINDOW_MS,
+  RESET_IN_PROGRESS_MS,
   CODE_ISSUE_LIMITS,
   FAILED_GUESS_BACKOFF,
   lockoutBackoffSec,
@@ -660,6 +690,7 @@ module.exports = {
   PasswordResetError,
   codeState,
   resetState,
+  resetInProgress,
   toId,
   createPasswordReset,
   sequelizeResetStore,
