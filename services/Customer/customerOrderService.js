@@ -3902,21 +3902,30 @@ class CustomerOrderService {
     async getHomeConfig(data = {}) {
         const { lat, lng } = data;
 
+        // The fees are the zone's, so there is no answer without a location. The
+        // codes (in `data.code`) let the app tell "set your address to see the fees"
+        // apart from "we don't serve this area yet" without reading the message.
         if (lat === undefined || lat === null || lng === undefined || lng === null) {
-            throw new ValidationError("Latitude and Longitude are required");
+            throw new ValidationError("Latitude and Longitude are required", {
+                code: HOME_CONFIG_ERROR.LOCATION_REQUIRED,
+            });
         }
 
         const parsedLat = parseFloat(lat);
         const parsedLng = parseFloat(lng);
         if (Number.isNaN(parsedLat) || Number.isNaN(parsedLng)) {
-            throw new ValidationError("Latitude and Longitude must be valid numbers");
+            throw new ValidationError("Latitude and Longitude must be valid numbers", {
+                code: HOME_CONFIG_ERROR.LOCATION_REQUIRED,
+            });
         }
 
         // Resolve zone from the given customer coordinates
         const matchedZones = await findZones(parsedLat, parsedLng);
         const activeZone = Array.isArray(matchedZones) ? matchedZones[0] : matchedZones;
         if (!activeZone) {
-            throw new NotFoundError("No active zone found for the provided coordinates");
+            throw new NotFoundError("No active zone found for the provided coordinates", {
+                code: HOME_CONFIG_ERROR.ZONE_NOT_SERVED,
+            });
         }
 
         const activeZoneId = activeZone?.id ?? null;
@@ -4055,7 +4064,14 @@ class CustomerOrderService {
     }
 }
 
+/** `data.code` of the getHomeConfig errors (stable; the app keys its message on them). */
+const HOME_CONFIG_ERROR = Object.freeze({
+    LOCATION_REQUIRED: 'LOCATION_REQUIRED',
+    ZONE_NOT_SERVED: 'ZONE_NOT_SERVED',
+});
+
 const customerOrderService = new CustomerOrderService();
+customerOrderService.HOME_CONFIG_ERROR = HOME_CONFIG_ERROR;
 customerOrderService.bookingEventSentCheckTheShops = bookingEventSentCheckTheShops;
 customerOrderService.findPreferredShopForCustomer = findPreferredShopForCustomer;
 customerOrderService.notifyPreferredShopOnly = notifyPreferredShopOnly;

@@ -271,8 +271,9 @@ router.post('/rescheduleBooking', validateAccessToken, asyncMiddleware(customerO
 router.get('/rescheduleHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerRescheduleHistory));
 
 //!----------------------------Home Screen Config---------------------//
-//Get home screen config (delivery, min order, service fee, no-show fee)
-router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherController.getHomeConfig))
+//Get home screen config (delivery, min order, service fee, no-show fee).
+//The fees depend only on the zone of the given coordinates, so a guest session reads them too.
+router.get('/getHomeConfig', validateAccessTokenOrGuest, asyncMiddleware(customerOtherController.getHomeConfig))
 
 //!----------------------------Coupon---------------------//
 //Validate and apply a coupon code (returns discount amount and final total)
