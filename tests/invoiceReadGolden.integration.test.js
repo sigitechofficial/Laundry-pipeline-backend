@@ -252,7 +252,11 @@ async function ensureReferenceData() {
         SELECT ${GOLDEN_COUPON_ID}, 'GOLDEN10', 'golden test coupon', 'percentage', 10, NULL, NULL, NULL, 0, 99, '2026-01-01', '2030-01-01', 1, '2026-01-01', '2026-01-01', NULL
         FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM coupons WHERE id = ${GOLDEN_COUPON_ID})`);
     const existing = await q('SELECT id FROM promotions WHERE name = :name', { name: GOLDEN_PROMOTION_NAME });
-    if (existing.length) return existing[0].id;
+    if (existing.length) {
+        // Paused between runs (see pauseGoldenPromotion) so local checkouts never pick it up.
+        await exec("UPDATE promotions SET status = 'active' WHERE id = :id", { id: existing[0].id });
+        return existing[0].id;
+    }
     const promoAdmin = require(path.join(ROOT, 'services/Admin/promotionAdminService'));
     const created = await promoAdmin.createPromotion({
         name: GOLDEN_PROMOTION_NAME,
@@ -268,6 +272,10 @@ async function ensureReferenceData() {
     }, 1, null);
     await promoAdmin.publishPromotion(created.id, 1, 'golden fixture', null);
     return created.id;
+}
+
+async function pauseGoldenPromotion() {
+    await exec("UPDATE promotions SET status = 'paused' WHERE name = :name", { name: GOLDEN_PROMOTION_NAME });
 }
 
 async function seed() {
@@ -483,6 +491,7 @@ function firstDifference(a, b, at = '') {
     }
     server.close();
     await deleteFixtures();
+    await pauseGoldenPromotion();
     process.exit(process.exitCode || 0);
 })().catch((err) => {
     console.error(err);
