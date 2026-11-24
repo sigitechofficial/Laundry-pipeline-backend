@@ -89,7 +89,7 @@ const rejectsCode = (fn, code) => assert.throws(fn, (e) => e.name === 'Validatio
 async function run() {
     // ── Identity from a sign-in body ──────────────────────────────────────────────────
     const idNoPush = resolveSessionIdentity({ deviceId: IPAD });
-    assert.deepEqual(idNoPush, { field: IPAD, claims: { deviceId: IPAD }, deviceId: IPAD, pushToken: null, legacy: false });
+    assert.deepEqual(idNoPush, { field: IPAD, claims: { deviceId: IPAD }, deviceId: IPAD, pushToken: null, firebaseProjectId: null, legacy: false });
 
     const idPhone = resolveSessionIdentity({ deviceId: ` ${PHONE} `, dvToken: FCM('phone') });
     assert.equal(idPhone.field, PHONE_ID, 'deviceId is canonical lower case');
@@ -105,7 +105,7 @@ async function run() {
 
     // LEGACY: dvToken-only builds — the session is named by that token, exactly as before.
     const idLegacy = resolveSessionIdentity({ dvToken: FCM('old') });
-    assert.deepEqual(idLegacy, { field: FCM('old'), claims: { dvToken: FCM('old') }, deviceId: null, pushToken: FCM('old'), legacy: true });
+    assert.deepEqual(idLegacy, { field: FCM('old'), claims: { dvToken: FCM('old') }, deviceId: null, pushToken: FCM('old'), firebaseProjectId: null, legacy: true });
     assert.equal(resolveSessionIdentity({ dvToken: 'device-1' }).pushToken, null, 'legacy placeholder: session yes, push no');
 
     // ── Session field from token claims ───────────────────────────────────────────────

@@ -22,7 +22,7 @@ const { getAdminJwtExpiresInMs } = require('../../utils/adminJwt');
 */
 
 async function signIn(req, res) {
-    const { email, password, dvToken } = req.body;
+    const { email, password, dvToken, firebaseProjectId } = req.body;
 
     // Basic validation only
     if (!email || !password) {
@@ -32,7 +32,9 @@ async function signIn(req, res) {
     const signInData = {
         email,
         password,
-        dvToken
+        dvToken,
+        // Firebase project that issued dvToken (web push); absent on older panel builds.
+        firebaseProjectId
     };
 
     const output = await authService.adminSignIn(signInData);

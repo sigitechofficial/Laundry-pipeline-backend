@@ -9,6 +9,12 @@
  * (utils/appSession.js); rows record that `deviceId` so a rotated token replaces the install's
  * old one and signing out of an install removes exactly its tokens. Rows from app builds
  * without a deviceId have deviceId NULL and are removed by token (removeUserTokens).
+ *
+ * Each row also records the Firebase project that issued the token (`firebaseProjectId`,
+ * reported by the client) so pushes go through that project (utils/fcmRouting.js). NULL means
+ * not reported (older builds): such rows are routed legacy-first and the project that
+ * accepts the token is recorded on first send. A later report without a project never
+ * clears a recorded one.
  */
 
 const { Op } = require('sequelize');
@@ -23,9 +29,10 @@ async function detachFromOtherUsers(userId, tokenId) {
 /**
  * Save the app's current token for the user (idempotent): one row, active, and on no other user.
  * With the install's `deviceId`, the token replaces that install's earlier (rotated) token.
+ * `firebaseProjectId`: the project that issued the token (validated by the caller), or null.
  * @returns {{ created: boolean }}
  */
-async function saveCurrentToken(userId, tokenId, deviceId = null) {
+async function saveCurrentToken(userId, tokenId, deviceId = null, firebaseProjectId = null) {
   await detachFromOtherUsers(userId, tokenId);
   if (deviceId) {
     await deviceToken.destroy({ where: { userId, deviceId, tokenId: { [Op.ne]: tokenId } } });
@@ -35,10 +42,13 @@ async function saveCurrentToken(userId, tokenId, deviceId = null) {
     const changes = {};
     if (!existing.status) changes.status = true;
     if (deviceId && existing.deviceId !== deviceId) changes.deviceId = deviceId;
+    if (firebaseProjectId && existing.firebaseProjectId !== firebaseProjectId) {
+      changes.firebaseProjectId = firebaseProjectId;
+    }
     if (Object.keys(changes).length) await existing.update(changes);
     return { created: false };
   }
-  await deviceToken.create({ userId, tokenId, deviceId, status: true });
+  await deviceToken.create({ userId, tokenId, deviceId, firebaseProjectId, status: true });
   return { created: true };
 }
 
@@ -47,11 +57,11 @@ async function saveCurrentToken(userId, tokenId, deviceId = null) {
  * no duplicate notifications from stale installs), and the token leaves any other user.
  * No-op without a token.
  */
-async function replaceUserToken(userId, tokenId, deviceId = null) {
+async function replaceUserToken(userId, tokenId, deviceId = null, firebaseProjectId = null) {
   if (!userId || !tokenId) return;
   await deviceToken.destroy({ where: { userId } });
   await detachFromOtherUsers(userId, tokenId);
-  await deviceToken.create({ userId, tokenId, deviceId, status: true });
+  await deviceToken.create({ userId, tokenId, deviceId, firebaseProjectId, status: true });
 }
 
 /** Sign-out of an install: forget every token that install registered for this user. */

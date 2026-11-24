@@ -19,13 +19,14 @@ function otpValues(otp) {
  * New, unverified account.
  * @param {{ sequelize, users, otpVerification, deviceToken }} deps
  * @param {{ userTypeId: number, profile: object, passwordHash: string, otp: object,
- *           pushToken?: string, deviceId?: string }} input  pushToken: a real FCM token of the
- *   signing-up install (deviceId), registered with the account so it gets pushes once verified.
+ *           pushToken?: string, deviceId?: string, firebaseProjectId?: string }} input
+ *   pushToken: a real FCM token of the signing-up install (deviceId), registered with the
+ *   account so it gets pushes once verified; firebaseProjectId: the project that issued it.
  * @returns {Promise<{ user, otpRow }>}
  */
 async function createUnverifiedAccount(deps, input) {
   const { sequelize, users, otpVerification, deviceToken } = deps;
-  const { userTypeId, profile, passwordHash, otp, pushToken, deviceId = null } = input;
+  const { userTypeId, profile, passwordHash, otp, pushToken, deviceId = null, firebaseProjectId = null } = input;
 
   return sequelize.transaction(async (transaction) => {
     const user = await users.create(
@@ -34,7 +35,10 @@ async function createUnverifiedAccount(deps, input) {
     );
     const otpRow = await otpVerification.create({ ...otpValues(otp), userId: user.id }, { transaction });
     if (pushToken) {
-      await deviceToken.create({ tokenId: pushToken, deviceId, status: true, userId: user.id }, { transaction });
+      await deviceToken.create(
+        { tokenId: pushToken, deviceId, firebaseProjectId, status: true, userId: user.id },
+        { transaction }
+      );
     }
     return { user, otpRow };
   });

@@ -1,6 +1,7 @@
 const authService = require('../../services/Agent/authService');
 const ResponseHelper = require('../../utils/responseHelper');
 const { saveCurrentToken } = require('../../utils/deviceTokenStore');
+const { reportedPushProject } = require('../../utils/pushTokenProject');
 const { identityOfSession, normalizeDeviceId } = require('../../utils/appSession');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 const { shopAgentIdFromReq } = require('../../utils/shopAgentContext');
@@ -195,7 +196,7 @@ const employeeLogin = async (req, res) => {
 };
 
 /**
- * POST /agent/deviceToken { dvToken } — the shop app reports its current push token
+ * POST /agent/deviceToken { dvToken, firebaseProjectId? } — the shop app reports its current push token
  * (on start and whenever Firebase rotates it). The server otherwise only learns the
  * token at sign-in, so a rotated token silently stopped all pushes until the next login,
  * and an install that had no token at sign-in (simulator, Firebase unavailable) got none.
@@ -209,8 +210,14 @@ const updateDeviceToken = async (req, res) => {
             status: '0', message: 'A valid device token is required', data: {}, error: 'INVALID_DEVICE_TOKEN',
         });
     }
-    const { created } = await saveCurrentToken(req.user.id, token, normalizeDeviceId(req.user.deviceId));
-    return ResponseHelper.success(res, 'Device token saved', { created });
+    const project = reportedPushProject(req.body);
+    if (!project.ok) {
+        return res.status(400).json({ status: '0', message: project.message, data: {}, error: project.error });
+    }
+    const { created } = await saveCurrentToken(
+        req.user.id, token, normalizeDeviceId(req.user.deviceId), project.firebaseProjectId
+    );
+    return ResponseHelper.success(res, 'Device token saved', { created, firebaseProjectId: project.firebaseProjectId });
 };
 
 // Employee logout

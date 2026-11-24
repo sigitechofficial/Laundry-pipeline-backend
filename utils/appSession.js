@@ -13,7 +13,8 @@
  * PUSH — the push (FCM) token is not part of the session. It is optional at sign-in (the iOS
  * simulator and devices whose Firebase fetch failed have none) and Firebase rotates it. It is
  * only a push address, kept in deviceTokens against the install (utils/deviceTokenStore.js) and
- * updated through POST /agent/deviceToken and POST /customer/deviceToken.
+ * updated through POST /agent/deviceToken and POST /customer/deviceToken. The token is stored
+ * with the Firebase project that issued it (`firebaseProjectId`, utils/firebaseProjects.js).
  *
  * LEGACY — DEPRECATED: app builds released before `deviceId` send only `dvToken` (their FCM
  * token at sign-in) and used it as the session id. They keep working exactly as before: the
@@ -36,6 +37,32 @@ const {
 } = require('./sessionIdentity');
 
 /**
+ * The project to record for a sign-in's push token, or `undefined` when the token must not be
+ * stored: the client named a project this server holds no credential for (a config lag must
+ * not block sign-in; the app re-reports its token through the deviceToken endpoint).
+ */
+function signInPushProject(userId, firebaseProjectId) {
+    const { acceptClientProject } = require('./firebaseProjects');
+    try {
+        return acceptClientProject(firebaseProjectId || null);
+    } catch (err) {
+        console.warn(`[appSession] push token of user=${userId} not stored: ${err.message}`);
+        return undefined;
+    }
+}
+
+/**
+ * The push token (and its project) to register with a new account at signup — none when the
+ * client named a project this server holds no credential for (see signInPushProject).
+ */
+function signupPushToken(identity) {
+    if (!identity || !identity.pushToken) return { pushToken: null, firebaseProjectId: null };
+    const firebaseProjectId = signInPushProject('(signup)', identity.firebaseProjectId);
+    if (firebaseProjectId === undefined) return { pushToken: null, firebaseProjectId: null };
+    return { pushToken: identity.pushToken, firebaseProjectId };
+}
+
+/**
  * Sign in: make this install the account's push target (when it has a push token) and store
  * a session for it. `claims` are the account claims (id, email, role…); the session claim is
  * added here. Returns the access token.
@@ -45,7 +72,10 @@ async function openAppSession({ userId, claims, identity }) {
     if (!identity) throw new Error('openAppSession: identity is required');
 
     if (identity.pushToken) {
-        await replaceUserToken(userId, identity.pushToken, identity.deviceId);
+        const firebaseProjectId = signInPushProject(userId, identity.firebaseProjectId);
+        if (firebaseProjectId !== undefined) {
+            await replaceUserToken(userId, identity.pushToken, identity.deviceId, firebaseProjectId);
+        }
     }
 
     const accessToken = jwt.sign({ ...claims, ...identity.claims }, process.env.JWT_ACCESS_SECRET);
@@ -89,6 +119,8 @@ module.exports = {
     resolveSessionIdentity,
     identityOfSession,
     sessionFieldOf,
+    signInPushProject,
+    signupPushToken,
     openAppSession,
     endAppSession,
 };
