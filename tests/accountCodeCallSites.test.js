@@ -16,7 +16,9 @@
  *  - the statuses and response shapes the installed apps were built against;
  *  - O-12-R2-1: a code verifies only through the flow of its purpose (a password-reset code
  *    never signs an account in through sign-up verify), a resend keeps the purpose, and the
- *    per-account backoff reaches the apps as their existing 429 with retryAfterSeconds.
+ *    per-account backoff reaches the apps as their existing 429 with retryAfterSeconds;
+ *  - O-12-R3-1: an account not verified yet that resets its password (completed or abandoned)
+ *    can still verify its sign-up from the email-verification screen's resend.
  * And, from the source tree: no module other than the shared lifecycle reads or compares a
  * code's state, so a new reader cannot reintroduce a loose comparison.
  *   node tests/accountCodeCallSites.test.js
@@ -130,6 +132,12 @@ const customer = require('../services/Customer/authService');
 const agent = require('../services/Agent/authService');
 const driver = require('../controllers/Driver/driverAuth');
 Module._load = originalLoad;
+// Mail helpers the flows require lazily (customer forgetPasswordRequest) resolve to the stub
+// too, so no test can reach the mail provider.
+for (const helper of ['../helper/otpMail', '../helper/forgotPasswordMail']) {
+  const file = require.resolve(helper);
+  require.cache[file] = { id: file, filename: file, loaded: true, exports: mailStub };
+}
 
 // The shop's display values are not part of these flows.
 agent._getUserIanaTimeZone = async () => 'Europe/London';
@@ -508,6 +516,77 @@ async function run() {
     }
     world.advance(realLifecycle.FAILED_GUESS_BACKOFF.baseSec * 1000);
     assert.ok((await agent.resendOTP({ userId: 10 })).otpId);
+  }
+
+  // ═══ O-12-R3-1: an unverified account's reset ends; its sign-up verification still works ═══
+  // Forget password → (reset completed, or abandoned) → login sends the account to email
+  // verification with its otpId → resend there → sign-up verify with the emailed code.
+  const flows = [
+    {
+      name: 'customer',
+      userId: 20,
+      async forget() { return (await customer.forgetPasswordRequest({ email: 'cust@x.test' })).otpId; },
+      async verifyReset(otpId, OTP) { await customer.verifyOTPforPassword({ otpId, OTP }); },
+      async changePassword(otpId) { await customer.changePasswordOTP({ otpId, password: 'n3w' }); },
+      async resend() { return (await customer.resendOTP({ userId: 20 })).otpId; },
+      async verifySignup(otpId, OTP) {
+        assert.equal((await customer.verifyOTpSignUp({ otpId, userId: 20, OTP, deviceId: 'd' })).userData.id, 20);
+        assert.deepEqual(record.sessions.map((x) => x.userId), [20], 'signed in');
+      },
+    },
+    {
+      name: 'agent',
+      userId: 10,
+      async forget() { return (await agent.forgetPasswordRequest({ email: 'agent@x.test' })).otpId; },
+      async verifyReset(otpId, OTP) { await agent.verifyOTPforPassword({ otpId, userId: 10, OTP }); },
+      async changePassword(otpId) { await agent.changePasswordOTP({ otpId, userId: 10, password: 'n3w' }); },
+      async resend() { return (await agent.resendOTP({ userId: 10 })).otpId; },
+      async verifySignup(otpId, OTP) {
+        assert.equal((await agent.verifyOTpSignUp({ otpId, userId: 10, OTP })).userId, 10);
+        assert.deepEqual(record.verifiedAt, [10], 'verified');
+      },
+    },
+    {
+      name: 'driver',
+      userId: 40,
+      async forget() { return (await callDriver(driver.forgetPasswordRequest, { email: 'drv@x.test' })).data.otpId; },
+      async verifyReset(otpId, OTP) { await callDriver(driver.verifyOTPforPassword, { otpId, OTP }); },
+      async changePassword(otpId) {
+        assert.equal((await callDriver(driver.changePasswordOTP, { otpId, password: 'n3w' })).status, '1');
+      },
+      async resend() { return (await callDriver(driver.resendOTP, { userId: 40 })).data.otpId; },
+      async verifySignup(otpId, OTP) {
+        assert.equal((await callDriver(driver.verifyOTP, { userId: 40, OTP })).status, '1');
+        assert.deepEqual(record.verifiedAt, [40], 'verified');
+      },
+    },
+  ];
+  for (const flow of flows) {
+    // Completed reset: the next resend is a sign-up code, at once.
+    freshWorld();
+    const forgot = await flow.forget();
+    assert.equal(world.row(forgot).codePurpose, RESET, flow.name);
+    await flow.verifyReset(forgot, world.codeOf(forgot));
+    await flow.changePassword(forgot);
+    assert.equal(world.state.users.get(flow.userId).password, 'hash(n3w)', flow.name);
+    assert.equal(world.row(forgot).codePurpose, null, `${flow.name}: the reset purpose ended with the reset`);
+    const resent = await flow.resend();
+    assert.equal(world.row(resent).codePurpose, SIGNUP, flow.name);
+    await flow.verifySignup(resent, world.codeOf(resent));
+
+    // Abandoned reset (code never entered): a reset code while it is in progress, then a
+    // sign-up code that verifies.
+    freshWorld();
+    const abandoned = await flow.forget();
+    world.advance(realLifecycle.RESET_IN_PROGRESS_MS - 1);
+    const stillResetting = await flow.resend();
+    assert.equal(world.row(stillResetting).codePurpose, RESET, `${flow.name}: forgot-password screen's resend`);
+    world.advance(realLifecycle.RESET_IN_PROGRESS_MS);
+    const resentLater = await flow.resend();
+    assert.equal(resentLater, abandoned, 'the account\'s one row');
+    assert.equal(world.row(resentLater).codePurpose, SIGNUP, flow.name);
+    nothingHappened();
+    await flow.verifySignup(resentLater, world.codeOf(resentLater));
   }
 
   // ═══ Source: only the shared lifecycle reads or compares a code's state ═════════════════
