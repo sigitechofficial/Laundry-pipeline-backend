@@ -6334,8 +6334,8 @@ paths:
                 error: "Failed to update booking status"
   /agent/getBussinessInforMation/{userId}:
     get:
-      summary: Get the signed-in shop's business information
-      description: Requires a signed-in agent session (accessToken). Returns the machine catalog and the active services of the caller's own shop (a shop employee gets the shop it works for). The userId path parameter is ignored and kept only for installed app builds. Admins use GET /admin/agents/{agentId}/business-information.
+      summary: Get a shop's business information
+      description: With a signed-in agent session (accessToken), returns the machine catalog and the active services of the caller's own shop (a shop employee gets the shop it works for) and ignores userId; an invalid session is refused with 403. Without a session (shop registration in installed app builds; pending the onboarding session) it returns the shop named by userId. Admins use GET /admin/agents/{agentId}/business-information.
       tags:
         - Agent > Agent Business
       parameters:
@@ -6344,7 +6344,7 @@ paths:
           required: true
           schema:
             type: integer
-          description: Ignored (legacy). The shop is always the signed-in caller's own.
+          description: Ignored when signed in (the caller's own shop is returned). Without a session, the shop owner whose data is returned.
       responses:
         '200':
           description: Business information fetched successfully
@@ -6401,8 +6401,8 @@ paths:
                 error: "Failed to fetch business information"
   /agent/getBussinessWrkinghours/{userId}:
     get:
-      summary: Get the signed-in shop's working hours
-      description: Requires a signed-in agent session (accessToken). Returns the working hours of the caller's own shop (a shop employee gets the shop it works for) and the platform operational hours of the shop's country. The userId path parameter is ignored and kept only for installed app builds.
+      summary: Get a shop's working hours
+      description: With a signed-in agent session (accessToken), returns the working hours of the caller's own shop (a shop employee gets the shop it works for) and the platform operational hours of the shop's country, and ignores userId; an invalid session is refused with 403. Without a session (shop registration in installed app builds; pending the onboarding session) it returns the shop named by userId.
       tags:
         - Agent > Agent Business
       parameters:
@@ -6411,7 +6411,7 @@ paths:
           required: true
           schema:
             type: integer
-          description: Ignored (legacy). The shop is always the signed-in caller's own.
+          description: Ignored when signed in (the caller's own shop is returned). Without a session, the shop owner whose data is returned.
       responses:
         '200':
           description: Business working hours fetched successfully
@@ -8546,8 +8546,8 @@ paths:
 
   /agent/getBussinessInforMation/{userId}:
     get:
-      summary: Get the signed-in shop's business information
-      description: Requires a signed-in agent session (accessToken). Returns the caller's own shop; the userId path parameter is ignored (kept for installed app builds).
+      summary: Get a shop's business information
+      description: Signed in (accessToken), returns the caller's own shop and ignores userId. Without a session (shop registration, pending the onboarding session) it returns the shop named by userId.
       tags:
         - Agent > Agent Business
       parameters:
