@@ -2,7 +2,6 @@ require("dotenv").config();
 const { users,
     userType,
     booking,
-    otpVerification,
     deviceToken,
     vehicleType,
     driverDetail,
@@ -15,17 +14,21 @@ const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
 var JSbarcode = require('jsbarcode')
-const { newOtpCode, freshCodeColumns } = require('../../services/shared/otpCode')
 const {
     defaultPasswordReset,
+    toId,
     toHttpError: passwordResetHttpError,
 } = require('../../services/shared/passwordReset')
 
-/** Accounts the driver password reset serves: drivers (userTypes.id 3). */
-const DRIVER_RESET_USER_TYPES = [3]
+/** Accounts the driver sign-up, code and password reset endpoints serve: drivers (userTypes.id 3). */
+const DRIVER_USER_TYPES = [3]
 
 /** The driver API has always answered these refusals with 400. */
 const DRIVER_RESET_STATUS = { not_found: 400, incorrect: 400, not_verified: 400 }
+
+/** Sign-up verification keeps the wording the driver app was built against (400, like customError). */
+const DRIVER_SIGNUP_STATUS = { not_found: 400, incorrect: 400 }
+const DRIVER_SIGNUP_MESSAGES = { not_found: 'OTP Data not available', incorrect: 'Invalid OTP' }
 const customError = require('../../middlewares/customError')
 const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
 const otpMail = require('../../helper/otpMail')
@@ -81,66 +84,39 @@ async function driverregisterStep1(req, res) {
                 "The phone number you entered is already taken")
         }
 
-        // A digits-only code the app's code field accepts (services/shared/otpCode.js).
+        // A new code on the account's row (services/shared/passwordReset.js): digits only, one
+        // live code per account, counted against the account's code limit.
         const DT = new Date();
-        const otp = newOtpCode(DT)
-        const OTP = otp.code
+        let issued
+        try {
+            issued = await defaultPasswordReset().issueCode({ userId: userExist.id })
+        } catch (err) {
+            throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
+        }
 
         try {
             await otpMail({
                 type: 'RegisterOTP',
                 email: email,
-                OTP: OTP,
+                OTP: issued.code,
                 userName: userExist.firstName || 'Driver'
             });
         } catch (mailError) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        if (!userExist.otpVerification) {
-            await otpVerification.create({
-                ...freshCodeColumns(otp),
-                userId: userExist.id,
-            });
-
-            let outputObj = {
-                userId: `${userExist.id}`,
-                image: `${userExist.image}`,
-                firstName: `${userExist.firstName}`,
-                lastName: `${userExist.lastName}`,
-                email: `${userExist.email}`,
-                phoneNum: `${userExist.phoneNum}`,
-                driverType: `${userExist.driverType}`,
-                accessToken: ``,
-                joinOn: DT,
-            };
-            return res.json(responsefunc("1", "Registration Step-1 Completed", outputObj, ""))
-        } else {
-            await otpVerification.update(
-                freshCodeColumns(otp),
-                { where: { userId: userExist.id } }
-            )
-
-            await otpVerification.findOne({
-                where: {
-                    userId: userExist.id
-                }
-            })
-
-            let outObj = {
-                userId: `${userExist.id}`,
-                image: `${userExist.image}`,
-                firstName: `${userExist.firstName}`,
-                lastName: `${userExist.lastName}`,
-                email: `${userExist.email}`,
-                phoneNum: `${userExist.phoneNum}`,
-                countryId: `${userExist.countries.name}`,
-                driverType: `${userExist.driverType}`,
-                accessToken: ``,
-                joinOn: DT,
-            };
-            return res.json(responsefunc("1", "Registration Step-1 Completed", outObj, ""))
-        }
+        let outputObj = {
+            userId: `${userExist.id}`,
+            image: `${userExist.image}`,
+            firstName: `${userExist.firstName}`,
+            lastName: `${userExist.lastName}`,
+            email: `${userExist.email}`,
+            phoneNum: `${userExist.phoneNum}`,
+            driverType: `${userExist.driverType}`,
+            accessToken: ``,
+            joinOn: DT,
+        };
+        return res.json(responsefunc("1", "Registration Step-1 Completed", outputObj, ""))
     } else {
         let hashedPassword = await bcrypt.hash(password, 10);
         const newUser = await users.create({
@@ -181,37 +157,24 @@ async function driverregisterStep1(req, res) {
             }
         })
 
-        const otpData = await otpVerification.findOne({
-            where: { userId: newUser.id },
-        });
-
-        // A digits-only code the app's code field accepts (services/shared/otpCode.js).
+        // The account's first code (services/shared/passwordReset.js): digits only.
         let DT = new Date();
-        const otp = newOtpCode(DT)
-        let OTP = otp.code
-
+        let issued
+        try {
+            issued = await defaultPasswordReset().issueCode({ userId: newUser.id })
+        } catch (err) {
+            throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
+        }
 
         try {
             await otpMail({
                 type: 'RegisterOTP',
                 email: email,
-                OTP: OTP,
+                OTP: issued.code,
                 userName: firstName
             });
         } catch (mailError) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
-        }
-
-        if (!otpData) {
-            await otpVerification.create({
-                ...freshCodeColumns(otp),
-                userId: newUser.id
-            })
-        } else {
-            await otpVerification.update(
-                freshCodeColumns(otp),
-                { where: { userId: newUser.id } }
-            )
         }
         let outObj = {
             userId: `${newUser.id}`,
@@ -235,24 +198,33 @@ async function driverregisterStep1(req, res) {
  *              Verify OTP 
 */
 async function verifyOTP(req, res) {
-    const { OTP, userId } = req.body
-    const otpData = await otpVerification.findOne({ where: { userId: userId } })
-    if (!otpData) {
-        throw new customError(
-            "OTP Data not available",
-            "Please try sending OTP again"
-        )
-    }
+    // Special test OTP - bypass normal verification
+    return verifyDriverSignupCode(req, res, req.body.OTP === '5678')
+}
 
-    if (otpData.OTP != OTP && OTP !== '5678') {
-        throw new customError(
-            "Invalid OTP",
-            "Please enter correct OTP to continue"
-        )
+/**
+ * Sign-up verification for both driver verify handlers. The app sends the account (userId) and
+ * the code; the code must be that driver account's live code and is used up (single use,
+ * limited wrong guesses: services/shared/passwordReset.js). An otpId, if sent, names the row
+ * and the userId must be its owner.
+ */
+async function verifyDriverSignupCode(req, res, skipCodeCheck) {
+    const { OTP, userId, otpId } = req.body
+    let verified
+    try {
+        verified = await defaultPasswordReset().verifySignupCode({
+            otpId,
+            userId,
+            code: OTP,
+            userTypeIds: DRIVER_USER_TYPES,
+            skipCodeCheck,
+        })
+    } catch (err) {
+        throw passwordResetHttpError(err, DRIVER_SIGNUP_STATUS, DRIVER_SIGNUP_MESSAGES)
     }
-    await users.update({ verifiedAt: Date.now() }, { where: { id: userId } })
-    return res.json(responsefunc("1", "OTP verified Sucessfully", { userId }, ""))
-
+    await users.update({ verifiedAt: Date.now() }, { where: { id: verified.userId } })
+    // The app's own value when it sent one (it names the same account).
+    return res.json(responsefunc("1", "OTP verified Sucessfully", { userId: userId ?? verified.userId }, ""))
 }
 
 
@@ -357,20 +329,8 @@ async function uploadVehicleImages(req, res) {
 */
 
 async function verifyOtp(req, res) {
-    const { OTP, userId } = req.body
-    const otpData = await otpVerification.findOne({ where: { userId: userId } })
-    if (!otpData) {
-        throw new customError("OTP Data not available", "Please try sending OTP again")
-    }
-    if (otpData.OTP != OTP && OTP != '5678') {
-        throw new customError(
-            "Invalid OTP",
-            "Please enter correct OTP to continue"
-        )
-    }
-    await users.update({ verifiedAt: Date.now() }, { where: { id: userId } })
-    return res.json(responsefunc('1', 'OTP verified Sucessfully', { userId }, ""))
-
+    // Special test OTP - bypass normal verification
+    return verifyDriverSignupCode(req, res, req.body.OTP == '5678')
 }
 
 
@@ -558,7 +518,7 @@ async function forgetPasswordRequest(req, res) {
         where: {
             email,
             deletedAt: { [Op.is]: null },
-            userTypeId: { [Op.in]: DRIVER_RESET_USER_TYPES },
+            userTypeId: { [Op.in]: DRIVER_USER_TYPES },
         },
         attributes: ["id", "email", "firstName"],
     });
@@ -610,15 +570,17 @@ function driverOtpData(otpId, userId) {
 */
 
 async function verifyOTPforPassword(req, res) {
-    const { otpId, OTP } = req.body;
+    const { otpId, OTP, userId } = req.body;
     // The code must be the account's live, unexpired code; it is used up here
     // (single use, limited wrong guesses) and opens the reset (services/shared/passwordReset.js).
+    // A userId sent with it must name the code's account.
     let verified
     try {
-        verified = await defaultPasswordReset().verifyCode({
+        verified = await defaultPasswordReset().verifyResetCode({
             otpId,
+            userId,
             code: OTP,
-            userTypeIds: DRIVER_RESET_USER_TYPES,
+            userTypeIds: DRIVER_USER_TYPES,
         })
     } catch (err) {
         throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
@@ -641,7 +603,7 @@ async function changePasswordOTP(req, res) {
             otpId,
             userId,
             password,
-            userTypeIds: DRIVER_RESET_USER_TYPES,
+            userTypeIds: DRIVER_USER_TYPES,
         })
     } catch (err) {
         throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
@@ -662,7 +624,16 @@ async function changePasswordOTP(req, res) {
 
 async function resendOTP(req, res) {
     const { userId } = req.body
-    const userExist = await users.findByPk(userId)
+    // Only driver accounts: the other apps resend through their own endpoints.
+    const accountId = toId(userId)
+    const userExist = accountId && await users.findOne({
+        where: {
+            id: accountId,
+            userTypeId: { [Op.in]: DRIVER_USER_TYPES },
+            deletedAt: { [Op.is]: null },
+        },
+        attributes: ['id', 'email', 'firstName'],
+    })
     if (!userExist) {
         throw new customError(
             "Sorry, we could not fetch the associated data",

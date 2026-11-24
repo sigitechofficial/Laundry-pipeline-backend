@@ -1,49 +1,65 @@
 'use strict';
 
 /**
- * Password reset by emailed code: the single implementation of the reset-code lifecycle for
- * customers (/customer), shop agents (/agent) and drivers (/driver).
+ * The emailed account code: the single implementation of its lifecycle for customers
+ * (/customer), shop agents (/agent) and drivers (/driver), used by sign-up verification and by
+ * password reset. No other module reads or writes a code's state (otpVerifications.OTP,
+ * expirtAt, failedAttempts, verifiedAtForgetCase, resetExpiresAt); tests/accountCodeCallSites.test.js
+ * fails if one does.
  *
- *   1. issueCode    — forget-password request (and resend): a new code on the account's
- *                     otpVerifications row (services/shared/otpCode.js), which ends whatever the
- *                     earlier code had reached (wrong guesses, a verified reset). At most
- *                     CODE_ISSUE_LIMIT codes per account per window, so the per-code guess limit
- *                     cannot be reset at will by asking for new codes.
- *   2. verifyCode   — the code must be the row's live code, unexpired; it is consumed (single
- *                     use) and opens a reset that must be completed within RESET_GRANT_TTL_MS.
- *                     Every guess first reserves one of MAX_FAILED_ATTEMPTS; at the limit the code
- *                     is invalidated. All checks are conditional UPDATEs, so concurrent requests
- *                     cannot exceed the limit or use one code twice.
- *   3. resetPassword — sets the password of the code's OWNER (otpVerifications.userId), never of
- *                     a client-supplied userId: one that is sent must name the owner. The verified
- *                     reset is consumed, and every session of the account ends
- *                     (utils/appSession.endAllAppSessions) in the same transaction.
+ *   1. issueCode        — forget-password request, resend, sign-up re-issue: a new code on the
+ *                         account's otpVerifications row (services/shared/otpCode.js), which ends
+ *                         whatever the earlier code had reached (wrong guesses, a verified reset).
+ *                         At most CODE_ISSUE_LIMIT codes per account per window, so the per-code
+ *                         guess limit cannot be reset at will by asking for new codes.
+ *   2. verifySignupCode — sign-up: the code proves the account's email; it is consumed.
+ *      verifyResetCode  — password reset: the code is consumed and opens a reset that must be
+ *                         completed within PASSWORD_RESET_WINDOW_MS (resetExpiresAt).
+ *                         Both: the account is the code row's OWNER (otpVerifications.userId); a
+ *                         userId the client sends must name it. The code must be the row's live
+ *                         code (issued, unused, unexpired), compared as a string. Every guess
+ *                         first reserves one of MAX_FAILED_ATTEMPTS; at the limit the code is
+ *                         invalidated. All checks are conditional UPDATEs, so concurrent requests
+ *                         cannot exceed the limit or use one code twice.
+ *   3. resetPassword    — sets the password of the verified code's owner, never of a client
+ *                         userId (one that is sent must name the owner). The verified reset is
+ *                         consumed, and every session of the account ends
+ *                         (utils/appSession.endAllAppSessions) in the same transaction.
  *
- * The row is keyed by otpId (the client echoes the id it was given); each flow passes the
- * account types it serves, so a code of another kind of account is not found through it.
+ * A used, invalidated or superseded code is OTP = NULL; codeState() classifies such a row as
+ * 'invalidated', so it can never match anything.
  *
- * Dependencies are injected (store, sessions, limiter, clock) so the lifecycle is unit-tested
- * without a database (tests/passwordReset.test.js); defaultPasswordReset() wires the real ones.
+ * Each flow passes the account types it serves, so a code of another kind of account is not
+ * found through it. Dependencies are injected (store, sessions, limiter, clock) so the
+ * lifecycle is unit-tested without a database (tests/passwordReset.test.js);
+ * defaultPasswordReset() wires the real ones.
  */
 
-const { OTP_TTL_MS, newOtpCode, freshCodeColumns, normalizeSubmittedCode } = require('./otpCode');
+const { newOtpCode, freshCodeColumns, normalizeSubmittedCode } = require('./otpCode');
 
 /** Wrong guesses allowed per code; the code is invalidated when they are used up. */
 const MAX_FAILED_ATTEMPTS = 5;
 
 /**
- * Time to choose the new password once the code is verified. It reuses the platform's code
- * lifetime (OTP_TTL_MS) rather than introducing a new product duration.
+ * Time to choose and confirm the new password once the reset code is verified. A product
+ * duration of its own, sized for typing a password twice; it does not depend on how long an
+ * emailed code can be entered (otpCode.OTP_TTL_MS). Documented in swagger.yaml.
  */
-const RESET_GRANT_TTL_MS = OTP_TTL_MS;
+const PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;
 
-/** New codes (forget-password requests and resends) per account per window. */
+/**
+ * New codes (forget-password requests, resends, sign-up re-issues) per account per window.
+ * Trade-off: the requests are unauthenticated, so anyone who knows an account's email or id can
+ * use the allowance up and delay that account's reset until the window ends (and each new code
+ * ends a reset in progress). Without the cap, wrong-guess limits per code would not bound
+ * guessing at all. Documented in swagger.yaml.
+ */
 const CODE_ISSUE_LIMIT = Object.freeze({ windowSec: 60 * 60, max: 5 });
 
 /** bcrypt cost used for account passwords throughout the app APIs. */
 const PASSWORD_HASH_ROUNDS = 8;
 
-/** Why a reset step was refused; `status` is the HTTP status unless a flow overrides it. */
+/** Why a step was refused; `status` is the HTTP status unless a flow overrides it. */
 const FAILURES = Object.freeze({
   not_found: { status: 404, message: 'Sorry, we could not fetch the data', hint: 'Please resend OTP to continue' },
   incorrect: { status: 401, message: 'You entered incorrect OTP Please enter correct OTP to continue' },
@@ -88,8 +104,8 @@ function codeState(row, now, maxFailedAttempts = MAX_FAILED_ATTEMPTS) {
 /** Where the row's verified reset stands: missing | not_verified | reset_expired | ready. */
 function resetState(row, now) {
   if (!row) return 'missing';
-  if (!row.verifiedAtForgetCase) return 'not_verified';
-  if (isPast(row.expirtAt, now)) return 'reset_expired';
+  if (row.verifiedAtForgetCase !== true && row.verifiedAtForgetCase !== 1) return 'not_verified';
+  if (isPast(row.resetExpiresAt, now)) return 'reset_expired';
   return 'ready';
 }
 
@@ -98,13 +114,28 @@ const RESET_FAILURE = { missing: 'not_found', not_verified: 'not_verified', rese
 
 const isAbsent = (value) => value === undefined || value === null || value === '';
 
+/** A row or account id as sent by a client (number or digit string), or null. */
+function toId(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? value : null;
+  if (typeof value === 'string' && /^\d{1,15}$/.test(value.trim())) {
+    const id = Number(value.trim());
+    return id > 0 ? id : null;
+  }
+  return null;
+}
+
+/** What a verified code leaves on its row (besides OTP = NULL and failedAttempts = 0). */
+const SIGNUP_VERIFIED = Object.freeze({ verifiedAtForgetCase: false, resetExpiresAt: null });
+const resetOpened = (until) => ({ verifiedAtForgetCase: true, resetExpiresAt: until });
+
 /**
  * @param {object} deps
  * @param {object} deps.store            persistence (sequelizeResetStore)
  * @param {function} deps.endAllSessions (userId, { transaction }) ends every session of the account
  * @param {object} deps.issueLimiter     { assertAllowed(userId) } throws PasswordResetError('throttled')
- * @param {function} [deps.hashPassword] (password) => hash
+ * @param {function} deps.hashPassword   (password) => hash
  * @param {function} [deps.now]          clock
+ * @param {function} [deps.newCode]      (now) => { code, requestedAt, expiresAt } (otpCode.newOtpCode)
  */
 function createPasswordReset({
   store,
@@ -112,50 +143,46 @@ function createPasswordReset({
   issueLimiter,
   hashPassword,
   now = () => new Date(),
+  newCode = newOtpCode,
   maxFailedAttempts = MAX_FAILED_ATTEMPTS,
 }) {
   if (!store || !endAllSessions || !issueLimiter || !hashPassword) {
     throw new Error('createPasswordReset: store, endAllSessions, issueLimiter and hashPassword are required');
   }
 
-  /** The code row of an account of the given types, or null. */
-  async function ownedCode(otpId, userTypeIds) {
-    if (isAbsent(otpId)) return null;
-    const row = await store.findCode(otpId);
-    if (!row || !row.userId) return null;
-    const account = await store.findAccount(row.userId, userTypeIds);
-    return account ? row : null;
-  }
-
   /**
-   * Issue a new code for the account (forget-password request or resend). The caller emails
-   * `code` to the account's address.
-   * @returns {Promise<{ otpId: number, code: string, created: boolean }>}
+   * The code row a request names, owned by an account of the given types.
+   * By otpId when one is sent; otherwise, where the flow allows it (`byAccount`), the account's
+   * own row named by userId. A userId that is sent must name the row's owner.
    */
-  async function issueCode({ userId }) {
-    if (!userId) throw new Error('issueCode: userId is required');
-    await issueLimiter.assertAllowed(userId);
-    const otp = newOtpCode(now());
-    const { otpId, created } = await store.writeFreshCode(userId, freshCodeColumns(otp));
-    return { otpId, code: otp.code, created };
-  }
-
-  /**
-   * Verify the emailed code and open the reset.
-   * @param {object} input
-   * @param {number[]} input.userTypeIds account types this flow serves
-   * @param {boolean} [input.skipCodeCheck] the flow accepted the code by its own rule
-   * @returns {Promise<{ otpId: number, userId: number }>}
-   */
-  async function verifyCode({ otpId, code, userTypeIds, skipCodeCheck = false }) {
-    const row = await ownedCode(otpId, userTypeIds);
+  async function locateCode({ otpId, userId, userTypeIds, byAccount = false }) {
+    let row = null;
+    if (!isAbsent(otpId)) {
+      const id = toId(otpId);
+      const found = id ? await store.findCode(id) : null;
+      if (found && found.userId && (await store.findAccount(found.userId, userTypeIds))) row = found;
+    } else if (byAccount && !isAbsent(userId)) {
+      const id = toId(userId);
+      const account = id ? await store.findAccount(id, userTypeIds) : null;
+      if (account) row = await store.findAccountCode(account.id);
+    }
     if (!row) throw new PasswordResetError('not_found');
-    const at = now();
-    const resetUntil = new Date(at.getTime() + RESET_GRANT_TTL_MS);
+    if (!isAbsent(userId) && toId(userId) !== Number(row.userId)) {
+      throw new PasswordResetError('user_mismatch');
+    }
+    return row;
+  }
 
+  /**
+   * Check the submitted code against the row and use it up, leaving `outcome` on the row.
+   * `skipCodeCheck`: the flow accepted the code by its own rule; the row's code is used up all
+   * the same.
+   */
+  async function consume(row, code, outcome, skipCodeCheck) {
+    const at = now();
     if (skipCodeCheck) {
-      await store.markVerified(row.id, resetUntil);
-      return { otpId: row.id, userId: row.userId };
+      await store.consumeWithoutCheck(row.id, outcome(at));
+      return;
     }
 
     const state = codeState(row, at, maxFailedAttempts);
@@ -167,17 +194,66 @@ function createPasswordReset({
       throw new PasswordResetError(CODE_FAILURE[current] || 'invalidated');
     }
 
-    if (await store.consumeCode(row.id, normalizeSubmittedCode(code), at, resetUntil)) {
-      return { otpId: row.id, userId: row.userId };
-    }
+    if (await store.consumeCode(row.id, normalizeSubmittedCode(code), at, outcome(at))) return;
 
+    // Not consumed: a wrong code, or the code ended meanwhile (used by a parallel request, expired).
     const after = await store.findCode(row.id);
-    const used = after ? Number(after.failedAttempts) : maxFailedAttempts;
-    if (used >= maxFailedAttempts) {
+    const afterState = codeState(after, at, maxFailedAttempts);
+    if (afterState === 'locked') {
       await store.invalidateCode(row.id, maxFailedAttempts);
       throw new PasswordResetError('locked');
     }
-    throw new PasswordResetError('incorrect', { attemptsRemaining: maxFailedAttempts - used });
+    if (afterState !== 'live') throw new PasswordResetError(CODE_FAILURE[afterState]);
+    throw new PasswordResetError('incorrect', {
+      attemptsRemaining: maxFailedAttempts - Number(after.failedAttempts),
+    });
+  }
+
+  /**
+   * Count one new code against the account's limit, for flows that write the code themselves
+   * (sign-up re-issue inside the account's own transaction).
+   */
+  async function reserveIssue({ userId }) {
+    if (!userId) throw new Error('reserveIssue: userId is required');
+    await issueLimiter.assertAllowed(userId);
+  }
+
+  /**
+   * Issue a new code for the account. The caller emails `code` to the account's address.
+   * @returns {Promise<{ otpId: number, code: string, created: boolean }>}
+   */
+  async function issueCode({ userId }) {
+    await reserveIssue({ userId });
+    const otp = newCode(now());
+    const { otpId, created } = await store.writeFreshCode(userId, freshCodeColumns(otp));
+    return { otpId, code: otp.code, created };
+  }
+
+  /**
+   * Sign-up verification: the account whose code it is, once the code is accepted and used up.
+   * @param {object} input
+   * @param {*} [input.otpId]   the row the app was given; without it, the account's own row
+   *                            named by userId (the driver app sends no otpId)
+   * @param {*} [input.userId]  the account the client believes it verifies; checked, never used
+   * @param {number[]} input.userTypeIds account types this flow serves
+   * @param {boolean} [input.skipCodeCheck] the flow accepted the code by its own rule
+   * @returns {Promise<{ otpId: number, userId: number }>}
+   */
+  async function verifySignupCode({ otpId, userId, code, userTypeIds, skipCodeCheck = false }) {
+    const row = await locateCode({ otpId, userId, userTypeIds, byAccount: true });
+    await consume(row, code, () => SIGNUP_VERIFIED, skipCodeCheck);
+    return { otpId: row.id, userId: Number(row.userId) };
+  }
+
+  /**
+   * Password reset: verify the emailed code and open the reset.
+   * @param {object} input see verifySignupCode; the row is always named by otpId
+   * @returns {Promise<{ otpId: number, userId: number }>}
+   */
+  async function verifyResetCode({ otpId, userId, code, userTypeIds, skipCodeCheck = false }) {
+    const row = await locateCode({ otpId, userId, userTypeIds });
+    await consume(row, code, (at) => resetOpened(new Date(at.getTime() + PASSWORD_RESET_WINDOW_MS)), skipCodeCheck);
+    return { otpId: row.id, userId: Number(row.userId) };
   }
 
   /**
@@ -190,17 +266,13 @@ function createPasswordReset({
     if (typeof password !== 'string' || password.length === 0) {
       throw new PasswordResetError('password_required');
     }
-    const row = await ownedCode(otpId, userTypeIds);
-    if (!row) throw new PasswordResetError('not_found');
-    if (!isAbsent(userId) && String(userId) !== String(row.userId)) {
-      throw new PasswordResetError('user_mismatch');
-    }
+    const row = await locateCode({ otpId, userId, userTypeIds });
     const at = now();
     const state = resetState(row, at);
     if (state !== 'ready') throw new PasswordResetError(RESET_FAILURE[state]);
 
     const hash = await hashPassword(password);
-    const ownerId = row.userId;
+    const ownerId = Number(row.userId);
     await store.transaction(async (transaction) => {
       if (!(await store.consumeVerifiedReset(row.id, ownerId, at, transaction))) {
         const current = await store.findCode(row.id, transaction);
@@ -215,19 +287,31 @@ function createPasswordReset({
     return { userId: ownerId };
   }
 
-  return { issueCode, verifyCode, resetPassword };
+  return { reserveIssue, issueCode, verifySignupCode, verifyResetCode, resetPassword };
 }
 
 /** Persistence on the otpVerifications and users tables (Sequelize, MySQL). */
 function sequelizeResetStore({ sequelize, users, otpVerification }) {
   const { Op } = require('sequelize');
-  const CODE_ATTRIBUTES = ['id', 'userId', 'OTP', 'expirtAt', 'failedAttempts', 'verifiedAtForgetCase'];
+  const CODE_ATTRIBUTES = [
+    'id', 'userId', 'OTP', 'expirtAt', 'failedAttempts', 'verifiedAtForgetCase', 'resetExpiresAt',
+  ];
+  const USED_UP = { OTP: null, failedAttempts: 0 };
   const affected = (result) => Array.isArray(result) && result[0] > 0;
+  const plain = (row) => (row ? row.get({ plain: true }) : null);
 
   return {
     async findCode(otpId, transaction) {
-      const row = await otpVerification.findByPk(otpId, { attributes: CODE_ATTRIBUTES, transaction });
-      return row ? row.get({ plain: true }) : null;
+      return plain(await otpVerification.findByPk(otpId, { attributes: CODE_ATTRIBUTES, transaction }));
+    },
+
+    /** The account's code row: the lowest-id row, the one writeFreshCode keeps. */
+    async findAccountCode(userId) {
+      return plain(await otpVerification.findOne({
+        where: { userId },
+        attributes: CODE_ATTRIBUTES,
+        order: [['id', 'ASC']],
+      }));
     },
 
     async findAccount(userId, userTypeIds) {
@@ -255,7 +339,7 @@ function sequelizeResetStore({ sequelize, users, otpVerification }) {
         await otpVerification.update(columns, { where: { id: kept.id }, transaction });
         if (others.length) {
           await otpVerification.update(
-            { OTP: null, expirtAt: null, verifiedAtForgetCase: false },
+            { OTP: null, verifiedAtForgetCase: false, resetExpiresAt: null },
             { where: { id: others.map((r) => r.id) }, transaction }
           );
         }
@@ -277,19 +361,16 @@ function sequelizeResetStore({ sequelize, users, otpVerification }) {
       ));
     },
 
-    async consumeCode(otpId, code, now, resetUntil) {
+    async consumeCode(otpId, code, now, outcome) {
       if (!code) return false;
       return affected(await otpVerification.update(
-        { OTP: null, failedAttempts: 0, verifiedAtForgetCase: true, expirtAt: resetUntil },
+        { ...USED_UP, ...outcome },
         { where: { id: otpId, OTP: code, expirtAt: { [Op.gte]: now } } }
       ));
     },
 
-    async markVerified(otpId, resetUntil) {
-      return affected(await otpVerification.update(
-        { OTP: null, failedAttempts: 0, verifiedAtForgetCase: true, expirtAt: resetUntil },
-        { where: { id: otpId } }
-      ));
+    async consumeWithoutCheck(otpId, outcome) {
+      return affected(await otpVerification.update({ ...USED_UP, ...outcome }, { where: { id: otpId } }));
     },
 
     async invalidateCode(otpId, maxFailedAttempts) {
@@ -301,9 +382,9 @@ function sequelizeResetStore({ sequelize, users, otpVerification }) {
 
     async consumeVerifiedReset(otpId, userId, now, transaction) {
       return affected(await otpVerification.update(
-        { verifiedAtForgetCase: false, expirtAt: null },
+        { verifiedAtForgetCase: false, resetExpiresAt: null },
         {
-          where: { id: otpId, userId, verifiedAtForgetCase: true, expirtAt: { [Op.gte]: now } },
+          where: { id: otpId, userId, verifiedAtForgetCase: true, resetExpiresAt: { [Op.gte]: now } },
           transaction,
         }
       ));
@@ -358,24 +439,30 @@ function defaultPasswordReset() {
 }
 
 /**
- * The HTTP error for a refused step. Flows keep the status their apps already handle for a
- * failure through `statusByReason` (e.g. the customer API answers a wrong code with 400).
+ * The HTTP error for a refused step. Flows keep the status and wording their apps already
+ * handle for a failure through `statusByReason` / `messageByReason` (e.g. the customer API
+ * answers a wrong code with 400).
  */
-function toHttpError(err, statusByReason = {}) {
+function toHttpError(err, statusByReason = {}, messageByReason = {}) {
   if (!(err instanceof PasswordResetError)) return err;
   const { UniversalHttpError } = require('../../middlewares/universalErrorHandler');
-  return new UniversalHttpError(err.message, statusByReason[err.reason] || err.status, err.details);
+  return new UniversalHttpError(
+    messageByReason[err.reason] || err.message,
+    statusByReason[err.reason] || err.status,
+    err.details
+  );
 }
 
 module.exports = {
   MAX_FAILED_ATTEMPTS,
-  RESET_GRANT_TTL_MS,
+  PASSWORD_RESET_WINDOW_MS,
   CODE_ISSUE_LIMIT,
   PASSWORD_HASH_ROUNDS,
   FAILURES,
   PasswordResetError,
   codeState,
   resetState,
+  toId,
   createPasswordReset,
   sequelizeResetStore,
   redisIssueLimiter,

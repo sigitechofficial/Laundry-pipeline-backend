@@ -44,6 +44,7 @@ function freshCodeColumns(otp) {
     expirtAt: otp.expiresAt,
     failedAttempts: 0,
     verifiedAtForgetCase: false,
+    resetExpiresAt: null,
   };
 }
 
