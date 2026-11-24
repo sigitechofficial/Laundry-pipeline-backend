@@ -1,5 +1,12 @@
 /**
  * Customer + Agent live-tracking bootstrap endpoints.
+ *
+ * Apps send `firebaseProjectId` (query string, or JSON body) — the Firebase project they are
+ * on. The custom token is minted by that project and the response names it
+ * (`firebaseProjectId`) and its RTDB (`databaseUrl`; `databaseURL` kept for older builds).
+ * Apps that do not send it are on the legacy project (firebaseProjects.clientProjectFor).
+ * The driver's request also records its project as the session's publisher, so its GPS is
+ * relayed to the other projects' RTDBs (utils/liveTrackingBridge.js).
  */
 
 const { isLiveTrackingDemoEnabled } = require('../utils/liveTrackingDemo');
@@ -20,7 +27,7 @@ const {
   openLiveTrackingSession,
 } = require('../utils/liveTrackingRtdb');
 const { createLiveTrackingCustomToken } = require('../utils/liveTrackingAuth');
-const { getFirebaseDatabaseUrl } = require('../utils/notification');
+const firebaseProjects = require('../utils/firebaseProjects');
 const { StatusCodes } = require('http-status-codes');
 
 function assignedDriverIdForTracking(bookingRow, statusId) {
@@ -36,11 +43,31 @@ function isWithinReadGrace(snapshot) {
   return Date.now() < Number(endedAt) + 5 * 60 * 1000;
 }
 
-async function issueTrackingToken(role, appUserId) {
+/**
+ * The Firebase project the requesting app is on: { requestedProjectId, project }.
+ * `project` is null when the named project (or, unnamed, any project) is not configured.
+ * @throws {ValidationError} firebaseProjectId present but malformed
+ */
+function requestProject(req) {
+  const raw = req.query?.firebaseProjectId ?? req.body?.firebaseProjectId;
+  let requestedProjectId;
   try {
-    return await createLiveTrackingCustomToken(role, appUserId);
+    requestedProjectId = firebaseProjects.normalizeFirebaseProjectId(raw);
   } catch (err) {
-    if (err.code === 'FIREBASE_NOT_CONFIGURED' || err.code === 'INVALID_USER') {
+    throw new ValidationError(err.message, { code: err.code });
+  }
+  return { requestedProjectId, project: firebaseProjects.clientProjectFor(requestedProjectId) };
+}
+
+async function issueTrackingToken(role, appUserId, firebaseProjectId) {
+  try {
+    return await createLiveTrackingCustomToken(role, appUserId, { firebaseProjectId });
+  } catch (err) {
+    if (
+      err.code === 'FIREBASE_NOT_CONFIGURED' ||
+      err.code === firebaseProjects.FIREBASE_PROJECT_ERROR.NOT_CONFIGURED ||
+      err.code === 'INVALID_USER'
+    ) {
       throw new UniversalHttpError(
         err.message || 'Live tracking is temporarily unavailable',
         StatusCodes.SERVICE_UNAVAILABLE,
@@ -84,18 +111,21 @@ exports.getCustomerLiveTracking = async (req, res) => {
     throw new ForbiddenError('You do not have access to this booking');
   }
 
+  const { requestedProjectId, project } = requestProject(req);
+  const readProjectId = project?.projectId || null;
+
   const statusId = Number(bookingRow.bookingStatusId);
   const enabled = isLiveTrackableStatus(statusId);
   const leg = legForStatus(statusId);
 
-  let snapshot = await getLiveTrackingSnapshot(bookingId);
+  let snapshot = readProjectId ? await getLiveTrackingSnapshot(bookingId, readProjectId) : null;
   if (enabled && (!snapshot || !snapshot.meta?.active)) {
     await openLiveTrackingSession({
       bookingId,
       leg,
       bookingRow,
     });
-    snapshot = await getLiveTrackingSnapshot(bookingId);
+    snapshot = readProjectId ? await getLiveTrackingSnapshot(bookingId, readProjectId) : null;
   }
 
   const graceReadable = isWithinReadGrace(snapshot);
@@ -104,7 +134,7 @@ exports.getCustomerLiveTracking = async (req, res) => {
 
   let auth = null;
   if (canSubscribe) {
-    auth = await issueTrackingToken('customer', customerId);
+    auth = await issueTrackingToken('customer', customerId, requestedProjectId);
   }
 
   return ResponseHelper.success(res, 'Live tracking session', {
@@ -114,7 +144,9 @@ exports.getCustomerLiveTracking = async (req, res) => {
     bookingStatusId: statusId,
     leg: enabled ? leg : snapshot?.meta?.leg || null,
     rtdbPath: `${LIVE_TRACKING_ROOT}/${bookingId}`,
-    databaseURL: getFirebaseDatabaseUrl(),
+    firebaseProjectId: auth?.firebaseProjectId || readProjectId,
+    databaseUrl: auth?.databaseURL || project?.databaseURL || null,
+    databaseURL: auth?.databaseURL || project?.databaseURL || null,
     firebaseAuthToken: auth?.token || null,
     firebaseUid: auth?.uid || null,
     destination: snapshot?.meta?.destination || null,
@@ -178,22 +210,24 @@ exports.getAgentLiveTracking = async (req, res) => {
   }
 
   const leg = legForStatus(statusId);
+  const { requestedProjectId, project } = requestProject(req);
+  const publishProjectId = project?.projectId || null;
 
+  let auth = null;
   if (enabled) {
+    // Token first: a project this server cannot serve must fail before the session records
+    // it as the publisher.
+    auth = await issueTrackingToken('agent', agentId, requestedProjectId);
     await openLiveTrackingSession({
       bookingId,
       leg,
       agentId,
       bookingRow,
+      publisherProjectId: auth.firebaseProjectId,
     });
   }
 
-  let auth = null;
-  if (enabled) {
-    auth = await issueTrackingToken('agent', agentId);
-  }
-
-  const snapshot = await getLiveTrackingSnapshot(bookingId);
+  const snapshot = publishProjectId ? await getLiveTrackingSnapshot(bookingId, publishProjectId) : null;
 
   return ResponseHelper.success(res, 'Live tracking publisher session', {
     enabled,
@@ -202,7 +236,9 @@ exports.getAgentLiveTracking = async (req, res) => {
     bookingStatusId: statusId,
     leg: enabled ? leg : null,
     rtdbPath: `${LIVE_TRACKING_ROOT}/${bookingId}`,
-    databaseURL: getFirebaseDatabaseUrl(),
+    firebaseProjectId: auth?.firebaseProjectId || publishProjectId,
+    databaseUrl: auth?.databaseURL || project?.databaseURL || null,
+    databaseURL: auth?.databaseURL || project?.databaseURL || null,
     firebaseAuthToken: auth?.token || null,
     firebaseUid: auth?.uid || null,
     destination: snapshot?.meta?.destination || null,

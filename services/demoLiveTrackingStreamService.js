@@ -6,7 +6,7 @@
 
 'use strict';
 
-const { getDatabase } = require('firebase-admin/database');
+const firebaseProjects = require('../utils/firebaseProjects');
 const {
   openLiveTrackingSession,
   getLiveTrackingSnapshot,
@@ -148,7 +148,16 @@ async function startDemoStream({
     pathPoints.push(lerp(start, dest, i / steps));
   }
   const encoded = encodePolyline(pathPoints);
-  const ref = getDatabase().ref(`liveTracking/${id}`);
+  // QA stream: written straight to every configured project's RTDB, so a customer on any
+  // project sees it without a publisher bridge.
+  const nodes = firebaseProjects
+    .readyProjects()
+    .map((p) => firebaseProjects.databaseFor(p.projectId).ref(`liveTracking/${id}`));
+  const ref = {
+    child: (name) => ({
+      set: (value) => Promise.all(nodes.map((n) => n.child(name).set(value))),
+    }),
+  };
 
   let step = 0;
   let stopping = false;

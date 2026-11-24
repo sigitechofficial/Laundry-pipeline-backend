@@ -1,11 +1,16 @@
 /**
  * Firebase Realtime Database live agent tracking sessions.
  * MySQL remains source of truth for booking status; RTDB is the high-frequency GPS channel.
+ *
+ * The backend may hold more than one Firebase project (utils/firebaseProjects.js) while apps
+ * move projects. Session meta is written to the RTDB of every configured project, so a reader
+ * on any of them finds it; the driver's GPS is relayed from the publisher's project to the
+ * others by utils/liveTrackingBridge.js (meta.publisherProjectId names the publisher).
  */
 
-const { getDatabase } = require('firebase-admin/database');
 const { addressDb, users, booking } = require('../models');
-const { ensureFirebaseReady, getFirebaseDatabaseUrl } = require('./notification');
+const firebaseProjects = require('./firebaseProjects');
+const liveTrackingBridge = require('./liveTrackingBridge');
 
 const LIVE_TRACKING_ROOT = 'liveTracking';
 /** Awaiting collection — demo / pre-trip pickup (one step before “I’m on the way”). */
@@ -34,27 +39,41 @@ function legForStatus(statusId) {
   return isDeliveryTrackableStatus(statusId) ? 'delivery' : 'pickup';
 }
 
-function getDb() {
-  if (!ensureFirebaseReady()) {
-    return null;
-  }
-  const databaseURL = getFirebaseDatabaseUrl();
-  if (!databaseURL) {
-    console.warn('[liveTracking] FIREBASE_DATABASE_URL not set — skipping RTDB write');
-    return null;
-  }
+/** RTDB handle of one project, or null when it is not configured / not reachable. */
+function getDb(projectId) {
+  if (!projectId) return null;
   try {
-    return getDatabase();
+    return firebaseProjects.databaseFor(projectId);
   } catch (err) {
-    console.warn('[liveTracking] getDatabase() failed:', err.message);
+    console.warn(`[liveTracking] database for ${projectId} unavailable:`, err.message);
     return null;
   }
 }
 
-function trackingRef(bookingId) {
-  const db = getDb();
-  if (!db) return null;
+/** Every configured project's RTDB, primary first: [{ projectId, db }]. */
+function trackingDbs() {
+  return firebaseProjects
+    .readyProjects()
+    .map((p) => ({ projectId: p.projectId, db: getDb(p.projectId) }))
+    .filter((x) => x.db);
+}
+
+function trackingRefIn(db, bookingId) {
   return db.ref(`${LIVE_TRACKING_ROOT}/${bookingId}`);
+}
+
+/** Run `fn(ref, projectId)` on the booking in every project; collect per-project results. */
+async function forEachProject(bookingId, fn) {
+  const results = [];
+  for (const { projectId, db } of trackingDbs()) {
+    try {
+      results.push({ projectId, ok: true, value: await fn(trackingRefIn(db, bookingId), projectId) });
+    } catch (err) {
+      console.warn(`[liveTracking] booking=${bookingId} project=${projectId}:`, err.message);
+      results.push({ projectId, ok: false, error: err.message });
+    }
+  }
+  return results;
 }
 
 function maskPhone(phone) {
@@ -117,7 +136,11 @@ async function loadAgentDisplay(agentId) {
 }
 
 /**
- * Open or refresh an active live-tracking session for pickup (3/4) or delivery (12/13).
+ * Open or refresh an active live-tracking session for pickup (3/4) or delivery (12/13), in
+ * the RTDB of every configured project.
+ * `publisherProjectId`: the Firebase project of the driver app asking to publish (agent
+ * session request). Omitted (status-driven opens, customer requests) keeps the publisher an
+ * active session already has for the same driver.
  */
 async function openLiveTrackingSession({
   bookingId,
@@ -125,9 +148,9 @@ async function openLiveTrackingSession({
   agentId,
   customerId,
   bookingRow = null,
+  publisherProjectId = null,
 }) {
-  const ref = trackingRef(bookingId);
-  if (!ref) {
+  if (trackingDbs().length === 0) {
     return { ok: false, reason: 'RTDB_UNAVAILABLE' };
   }
 
@@ -170,15 +193,20 @@ async function openLiveTrackingSession({
   const agent = await loadAgentDisplay(resolvedAgentId);
   const now = Date.now();
 
-  // Preserve startedAt when refreshing an already-active session.
+  // Preserve startedAt (and the publisher, for the same driver) when refreshing an
+  // already-active session; projects may disagree after a partial failure, so take the
+  // earliest start and the first publisher found.
+  const previous = await forEachProject(bookingId, async (ref) => (await ref.child('meta').once('value')).val());
   let startedAt = now;
-  try {
-    const existingSnap = await ref.child('meta').once('value');
-    const prev = existingSnap.val();
-    if (prev && prev.active === true && prev.startedAt) {
-      startedAt = Number(prev.startedAt) || now;
+  let keptPublisher = null;
+  for (const r of previous) {
+    const prev = r.ok ? r.value : null;
+    if (!prev || prev.active !== true) continue;
+    if (prev.startedAt) startedAt = Math.min(startedAt, Number(prev.startedAt) || now);
+    if (!keptPublisher && prev.publisherProjectId && Number(prev.agentId) === resolvedAgentId) {
+      keptPublisher = prev.publisherProjectId;
     }
-  } catch (_) { /* ignore */ }
+  }
 
   const meta = {
     agentId: resolvedAgentId,
@@ -188,41 +216,62 @@ async function openLiveTrackingSession({
     startedAt,
     endedAt: null,
     closeReason: null,
+    publisherProjectId: publisherProjectId || keptPublisher || null,
     destination,
     agent,
   };
 
-  await ref.child('meta').set(meta);
+  const written = await forEachProject(bookingId, (ref) => ref.child('meta').set(meta));
+  const projects = written.filter((r) => r.ok).map((r) => r.projectId);
+  if (projects.length === 0) {
+    return { ok: false, reason: 'RTDB_WRITE_FAILED', failed: written };
+  }
+
+  const bridge = meta.publisherProjectId
+    ? liveTrackingBridge.ensureBridge(bookingId, meta.publisherProjectId)
+    : { active: false, reason: 'NO_PUBLISHER_YET' };
 
   console.log(
-    `[liveTracking] opened booking=${bookingId} leg=${normalizedLeg} agent=${resolvedAgentId}`
+    `[liveTracking] opened booking=${bookingId} leg=${normalizedLeg} agent=${resolvedAgentId} ` +
+      `projects=${projects.join(',')} publisher=${meta.publisherProjectId || '-'}`
   );
-  return { ok: true, meta, path: `${LIVE_TRACKING_ROOT}/${bookingId}` };
+  return {
+    ok: true,
+    meta,
+    path: `${LIVE_TRACKING_ROOT}/${bookingId}`,
+    projects,
+    failedProjects: written.filter((r) => !r.ok).map((r) => r.projectId),
+    bridge,
+  };
 }
 
 /**
  * Close (deactivate) a live-tracking session.
  */
 async function closeLiveTrackingSession(bookingId, { reason = 'ended' } = {}) {
-  const ref = trackingRef(bookingId);
-  if (!ref) {
+  liveTrackingBridge.stopBridge(bookingId);
+  if (trackingDbs().length === 0) {
     return { ok: false, reason: 'RTDB_UNAVAILABLE' };
   }
 
-  const snap = await ref.child('meta').once('value');
-  if (!snap.exists()) {
+  const now = Date.now();
+  const results = await forEachProject(bookingId, async (ref) => {
+    const snap = await ref.child('meta').once('value');
+    if (!snap.exists()) return false;
+    await ref.child('meta').update({
+      active: false,
+      endedAt: now,
+      closeReason: reason,
+    });
+    return true;
+  });
+  const closedIn = results.filter((r) => r.ok && r.value).map((r) => r.projectId);
+  if (closedIn.length === 0) {
     return { ok: true, skipped: true, reason: 'NO_SESSION' };
   }
 
-  const now = Date.now();
-  await ref.child('meta').update({
-    active: false,
-    endedAt: now,
-    closeReason: reason,
-  });
-
-  console.log(`[liveTracking] closed booking=${bookingId} reason=${reason}`);
-  return { ok: true, endedAt: now };
+  console.log(`[liveTracking] closed booking=${bookingId} reason=${reason} projects=${closedIn.join(',')}`);
+  return { ok: true, endedAt: now, projects: closedIn };
 }
 
 /**
@@ -271,20 +320,24 @@ async function syncLiveTrackingForBookingStatus(bookingId, bookingStatusId, extr
  * Update agentId on an active session (reassign mid-trip).
  */
 async function reassignLiveTrackingAgent(bookingId, newAgentId) {
-  const ref = trackingRef(bookingId);
-  if (!ref) return { ok: false, reason: 'RTDB_UNAVAILABLE' };
-
-  const snap = await ref.child('meta').once('value');
-  const meta = snap.val();
-  if (!meta || !meta.active) {
-    return { ok: false, reason: 'NO_ACTIVE_SESSION' };
-  }
+  if (trackingDbs().length === 0) return { ok: false, reason: 'RTDB_UNAVAILABLE' };
 
   const agent = await loadAgentDisplay(newAgentId);
-  await ref.child('meta').update({
-    agentId: Number(newAgentId),
-    agent,
+  // The new driver's app names its project when it asks for the publisher session.
+  liveTrackingBridge.stopBridge(bookingId);
+  const results = await forEachProject(bookingId, async (ref) => {
+    const meta = (await ref.child('meta').once('value')).val();
+    if (!meta || !meta.active) return false;
+    await ref.child('meta').update({
+      agentId: Number(newAgentId),
+      agent,
+      publisherProjectId: null,
+    });
+    return true;
   });
+  if (!results.some((r) => r.ok && r.value)) {
+    return { ok: false, reason: 'NO_ACTIVE_SESSION' };
+  }
   return { ok: true };
 }
 
@@ -292,12 +345,24 @@ async function reassignLiveTrackingAgent(bookingId, newAgentId) {
  * Delete inactive tracking nodes older than maxAgeMs (default 6h).
  */
 async function cleanupStaleLiveTrackingSessions({ maxAgeMs = 6 * 60 * 60 * 1000 } = {}) {
-  const db = getDb();
-  if (!db) return { ok: false, deleted: 0 };
+  const dbs = trackingDbs();
+  if (dbs.length === 0) return { ok: false, deleted: 0 };
+  let deleted = 0;
+  for (const { projectId, db } of dbs) {
+    try {
+      deleted += await cleanupProject(db, maxAgeMs);
+    } catch (err) {
+      console.warn(`[liveTracking] cleanup project=${projectId} failed:`, err.message);
+    }
+  }
+  console.log(`[liveTracking] cleanup deleted=${deleted}`);
+  return { ok: true, deleted };
+}
 
+async function cleanupProject(db, maxAgeMs) {
   const root = db.ref(LIVE_TRACKING_ROOT);
   const snap = await root.once('value');
-  if (!snap.exists()) return { ok: true, deleted: 0 };
+  if (!snap.exists()) return 0;
 
   const now = Date.now();
   const updates = {};
@@ -323,15 +388,18 @@ async function cleanupStaleLiveTrackingSessions({ maxAgeMs = 6 * 60 * 60 * 1000 
   if (deleted > 0) {
     await root.update(updates);
   }
-
-  console.log(`[liveTracking] cleanup deleted=${deleted}`);
-  return { ok: true, deleted };
+  return deleted;
 }
 
-async function getLiveTrackingSnapshot(bookingId) {
-  const ref = trackingRef(bookingId);
-  if (!ref) return null;
-  const snap = await ref.once('value');
+/**
+ * The booking's tracking node as one project's RTDB holds it (the project the asking app
+ * reads), or the primary project's when `projectId` is omitted.
+ */
+async function getLiveTrackingSnapshot(bookingId, projectId = null) {
+  const target = projectId || (firebaseProjects.readyProjects()[0] || {}).projectId;
+  const db = getDb(target);
+  if (!db) return null;
+  const snap = await trackingRefIn(db, bookingId).once('value');
   return snap.exists() ? snap.val() : null;
 }
 
