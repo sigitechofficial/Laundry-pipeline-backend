@@ -288,12 +288,14 @@ function capApplied(applied, allowanceMinor) {
 /**
  * Price the booking's held promotions on the real invoice lines.
  *
- * @param {{ bookingId: number, allowance: number }} params allowance = most the promotions may
- *   take off (payable balance before discount, minus any legacy coupon discount)
+ * @param {{ bookingId: number, allowance: number, currency?: string }} params allowance = most
+ *   the promotions may take off (payable balance before discount, minus any legacy coupon
+ *   discount); currency = the booking zone's currency code when the caller resolved it
  * @returns {{ amount: number, applied: Array, frozen: boolean, capped: boolean }}
  *   frozen — paid already: the stored discount is returned unchanged.
  */
-async function priceAtInvoice({ bookingId, allowance }) {
+async function priceAtInvoice({ bookingId, allowance, currency }) {
+  const ledgerOptions = currency ? { currency } : undefined;
   const none = { amount: 0, applied: [], frozen: false, capped: false };
   const b = await Booking.findByPk(bookingId, {
     attributes: ['id', 'customerId', 'zoneId', 'paymentType', 'createdAt', 'collectionDate', 'deliveryDate'],
@@ -310,7 +312,7 @@ async function priceAtInvoice({ bookingId, allowance }) {
     : [];
   if (!holds.length) {
     // Flag off (kill switch) or nothing held: no promotion lines on an unpaid invoice.
-    if (await storedPromotionDiscount(bookingId)) await ledger.writeOrderAdjustments(bookingId, []);
+    if (await storedPromotionDiscount(bookingId)) await ledger.writeOrderAdjustments(bookingId, [], ledgerOptions);
     return none;
   }
 
@@ -334,7 +336,7 @@ async function priceAtInvoice({ bookingId, allowance }) {
   const result = await evaluatePromotions(context, { promotions, coupons });
   const { applied, totalMinor, capped } = capApplied(result.applied, Math.max(0, toMinor(allowance)));
 
-  await ledger.writeOrderAdjustments(bookingId, applied);
+  await ledger.writeOrderAdjustments(bookingId, applied, ledgerOptions);
   const byPromotion = new Map(applied.map((a) => [a.promotionId, a]));
   const fullByPromotion = new Map(result.applied.map((a) => [a.promotionId, a.totalSavingMinor || 0]));
   const rejectedReason = new Map((result.rejected || []).map((r) => {
@@ -381,10 +383,11 @@ async function priceAtInvoice({ bookingId, allowance }) {
  * customer's credit pays as much of what is still payable as it can. Paid invoices keep
  * their credit; with the flag off (kill switch) an unpaid invoice uses none.
  *
- * @param {{ bookingId: number, allowance: number }} params allowance = payable after discounts
+ * @param {{ bookingId: number, allowance: number, currency?: string }} params allowance = payable
+ *   after discounts; currency = the booking zone's currency code when the caller resolved it
  * @returns {{ amount: number, previous: number }} previous = credit the stored discount included
  */
-async function priceCreditAtInvoice({ bookingId, allowance }) {
+async function priceCreditAtInvoice({ bookingId, allowance, currency }) {
   const before = await credit.spentOnBooking(bookingId);
   if (before.committed) return { amount: before.amount, previous: before.amount };
   const b = await Booking.findByPk(bookingId, {
@@ -408,7 +411,7 @@ async function priceCreditAtInvoice({ bookingId, allowance }) {
         customerId: b.customerId,
         bookingId,
         amount: Math.max(0, allowance),
-        currency: await bookingCurrencyCode(bookingId),
+        currency: currency || await bookingCurrencyCode(bookingId),
       })
       : (before.amount ? (await credit.releaseForBooking(bookingId, 'Credit switched off'), 0) : 0);
     return { amount, previous: before.amount };

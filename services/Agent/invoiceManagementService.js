@@ -64,6 +64,7 @@ const {
     ensureCustomerDeclaredSnapshot,
     getCustomerDeclaredServices,
     getBookingRepairItems,
+    loadBookingRepairRows,
 } = require("./customerDeclaredServicesService");
 const dbModels = require("../../models");
 const {
@@ -586,26 +587,34 @@ class AgentInvoiceManagementService {
     async resolveInvoiceDiscount({ bookingId, zoneId, paymentType, servicesSubtotal, storedDiscount, summaryInput }) {
         const previousPromotion = await bookingPromotionService.storedPromotionDiscount(bookingId);
         // Customer credit is part of the stored discount too (docs/CASHBACK_CREDIT_PLAN.md).
-        const previousCredit = (await customerCreditService.spentOnBooking(bookingId)).amount;
+        const creditSpent = await customerCreditService.spentOnBooking(bookingId);
+        const previousCredit = creditSpent.amount;
         const nonPromotion = Math.max(0, parseFloat(((parseFloat(storedDiscount) || 0) - previousPromotion - previousCredit).toFixed(2)));
+        // The bill's currency (the booking zone's) was resolved by the caller: the pricing
+        // helpers use it instead of looking the booking's zone up again.
+        const known = { currency: summaryInput.currency, currencySymbol: summaryInput.currencySymbol };
         const legacyDiscount = await couponService.resolveBookingDiscount(
             bookingId,
             servicesSubtotal,
             nonPromotion,
             null,
-            zoneId
+            zoneId,
+            known
         );
         if (!previousPromotion && !previousCredit && !isPromotionsCheckoutEnabled(zoneId)) {
-            return { discount: legacyDiscount, legacyDiscount, promotionDiscount: 0, creditUsed: 0, promotions: [] };
+            // Nothing re-priced the credit: `creditSpent` is still what the booking has spent.
+            return { discount: legacyDiscount, legacyDiscount, promotionDiscount: 0, creditUsed: 0, promotions: [], creditSpent };
         }
         const dueBeforeDiscount = buildPaymentSummaryForBooking(paymentType, { ...summaryInput, discount: 0 }).amountDueNow;
         const promo = await bookingPromotionService.priceAtInvoice({
             bookingId,
             allowance: Math.max(0, dueBeforeDiscount - legacyDiscount),
+            currency: known.currency,
         });
         const creditPriced = await bookingPromotionService.priceCreditAtInvoice({
             bookingId,
             allowance: Math.max(0, parseFloat((dueBeforeDiscount - legacyDiscount - promo.amount).toFixed(2))),
+            currency: known.currency,
         });
         return {
             discount: parseFloat((legacyDiscount + promo.amount + creditPriced.amount).toFixed(2)),
@@ -616,13 +625,20 @@ class AgentInvoiceManagementService {
         };
     }
 
-    async calculateInvoiceTotals(bookingRow, bookingId, _serviceCharge, _zoneMinimumAmount) {
+    /**
+     * @param {object} [known] facts the caller already read in this request (read here when
+     *   absent): `servicesSubtotal` (sumActiveBookingServicesSubtotal of the booking) and
+     *   `bookingStatusId`.
+     */
+    async calculateInvoiceTotals(bookingRow, bookingId, _serviceCharge, _zoneMinimumAmount, known = {}) {
         const terms = await ensureRateSnapshotOnBooking(bookingRow);
         if (!bookingRow?.zone && !terms.locked) {
             throw new NotFoundError("Zone information not found for this booking");
         }
 
-        const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
+        const servicesSubtotal = known.servicesSubtotal != null
+            ? known.servicesSubtotal
+            : await sumActiveBookingServicesSubtotal(bookingId);
         const parsedServiceCharge = terms.serviceCharge;
         const parsedZoneMinimum = terms.zoneMinimumAmount;
         const agentCommissionPercent = terms.agentCommissionPercent;
@@ -682,7 +698,10 @@ class AgentInvoiceManagementService {
             }
         );
 
-        await attachInvoiceBill(paymentSummary, bookingId);
+        await attachInvoiceBill(paymentSummary, bookingId, {
+            bookingStatusId: known.bookingStatusId,
+            creditSpent: resolved.creditSpent,
+        });
 
         const totalOrderAmount = paymentSummary.orderSummary.totalOrderAmount;
         const amountDueNow = paymentSummary.amountDueNow;
@@ -726,9 +745,11 @@ class AgentInvoiceManagementService {
     /**
      * Build paymentSummary for a booking (customer/agent invoice screens).
      * @param {number} bookingId
+     * @param {{ servicesSubtotal?: number, bookingStatusId?: number }} [known] facts the
+     *   caller already read in this request (see calculateInvoiceTotals)
      * @returns {Promise<object>} paymentSummary
      */
-    async getPaymentSummaryForBooking(bookingId) {
+    async getPaymentSummaryForBooking(bookingId, known = {}) {
         const bookingRow = await booking.findByPk(bookingId, {
             attributes: [
                 "id",
@@ -771,7 +792,10 @@ class AgentInvoiceManagementService {
 
         const totals = await this.calculateInvoiceTotals(
             bookingRow,
-            bookingId
+            bookingId,
+            undefined,
+            undefined,
+            known
         );
 
         return totals.paymentSummary;
@@ -979,14 +1003,18 @@ class AgentInvoiceManagementService {
                 return item;
             });
 
+        // The booking's repair rows, read once for the lines, the declared services and the
+        // flat list (each helper reads them itself if this read fails, as before).
+        const repairRows = await loadBookingRepairRows(bookingId).catch(() => undefined);
         bookingData.customerSelectedServices = await hydrateRepairItemsForBooking(
             dbModels,
             bookingId,
-            bookingData.customerSelectedServices
+            bookingData.customerSelectedServices,
+            { rows: repairRows }
         );
         bookingData.customerDeclaredServices =
-            await getCustomerDeclaredServices(bookingId);
-        bookingData.repairItems = await getBookingRepairItems(bookingId);
+            await getCustomerDeclaredServices(bookingId, { repairRows });
+        bookingData.repairItems = await getBookingRepairItems(bookingId, { repairRows });
 
         const servicesSubtotal = await sumActiveBookingServicesSubtotal(bookingId);
         const billing = bookingData.billingDetail || {};
@@ -1056,7 +1084,8 @@ class AgentInvoiceManagementService {
                 ...draftSummaryInput,
                 discount: resolvedDiscount,
             }),
-            bookingId
+            bookingId,
+            { bookingStatusId: bookingData.bookingStatusId, creditSpent: resolvedDraft.creditSpent }
         );
 
         return {

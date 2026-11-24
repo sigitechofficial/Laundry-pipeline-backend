@@ -121,8 +121,15 @@ function buildInvoiceBill(ps = {}, facts = {}) {
 /**
  * Add `bill` to a booking's payment summary (new optional key; old apps ignore it).
  * Never throws: a summary without a bill is still a valid summary.
+ *
+ * @param {object} paymentSummary
+ * @param {number|string} bookingId
+ * @param {{ bookingStatusId?: number, creditSpent?: { amount: number } }} [known] facts the
+ *   caller already read in this request and that cannot have changed since: the booking's
+ *   status, and the credit spent on it (customerCreditService.spentOnBooking) when nothing
+ *   re-priced the credit after it was read. Each is read here when not given.
  */
-async function attachInvoiceBill(paymentSummary, bookingId) {
+async function attachInvoiceBill(paymentSummary, bookingId, known = {}) {
   if (!paymentSummary || !bookingId) return paymentSummary;
   try {
     const { promotionRedemption: Redemption, booking: Booking, cancelBooking: CancelBooking } = require('../models');
@@ -133,8 +140,10 @@ async function attachInvoiceBill(paymentSummary, bookingId) {
         where: { bookingId, status: ['RESERVED', 'COMMITTED'] },
         attributes: ['discountAmount', 'fullDiscountAmount'],
       }),
-      credit.spentOnBooking(bookingId),
-      Booking.findByPk(bookingId, { attributes: ['id', 'bookingStatusId'] }),
+      known.creditSpent ? known.creditSpent : credit.spentOnBooking(bookingId),
+      known.bookingStatusId != null
+        ? { bookingStatusId: known.bookingStatusId }
+        : Booking.findByPk(bookingId, { attributes: ['id', 'bookingStatusId'] }),
       CancelBooking.count({ where: { bookingId } }),
     ]);
     // Cancelled: by status, or by a cancel record (the agent cancel path sets status 13).

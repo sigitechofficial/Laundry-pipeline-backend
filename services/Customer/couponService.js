@@ -131,7 +131,8 @@ class CouponService {
         laundrySubtotal,
         fallbackDiscount = 0,
         transaction = null,
-        zoneId = null
+        zoneId = null,
+        known = {}
     ) {
         const opts = transaction ? { transaction } : {};
         const redemption = await couponRedemption.findOne({
@@ -155,7 +156,10 @@ class CouponService {
             couponData: redemption.coupon,
             laundryAmount: laundrySubtotal,
             deferMinOrderWhenLaundryUnknown: false,
-            currencySymbol: (await bookingCurrency(bookingId)).currencySymbol,
+            // known.currencySymbol: the booking zone's symbol, when the caller resolved it.
+            currencySymbol: known.currencySymbol != null
+                ? known.currencySymbol
+                : (await bookingCurrency(bookingId)).currencySymbol,
         });
 
         const discountAmt = evaluation.rejected ? 0 : evaluation.discountAmt;

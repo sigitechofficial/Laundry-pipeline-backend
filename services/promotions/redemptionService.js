@@ -400,40 +400,70 @@ function classifyAdjustment(benefitType, lineType) {
  */
 async function writeOrderAdjustments(bookingId, appliedPromotions, options = {}) {
   const currency = options.currency || (await bookingCurrencyCode(bookingId));
-  return inTransaction(async (t) => {
-    await OrderAdjustment.destroy({
-      where: {
+  const wanted = [];
+  for (const promo of appliedPromotions) {
+    for (const adj of promo.adjustments) {
+      if (!adj.amountMinor && !adj.amount) continue; // cashback rows carry no order amount
+      wanted.push({
         bookingId,
+        adjustmentClass: classifyAdjustment(promo.benefitType, adj.lineType),
+        promotionId: promo.promotionId,
+        promotionVersionId: promo.promotionVersionId || null,
+        couponCodeId: promo.couponCodeId || null,
+        couponCode: promo.couponCode || null,
+        lineType: adj.lineType || 'basket',
+        lineItemId: adj.lineItemId || null,
+        lineDescription: adj.lineDescription || null,
+        amount: money(adj.amountMinor != null ? adj.amountMinor / 100 : adj.amount),
+        currency,
+        label: adj.label || promo.promotionName,
+        description: adj.description || null,
         appliedBy: 'system',
-        adjustmentClass: ['ITEM_PROMOTION', 'BASKET_PROMOTION', 'DELIVERY_PROMOTION'],
-        reversedAt: null,
-      },
-      transaction: t,
-    });
-    const rows = [];
-    for (const promo of appliedPromotions) {
-      for (const adj of promo.adjustments) {
-        if (!adj.amountMinor && !adj.amount) continue; // cashback rows carry no order amount
-        rows.push(await OrderAdjustment.create({
-          bookingId,
-          adjustmentClass: classifyAdjustment(promo.benefitType, adj.lineType),
-          promotionId: promo.promotionId,
-          promotionVersionId: promo.promotionVersionId || null,
-          couponCodeId: promo.couponCodeId || null,
-          couponCode: promo.couponCode || null,
-          lineType: adj.lineType || 'basket',
-          lineItemId: adj.lineItemId || null,
-          lineDescription: adj.lineDescription || null,
-          amount: money(adj.amountMinor != null ? adj.amountMinor / 100 : adj.amount),
-          currency,
-          label: adj.label || promo.promotionName,
-          description: adj.description || null,
-          appliedBy: 'system',
-        }, { transaction: t }));
-      }
+      });
     }
+  }
+  const current = {
+    bookingId,
+    appliedBy: 'system',
+    adjustmentClass: SYSTEM_PROMOTION_CLASSES,
+    reversedAt: null,
+  };
+  return inTransaction(async (t) => {
+    // Every invoice open re-prices: when the stored adjustments already are exactly these,
+    // keep them (no delete + re-insert of the same rows on each read).
+    const existing = await OrderAdjustment.findAll({ where: current, lock: t.LOCK.UPDATE, transaction: t });
+    if (sameAdjustments(existing, wanted)) return existing;
+
+    await OrderAdjustment.destroy({ where: current, transaction: t });
+    const rows = [];
+    for (const row of wanted) rows.push(await OrderAdjustment.create(row, { transaction: t }));
     return rows;
   }, options.transaction);
+}
+
+const SYSTEM_PROMOTION_CLASSES = ['ITEM_PROMOTION', 'BASKET_PROMOTION', 'DELIVERY_PROMOTION'];
+const ADJUSTMENT_FIELDS = [
+  'adjustmentClass', 'promotionId', 'promotionVersionId', 'couponCodeId', 'couponCode', 'lineType',
+  'lineItemId', 'lineDescription', 'amount', 'currency', 'label', 'description',
+];
+
+/** Same rows (as a multiset), comparing every stored field writeOrderAdjustments sets. */
+function sameAdjustments(existingRows, wantedRows) {
+  if (existingRows.length !== wantedRows.length) return false;
+  const key = (row) => JSON.stringify(ADJUSTMENT_FIELDS.map((f) => {
+    const v = row[f] === undefined ? null : row[f];
+    if (f === 'amount') return Number(v).toFixed(2);
+    if (['promotionId', 'promotionVersionId', 'couponCodeId', 'lineItemId'].includes(f)) return v == null ? null : Number(v);
+    return v;
+  }));
+  const counts = new Map();
+  for (const row of existingRows) counts.set(key(row), (counts.get(key(row)) || 0) + 1);
+  for (const row of wantedRows) {
+    const k = key(row);
+    if (!counts.get(k)) return false;
+    counts.set(k, counts.get(k) - 1);
+  }
+  return true;
 }
 
 module.exports = {
