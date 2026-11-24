@@ -9,8 +9,12 @@ const {
     billingDetails,
     tip,
     reason,
+    addressDb,
 } = require('../../models');
 const { resolveCancelReasonId } = require('../../utils/cancelReason');
+const { notifyShopOfCustomerCancellation } = require('../../utils/bookingCancelNotify');
+const { sendEvent } = require('../../socket_io');
+const { sendNotification } = require('../../utils/notification');
 const { Op } = require('sequelize');
 const { zoneCurrencyCode, bookingCurrencyCode } = require('../../utils/zoneCurrency');
 const { snapshotPolicy } = require('../../utils/bookingPolicyAttach');
@@ -212,6 +216,8 @@ class CancelBookingService {
                 'orderTrackId',
                 'paymentType',
                 'laundryShopId',
+                'adminAssignedShopId',
+                'driverId',
                 'createdAt'
             ],
             include: [
@@ -399,6 +405,15 @@ class CancelBookingService {
             const { syncLiveTrackingForBookingStatus } = require('../../utils/liveTrackingRtdb');
             syncLiveTrackingForBookingStatus(bookingId, 19, { reason: 'cancelled' }).catch(() => {});
         } catch (_) { /* ignore */ }
+
+        // Step 9b: Tell the shop owner and driver so they drop the job (socket + push).
+        // Not awaited: a slow push must not hold up the customer's response; never throws.
+        notifyShopOfCustomerCancellation(bookingData, {
+            findShopOwnerUserId: async (addressId) =>
+                (await addressDb.findOne({ where: { id: addressId }, attributes: ['userId'] }))?.userId ?? null,
+            sendEvent,
+            sendNotification,
+        });
 
         // Step 10: Create booking history entry on the booking's operational wall clock
         const cancellationMoment = moment.tz(await resolveBookingOperationalTimeZone(bookingData));
