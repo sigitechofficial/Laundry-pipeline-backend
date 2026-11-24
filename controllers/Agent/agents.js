@@ -102,6 +102,7 @@ const {
     formatOrderExpireTimeForApi,
 } = require("../../utils/bookingTimeZone");
 const { getAcceptWindowAnchor } = require("../../utils/bookingAgentWindow");
+const { shopDays } = require("../../utils/shopDayRange");
 const {
     markAgentOnline,
     isAgentOnline,
@@ -118,6 +119,7 @@ const {
 const {
     bookingWallClockNow,
     resolveBookingOperationalTimeZone,
+    requireShopTimeZone,
 } = require("../../utils/countryTimeZone");
 
 function recurringIntervalDaysFromLabel(value) {
@@ -1483,7 +1485,7 @@ exports.agentBookingFilters = async (req, res) => {
     // ── Shop address ────────────────────────────────────────────────────────
     const addressFound = await addressDb.findOne({
         where: { userId: agentId },
-        attributes: ["id", "zoneId"],
+        attributes: ["id", "zoneId", "countryId"],
     });
 
     if (!addressFound) {
@@ -1638,10 +1640,12 @@ exports.agentBookingFilters = async (req, res) => {
         return plains;
     };
 
-    // ── Date helpers ─────────────────────────────────────────────────────────
-    const todayStr         = moment().format("YYYY-MM-DD");
-    const tomorrowStr      = moment().add(1, "day").format("YYYY-MM-DD");
-    const dayAfterStr      = moment().add(2, "day").format("YYYY-MM-DD");
+    // ── Date helpers: the shop's days, in its time zone ─────────────────────
+    const {
+        today: todayStr,
+        tomorrow: tomorrowStr,
+        dayAfter: dayAfterStr,
+    } = shopDays(await requireShopTimeZone(addressFound));
 
     // Status groups (shared constants — see AGENT_* above)
     const PICKUP_STATUSES = AGENT_PICKUP_STATUSES;
@@ -1842,15 +1846,18 @@ exports.getBookingCounts = async (req, res) => {
 
     const shopRow = await addressDb.findOne({
         where: { userId: agentId, deletedAt: null },
-        attributes: ["id", "zoneId"],
+        attributes: ["id", "zoneId", "countryId"],
     });
     if (!shopRow) return ResponseHelper.success(res, "Booking counts", { counts: { new: 0, today: 0, tomorrow: 0, orders: 0, invoice: 0, processing: 0 } });
 
     const shopId = shopRow.id;
 
-    const todayStr        = moment().format("YYYY-MM-DD");
-    const tomorrowStr     = moment().add(1, "day").format("YYYY-MM-DD");
-    const dayAfterStr     = moment().add(2, "day").format("YYYY-MM-DD");
+    // The shop's days, in its time zone (the same as the lists').
+    const {
+        today: todayStr,
+        tomorrow: tomorrowStr,
+        dayAfter: dayAfterStr,
+    } = shopDays(await requireShopTimeZone(shopRow));
     const hideNew = req.isShopEmployee && !actorCanAcceptOrders(req);
 
     const [countNew, countToday, countTomorrow, countOrders, countInvoice, countProcessing] = await Promise.all([

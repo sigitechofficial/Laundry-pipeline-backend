@@ -85,6 +85,28 @@ function resolveShopDayRange(query = {}, timeZone, now = new Date()) {
     return { timeZone, ...current, previous };
 }
 
+/**
+ * The shop's days the agent tabs work with: today, tomorrow and the day
+ * after (YYYY-MM-DD, shop-local), from the same "today in the shop's zone"
+ * as the reports (resolveShopDayRange). The day tabs, their counts and
+ * slots used the server's own clock (moment()), so around midnight a London
+ * shop's "today" was the server's date: tomorrow's orders on Today, or none.
+ *
+ * @param {string} timeZone IANA zone of the shop
+ * @param {Date} [now]
+ * @returns {{ today: string, tomorrow: string, dayAfter: string, timeZone: string }}
+ */
+function shopDays(timeZone, now = new Date()) {
+    const { startDate: today } = resolveShopDayRange({}, timeZone, now);
+    const day = moment.tz(today, DAY_FORMAT, true, timeZone);
+    return {
+        today,
+        tomorrow: day.clone().add(1, 'day').format(DAY_FORMAT),
+        dayAfter: day.clone().add(2, 'days').format(DAY_FORMAT),
+        timeZone,
+    };
+}
+
 const REPORT_PERIODS = Object.freeze(['today', 'week', 'month', 'year', 'custom']);
 
 /**
@@ -152,5 +174,6 @@ module.exports = {
     REPORT_PERIODS,
     resolveShopDayRange,
     resolveShopReportPeriod,
+    shopDays,
     reportTrendBuckets,
 };

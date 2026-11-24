@@ -107,3 +107,45 @@ console.log('shopDayRange tests passed');
   assert.strictEqual(months[0].label, 'May 2026');
 }
 console.log('shopDayRange.test.js: report periods passed');
+
+// shopDays: the agent day tabs (Today / Tomorrow lists, counts, slots) use
+// the shop's days, never the server's clock. Production, 24 Nov 21:18 UTC
+// (GMT): a London shop is still on 24 Nov; a Karachi device / server is on
+// 25 Nov, which put an order delivered on 25 Nov under London's Today.
+{
+  const { shopDays } = require('./shopDayRange');
+  const gmtEvening = new Date('2026-11-24T21:18:00Z');
+  assert.deepStrictEqual(shopDays(LONDON, gmtEvening), {
+    today: '2026-11-24', tomorrow: '2026-11-25', dayAfter: '2026-11-26', timeZone: LONDON,
+  });
+  assert.strictEqual(shopDays(KARACHI, gmtEvening).today, '2026-11-25');
+
+  // BST: 23:30 UTC on 1 Jul is already 2 Jul in London while the UTC date is 1 Jul.
+  const bstLate = new Date('2026-07-01T23:30:00Z');
+  assert.deepStrictEqual(shopDays(LONDON, bstLate), {
+    today: '2026-07-02', tomorrow: '2026-07-03', dayAfter: '2026-07-04', timeZone: LONDON,
+  });
+  // GMT just after UTC midnight: London and UTC agree.
+  assert.strictEqual(shopDays(LONDON, new Date('2026-12-01T00:10:00Z')).today, '2026-12-01');
+  // Month and year roll over in the shop's zone.
+  assert.deepStrictEqual(shopDays(LONDON, new Date('2026-12-30T22:00:00Z')), {
+    today: '2026-12-30', tomorrow: '2026-12-31', dayAfter: '2027-01-01', timeZone: LONDON,
+  });
+  assert.throws(() => shopDays('Nowhere/Typo', gmtEvening));
+}
+
+// The agent day tabs and their counts read the shop's days (not moment()).
+{
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '../controllers/Agent/agents.js'), 'utf8');
+  for (const handler of ['exports.agentBookingFilters', 'exports.getBookingCounts']) {
+    const start = src.indexOf(handler);
+    assert.ok(start >= 0, handler);
+    const body = src.slice(start, src.indexOf('\nexports.', start + 1));
+    assert.ok(/shopDays\(await requireShopTimeZone\(/.test(body), `${handler} uses the shop's days`);
+    assert.ok(!/moment\(\)\.format\("YYYY-MM-DD"\)/.test(body), `${handler} does not read the server's day`);
+  }
+}
+
+console.log('shopDayRange: shopDays ok');
