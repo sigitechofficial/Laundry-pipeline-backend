@@ -925,9 +925,11 @@ class CustomerAuthService {
         });
 
         if (!userData) {
-            throw new NotFoundError(
-                "Sorry no user found!",
-                "Please contact support for more information"
+            // The token is valid but its account no longer exists (deleted, or a token from
+            // another environment): that is an unauthenticated session, so the app signs out
+            // to sign-in instead of treating it as a server or connection error.
+            throw new UnauthorizedError(
+                "Your account was not found. Please sign in again."
             );
         }
 
