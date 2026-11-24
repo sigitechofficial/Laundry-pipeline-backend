@@ -8,6 +8,13 @@
 #   on every exit path), FIREBASE_DATABASE_URL_VALUE, FIREBASE_LEGACY_DATABASE_URL_VALUE
 set -euo pipefail
 
+# Deploy-only variables must not reach the app: `pm2 reload --update-env` copies this shell's
+# environment into the process, where they would linger across every later reload.
+clear_deploy_only_env() {
+  unset FIREBASE_DATABASE_URL_VALUE FIREBASE_LEGACY_DATABASE_URL_VALUE FIREBASE_SERVICE_ACCOUNT_FILE
+}
+
+
 export HOME="${HOME:-/home/sigisolutions}"
 # shellcheck disable=SC1090
 [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" || true
@@ -116,6 +123,7 @@ rollback_files() {
   cd "$LIVE_PATH"
   ensure_node20
   npm ci --omit=dev || npm install --production
+  clear_deploy_only_env
   if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
     pm2 reload "$PM2_APP_NAME" --update-env
   else
@@ -448,6 +456,7 @@ LIVE_PATH="$LIVE_PATH" DEPLOY_ROOT="$DEPLOY_ROOT" \
 discard_firebase_drop
 
 echo "Reloading PM2..."
+clear_deploy_only_env
 if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
   pm2 reload "$PM2_APP_NAME" --update-env
 else

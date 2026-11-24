@@ -1,4 +1,8 @@
-require('dotenv').config();
+// The server's .env is the single source of configuration. PM2 keeps the environment a
+// process was first started with (and `reload --update-env` only adds to it), so without
+// override a stale value there (e.g. an old FIREBASE_DATABASE_URL) silently wins over the
+// value the deploy just wrote to .env.
+require('dotenv').config({ override: true });
 require('./utils/ensureNodeCompat');
 // pipeline-smoke-test: 2026-08-04 stage deploy verification
 const express = require('express');
