@@ -33,7 +33,20 @@ async function enumMembers(queryInterface) {
   const match = /^enum\((.*)\)$/i.exec(String(row.type));
   if (!match) throw new Error(`${TABLE}.${COLUMN} is ${row.type}, expected an ENUM`);
   const members = [...match[1].matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));
-  return { members, nullable: row.nullable === 'YES', def: row.def };
+  return { members, nullable: row.nullable === 'YES', def: columnDefault(row.def) };
+}
+
+/**
+ * The column's default as a plain value. MySQL reports a string default unquoted
+ * (basket) and no default as NULL; MariaDB reports it as an SQL literal ('basket')
+ * and no default as the string NULL.
+ */
+function columnDefault(raw) {
+  if (raw == null) return null;
+  const text = String(raw);
+  if (text.toUpperCase() === 'NULL') return null;
+  const literal = /^'((?:[^']|'')*)'$/.exec(text);
+  return literal ? literal[1].replace(/''/g, "'") : text;
 }
 
 async function setMembers(queryInterface, { members, nullable, def }) {
@@ -45,6 +58,7 @@ async function setMembers(queryInterface, { members, nullable, def }) {
 }
 
 module.exports = {
+  columnDefault,
   async up(queryInterface) {
     const column = await enumMembers(queryInterface);
     if (column.members.includes(VALUE)) return;

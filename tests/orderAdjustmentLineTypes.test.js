@@ -42,7 +42,7 @@ const allowed = OrderAdjustment.rawAttributes.lineType.values;
 for (const type of produced) assert.ok(allowed.includes(type), `model ENUM allows '${type}'`);
 
 // ── …and by the database once the migration ran ─────────────────────────────
-function fakeQueryInterface(columnType, serviceRows = 0) {
+function fakeQueryInterface(columnType, serviceRows = 0, def = 'basket') {
     const statements = [];
     return {
         statements,
@@ -50,7 +50,7 @@ function fakeQueryInterface(columnType, serviceRows = 0) {
             QueryTypes: { SELECT: 'SELECT' },
             escape: (v) => `'${String(v).replace(/'/g, "''")}'`,
             query: async (sql) => {
-                if (/information_schema\.COLUMNS/.test(sql)) return [{ type: columnType, nullable: 'NO', def: 'basket' }];
+                if (/information_schema\.COLUMNS/.test(sql)) return [{ type: columnType, nullable: 'NO', def }];
                 if (/SELECT COUNT\(\*\)/.test(sql)) return [{ n: serviceRows }];
                 statements.push(sql.replace(/\s+/g, ' ').trim());
                 return [];
@@ -86,6 +86,15 @@ function fakeQueryInterface(columnType, serviceRows = 0) {
     qi = fakeQueryInterface("enum('subCategory','addon','delivery','basket','service')", 0);
     await migration.down(qi);
     assert.match(qi.statements[0], /ENUM\('subCategory', 'addon', 'delivery', 'basket'\) NOT NULL DEFAULT 'basket'$/);
+
+    // MariaDB reports the default as an SQL literal ('basket') and no default as NULL.
+    qi = fakeQueryInterface("enum('subCategory','addon','delivery','basket')", 0, "'basket'");
+    await migration.up(qi);
+    assert.match(qi.statements[0], /'service'\) NOT NULL DEFAULT 'basket'$/, 'MariaDB literal default is not quoted twice');
+    assert.strictEqual(migration.columnDefault("'it''s'"), "it's");
+    assert.strictEqual(migration.columnDefault('NULL'), null);
+    assert.strictEqual(migration.columnDefault(null), null);
+    assert.strictEqual(migration.columnDefault('basket'), 'basket');
 
     console.log('orderAdjustmentLineTypes tests passed');
 })().catch((err) => {
