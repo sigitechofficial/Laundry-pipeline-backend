@@ -57,4 +57,25 @@ function shopAddressFields(body, country) {
     };
 }
 
-module.exports = { shopAddressFields, formatUkPostcode };
+/**
+ * A customer booking address (POST customer booking: pickUp / dropOff) as the
+ * address table stores it. The customer app sends `postalCode` and `city`,
+ * neither of which is an addressDb attribute, so `...address` used to drop the
+ * postcode and the post town. Installed builds put the county in `district` and
+ * the town in `city`; newer ones send the town in both.
+ *   district   = city (the post town) when sent, else district
+ *   postalcode = postalcode / postalCode / postcode; a full UK one as "EC1A 1BB"
+ */
+function bookingAddressFields(address) {
+    const out = { ...address };
+    const town = text(address.city) || text(address.district);
+    out.district = town || null;
+    const postcode = text(address.postalcode ?? address.postalCode ?? address.postcode);
+    out.postalcode = postcode ? (formatUkPostcode(postcode) || postcode.toUpperCase()) : null;
+    delete out.postalCode;
+    delete out.postcode;
+    delete out.city;
+    return out;
+}
+
+module.exports = { shopAddressFields, bookingAddressFields, formatUkPostcode };

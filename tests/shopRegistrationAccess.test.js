@@ -16,7 +16,7 @@
 
 const assert = require('assert');
 const { createShopRegistrationAccess } = require('../services/Agent/shopRegistrationAccess');
-const { shopAddressFields, formatUkPostcode } = require('../utils/shopAddressInput');
+const { shopAddressFields, bookingAddressFields, formatUkPostcode } = require('../utils/shopAddressInput');
 
 // ─── In-memory accounts ──────────────────────────────────────────────────────
 // 10: verified owner, set-up unfinished (no business info yet)
@@ -136,6 +136,20 @@ async function refused(promise, statusCode, label) {
   assert.strictEqual(
     shopAddressFields({ streetAddress: '1 Main St', postalcode: '10001' }, { shortName: 'US' }).postalcode,
     '10001', 'other countries: postcode kept (uppercased) as sent');
+
+  // ─── Customer booking addresses ─────────────────────────────────────────────
+  // Installed customer builds: county in district, town in city, postalCode.
+  const legacyBooking = bookingAddressFields({
+    streetAddress: 'Royal Mail, Farringdon Road', district: 'London', city: 'London',
+    province: 'London', postalCode: 'EC1A1BB', lat: 51.5, lng: -0.1,
+  });
+  assert.strictEqual(legacyBooking.postalcode, 'EC1A 1BB', 'postalCode is stored (it was dropped)');
+  assert.strictEqual(legacyBooking.district, 'London');
+  assert.ok(!('postalCode' in legacyBooking) && !('city' in legacyBooking), 'no non-column keys');
+  const countyInDistrict = bookingAddressFields({ district: 'Berkshire', city: 'Reading', postalcode: 'rg1 2bh' });
+  assert.strictEqual(countyInDistrict.district, 'Reading', 'the post town, not the county');
+  assert.strictEqual(countyInDistrict.postalcode, 'RG1 2BH');
+  assert.strictEqual(bookingAddressFields({ district: 'X' }).postalcode, null);
 
   console.log('shopRegistrationAccess tests passed');
 })().catch((err) => {

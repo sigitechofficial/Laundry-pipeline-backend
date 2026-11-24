@@ -145,6 +145,8 @@ const {
 
 
 // Address adder function
+const { bookingAddressFields } = require('../../utils/shopAddressInput');
+
 async function addressAdder(addNew, address, type, userId, addressId, cityId, countryId) {
     console.log("Address Data------>", address.lat);
     console.log("Address Data------>", address.lng);
@@ -155,7 +157,7 @@ async function addressAdder(addNew, address, type, userId, addressId, cityId, co
         await addressDb.update({ isDefault: false }, { where: { userId } });
 
         const dropOffAddressData = await addressDb.create({
-            ...address,
+            ...bookingAddressFields(address),
             userId,
             type,
             cityId,
