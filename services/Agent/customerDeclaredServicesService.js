@@ -255,12 +255,18 @@ function mapSnapshotToDeclaredService(row) {
  * Attach live repair lines onto declared services (by serviceId).
  * Creates a synthetic declared row when a repair service has garments but no snapshot.
  */
-async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) {
+/**
+ * @param {{ repairRows?: Array }} [loaded] the booking's repair rows (loadBookingRepairRows)
+ *   when the caller already read them for this request; read here otherwise.
+ */
+async function attachRepairItemsToDeclaredServices(bookingId, declaredServices, loaded = {}) {
+    const repairRows = Array.isArray(loaded.repairRows) ? loaded.repairRows : undefined;
     let list = Array.isArray(declaredServices) ? [...declaredServices] : [];
 
     // Snapshot row ids ≠ customerSelectedServiceId — match repair lines by serviceId.
     list = await hydrateRepairItemsForBooking(dbModels, bookingId, list, {
         matchByServiceIdOnly: true,
+        rows: repairRows,
     });
 
     // Collect serviceIds already covered.
@@ -273,7 +279,7 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
     // Find repair serviceIds not represented in declared list.
     let orphanServiceIds = [];
     try {
-        const allRepair = await customerSelectedRepairItem.findAll({
+        const allRepair = repairRows || await customerSelectedRepairItem.findAll({
             where: { bookingId },
             attributes: ['serviceId'],
             raw: true,
@@ -290,11 +296,11 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
             '[attachRepairItemsToDeclaredServices] orphan lookup skipped:',
             err?.message || err
         );
-        return attachLeftoverRepairsToAlteration(bookingId, list);
+        return attachLeftoverRepairsToAlteration(bookingId, list, loaded);
     }
 
     if (orphanServiceIds.length === 0) {
-        return attachLeftoverRepairsToAlteration(bookingId, list);
+        return attachLeftoverRepairsToAlteration(bookingId, list, loaded);
     }
 
     const serviceRows = await service.findAll({
@@ -333,12 +339,13 @@ async function attachRepairItemsToDeclaredServices(bookingId, declaredServices) 
         dbModels,
         bookingId,
         placeholders,
-        { matchByServiceIdOnly: true }
+        { matchByServiceIdOnly: true, rows: repairRows }
     );
 
     return attachLeftoverRepairsToAlteration(
         bookingId,
-        [...list, ...hydratedPlaceholders]
+        [...list, ...hydratedPlaceholders],
+        loaded
     );
 }
 
@@ -348,13 +355,13 @@ function isAlterationDeclaredRow(row) {
 }
 
 /** Last-resort: garments with a missing/mismatched serviceId still land on Alteration. */
-async function attachLeftoverRepairsToAlteration(bookingId, declaredServices) {
+async function attachLeftoverRepairsToAlteration(bookingId, declaredServices, loaded = {}) {
     const list = Array.isArray(declaredServices) ? declaredServices : [];
     if (!list.length) return list;
 
     let allRepair = [];
     try {
-        allRepair = await getBookingRepairItems(bookingId);
+        allRepair = await getBookingRepairItems(bookingId, loaded);
     } catch (err) {
         console.warn(
             '[attachLeftoverRepairsToAlteration] skipped:',
@@ -537,9 +544,14 @@ async function loadDeclaredServicesWithCounts(bookingId) {
     return mapped;
 }
 
-async function getCustomerDeclaredServices(bookingId) {
+/**
+ * @param {number|string} bookingId
+ * @param {{ repairRows?: Array }} [loaded] the booking's repair rows when the caller already
+ *   read them for this request (loadBookingRepairRows)
+ */
+async function getCustomerDeclaredServices(bookingId, loaded = {}) {
     const mapped = await loadDeclaredServicesWithCounts(bookingId);
-    return attachRepairItemsToDeclaredServices(bookingId, mapped);
+    return attachRepairItemsToDeclaredServices(bookingId, mapped, loaded);
 }
 
 async function snapshotCreatedAt(bookingId) {
@@ -748,24 +760,40 @@ async function getAgentAddedServicesForCustomer(
 /**
  * Flat list of all repair items for a booking (for top-level API fields).
  */
-async function getBookingRepairItems(bookingId) {
+/**
+ * Every repair row of a booking with its options and images, in id order: the one read the
+ * invoice endpoints share between hydrateRepairItemsForBooking, the declared services and
+ * the flat repairItems list. Throws when the tables cannot be read.
+ */
+async function loadBookingRepairRows(bookingId) {
+    return customerSelectedRepairItem.findAll({
+        where: { bookingId },
+        order: [['id', 'ASC']],
+        include: [
+            {
+                model: dbModels.customerSelectedRepairItemOption,
+                as: 'options',
+                required: false,
+            },
+            {
+                model: dbModels.customerSelectedRepairItemImage,
+                as: 'images',
+                required: false,
+            },
+        ],
+    });
+}
+
+/**
+ * @param {number|string} bookingId
+ * @param {{ repairRows?: Array }} [loaded] loadBookingRepairRows(bookingId) when the caller
+ *   already read them for this request
+ */
+async function getBookingRepairItems(bookingId, loaded = {}) {
     try {
-        const rows = await customerSelectedRepairItem.findAll({
-            where: { bookingId },
-            order: [['id', 'ASC']],
-            include: [
-                {
-                    model: dbModels.customerSelectedRepairItemOption,
-                    as: 'options',
-                    required: false,
-                },
-                {
-                    model: dbModels.customerSelectedRepairItemImage,
-                    as: 'images',
-                    required: false,
-                },
-            ],
-        });
+        const rows = Array.isArray(loaded.repairRows)
+            ? loaded.repairRows
+            : await loadBookingRepairRows(bookingId);
         return normalizeRepairItems(rows);
     } catch (err) {
         console.warn('[getBookingRepairItems] skipped:', err?.message || err);
@@ -779,5 +807,6 @@ module.exports = {
     getFrozenCustomerDeclaredServices,
     getAgentAddedServicesForCustomer,
     getBookingRepairItems,
+    loadBookingRepairRows,
     attachRepairItemsToDeclaredServices,
 };

@@ -198,6 +198,7 @@ const shopReportsService = require("../../services/Agent/shopReportsService");
 const {
     getCustomerDeclaredServices,
     getBookingRepairItems,
+    loadBookingRepairRows,
 } = require("../../services/Agent/customerDeclaredServicesService");
 const agentServiceManagementService = require("../../services/Agent/serviceManagementService");
 const serviceManagementService = require("../../services/Admin/serviceManagementService");
@@ -4513,16 +4514,20 @@ exports.invoiceCreation = async (req, res) => {
         return item;
     });
 
+    // The booking's repair rows, read once for the lines, the declared services and the
+    // flat list (each helper reads them itself if this read fails, as before).
+    const repairRows = await loadBookingRepairRows(bookingId).catch(() => undefined);
     bookingData.customerSelectedServices = await hydrateRepairItemsForBooking(
         dbModels,
         bookingId,
-        bookingData.customerSelectedServices
+        bookingData.customerSelectedServices,
+        { rows: repairRows }
     );
 
     // Frozen customer booking intent — independent of agent invoice lines.
     bookingData.customerDeclaredServices =
-        await getCustomerDeclaredServices(bookingId);
-    bookingData.repairItems = await getBookingRepairItems(bookingId);
+        await getCustomerDeclaredServices(bookingId, { repairRows });
+    bookingData.repairItems = await getBookingRepairItems(bookingId, { repairRows });
 
     // null = nothing on hold; false = the customer still has items to answer;
     // true = every on-hold item is answered (customerResponse alone can't tell,
@@ -4546,8 +4551,12 @@ exports.invoiceCreation = async (req, res) => {
         repairItems: bookingData.repairItems,
     });
 
+    // The subtotal and status were read above in this request; the pricing chain reuses them.
     const paymentSummary =
-        await invoiceManagementService.getPaymentSummaryForBooking(bookingId);
+        await invoiceManagementService.getPaymentSummaryForBooking(bookingId, {
+            servicesSubtotal,
+            bookingStatusId: bookingData.bookingStatusId,
+        });
     bookingData.extraTip = summarizeTips(bookingData.tips || []);
 
     const paymentFlags = buildCollectPaymentFlags({

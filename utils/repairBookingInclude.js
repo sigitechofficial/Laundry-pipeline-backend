@@ -292,9 +292,11 @@ function applyRepairItemRows(rows, selectedServices, options = {}) {
  * @param {object} models
  * @param {number|string} bookingId
  * @param {Array} selectedServices
- * @param {{ matchByServiceIdOnly?: boolean }} [options]
- *   When true (customerDeclared / snapshot rows), never match on row `id` —
- *   snapshot ids live in a different sequence than customerSelectedServiceId.
+ * @param {{ matchByServiceIdOnly?: boolean, rows?: Array }} [options]
+ *   matchByServiceIdOnly: when true (customerDeclared / snapshot rows), never match on
+ *   row `id` — snapshot ids live in a different sequence than customerSelectedServiceId.
+ *   rows: the booking's customerSelectedRepairItem rows (with options and images) when the
+ *   caller already read them for this request; they are used instead of a query.
  */
 async function hydrateRepairItemsForBooking(
   models,
@@ -302,6 +304,21 @@ async function hydrateRepairItemsForBooking(
   selectedServices,
   options = {}
 ) {
+  if (Array.isArray(options.rows)) {
+    if (
+      !models.customerSelectedRepairItem ||
+      !Array.isArray(selectedServices) ||
+      selectedServices.length === 0 ||
+      !Number.isFinite(parseInt(bookingId, 10))
+    ) {
+      return selectedServices;
+    }
+    try {
+      return applyRepairItemRows(options.rows, selectedServices, options);
+    } catch (err) {
+      return repairItemsSkipped(err, selectedServices);
+    }
+  }
   const [hydrated] = await hydrateRepairItemsForBookings(
     models,
     [{ bookingId, selectedServices }],
