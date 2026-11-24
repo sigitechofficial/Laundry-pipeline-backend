@@ -56,7 +56,10 @@ const {
     ConflictError,
     UnauthorizedError,
     ForbiddenError,
+    UnprocessableEntityError,
 } = require('../../middlewares/universalErrorHandler');
+const { shopRegistrationAccess } = require('../../services/Agent/shopRegistrationAccess');
+const { shopAddressFields } = require('../../utils/shopAddressInput');
 const otpMail = require("../../helper/otpMail");
 const error = require("../../middlewares/error");
 const path = require("path");
@@ -287,22 +290,29 @@ async function tryCreditAgentWallet(bookingId, options = {}) {
     }
 }
 //!----------------------------------Agent Shop Address Add-----------------------------//
+/** The zone a shop at (lat, lng) belongs to; a place no zone serves is a 422, not a crash. */
+async function shopZoneAt(lat, lng) {
+    if (lat === undefined || lat === null || lat === '' || lng === undefined || lng === null || lng === '') {
+        throw new ValidationError('Pick the shop location on the map');
+    }
+    const zones = await findZones(lat, lng);
+    if (!zones || !zones.length || !zones[0]?.city?.country) {
+        throw new UnprocessableEntityError("We don't serve this area yet");
+    }
+    return zones[0];
+}
+
+// The shop's first address, during registration. The shop is the caller's own when a
+// session is sent; installed builds without one name it by body `userId`
+// (services/Agent/shopRegistrationAccess.js says what such a request may do).
 exports.agentAddressAdd = async (req, res) => {
-    const {
-        streetAddress,
-        district,
-        province,
-        lat,
-        lng,
-        coordinates,
-        addressType,
-        userId,
-        postalcode
-    } = req.body;
+    const { lat, lng, coordinates, addressType, userId } = req.body;
+
+    const shopId = await shopRegistrationAccess().registrationShopId(req, { legacyUserId: userId });
 
     const findAgentShopAddress = await addressDb.findAll({
         where: {
-            userId: userId,
+            userId: shopId,
         },
     });
 
@@ -315,29 +325,19 @@ exports.agentAddressAdd = async (req, res) => {
         coordinates: coordinates,
     };
 
-    const fetchZones = await findZones(lat, lng);
-    console.log("ðŸš€ ~ agentAddressAdd ~ fetchZones:", fetchZones[0].id);
-    console.log("ðŸš€ ~ agentAddressAdd ~ fetchZones:", fetchZones[0].city.id);
-    console.log(
-        "ðŸš€ ~ agentAddressAdd ~ fetchZones:",
-        fetchZones[0].city.country.id
-    );
-
-    // return res.json(fetchZones);
+    const shopZone = await shopZoneAt(lat, lng);
+    const fields = shopAddressFields(req.body, shopZone.city.country);
 
     const registerShop = await addressDb.create({
-        streetAddress,
-        district,
-        cityId: fetchZones[0].city.id,
-        province,
-        countryId: fetchZones[0].city.country.id,
+        ...fields,
+        cityId: shopZone.city.id,
+        countryId: shopZone.city.country.id,
         lat,
         lng,
         status: true,
-        postalcode,
         coordinates: polygon,
-        userId: userId,
-        zoneId: fetchZones[0].id,
+        userId: shopId,
+        zoneId: shopZone.id,
         addressType,
     });
 
@@ -349,17 +349,7 @@ exports.agentAddressAdd = async (req, res) => {
 
 //!----------------------------------Agent Shop Address Edit-----------------------------//
 exports.agentAddressEdit = async (req, res) => {
-    const {
-        streetAddress,
-        district,
-        province,
-        lat,
-        lng,
-        coordinates,
-        addressType,
-        addressId,
-        postalcode
-    } = req.body;
+    const { lat, lng, coordinates, addressType } = req.body;
 
     console.log("req.body===================>>>", redact(req.body))
 
@@ -374,9 +364,6 @@ exports.agentAddressEdit = async (req, res) => {
         },
     });
 
-    console.log("existingAddress===================>>>", existingAddress.id)
-
-
     if (!existingAddress) {
         throw new NotFoundError("No shop address found to edit. Please add an address first.");
     }
@@ -386,28 +373,20 @@ exports.agentAddressEdit = async (req, res) => {
         coordinates: coordinates,
     };
 
-    const fetchZones = await findZones(lat, lng);
-    console.log("🚀 ~ agentAddressEdit ~ fetchZones:", fetchZones[0].id);
-    console.log("🚀 ~ agentAddressEdit ~ fetchZones:", fetchZones[0].city.id);
-    console.log(
-        "🚀 ~ agentAddressEdit ~ fetchZones:",
-        fetchZones[0].city.country.id
-    );
+    const shopZone = await shopZoneAt(lat, lng);
+    const fields = shopAddressFields(req.body, shopZone.city.country);
 
     // Update the existing address
-    const updatedAddress = await addressDb.update(
+    await addressDb.update(
         {
-            streetAddress,
-            district,
-            cityId: fetchZones[0].city.id,
-            province,
-            countryId: fetchZones[0].city.country.id,
+            ...fields,
+            cityId: shopZone.city.id,
+            countryId: shopZone.city.country.id,
             lat,
             lng,
             coordinates: polygon,
-            zoneId: fetchZones[0].id,
+            zoneId: shopZone.id,
             addressType,
-            postalcode
         },
         {
             where: {
@@ -418,8 +397,6 @@ exports.agentAddressEdit = async (req, res) => {
 
     // Fetch the updated address to return in response
     const updatedAddressData = await addressDb.findByPk(existingAddress.id);
-
-    console.log("updatedAddressData===================>>>", updatedAddressData)
 
     return ResponseHelper.success(res, "Laundry Shop Address Updated Successfully", updatedAddressData);
 }

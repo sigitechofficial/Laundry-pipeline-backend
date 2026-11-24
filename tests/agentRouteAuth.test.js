@@ -69,14 +69,16 @@ const PUBLIC_ROUTES = {
   'GET /getCountries': 'country list (registration form)',
   'GET /getCities': 'city list (registration form)',
   'GET /getOnHoldOptions': 'platform on-hold reason list',
-  // PENDING DECISION — registration-time writes that installed app builds call
-  // without a session (and, for the login "business info missing" path, the backend
-  // issues none). They trust a client-sent shop id and must move behind a session
-  // with the app; tracked separately, not silently changed here.
-  'POST /addBusinessInfor': 'PENDING: registration write, trusts body userId',
-  'POST /agentAddressAdd': 'PENDING: registration write, trusts body userId',
-  'POST /businesInfoAdded/:userId': 'PENDING: registration write, trusts :userId',
-  'PATCH /workingHoursUpdate/:userId': 'PENDING: registration + profile write, trusts :userId',
+  // Shop registration writes. Sign-up and a set-up-unfinished sign-in now return a
+  // session, which (when sent) decides the shop: the owner's own. LEGACY builds send
+  // none; services/Agent/shopRegistrationAccess.js limits what such a request may do
+  // (verified owner account; business info / services only while set-up is unfinished;
+  // address only while there is none) and SHOP_REGISTRATION_ALLOW_ANONYMOUS=false
+  // turns it off. Covered by tests/shopRegistrationAccess.test.js.
+  'POST /addBusinessInfor': 'registration write, session optional (legacy: unfinished set-up only)',
+  'POST /agentAddressAdd': 'registration write, session optional (legacy: no address yet)',
+  'POST /businesInfoAdded/:userId': 'registration write, session optional (legacy: unfinished set-up only)',
+  'PATCH /workingHoursUpdate/:userId': 'registration + profile write, session optional (legacy: verified owner)',
   // PENDING DECISION — registration-time reads (same onboarding-session work). They
   // run accessTokenIfPresent: a signed-in caller reads only its own shop; a request
   // without a session still reads the shop named by :userId, as installed builds
@@ -89,6 +91,10 @@ const PUBLIC_ROUTES = {
 const OPTIONAL_SESSION_ROUTES = [
   'GET /getBussinessInforMation/:userId',
   'GET /getBussinessWrkinghours/:userId',
+  'POST /addBusinessInfor',
+  'POST /agentAddressAdd',
+  'POST /businesInfoAdded/:userId',
+  'PATCH /workingHoursUpdate/:userId',
 ];
 
 function routeTable(app) {
@@ -125,7 +131,7 @@ for (const key of [
   assert.ok(route.authenticated && route.authFirst, `${key} requires a session first`);
 }
 
-// Registration-time reads: a session, when sent, is verified before anything else.
+// Registration-time reads and writes: a session, when sent, is verified before anything else.
 for (const key of OPTIONAL_SESSION_ROUTES) {
   const route = byKey.get(key);
   assert.ok(route, `${key} exists (installed app builds call it)`);
@@ -134,7 +140,7 @@ for (const key of OPTIONAL_SESSION_ROUTES) {
 assert.deepStrictEqual(
   routes.filter((r) => r.optionalSessionFirst).map((r) => r.key).sort(),
   [...OPTIONAL_SESSION_ROUTES].sort(),
-  'only the documented registration reads use accessTokenIfPresent'
+  'only the documented registration routes use accessTokenIfPresent'
 );
 
 // Stripe Connect onboarding is the owner's payout account: owner only.
