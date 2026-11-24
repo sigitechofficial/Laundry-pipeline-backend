@@ -84,5 +84,19 @@ const tokensOf = (userId) => rows.filter((r) => r.userId === userId).map((r) => 
   assert.equal(adminSessionKey(7), 'tsh7');
   assert.notEqual(appSessionKey(7), adminSessionKey(7));
 
+  // Each token records the Firebase project that issued it; a later report without a
+  // project never clears it, a report with another project corrects it.
+  const projectOf = (tokenId) => rows.find((r) => r.tokenId === tokenId).firebaseProjectId;
+  await store.replaceUserToken(20, 'web-token', null, 'new-project');
+  assert.equal(projectOf('web-token'), 'new-project');
+  await store.saveCurrentToken(20, 'web-token');
+  assert.equal(projectOf('web-token'), 'new-project');
+  await store.saveCurrentToken(20, 'app-token', null, 'old-project');
+  assert.equal(projectOf('app-token'), 'old-project');
+  await store.saveCurrentToken(20, 'app-token', null, 'new-project');
+  assert.equal(projectOf('app-token'), 'new-project');
+  await store.saveCurrentToken(20, 'legacy-token');
+  assert.equal(projectOf('legacy-token'), null, 'unreported project stays unclassified');
+
   console.log('deviceTokenStore.test.js: all assertions passed');
 })().catch((e) => { console.error(e); process.exit(1); });
