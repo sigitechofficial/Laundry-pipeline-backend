@@ -51,7 +51,16 @@ async function findZoneByCoords(lat, lng) {
     }
 }
 const bcrypt = require('bcryptjs');
-const otpGenerator = require('otp-generator');
+const {
+    defaultPasswordReset,
+    toHttpError: passwordResetHttpError,
+} = require('../shared/passwordReset');
+
+/** Accounts the customer password reset serves: customers (userTypes.id 2). */
+const CUSTOMER_RESET_USER_TYPES = [2];
+
+/** Statuses the customer app already handles for these refusals (ValidationError, 400). */
+const CUSTOMER_RESET_STATUS = { incorrect: 400 };
 const otpMail = require('../../helper/otpMail');
 const stripe = require('../../controllers/stripe');
 const { enqueueEmail } = require('../email/emailOutbox');
@@ -752,7 +761,6 @@ class CustomerAuthService {
                 deletedAt: { [Op.is]: null },
                 userTypeId: { [Op.or]: [2] },
             },
-            include: { model: otpVerification, attributes: ["id"] },
             attributes: ["id", "signedFrom", "firstName"],
         });
 
@@ -771,12 +779,13 @@ class CustomerAuthService {
             );
         }
 
-        // Generate OTP
-        let OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false,
-        });
+        // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
+        let issued;
+        try {
+            issued = await defaultPasswordReset().issueCode({ userId: userData.id });
+        } catch (err) {
+            throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
+        }
 
         // Send forgot password email with OTP
         try {
@@ -784,59 +793,20 @@ class CustomerAuthService {
             await forgotPasswordMail({
                 email,
                 userName: userData.firstName || 'User',
-                otp: OTP
+                otp: issued.code
             });
             console.log('✅ Forgot password email sent to:', email);
         } catch (emailError) {
             console.error('⚠️ Failed to send forgot password email (non-blocking):', emailError.message);
         }
 
-        let dt = new Date();
-        // Set OTP expiration to 1 minute from now
-        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
-
-        // Update existing OTP or create new one
-        if (userData.otpVerification != null) {
-            try {
-                await otpVerification.update(
-                    {
-                        OTP: OTP,
-                        reqAt: dt,
-                        expirtAt: expirationTime,
-                    }, 
-                    { where: { userId: userData.id } }
-                );
-
-                return {
-                    otpId: userData.otpVerification.id,
-                    userId: userData.id,
-                    message: "OTP Updated Successfully"
-                };
-
-            } catch (error) {
-                console.log("Error in updating OTP", error);
-                throw new UniversalHttpError(`Failed to update OTP: ${error.message}`);
-            }
-        } else {
-            try {
-                const otpSend = await otpVerification.create({
-                    OTP: OTP,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                    userId: userData.id
-                });
-
-                return {
-                    otpId: otpSend.id,
-                    userId: userData.id,
-                    message: "OTP sent Successfully for Password Reset"
-                };
-
-            } catch (error) {
-                console.log("Error in creating OTP", error);
-                throw new UniversalHttpError(`Failed to create OTP: ${error.message}`);
-            }
-        }
+        return {
+            otpId: issued.otpId,
+            userId: userData.id,
+            message: issued.created
+                ? "OTP sent Successfully for Password Reset"
+                : "OTP Updated Successfully"
+        };
     }
 
     /**
@@ -849,43 +819,24 @@ class CustomerAuthService {
     async verifyOTPforPassword(data) {
         const { otpId, OTP } = data;
 
-        const otpData = await otpVerification.findByPk(otpId, {
-            attributes: ["id", "OTP", "verifiedAtForgetCase", "userId", "expirtAt"],
-        });
-
-        if (!otpData) {
-            throw new NotFoundError("Sorry, we could not fetch the data", "Please resend OTP to continue");
-        }
-
-        // Special test OTP - bypass normal verification
-        if (OTP === '5678') {
-            otpData.verifiedAtForgetCase = true;
-            await otpData.save();
-
-            return {
+        // The code must be the account's live, unexpired code; it is used up here
+        // (single use, limited wrong guesses) and opens the reset (services/shared/passwordReset.js).
+        let verified;
+        try {
+            verified = await defaultPasswordReset().verifyCode({
                 otpId,
-                userId: otpData.userId,
-                message: "OTP verified"
-            };
+                code: OTP,
+                userTypeIds: CUSTOMER_RESET_USER_TYPES,
+                // Special test OTP - bypass normal verification
+                skipCodeCheck: OTP === '5678',
+            });
+        } catch (err) {
+            throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
         }
-
-        // Check if OTP has expired
-        const now = new Date();
-        if (otpData.expirtAt && new Date(otpData.expirtAt) < now) {
-            throw new ValidationError("OTP has expired. Please request a new OTP to continue");
-        }
-
-        // Normal OTP verification
-        if (OTP != otpData.OTP) {
-            throw new ValidationError("You entered incorrect OTP Please enter correct OTP to continue");
-        }
-
-        otpData.verifiedAtForgetCase = true;
-        await otpData.save();
 
         return {
             otpId,
-            userId: otpData.userId,
+            userId: verified.userId,
             message: "OTP verified"
         };
     }
@@ -901,29 +852,18 @@ class CustomerAuthService {
     async changePasswordOTP(data) {
         const { userId, otpId, password } = data;
 
-        const otpData = await otpVerification.findByPk(otpId, {
-            attributes: ["id", "OTP", "verifiedAtForgetCase"],
-        });
-
-        const userData = await users.findByPk(userId, {
-            attributes: ["id", "password"],
-        });
-
-        if (!otpData) {
-            throw new NotFoundError("Sorry, we could not fetch the data", "Please resend OTP to continue");
+        // The password changed is the verified code's owner's; a userId the app sends must name
+        // that owner. Every session of the account ends (services/shared/passwordReset.js).
+        try {
+            await defaultPasswordReset().resetPassword({
+                otpId,
+                userId,
+                password,
+                userTypeIds: CUSTOMER_RESET_USER_TYPES,
+            });
+        } catch (err) {
+            throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
         }
-
-        if (otpData.verifiedAtForgetCase === false) {
-            throw new UnauthorizedError("OTP not verified yet", "Please verify OTP first");
-        }
-
-        let hashedPassword = await bcrypt.hash(password, 8);
-        userData.password = hashedPassword;
-        await userData.save();
-
-        // Reset the OTP verification status
-        otpData.verifiedAtForgetCase = false;
-        await otpData.save();
 
         return {
             message: "Password updated successfully. Please login to continue"
@@ -945,55 +885,30 @@ class CustomerAuthService {
             throw new NotFoundError("Sorry, we could not fetch the associated data", "Please try sending again");
         }
 
-        let otpData = await otpVerification.findOne({ where: { userId } });
-        let OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false,
-        });
+        // A new code for the account (services/shared/passwordReset.js): the app's forgot-password
+        // screen resends through here too, so it goes through the same lifecycle and limits.
+        let issued;
+        try {
+            issued = await defaultPasswordReset().issueCode({ userId: userExist.id });
+        } catch (err) {
+            throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
+        }
 
         try {
             await otpMail({
                 type: 'RegisterOTP',
                 email: userExist.email,
-                OTP: OTP,
+                OTP: issued.code,
                 userName: userExist.firstName
             });
         } catch (mailError) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        let DT = new Date();
-        // Set OTP expiration to 1 minute from now
-        let expirationTime = new Date(DT.getTime() + 1 * 60 * 1000); // 1 minute
-
-        if (!otpData) {
-            const newOtpData = await otpVerification.create({
-                OTP,
-                reqAt: DT,
-                expirtAt: expirationTime,
-                verifiedInForgetCase: false,
-                userId,
-            });
-            return {
-                otpId: newOtpData.id,
-                message: "OTP sent successfully"
-            };
-        } else {
-            await otpVerification.update(
-                {
-                    OTP,
-                    reqAt: DT,
-                    expirtAt: expirationTime,
-                    verifiedInForgetCase: false,
-                },
-                { where: { userId } }
-            );
-            return {
-                otpId: otpData.id,
-                message: "OTP sent successfully"
-            };
-        }
+        return {
+            otpId: issued.otpId,
+            message: "OTP sent successfully"
+        };
     }
 
     /**

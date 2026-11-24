@@ -15,7 +15,17 @@ const { redact } = require("../../utils/redact");
 const { Op } = require('sequelize')
 const bcrypt = require('bcryptjs')
 var JSbarcode = require('jsbarcode')
-const otpGenerator = require('otp-generator')
+const { newOtpCode, freshCodeColumns } = require('../../services/shared/otpCode')
+const {
+    defaultPasswordReset,
+    toHttpError: passwordResetHttpError,
+} = require('../../services/shared/passwordReset')
+
+/** Accounts the driver password reset serves: drivers (userTypes.id 3). */
+const DRIVER_RESET_USER_TYPES = [3]
+
+/** The driver API has always answered these refusals with 400. */
+const DRIVER_RESET_STATUS = { not_found: 400, incorrect: 400, not_verified: 400 }
 const customError = require('../../middlewares/customError')
 const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
 const otpMail = require('../../helper/otpMail')
@@ -71,11 +81,10 @@ async function driverregisterStep1(req, res) {
                 "The phone number you entered is already taken")
         }
 
-        const OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: true,
-        })
+        // A digits-only code the app's code field accepts (services/shared/otpCode.js).
+        const DT = new Date();
+        const otp = newOtpCode(DT)
+        const OTP = otp.code
 
         try {
             await otpMail({
@@ -88,12 +97,10 @@ async function driverregisterStep1(req, res) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        const DT = new Date();
         if (!userExist.otpVerification) {
             await otpVerification.create({
-                OTP,
-                reqAt: DT,
-                userID: userExist.id,
+                ...freshCodeColumns(otp),
+                userId: userExist.id,
             });
 
             let outputObj = {
@@ -110,10 +117,7 @@ async function driverregisterStep1(req, res) {
             return res.json(responsefunc("1", "Registration Step-1 Completed", outputObj, ""))
         } else {
             await otpVerification.update(
-                {
-                    OTP,
-                    reqAt: DT,
-                },
+                freshCodeColumns(otp),
                 { where: { userId: userExist.id } }
             )
 
@@ -181,11 +185,10 @@ async function driverregisterStep1(req, res) {
             where: { userId: newUser.id },
         });
 
-        let OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: true,
-        });
+        // A digits-only code the app's code field accepts (services/shared/otpCode.js).
+        let DT = new Date();
+        const otp = newOtpCode(DT)
+        let OTP = otp.code
 
 
         try {
@@ -199,19 +202,14 @@ async function driverregisterStep1(req, res) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        let DT = new Date();
         if (!otpData) {
-            otpVerification.create({
-                OTP,
-                reqAt: DT,
+            await otpVerification.create({
+                ...freshCodeColumns(otp),
                 userId: newUser.id
             })
         } else {
-            otpVerification.update(
-                {
-                    OTP,
-                    reqAt: DT,
-                },
+            await otpVerification.update(
+                freshCodeColumns(otp),
                 { where: { userId: newUser.id } }
             )
         }
@@ -560,10 +558,9 @@ async function forgetPasswordRequest(req, res) {
         where: {
             email,
             deletedAt: { [Op.is]: null },
-            userTypeId: { [Op.or]: [2] },
+            userTypeId: { [Op.in]: DRIVER_RESET_USER_TYPES },
         },
-        include: { model: otpVerification, attributes: ["id"] },
-        attributes: ["id"],
+        attributes: ["id", "email", "firstName"],
     });
 
     // user not found
@@ -572,59 +569,39 @@ async function forgetPasswordRequest(req, res) {
             "Invalid information",
             "No user exists against this email"
         );
-    let OTP = otpGenerator.generate(4, {
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: true,
-    });
-    //return res.json(OTP)
 
+    // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
+    let issued
+    try {
+        issued = await defaultPasswordReset().issueCode({ userId: userData.id })
+    } catch (err) {
+        throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
+    }
 
     try {
         await otpMail({
             type: 'ForgetPassword',
-            email: email,
-            OTP: OTP,
+            email: userData.email,
+            OTP: issued.code,
             userName: userData.firstName || 'Driver'
         });
     } catch (mailError) {
         console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
     }
 
-    let dt = new Date();
-    if (userData.otpVerification != null) {
-        try {
-            otpVerification.update(
-                {
-                    OTP: OTP,
-                    reqAt: dt,
-                }, { where: { userid: userData.id } }
-            )
+    return res.json(responsefunc(
+        "1",
+        issued.created ? "OTP sent Sucessfully for Password Reset" : "OTP Updated Sucessfully",
+        driverOtpData(issued.otpId, userData.id)
+    ))
+}
 
-            return res.json(responsefunc("1", "OTP Updated Sucessfully", { otpid: userData.otpVerification.id, userId: userData.id }))
-
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-
-        }
-    } else {
-        try {
-            const otpSend = otpVerification.create({
-                OTP: OTP,
-                reqAt: dt,
-                userId: userData.id
-            })
-
-            return res.json(responsefunc("1", "OTP sent Sucessfully for Password Reset", { otpId: otpSend.id, userId: userData.id }))
-
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-
-        }
-    }
-
+/**
+ * `data` of the driver code requests: `otpId` as documented (swagger.yaml), plus the
+ * deprecated `otpid` spelling earlier builds were sent when a code row already existed.
+ */
+function driverOtpData(otpId, userId) {
+    return { otpId, otpid: otpId, userId }
 }
 
 
@@ -634,24 +611,20 @@ async function forgetPasswordRequest(req, res) {
 
 async function verifyOTPforPassword(req, res) {
     const { otpId, OTP } = req.body;
-    const otpData = await otpVerification.findByPk(otpId, {
-        attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
-    });
-    if (!otpData)
-        throw new customError(
-            "Sorry, we could not fetch the data",
-            "Please rensend OTP to continue"
-        );
-
-    if (OTP != otpData.OTP) {
-        throw new customError(
-            "You entered incorrect OTP Please enter correct OTP to continue"
-        );
+    // The code must be the account's live, unexpired code; it is used up here
+    // (single use, limited wrong guesses) and opens the reset (services/shared/passwordReset.js).
+    let verified
+    try {
+        verified = await defaultPasswordReset().verifyCode({
+            otpId,
+            code: OTP,
+            userTypeIds: DRIVER_RESET_USER_TYPES,
+        })
+    } catch (err) {
+        throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
     }
-    otpData.verifiedAtForgetCase = true;
-    await otpData.save();
     return res.json(
-        responsefunc("1", "OTP verified", { otpId, userId: otpData.userId }, "")
+        responsefunc("1", "OTP verified", { otpId, userId: verified.userId }, "")
     );
 }
 
@@ -661,28 +634,18 @@ async function verifyOTPforPassword(req, res) {
 */
 async function changePasswordOTP(req, res) {
     const { userId, otpId, password } = req.body;
-    const otpData = await otpVerification.findByPk(otpId, {
-        attributes: ["id", "OTP", "verifiedAtForgetCase"],
-    });
-    const userData = await users.findByPk(userId, {
-        attributes: ["id", "password"],
-    });
-    if (!otpData)
-        throw new customError(
-            "Sorry, we could not fetch the data",
-            "Please rensend OTP to continue"
-        );
-    if (otpData.verifiedAtForgetCase === false)
-        throw new customError(
-            "OTP not verified yet",
-            "Please verify OTP first"
-        );
-    let hashedPassword = await bcrypt.hash(password, 8);
-    userData.password = hashedPassword;
-    await userData.save();
-    // reset the OTP Id
-    otpData.verifiedAtForgetCase = false;
-    await otpData.save();
+    // The password changed is the verified code's owner's; a userId the app sends must name
+    // that owner. Every session of the account ends (services/shared/passwordReset.js).
+    try {
+        await defaultPasswordReset().resetPassword({
+            otpId,
+            userId,
+            password,
+            userTypeIds: DRIVER_RESET_USER_TYPES,
+        })
+    } catch (err) {
+        throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
+    }
     return res.json(
         responsefunc(
             "1",
@@ -700,7 +663,6 @@ async function changePasswordOTP(req, res) {
 async function resendOTP(req, res) {
     const { userId } = req.body
     const userExist = await users.findByPk(userId)
-    console.log("🚀 ~ resendOTP ~ userExist:", userExist.email)
     if (!userExist) {
         throw new customError(
             "Sorry, we could not fetch the associated data",
@@ -708,62 +670,31 @@ async function resendOTP(req, res) {
         )
     }
 
-    const otpData = await otpVerification.findOne({
-        where: {
-            userId
-        }
-    })
-
-    let OTP = otpGenerator.generate(4, {
-        lowerCaseAlphabets: false,
-        upperCaseAlphabets: false,
-        specialChars: true
-    })
+    // A new code for the account (services/shared/passwordReset.js): it also serves a password
+    // reset in progress, so it goes through the same lifecycle and limits.
+    let issued
+    try {
+        issued = await defaultPasswordReset().issueCode({ userId: userExist.id })
+    } catch (err) {
+        throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
+    }
 
     try {
         await otpMail({
             type: 'ForgetPassword',
             email: userExist.email,
-            OTP: OTP,
+            OTP: issued.code,
             userName: userExist.firstName || 'Driver'
         });
     } catch (mailError) {
         console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
     }
 
-    let dt = new Date();
-    // Set OTP expiration to 1 minute from now
-    let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
-    
-    if (userExist.otpVerification != null) {
-        try {
-            otpVerification.update(
-                {
-                    OTP: OTP,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                }, { where: { userid: userExist.id } }
-            )
-            return res.json(responsefunc("1", "OTP Updated Sucessfully", { otpid: userExist.otpVerification.id, userId: userExist.id }))
-
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-        }
-    } else {
-        try {
-            const otpSend = otpVerification.create({
-                OTP: OTP,
-                reqAt: dt,
-                expirtAt: expirationTime,
-                userId: userExist.id
-            })
-            return res.json(responsefunc("1", "OTP sent Sucessfully for Password Reset", { otpId: otpSend.id, userId: userExist.id }))
-        } catch (error) {
-            console.log("Error in updating OTP", error)
-            throw new customError(`${error.message}`)
-        }
-    }
+    return res.json(responsefunc(
+        "1",
+        issued.created ? "OTP sent Sucessfully for Password Reset" : "OTP Updated Sucessfully",
+        driverOtpData(issued.otpId, userExist.id)
+    ))
 }
 
 
