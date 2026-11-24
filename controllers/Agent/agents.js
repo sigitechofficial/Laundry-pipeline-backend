@@ -113,6 +113,7 @@ const {
     findTodayWorkingHoursRow,
     getWallClockContext,
     isPickupWithinShopWorkingHours,
+    workingHoursByDayLookup,
 } = require("../../utils/shopWorkingHours");
 const {
     bookingWallClockNow,
@@ -700,6 +701,10 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         return slotRoomCache.get(key);
     }
 
+    // The shop's hours row per pickup weekday, read once for all candidates (it was read
+    // for every candidate booking: 1-4 queries each).
+    const shopHoursForDay = workingHoursByDayLookup(agentId);
+
     const out = [];
     const excluded = {
         noExpiry: 0,
@@ -751,7 +756,8 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             plain.collectionDate,
             plain.collectionTimeFrom,
             plain.collectionTimeTo,
-            bookingTz
+            bookingTz,
+            shopHoursForDay
         );
         if (!pickupOk) {
             excluded.pickupHours += 1;
