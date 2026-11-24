@@ -10,6 +10,7 @@ const {
 } = require('../../models');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { ACCOUNT_KIND, assertEmailFree } = require('../shared/accountEmail');
 const {
     UnauthorizedError,
     NotFoundError,
@@ -142,16 +143,9 @@ class AgentEmployeeManagementService {
                 );
             }
 
-            const existingEmail = await users.findOne({
-                where: { email: email.trim() },
-                transaction: t,
-            });
-
-            if (existingEmail) {
-                throw new ConflictError(
-                    'This email is already registered. Use a different email.'
-                );
-            }
+            // Any holder of the address (any account type, deleted included: the unique index
+            // still holds it) is a 409 (services/shared/accountEmail.js).
+            await assertEmailFree(users, email.trim(), ACCOUNT_KIND.SHOP_STAFF, { transaction: t });
 
             const hashpassword = await bcrypt.hash(password, 10);
             const isDriver = isLaundryShopDriverRole(roleRecord);
