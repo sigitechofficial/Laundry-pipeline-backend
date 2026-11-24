@@ -36,6 +36,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
+  },
+    // End of the window to set a new password after the reset code was verified
+    // (services/shared/passwordReset.js); expirtAt stays the code's own expiry.
+    resetExpiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
   }
   }, {
     sequelize,
