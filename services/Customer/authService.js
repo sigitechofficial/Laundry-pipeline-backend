@@ -56,6 +56,7 @@ const {
     toId,
     toHttpError: passwordResetHttpError,
 } = require('../shared/passwordReset');
+const { CODE_PURPOSES } = require('../shared/otpCode');
 
 /** Accounts the customer sign-up, code and password reset endpoints serve: customers (userTypes.id 2). */
 const CUSTOMER_USER_TYPES = [2];
@@ -753,7 +754,10 @@ class CustomerAuthService {
         // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
         let issued;
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: userData.id });
+            issued = await defaultPasswordReset().issueCode({
+                userId: userData.id,
+                purpose: CODE_PURPOSES.PASSWORD_RESET,
+            });
         } catch (err) {
             throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
         }
@@ -868,10 +872,11 @@ class CustomerAuthService {
         }
 
         // A new code for the account (services/shared/passwordReset.js): the app's forgot-password
-        // screen resends through here too, so it goes through the same lifecycle and limits.
+        // screen resends through here too, so it goes through the same lifecycle and limits, and
+        // the new code keeps the purpose of the one it replaces (sign-up or password reset).
         let issued;
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: userExist.id });
+            issued = await defaultPasswordReset().issueResendCode({ userId: userExist.id });
         } catch (err) {
             throw passwordResetHttpError(err, CUSTOMER_RESET_STATUS);
         }

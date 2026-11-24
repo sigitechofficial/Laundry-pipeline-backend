@@ -13,7 +13,10 @@
  *  - each flow only serves its own account types (sign-up verify, reset, resend);
  *  - the 5678 test code is accepted where it always was (sign-up verify of all three, customer
  *    reset verify) and nowhere else;
- *  - the statuses and response shapes the installed apps were built against.
+ *  - the statuses and response shapes the installed apps were built against;
+ *  - O-12-R2-1: a code verifies only through the flow of its purpose (a password-reset code
+ *    never signs an account in through sign-up verify), a resend keeps the purpose, and the
+ *    per-account backoff reaches the apps as their existing 429 with retryAfterSeconds.
  * And, from the source tree: no module other than the shared lifecycle reads or compares a
  * code's state, so a new reader cannot reintroduce a loose comparison.
  *   node tests/accountCodeCallSites.test.js
@@ -31,6 +34,10 @@ const { UniversalHttpError } = require('../middlewares/universalErrorHandler');
 const CustomException = require('../middlewares/customError');
 
 const ROOT = path.join(__dirname, '..');
+const { CODE_PURPOSES } = require('../services/shared/otpCode');
+
+const SIGNUP = CODE_PURPOSES.SIGNUP;
+const RESET = CODE_PURPOSES.PASSWORD_RESET;
 
 // ── The world the stubs read and record into; replaced for every case ────────────────────────
 let world;
@@ -153,7 +160,7 @@ const nothingHappened = () => {
 
 /** Use a code up through a completed reset, leaving OTP NULL (the row state of O-12-R1). */
 async function usedRow(userId, userTypeIds) {
-  const c = await world.reset.issueCode({ userId });
+  const c = await world.reset.issueCode({ userId, purpose: RESET });
   await world.reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds });
   await world.reset.resetPassword({ otpId: c.otpId, password: 'reset', userTypeIds });
   assert.equal(world.row(c.otpId).OTP, null);
@@ -161,11 +168,11 @@ async function usedRow(userId, userTypeIds) {
   return c.otpId;
 }
 
-/** Lock a code with wrong guesses (OTP NULL, failedAttempts at the limit). */
+/** Lock a sign-up code with wrong guesses (OTP NULL, failedAttempts at the limit). */
 async function lockedRow(userId, userTypeIds) {
-  const c = await world.reset.issueCode({ userId });
+  const c = await world.reset.issueCode({ userId, purpose: SIGNUP });
   for (let i = 0; i < realLifecycle.MAX_FAILED_ATTEMPTS; i += 1) {
-    await assert.rejects(world.reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds }));
+    await assert.rejects(world.reset.verifySignupCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds }));
   }
   assert.equal(world.row(c.otpId).OTP, null);
   return c;
@@ -187,7 +194,7 @@ async function run() {
     nothingHappened();
 
     // A live code of customer 20 with customer 21's userId (accepted on main) → 401, code kept.
-    const live = await world.reset.issueCode({ userId: 20 });
+    const live = await world.reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsHttp(customer.verifyOTpSignUp({ otpId: live.otpId, userId: 21, OTP: live.code, deviceId: 'd' }), 401);
     assert.equal(world.row(live.otpId).OTP, live.code);
     // Wrong code: the customer app's 400, its wording, and the attempts left.
@@ -212,13 +219,13 @@ async function run() {
     freshWorld();
     const locked = await lockedRow(21, [2]);
     await rejectsHttp(customer.verifyOTpSignUp({ otpId: locked.otpId, userId: 21, OTP: locked.code, deviceId: 'd' }), 429);
-    const agentCode = await world.reset.issueCode({ userId: 10 });
+    const agentCode = await world.reset.issueCode({ userId: 10, purpose: SIGNUP });
     await rejectsHttp(customer.verifyOTpSignUp({ otpId: agentCode.otpId, OTP: agentCode.code, deviceId: 'd' }), 404);
     await rejectsHttp(customer.verifyOTpSignUp({ otpId: 999, userId: 20, OTP: '1234', deviceId: 'd' }), 404);
     nothingHappened();
 
     // 5678 (kept where it was): sign-up verify of the code's own account only.
-    const own = await world.reset.issueCode({ userId: 20 });
+    const own = await world.reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsHttp(customer.verifyOTpSignUp({ otpId: own.otpId, userId: 21, OTP: '5678', deviceId: 'd' }), 401);
     nothingHappened();
     const viaTest = await customer.verifyOTpSignUp({ otpId: own.otpId, userId: 20, OTP: '5678', deviceId: 'd' });
@@ -229,7 +236,7 @@ async function run() {
   {
     // Reset: the code's owner is reset, a client userId is checked and never picks the account.
     freshWorld();
-    const c = await world.reset.issueCode({ userId: 20 });
+    const c = await world.reset.issueCode({ userId: 20, purpose: RESET });
     await rejectsHttp(customer.verifyOTPforPassword({ otpId: c.otpId, OTP: wrongCode(c.code) }), 400);
     await rejectsHttp(customer.verifyOTPforPassword({ otpId: c.otpId, userId: 21, OTP: c.code }), 401);
     assert.deepEqual(
@@ -247,11 +254,11 @@ async function run() {
     await rejectsHttp(customer.changePasswordOTP({ otpId: c.otpId, password: 'again' }), 401);
 
     // A driver's reset code is not found through the customer endpoints.
-    const d = await world.reset.issueCode({ userId: 40 });
+    const d = await world.reset.issueCode({ userId: 40, purpose: RESET });
     await rejectsHttp(customer.verifyOTPforPassword({ otpId: d.otpId, OTP: d.code }), 404);
 
     // 5678 on customer reset verify (kept where it was) opens the owner's reset only.
-    const t = await world.reset.issueCode({ userId: 21 });
+    const t = await world.reset.issueCode({ userId: 21, purpose: RESET });
     await rejectsHttp(customer.verifyOTPforPassword({ otpId: t.otpId, userId: 20, OTP: '5678' }), 401);
     assert.equal((await customer.verifyOTPforPassword({ otpId: t.otpId, OTP: '5678' })).userId, 21);
 
@@ -275,7 +282,7 @@ async function run() {
     }
     nothingHappened();
 
-    const live = await world.reset.issueCode({ userId: 10 });
+    const live = await world.reset.issueCode({ userId: 10, purpose: SIGNUP });
     await rejectsHttp(agent.verifyOTpSignUp({ otpId: live.otpId, userId: 11, OTP: live.code }), 401);
     await rejectsHttp(
       agent.verifyOTpSignUp({ otpId: live.otpId, userId: 10, OTP: wrongCode(live.code) }),
@@ -299,16 +306,16 @@ async function run() {
 
     // Expired code: the agent app's 401.
     freshWorld();
-    const old = await world.reset.issueCode({ userId: 10 });
+    const old = await world.reset.issueCode({ userId: 10, purpose: SIGNUP });
     world.advance(2 * 60 * 1000);
     await rejectsHttp(agent.verifyOTpSignUp({ otpId: old.otpId, userId: 10, OTP: old.code }), 401);
     // A customer's code is not found through the agent endpoint.
-    const cust = await world.reset.issueCode({ userId: 20 });
+    const cust = await world.reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsHttp(agent.verifyOTpSignUp({ otpId: cust.otpId, userId: 20, OTP: cust.code }), 404);
     nothingHappened();
 
     // 5678 (kept where it was): sign-up verify of the code's own account only.
-    const own = await world.reset.issueCode({ userId: 11 });
+    const own = await world.reset.issueCode({ userId: 11, purpose: SIGNUP });
     await rejectsHttp(agent.verifyOTpSignUp({ otpId: own.otpId, userId: 10, OTP: '5678' }), 401);
     nothingHappened();
     assert.equal((await agent.verifyOTpSignUp({ otpId: own.otpId, userId: 11, OTP: '5678' })).userId, 11);
@@ -316,7 +323,7 @@ async function run() {
 
   {
     freshWorld();
-    const c = await world.reset.issueCode({ userId: 10 });
+    const c = await world.reset.issueCode({ userId: 10, purpose: RESET });
     // 5678 is not a reset code for agents: it counts as a wrong guess.
     await rejectsHttp(agent.verifyOTPforPassword({ otpId: c.otpId, userId: 10, OTP: '5678' }), 401);
     assert.equal(world.row(c.otpId).failedAttempts, 1);
@@ -354,13 +361,13 @@ async function run() {
       await rejectsHttp(callDriver(handler, { otpId: used, userId: 40, OTP }), 401);
     }
     // Other account types, unknown accounts and no account at all.
-    const cust = await world.reset.issueCode({ userId: 20 });
+    const cust = await world.reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsHttp(callDriver(handler, { userId: 20, OTP: cust.code }), 400, 'OTP Data not available');
     await rejectsHttp(callDriver(handler, { userId: 999, OTP: '1234' }), 400, 'OTP Data not available');
     await rejectsHttp(callDriver(handler, { OTP: '1234' }), 400, 'OTP Data not available');
     nothingHappened();
 
-    const live = await world.reset.issueCode({ userId: 40 });
+    const live = await world.reset.issueCode({ userId: 40, purpose: SIGNUP });
     await rejectsHttp(callDriver(handler, { userId: 40, OTP: wrongCode(live.code) }), 400, 'Invalid OTP');
     const body = await callDriver(handler, { userId: '40', OTP: live.code });
     assert.deepEqual(body, { status: '1', messsage: 'OTP verified Sucessfully', data: { userId: '40' }, error: '' }, name);
@@ -370,7 +377,7 @@ async function run() {
     // 5678 (kept where it was): the named driver account, which must have a code row.
     freshWorld();
     await rejectsHttp(callDriver(handler, { userId: 40, OTP: '5678' }), 400, 'OTP Data not available');
-    await world.reset.issueCode({ userId: 40 });
+    await world.reset.issueCode({ userId: 40, purpose: SIGNUP });
     await rejectsHttp(callDriver(handler, { userId: 20, OTP: '5678' }), 400, 'OTP Data not available');
     assert.equal((await callDriver(handler, { userId: 40, OTP: '5678' })).data.userId, 40);
   }
@@ -390,13 +397,13 @@ async function run() {
     assert.equal(world.row(51).OTP, null, 'one live code per account');
     const verified = await callDriver(driver.verifyOTP, { userId: 41, OTP: record.mails.at(-1).OTP });
     assert.equal(verified.status, '1');
-    for (let i = 1; i < realLifecycle.CODE_ISSUE_LIMIT.max; i += 1) await callDriver(driver.driverregisterStep1, step1);
+    for (let i = 1; i < realLifecycle.CODE_ISSUE_LIMITS.hourly.max; i += 1) await callDriver(driver.driverregisterStep1, step1);
     await rejectsHttp(callDriver(driver.driverregisterStep1, step1), 429);
   }
 
   {
     freshWorld();
-    const c = await world.reset.issueCode({ userId: 40 });
+    const c = await world.reset.issueCode({ userId: 40, purpose: RESET });
     await rejectsHttp(callDriver(driver.verifyOTPforPassword, { otpId: c.otpId, OTP: '5678' }), 400);
     await rejectsHttp(callDriver(driver.verifyOTPforPassword, { otpId: c.otpId, userId: 41, OTP: c.code }), 401);
     const verified = await callDriver(driver.verifyOTPforPassword, { otpId: c.otpId, OTP: c.code });
@@ -418,6 +425,91 @@ async function run() {
     assert.equal(world.row(r.data.otpId).userId, 41);
   }
 
+  // ═══ O-12-R2-1: a code verifies only for its purpose; issuing is bounded over days ═════════
+  {
+    // Customer: a password-reset code never signs the account in through sign-up verify, with
+    // the code or with 5678; the reset itself still works with it.
+    freshWorld();
+    const forgot = await world.reset.issueCode({ userId: 20, purpose: RESET });
+    for (const OTP of [forgot.code, '5678']) {
+      await rejectsHttp(customer.verifyOTpSignUp({ otpId: forgot.otpId, userId: 20, OTP, deviceId: 'd' }), 400);
+      await rejectsHttp(customer.verifyOTpSignUp({ otpId: forgot.otpId, OTP, deviceId: 'd' }), 400);
+    }
+    nothingHappened();
+    assert.equal(world.codeOf(forgot.otpId), forgot.code);
+    // The forgot-password screen's resend keeps the reset purpose.
+    const resent = await customer.resendOTP({ userId: 20 });
+    const resentCode = world.codeOf(resent.otpId);
+    await rejectsHttp(customer.verifyOTpSignUp({ otpId: resent.otpId, OTP: resentCode, deviceId: 'd' }), 400);
+    assert.equal((await customer.verifyOTPforPassword({ otpId: resent.otpId, OTP: resentCode })).userId, 20);
+    // A verified customer's resend is a reset code, never a sign-up one.
+    world.state.users.get(21).verifiedAt = new Date('2026-01-01T00:00:00Z');
+    const verifiedResend = await customer.resendOTP({ userId: 21 });
+    await rejectsHttp(customer.verifyOTpSignUp({
+      otpId: verifiedResend.otpId, OTP: world.codeOf(verifiedResend.otpId), deviceId: 'd',
+    }), 400);
+    nothingHappened();
+    // A sign-up code never opens a reset (5678 included).
+    const signup = await world.reset.issueCode({ userId: 20, purpose: SIGNUP });
+    await rejectsHttp(customer.verifyOTPforPassword({ otpId: signup.otpId, OTP: signup.code }), 400);
+    await rejectsHttp(customer.verifyOTPforPassword({ otpId: signup.otpId, OTP: '5678' }), 400);
+    await rejectsHttp(customer.changePasswordOTP({ otpId: signup.otpId, password: 'x' }), 401);
+    assert.equal(world.state.users.get(20).password, 'old-customer');
+    assert.equal(world.codeOf(signup.otpId), signup.code, 'refused attempts leave the code alone');
+  }
+
+  {
+    // Agent: forget-password issues a reset code; sign-up verify refuses it; the shop is not
+    // verified and gets no working hours.
+    freshWorld();
+    const forgot = await agent.forgetPasswordRequest({ email: 'agent@x.test' });
+    assert.equal(record.mails.at(-1).type, 'ForgetPassword');
+    const code = world.codeOf(forgot.otpId);
+    await rejectsHttp(agent.verifyOTpSignUp({ otpId: forgot.otpId, userId: 10, OTP: code }), 400);
+    await rejectsHttp(agent.verifyOTpSignUp({ otpId: forgot.otpId, userId: 10, OTP: '5678' }), 400);
+    nothingHappened();
+    const resent = await agent.resendOTP({ userId: 10 });
+    assert.equal(world.row(resent.otpId).codePurpose, RESET);
+    // Driver: the same, by userId (the driver app sends no otpId).
+    const drv = await callDriver(driver.forgetPasswordRequest, { email: 'drv@x.test' });
+    const drvCode = world.codeOf(drv.data.otpId);
+    for (const handler of [driver.verifyOTP, driver.verifyOtp]) {
+      await rejectsHttp(callDriver(handler, { userId: 40, OTP: drvCode }), 400);
+      await rejectsHttp(callDriver(handler, { userId: 40, OTP: '5678' }), 400);
+    }
+    nothingHappened();
+    const drvResent = await callDriver(driver.resendOTP, { userId: 40 });
+    assert.equal(world.row(drvResent.data.otpId).codePurpose, RESET);
+    assert.equal((await callDriver(driver.verifyOTPforPassword, {
+      otpId: drvResent.data.otpId, OTP: world.codeOf(drvResent.data.otpId),
+    })).data.userId, 40);
+  }
+
+  {
+    // Wrong guesses add up per account: after the second locked code the next code waits,
+    // with the 429 and retryAfterSeconds the apps already handle.
+    freshWorld();
+    for (let n = 0; n < 2; n += 1) {
+      const c = await world.reset.issueCode({ userId: 10, purpose: RESET });
+      for (let i = 0; i < realLifecycle.MAX_FAILED_ATTEMPTS; i += 1) {
+        await assert.rejects(agent.verifyOTPforPassword({ otpId: c.otpId, userId: 10, OTP: wrongCode(c.code) }));
+      }
+    }
+    for (const request of [
+      () => agent.forgetPasswordRequest({ email: 'agent@x.test' }),
+      () => agent.resendOTP({ userId: 10 }),
+    ]) {
+      await assert.rejects(request(), (err) => {
+        assert.ok(err instanceof UniversalHttpError);
+        assert.equal(err.statusCode, 429);
+        assert.equal(err.details.retryAfterSeconds, realLifecycle.FAILED_GUESS_BACKOFF.baseSec);
+        return true;
+      });
+    }
+    world.advance(realLifecycle.FAILED_GUESS_BACKOFF.baseSec * 1000);
+    assert.ok((await agent.resendOTP({ userId: 10 })).otpId);
+  }
+
   // ═══ Source: only the shared lifecycle reads or compares a code's state ═════════════════
   {
     const OWNERS = new Set([
@@ -427,7 +519,7 @@ async function run() {
     ]);
     const SKIP_DIRS = new Set(['node_modules', 'tests', 'migrations', 'seeders', 'scripts', 'coverage', '.git', 'public', 'uploads', 'docs']);
     // Code-state columns, in any file that touches the otpVerifications model or table.
-    const STATE_COLUMNS = /\b(expirtAt|failedAttempts|verifiedAtForgetCase|resetExpiresAt)\b/;
+    const STATE_COLUMNS = /\b(expirtAt|failedAttempts|verifiedAtForgetCase|resetExpiresAt|codePurpose)\b/;
     const TOUCHES_CODES = /\botpVerifications?\b/;
     // A stored code compared with anything but a literal (the 5678 test code is a literal).
     const CODE_COMPARE = /\.OTP\s*[!=]==?(?!=)\s*(?![\s'"`])|(?<!['"`]\s*)[!=]==?\s*[\w$.]*\.OTP\b/;

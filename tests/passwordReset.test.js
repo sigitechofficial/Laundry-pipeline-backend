@@ -7,7 +7,9 @@
  *  - the account is the code owner, never a client-supplied userId (one that is sent is checked);
  *  - a code is digits only, must be live (issued, unused, unexpired) and is single use;
  *  - a used, invalidated or superseded code (OTP NULL) never verifies anything, in any flow;
- *  - wrong guesses are limited per code, and codes per account per window;
+ *  - every code is bound to its purpose (sign-up or password reset) and verifies only for it;
+ *  - wrong guesses are limited per code, codes per account per hour and per day, and wrong
+ *    guesses add up per account into an escalating wait for the next code (O-12-R2-1);
  *  - a new code ends the earlier code's lifecycle (verified flag, reset window, wrong guesses);
  *  - a reset must be completed within its own window and ends every session of the account.
  * The flows' use of it is tested in tests/accountCodeCallSites.test.js.
@@ -20,6 +22,7 @@ const { Op } = require('sequelize');
 const {
   OTP_CODE_LENGTH,
   OTP_TTL_MS,
+  CODE_PURPOSES,
   generateOtpCode,
   freshCodeColumns,
   normalizeSubmittedCode,
@@ -27,18 +30,23 @@ const {
 const {
   MAX_FAILED_ATTEMPTS,
   PASSWORD_RESET_WINDOW_MS,
-  CODE_ISSUE_LIMIT,
+  CODE_ISSUE_LIMITS,
+  FAILED_GUESS_BACKOFF,
+  lockoutBackoffSec,
+  lockoutBackoffSchedule,
   PasswordResetError,
   codeState,
   resetState,
   toId,
   sequelizeResetStore,
-  redisIssueLimiter,
+  redisCodeLimiter,
   toHttpError,
 } = require('../services/shared/passwordReset');
-const { makeAccountCodeWorld: makeWorld, wrongCode } = require('./memoryAccountCodes');
+const { makeAccountCodeWorld: makeWorld, memoryCodeLimiter, wrongCode } = require('./memoryAccountCodes');
 
 const AGENT = [4];
+const SIGNUP = CODE_PURPOSES.SIGNUP;
+const RESET = CODE_PURPOSES.PASSWORD_RESET;
 const CUSTOMER = [2];
 const DRIVER = [3];
 
@@ -60,13 +68,17 @@ async function run() {
   assert.equal(normalizeSubmittedCode(undefined), '');
   assert.equal(normalizeSubmittedCode({ $ne: null }), '', 'objects never reach the query');
   assert.deepEqual(
-    freshCodeColumns({ code: '0042', requestedAt: new Date(0), expiresAt: new Date(1) }),
+    freshCodeColumns({ code: '0042', requestedAt: new Date(0), expiresAt: new Date(1) }, RESET),
     {
-      OTP: '0042', reqAt: new Date(0), expirtAt: new Date(1), failedAttempts: 0,
+      OTP: '0042', codePurpose: 'password_reset', reqAt: new Date(0), expirtAt: new Date(1), failedAttempts: 0,
       verifiedAtForgetCase: false, resetExpiresAt: null,
     },
-    'a new code clears the earlier lifecycle'
+    'a new code clears the earlier lifecycle and records its purpose'
   );
+  assert.equal(freshCodeColumns({ code: '1' }, SIGNUP).codePurpose, 'signup');
+  for (const bad of [undefined, null, '', 'login', 'SIGNUP']) {
+    assert.throws(() => freshCodeColumns({ code: '1' }, bad), /unknown code purpose/, 'no code without a purpose');
+  }
 
   // ── Pure state classification ──
   const at = new Date('2026-11-24T10:00:00Z');
@@ -79,6 +91,13 @@ async function run() {
   assert.equal(codeState({ OTP: null, expirtAt: later, failedAttempts: 0 }, at), 'invalidated');
   assert.equal(codeState({ OTP: null, expirtAt: later, failedAttempts: MAX_FAILED_ATTEMPTS }, at), 'locked');
   assert.equal(codeState({ OTP: null, expirtAt: null, failedAttempts: 0 }, at), 'invalidated', 'a used code never matches');
+  const liveReset = { OTP: '1234', codePurpose: RESET, expirtAt: later, failedAttempts: 0 };
+  assert.equal(codeState(liveReset, at, MAX_FAILED_ATTEMPTS, RESET), 'live');
+  assert.equal(codeState(liveReset, at, MAX_FAILED_ATTEMPTS, SIGNUP), 'other_purpose');
+  assert.equal(codeState({ ...liveReset, codePurpose: null }, at, MAX_FAILED_ATTEMPTS, RESET), 'other_purpose',
+    'a code issued before purposes were recorded verifies nothing');
+  assert.equal(codeState({ ...liveReset, failedAttempts: MAX_FAILED_ATTEMPTS }, at, MAX_FAILED_ATTEMPTS, SIGNUP),
+    'other_purpose', 'another flow learns nothing about the code');
   assert.equal(resetState({ verifiedAtForgetCase: false, resetExpiresAt: later }, at), 'not_verified');
   assert.equal(resetState({ verifiedAtForgetCase: null, resetExpiresAt: later }, at), 'not_verified', 'only true is verified');
   assert.equal(resetState({ verifiedAtForgetCase: true, resetExpiresAt: new Date(at - 1) }, at), 'reset_expired');
@@ -94,7 +113,7 @@ async function run() {
   // ── Happy path: owner's password changes, sessions end, everything is single use ──
   {
     const { state, reset, codeOf } = makeWorld();
-    const { otpId, code, created } = await reset.issueCode({ userId: 10 });
+    const { otpId, code, created } = await reset.issueCode({ userId: 10, purpose: RESET });
     assert.equal(created, true);
     assert.equal(code, codeOf(otpId));
     assert.deepEqual(await reset.verifyResetCode({ otpId: String(otpId), code, userTypeIds: AGENT }), { otpId, userId: 10 });
@@ -109,7 +128,7 @@ async function run() {
   // ── The O-12 attack: a verified code of account A cannot set account B's password ──
   {
     const { state, reset } = makeWorld();
-    const mine = await reset.issueCode({ userId: 30 });
+    const mine = await reset.issueCode({ userId: 30, purpose: RESET });
     await reset.verifyResetCode({ otpId: mine.otpId, code: mine.code, userTypeIds: AGENT });
     await rejectsWith(
       reset.resetPassword({ otpId: mine.otpId, userId: 10, password: 'pwned', userTypeIds: AGENT }),
@@ -126,12 +145,12 @@ async function run() {
   // ── Not verified, expired code, expired reset ──
   {
     const { state, reset, advance } = makeWorld();
-    const a = await reset.issueCode({ userId: 10 });
+    const a = await reset.issueCode({ userId: 10, purpose: RESET });
     await rejectsWith(reset.resetPassword({ otpId: a.otpId, password: 'x', userTypeIds: AGENT }), 'not_verified');
     advance(OTP_TTL_MS + 1);
     await rejectsWith(reset.verifyResetCode({ otpId: a.otpId, code: a.code, userTypeIds: AGENT }), 'expired');
 
-    const b = await reset.issueCode({ userId: 10 });
+    const b = await reset.issueCode({ userId: 10, purpose: RESET });
     await reset.verifyResetCode({ otpId: b.otpId, code: b.code, userTypeIds: AGENT });
     // The reset window is its own duration, longer than the code's, and not the code expiry.
     assert.ok(PASSWORD_RESET_WINDOW_MS > OTP_TTL_MS);
@@ -141,7 +160,7 @@ async function run() {
     await reset.resetPassword({ otpId: b.otpId, password: 'in-time', userTypeIds: AGENT });
     assert.equal(state.users.get(10).password, 'hash(in-time)');
 
-    const c = await reset.issueCode({ userId: 10 });
+    const c = await reset.issueCode({ userId: 10, purpose: RESET });
     await reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds: AGENT });
     advance(PASSWORD_RESET_WINDOW_MS + 1);
     await rejectsWith(reset.resetPassword({ otpId: c.otpId, password: 'x', userTypeIds: AGENT }), 'reset_expired');
@@ -153,7 +172,7 @@ async function run() {
   // ── Wrong guesses: limited per code, the code is invalidated at the limit ──
   {
     const { reset } = makeWorld();
-    const { otpId, code } = await reset.issueCode({ userId: 10 });
+    const { otpId, code } = await reset.issueCode({ userId: 10, purpose: RESET });
     for (let i = 1; i < MAX_FAILED_ATTEMPTS; i += 1) {
       await assert.rejects(reset.verifyResetCode({ otpId, code: wrongCode(code), userTypeIds: AGENT }), (err) => {
         assert.equal(err.reason, 'incorrect');
@@ -165,7 +184,7 @@ async function run() {
     await rejectsWith(reset.verifyResetCode({ otpId, code, userTypeIds: AGENT }), 'locked', 'the right code no longer works');
 
     // A new code starts over (and the earlier lockout ends with it).
-    const again = await reset.issueCode({ userId: 10 });
+    const again = await reset.issueCode({ userId: 10, purpose: RESET });
     assert.equal(again.otpId, otpId, 'one row per account');
     await reset.verifyResetCode({ otpId, code: again.code, userTypeIds: AGENT });
   }
@@ -173,7 +192,7 @@ async function run() {
   // ── Parallel guesses cannot exceed the limit ──
   {
     const { reset, state } = makeWorld();
-    const { otpId, code } = await reset.issueCode({ userId: 10 });
+    const { otpId, code } = await reset.issueCode({ userId: 10, purpose: RESET });
     const guesses = Array.from({ length: 20 }, () =>
       reset.verifyResetCode({ otpId, code: wrongCode(code), userTypeIds: AGENT }).catch((e) => e.reason));
     const reasons = await Promise.all(guesses);
@@ -185,24 +204,139 @@ async function run() {
   // ── A new code resets the verified flag (forget request after a verification) ──
   {
     const { reset } = makeWorld();
-    const a = await reset.issueCode({ userId: 10 });
+    const a = await reset.issueCode({ userId: 10, purpose: RESET });
     await reset.verifyResetCode({ otpId: a.otpId, code: a.code, userTypeIds: AGENT });
-    await reset.issueCode({ userId: 10 });
+    await reset.issueCode({ userId: 10, purpose: RESET });
     await rejectsWith(reset.resetPassword({ otpId: a.otpId, password: 'x', userTypeIds: AGENT }), 'not_verified');
   }
 
-  // ── Codes per account per window ──
+  // ── Codes per account per hour and per day ──
   {
-    const { reset } = makeWorld();
-    for (let i = 0; i < CODE_ISSUE_LIMIT.max; i += 1) await reset.issueCode({ userId: 10 });
-    await rejectsWith(reset.issueCode({ userId: 10 }), 'throttled');
-    await reset.issueCode({ userId: 30 }); // other accounts are unaffected
+    const { reset, advance } = makeWorld();
+    const HOUR = 60 * 60 * 1000;
+    assert.deepEqual(
+      Object.values(CODE_ISSUE_LIMITS).map(({ windowSec, max }) => [windowSec, max]),
+      [[3600, 5], [86400, 10]],
+      'the documented caps (swagger.yaml)'
+    );
+    for (let i = 0; i < CODE_ISSUE_LIMITS.hourly.max; i += 1) await reset.issueCode({ userId: 10, purpose: RESET });
+    await assert.rejects(reset.issueCode({ userId: 10, purpose: RESET }), (err) =>
+      err.reason === 'throttled' && err.details.retryAfterSeconds === 3600);
+    await reset.issueCode({ userId: 30, purpose: RESET }); // other accounts are unaffected
+    advance(HOUR);
+    for (let i = 0; i < CODE_ISSUE_LIMITS.daily.max - CODE_ISSUE_LIMITS.hourly.max; i += 1) {
+      await reset.issueCode({ userId: 10, purpose: RESET });
+    }
+    // The daily cap holds although the hour has room again; refusals are not counted.
+    advance(HOUR);
+    await assert.rejects(reset.issueCode({ userId: 10, purpose: RESET }), (err) =>
+      err.reason === 'throttled' && err.details.retryAfterSeconds === 22 * 3600);
+    await rejectsWith(reset.reserveIssue({ userId: 10 }), 'throttled');
+    advance(22 * HOUR);
+    await reset.issueCode({ userId: 10, purpose: RESET });
+  }
+
+  // ── Wrong guesses add up per account: escalating wait for the next code ──
+  {
+    assert.deepEqual(lockoutBackoffSchedule(), [0, 900, 1800, 3600, 7200, 14400, 28800, 57600, 86400]);
+    assert.equal(lockoutBackoffSec(1), 0, 'one locked code: a new code at once');
+    assert.equal(lockoutBackoffSec(2), FAILED_GUESS_BACKOFF.baseSec);
+    assert.equal(lockoutBackoffSec(50), FAILED_GUESS_BACKOFF.maxSec);
+
+    const { reset, advance, limiter } = makeWorld();
+    const lock = async (purpose = RESET) => {
+      const c = await reset.issueCode({ userId: 10, purpose });
+      for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
+        await assert.rejects(purpose === RESET
+          ? reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT })
+          : reset.verifySignupCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT }));
+      }
+    };
+    await lock();
+    await lock(SIGNUP); // both purposes count against the same account
+    assert.equal(limiter.failedGuesses(10), 2 * MAX_FAILED_ATTEMPTS);
+    await assert.rejects(reset.issueCode({ userId: 10, purpose: RESET }), (err) =>
+      err.reason === 'throttled' && err.details.retryAfterSeconds === 900);
+    await rejectsWith(reset.issueResendCode({ userId: 10 }), 'throttled');
+    await rejectsWith(reset.reserveIssue({ userId: 10 }), 'throttled');
+    await reset.issueCode({ userId: 30, purpose: RESET }); // other accounts are unaffected
+    advance(900 * 1000);
+    await lock();
+    await rejectsWith(reset.issueCode({ userId: 10, purpose: RESET }), 'throttled');
+    advance(1800 * 1000 - 1);
+    await rejectsWith(reset.issueCode({ userId: 10, purpose: RESET }), 'throttled');
+    advance(1);
+    // A correct code clears the tally: the owner is not delayed by earlier guesses.
+    const ok = await reset.issueCode({ userId: 10, purpose: RESET });
+    await assert.rejects(reset.verifyResetCode({ otpId: ok.otpId, code: wrongCode(ok.code), userTypeIds: AGENT }));
+    await reset.verifyResetCode({ otpId: ok.otpId, code: ok.code, userTypeIds: AGENT });
+    assert.equal(limiter.failedGuesses(10), 0);
+    await reset.issueCode({ userId: 10, purpose: RESET });
+  }
+
+  // ── Guesses spread over codes replaced early count the same as a locked code ──
+  {
+    const { reset, limiter } = makeWorld();
+    for (let round = 0; round < 3; round += 1) {
+      const c = await reset.issueCode({ userId: 10, purpose: RESET });
+      for (let i = 0; i < MAX_FAILED_ATTEMPTS - 1; i += 1) {
+        await rejectsWith(reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT }),
+          'incorrect');
+      }
+    }
+    assert.equal(limiter.failedGuesses(10), 3 * (MAX_FAILED_ATTEMPTS - 1));
+    await rejectsWith(reset.issueCode({ userId: 10, purpose: RESET }), 'throttled');
+  }
+
+  // ── The tally is forgotten FAILED_GUESS_BACKOFF.memorySec after the last wrong guess ──
+  {
+    const { reset, advance, limiter } = makeWorld();
+    for (let n = 0; n < 2; n += 1) {
+      const c = await reset.issueCode({ userId: 10, purpose: RESET });
+      for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
+        await assert.rejects(reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT }));
+      }
+    }
+    advance(FAILED_GUESS_BACKOFF.memorySec * 1000);
+    assert.equal(FAILED_GUESS_BACKOFF.memorySec, 30 * 24 * 3600);
+    const c = await reset.issueCode({ userId: 10, purpose: RESET });
+    await assert.rejects(reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT }));
+    assert.equal(limiter.failedGuesses(10), 1, 'counting starts again');
+  }
+
+  // ── Long-horizon bound: an attacker who always guesses wrong at one account ──
+  {
+    const { reset, advance, state } = makeWorld();
+    const DAY = 24 * 60 * 60 * 1000;
+    const start = state.clock.getTime();
+    let guesses = 0;
+    const guessesBy = {};
+    while (state.clock.getTime() - start < 30 * DAY) {
+      let c;
+      try {
+        c = await reset.issueCode({ userId: 10, purpose: RESET });
+      } catch (err) {
+        assert.equal(err.reason, 'throttled');
+        advance(err.details.retryAfterSeconds * 1000);
+        continue;
+      }
+      const day = Math.floor((state.clock.getTime() - start) / DAY) + 1;
+      for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
+        await assert.rejects(reset.verifyResetCode({ otpId: c.otpId, code: wrongCode(c.code), userTypeIds: AGENT }));
+        guesses += 1;
+        guessesBy[day] = (guessesBy[day] || 0) + 1;
+      }
+    }
+    assert.ok(guessesBy[1] <= 40, `day 1: ${guessesBy[1]} guesses`);
+    for (let day = 3; day <= 30; day += 1) assert.ok((guessesBy[day] || 0) <= 5, `day ${day}: ${guessesBy[day]}`);
+    assert.ok(guesses <= 185, `30 days: ${guesses} guesses`);
+    assert.ok(guesses / 10 ** OTP_CODE_LENGTH < 0.02, 'under 2% of the code space in 30 days');
   }
 
   // ── Account types: a flow only finds codes of the accounts it serves ──
   {
     const { reset, state } = makeWorld();
-    const c = await reset.issueCode({ userId: 20 }); // a customer
+    const c = await reset.issueCode({ userId: 20, purpose: RESET }); // a customer
     await rejectsWith(reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds: AGENT }), 'not_found');
     await reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds: CUSTOMER });
     await rejectsWith(reset.resetPassword({ otpId: c.otpId, password: 'x', userTypeIds: AGENT }), 'not_found');
@@ -215,7 +349,7 @@ async function run() {
   // ── A flow's own accept rule (skipCodeCheck) still ends in the same single-use reset ──
   {
     const { reset, state } = makeWorld();
-    const c = await reset.issueCode({ userId: 20 });
+    const c = await reset.issueCode({ userId: 20, purpose: RESET });
     await reset.verifyResetCode({ otpId: c.otpId, code: 'test', userTypeIds: CUSTOMER, skipCodeCheck: true });
     await rejectsWith(reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds: CUSTOMER }), 'invalidated');
     await reset.resetPassword({ otpId: c.otpId, userId: 20, password: 'p', userTypeIds: CUSTOMER });
@@ -225,7 +359,7 @@ async function run() {
   // ── If the sessions cannot be ended, the password is not changed and the reset stays open ──
   {
     const { reset, state } = makeWorld();
-    const c = await reset.issueCode({ userId: 10 });
+    const c = await reset.issueCode({ userId: 10, purpose: RESET });
     await reset.verifyResetCode({ otpId: c.otpId, code: c.code, userTypeIds: AGENT });
     state.failSessionsEnd = true;
     await assert.rejects(reset.resetPassword({ otpId: c.otpId, password: 'p', userTypeIds: AGENT }), /redis down/);
@@ -238,7 +372,7 @@ async function run() {
   // ── Sign-up verification: owner-bound, live, single use, and it opens no reset ──
   {
     const { state, reset, row } = makeWorld();
-    const a = await reset.issueCode({ userId: 20 });
+    const a = await reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsWith(reset.verifySignupCode({ otpId: a.otpId, userId: 30, code: a.code, userTypeIds: CUSTOMER }),
       'user_mismatch');
     assert.equal(row(a.otpId).OTP, a.code, 'a refused request does not use the code');
@@ -254,16 +388,16 @@ async function run() {
     await rejectsWith(reset.verifyResetCode({ otpId: a.otpId, code: a.code, userTypeIds: CUSTOMER }), 'invalidated');
     assert.equal(state.users.get(20).password, 'old-customer');
     // Without userId the owner is verified (never anyone else); without otpId, the account's own row.
-    const b = await reset.issueCode({ userId: 20 });
+    const b = await reset.issueCode({ userId: 20, purpose: SIGNUP });
     assert.deepEqual(await reset.verifySignupCode({ otpId: b.otpId, code: b.code, userTypeIds: CUSTOMER }),
       { otpId: b.otpId, userId: 20 });
-    const c = await reset.issueCode({ userId: 40 });
+    const c = await reset.issueCode({ userId: 40, purpose: SIGNUP });
     assert.deepEqual(await reset.verifySignupCode({ userId: '40', code: c.code, userTypeIds: DRIVER }),
       { otpId: c.otpId, userId: 40 });
     await rejectsWith(reset.verifySignupCode({ code: c.code, userTypeIds: DRIVER }), 'not_found');
     await rejectsWith(reset.verifySignupCode({ userId: { $gt: 0 }, code: c.code, userTypeIds: DRIVER }), 'not_found');
     // A flow only finds its own kind of account, by otpId or by userId.
-    const d = await reset.issueCode({ userId: 10 });
+    const d = await reset.issueCode({ userId: 10, purpose: SIGNUP });
     await rejectsWith(reset.verifySignupCode({ userId: 10, code: d.code, userTypeIds: DRIVER }), 'not_found');
     await rejectsWith(reset.verifySignupCode({ otpId: d.otpId, code: d.code, userTypeIds: CUSTOMER }), 'not_found');
     assert.equal(row(d.otpId).OTP, d.code);
@@ -288,13 +422,13 @@ async function run() {
       }
     };
     // Used by a completed reset (OTP NULL, reset closed).
-    const used = await reset.issueCode({ userId: 20 });
+    const used = await reset.issueCode({ userId: 20, purpose: RESET });
     await reset.verifyResetCode({ otpId: used.otpId, code: used.code, userTypeIds: CUSTOMER });
     await reset.resetPassword({ otpId: used.otpId, password: 'p', userTypeIds: CUSTOMER });
     assert.equal(row(used.otpId).OTP, null);
     await attempts(used.otpId, 20, CUSTOMER);
     // Locked by wrong guesses.
-    const locked = await reset.issueCode({ userId: 10 });
+    const locked = await reset.issueCode({ userId: 10, purpose: SIGNUP });
     for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
       await assert.rejects(reset.verifySignupCode({ otpId: locked.otpId, code: wrongCode(locked.code), userTypeIds: AGENT }));
     }
@@ -304,7 +438,7 @@ async function run() {
     // Superseded: an account's extra row is emptied by a new code.
     state.codes.push({ id: 99, userId: 40, OTP: '1111', expirtAt: new Date(state.clock.getTime() + 1000), failedAttempts: 0 });
     state.codes.push({ id: 100, userId: 40, OTP: '2222', expirtAt: new Date(state.clock.getTime() + 1000), failedAttempts: 0 });
-    const fresh = await reset.issueCode({ userId: 40 });
+    const fresh = await reset.issueCode({ userId: 40, purpose: SIGNUP });
     assert.equal(fresh.otpId, 99, 'the lowest-id row holds the code');
     await attempts(100, 40, DRIVER);
     await rejectsWith(reset.verifySignupCode({ otpId: 100, code: '2222', userTypeIds: DRIVER }), 'invalidated');
@@ -317,7 +451,7 @@ async function run() {
   // ── Sign-up: the flow's own accept rule (skipCodeCheck) uses the row's code up, opens no reset ──
   {
     const { reset, row } = makeWorld();
-    const c = await reset.issueCode({ userId: 20 });
+    const c = await reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsWith(
       reset.verifySignupCode({ otpId: c.otpId, userId: 30, code: 'test', userTypeIds: CUSTOMER, skipCodeCheck: true }),
       'user_mismatch'
@@ -335,7 +469,7 @@ async function run() {
   // ── Concurrent correct submissions: one wins, the other is told the code is used ──
   {
     const { reset } = makeWorld();
-    const c = await reset.issueCode({ userId: 20 });
+    const c = await reset.issueCode({ userId: 20, purpose: SIGNUP });
     const results = await Promise.all([1, 2].map(() =>
       reset.verifySignupCode({ otpId: c.otpId, code: c.code, userTypeIds: CUSTOMER }).then(() => 'ok', (e) => e.reason)));
     assert.deepEqual(results.sort(), ['invalidated', 'ok']);
@@ -344,10 +478,79 @@ async function run() {
   // ── Sign-up re-issue counts against the same per-account code limit ──
   {
     const { reset } = makeWorld();
-    for (let i = 0; i < CODE_ISSUE_LIMIT.max - 1; i += 1) await reset.reserveIssue({ userId: 20 });
-    await reset.issueCode({ userId: 20 });
+    for (let i = 0; i < CODE_ISSUE_LIMITS.hourly.max - 1; i += 1) await reset.reserveIssue({ userId: 20 });
+    await reset.issueCode({ userId: 20, purpose: SIGNUP });
     await rejectsWith(reset.reserveIssue({ userId: 20 }), 'throttled');
-    await rejectsWith(reset.issueCode({ userId: 20 }), 'throttled');
+    await rejectsWith(reset.issueCode({ userId: 20, purpose: SIGNUP }), 'throttled');
+  }
+
+  // ── O-12-R2-1: a code verifies only for its own purpose ──
+  {
+    const { reset, row, state, limiter } = makeWorld();
+    // A password-reset code never verifies a sign-up (that would sign the account in).
+    const r = await reset.issueCode({ userId: 20, purpose: RESET });
+    await rejectsWith(reset.verifySignupCode({ otpId: r.otpId, code: r.code, userTypeIds: CUSTOMER }), 'invalidated');
+    await rejectsWith(reset.verifySignupCode({ userId: 20, code: r.code, userTypeIds: CUSTOMER }), 'invalidated');
+    await rejectsWith(
+      reset.verifySignupCode({ otpId: r.otpId, code: 'test', userTypeIds: CUSTOMER, skipCodeCheck: true }),
+      'invalidated',
+      'not by a flow\'s own accept rule either'
+    );
+    assert.equal(row(r.otpId).OTP, r.code, 'the reset code is untouched');
+    assert.equal(row(r.otpId).failedAttempts, 0, 'and no attempt of it was used');
+    assert.equal(limiter.failedGuesses(20), 0);
+    await reset.verifyResetCode({ otpId: r.otpId, code: r.code, userTypeIds: CUSTOMER });
+
+    // A sign-up code never opens a password reset.
+    const s1 = await reset.issueCode({ userId: 20, purpose: SIGNUP });
+    await rejectsWith(reset.verifyResetCode({ otpId: s1.otpId, code: s1.code, userTypeIds: CUSTOMER }), 'invalidated');
+    await rejectsWith(
+      reset.verifyResetCode({ otpId: s1.otpId, code: 'test', userTypeIds: CUSTOMER, skipCodeCheck: true }),
+      'invalidated'
+    );
+    await rejectsWith(reset.resetPassword({ otpId: s1.otpId, password: 'x', userTypeIds: CUSTOMER }), 'not_verified');
+    assert.equal(row(s1.otpId).OTP, s1.code);
+    await reset.verifySignupCode({ otpId: s1.otpId, code: s1.code, userTypeIds: CUSTOMER });
+
+    // The purpose is checked atomically with the code: a code replaced by one of the other
+    // purpose between the check and the update is not used.
+    const raced = await reset.issueCode({ userId: 10, purpose: SIGNUP });
+    row(raced.otpId).codePurpose = RESET; // what a concurrent forget-password request leaves
+    await rejectsWith(reset.verifySignupCode({ otpId: raced.otpId, code: raced.code, userTypeIds: AGENT }), 'invalidated');
+
+    // A row with no purpose (issued before purposes were recorded) verifies nothing.
+    state.codes.push({ id: 200, userId: 30, OTP: '4321', expirtAt: new Date(state.clock.getTime() + 1000), failedAttempts: 0 });
+    await rejectsWith(reset.verifySignupCode({ otpId: 200, code: '4321', userTypeIds: AGENT }), 'invalidated');
+    await rejectsWith(reset.verifyResetCode({ otpId: 200, code: '4321', userTypeIds: AGENT }), 'invalidated');
+  }
+
+  // ── Sign-up codes only for accounts not verified yet; a resend keeps the code's purpose ──
+  {
+    const { reset, row, state } = makeWorld();
+    state.users.get(20).verifiedAt = new Date('2026-01-01T00:00:00Z');
+    await rejectsWith(reset.issueCode({ userId: 20, purpose: SIGNUP }), 'already_verified');
+    await rejectsWith(reset.issueCode({ userId: 999, purpose: SIGNUP }), 'not_found');
+    await assert.rejects(reset.issueCode({ userId: 20 }), /unknown code purpose/);
+    // Verified: a resend is always a password reset, whatever the row held before.
+    state.codes.push({ id: 300, userId: 20, OTP: null, codePurpose: SIGNUP, failedAttempts: 0 });
+    const verifiedResend = await reset.issueResendCode({ userId: 20 });
+    assert.equal(verifiedResend.otpId, 300);
+    assert.equal(verifiedResend.purpose, RESET);
+    assert.equal(row(300).codePurpose, RESET);
+    await rejectsWith(reset.verifySignupCode({ otpId: 300, code: verifiedResend.code, userTypeIds: CUSTOMER }), 'invalidated');
+    await reset.verifyResetCode({ otpId: 300, code: verifiedResend.code, userTypeIds: CUSTOMER });
+    // Not verified: the resend keeps the purpose of the code it replaces.
+    const signup = await reset.issueCode({ userId: 40, purpose: SIGNUP });
+    assert.equal((await reset.issueResendCode({ userId: 40 })).purpose, SIGNUP);
+    await reset.issueCode({ userId: 40, purpose: RESET });
+    const resetResend = await reset.issueResendCode({ userId: '40' });
+    assert.equal(resetResend.purpose, RESET, 'an unverified account resetting its password');
+    assert.equal(resetResend.otpId, signup.otpId);
+    // Not verified, no purpose recorded (or no row): the sign-up being verified.
+    assert.equal((await reset.issueResendCode({ userId: 30 })).purpose, SIGNUP);
+    row(signup.otpId).codePurpose = null;
+    assert.equal((await reset.issueResendCode({ userId: 40 })).purpose, SIGNUP);
+    await rejectsWith(reset.issueResendCode({ userId: 999 }), 'not_found');
   }
 
   // ── HTTP mapping keeps each API's statuses ──
@@ -364,22 +567,36 @@ async function run() {
     assert.equal(toHttpError(other), other, 'other errors pass through');
   }
 
-  // ── Redis issue limiter: the window starts with the first code and never loses its expiry ──
+  // ── Redis limiter: one atomic script per issue, with every limit's keys and values ──
+  // (The script itself runs against a real Redis in tests/accountCodeLimits.redis.test.js.)
   {
     const calls = [];
-    const kv = new Map();
+    let reply = 0;
     const redis = {
-      async set(key, value, opts) { calls.push(['set', key, opts]); if (!kv.has(key)) kv.set(key, Number(value)); },
-      async incr(key) { kv.set(key, (kv.get(key) || 0) + 1); return kv.get(key); },
-      async ttl() { return 1234; },
+      async eval(script, opts) { calls.push({ script, ...opts }); return reply; },
+      async del(key) { calls.push({ del: key }); return 1; },
     };
-    const limiter = redisIssueLimiter(redis, { windowSec: 3600, max: 2 });
-    await limiter.assertAllowed(7);
-    await limiter.assertAllowed(7);
-    await assert.rejects(limiter.assertAllowed(7), (e) => e.reason === 'throttled' && e.details.retryAfterSeconds === 1234);
-    assert.deepEqual(calls[0], ['set', 'rl:otp:issue:u:7', { EX: 3600, NX: true }]);
-    const down = redisIssueLimiter({ async set() { throw new Error('ECONNREFUSED'); } });
-    await assert.rejects(down.assertAllowed(7), /ECONNREFUSED/, 'fails closed');
+    const limiter = redisCodeLimiter(redis);
+    const now = new Date('2026-11-24T10:00:00Z');
+    await limiter.assertIssueAllowed(7, now);
+    assert.deepEqual(calls[0].keys, ['rl:otp:issue:u:7', 'rl:otp:issue:day:u:7', 'rl:otp:fail:u:7'],
+      'the hourly counter keeps its key');
+    assert.deepEqual(calls[0].arguments, [
+      String(now.getTime()), '2', '3600000', '5', '86400000', '10', String(MAX_FAILED_ATTEMPTS),
+      ...lockoutBackoffSchedule().map((sec) => String(sec * 1000)),
+    ]);
+    reply = 1500;
+    await assert.rejects(limiter.assertIssueAllowed(7, now),
+      (e) => e.reason === 'throttled' && e.details.retryAfterSeconds === 2);
+    await limiter.recordFailedGuess(7, now);
+    assert.deepEqual(calls[2].keys, ['rl:otp:fail:u:7']);
+    assert.deepEqual(calls[2].arguments, [String(now.getTime()), String(30 * 24 * 3600 * 1000)]);
+    await limiter.clearFailedGuesses(7);
+    assert.deepEqual(calls[3], { del: 'rl:otp:fail:u:7' });
+    const down = redisCodeLimiter({ async eval() { throw new Error('ECONNREFUSED'); } });
+    await assert.rejects(down.assertIssueAllowed(7, now), /ECONNREFUSED/, 'fails closed');
+    await assert.rejects(down.recordFailedGuess(7, now), /ECONNREFUSED/, 'fails closed');
+    assert.equal(typeof memoryCodeLimiter, 'function');
   }
 
   // ── The Sequelize store's guards are in its WHERE clauses (atomic under concurrency) ──
@@ -394,17 +611,17 @@ async function run() {
       otpVerification,
     });
     const now = new Date();
-    await store.reserveAttempt(5, now, 5);
+    await store.reserveAttempt(5, RESET, now, 5);
     assert.deepEqual(updates[0].where, {
-      id: 5, OTP: { [Op.not]: null }, failedAttempts: { [Op.lt]: 5 }, expirtAt: { [Op.gte]: now },
+      id: 5, codePurpose: RESET, OTP: { [Op.not]: null }, failedAttempts: { [Op.lt]: 5 }, expirtAt: { [Op.gte]: now },
     });
     assert.deepEqual(updates[0].values, { failedAttempts: { literal: 'failedAttempts + 1' } });
-    await store.consumeCode(5, '0421', now, { verifiedAtForgetCase: true, resetExpiresAt: now });
-    assert.deepEqual(updates[1].where, { id: 5, OTP: '0421', expirtAt: { [Op.gte]: now } });
+    await store.consumeCode(5, '0421', RESET, now, { verifiedAtForgetCase: true, resetExpiresAt: now });
+    assert.deepEqual(updates[1].where, { id: 5, codePurpose: RESET, OTP: '0421', expirtAt: { [Op.gte]: now } });
     assert.deepEqual(updates[1].values, {
       OTP: null, failedAttempts: 0, verifiedAtForgetCase: true, resetExpiresAt: now,
     }, 'the code is used up; expirtAt is left as the code expiry');
-    assert.equal(await store.consumeCode(5, '', now, {}), false, 'an empty code never matches');
+    assert.equal(await store.consumeCode(5, '', RESET, now, {}), false, 'an empty code never matches');
     await store.consumeVerifiedReset(5, 10, now, { id: 'tx' });
     assert.deepEqual(updates[2].where, {
       id: 5, userId: 10, verifiedAtForgetCase: true, resetExpiresAt: { [Op.gte]: now },
@@ -412,6 +629,8 @@ async function run() {
     assert.deepEqual(updates[2].values, { verifiedAtForgetCase: false, resetExpiresAt: null });
     await store.setPassword(10, 'h', { id: 'tx' });
     assert.deepEqual(updates[3], { values: { password: 'h' }, where: { id: 10 }, users: true });
+    await store.consumeWithoutCheck(5, SIGNUP, { verifiedAtForgetCase: false, resetExpiresAt: null });
+    assert.deepEqual(updates[4].where, { id: 5, codePurpose: SIGNUP }, 'a flow\'s accept rule keeps the purpose');
   }
 
   // ── endAllAppSessions: every session and every push token of the account ──

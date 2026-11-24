@@ -12,6 +12,7 @@ const {
     toId,
     toHttpError: passwordResetHttpError,
 } = require('../shared/passwordReset');
+const { CODE_PURPOSES } = require('../shared/otpCode');
 const {
     UnauthorizedError, 
     NotFoundError, 
@@ -453,10 +454,11 @@ class AgentAuthService {
         }
 
         // A new code for the account (services/shared/passwordReset.js): it also serves a
-        // password reset in progress, so it goes through the same lifecycle and limits.
+        // password reset in progress, so it goes through the same lifecycle and limits, and the
+        // new code keeps the purpose of the one it replaces (sign-up or password reset).
         let issued;
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: userExist.id });
+            issued = await defaultPasswordReset().issueResendCode({ userId: userExist.id });
         } catch (err) {
             throw passwordResetHttpError(err);
         }
@@ -1233,7 +1235,10 @@ class AgentAuthService {
         // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
         let issued;
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: userData.id });
+            issued = await defaultPasswordReset().issueCode({
+                userId: userData.id,
+                purpose: CODE_PURPOSES.PASSWORD_RESET,
+            });
         } catch (err) {
             throw passwordResetHttpError(err);
         }

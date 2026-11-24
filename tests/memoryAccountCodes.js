@@ -10,9 +10,12 @@
 const assert = require('assert/strict');
 const { newOtpCode } = require('../services/shared/otpCode');
 const {
-  CODE_ISSUE_LIMIT,
+  CODE_ISSUE_LIMITS,
+  FAILED_GUESS_BACKOFF,
+  MAX_FAILED_ATTEMPTS,
   PasswordResetError,
   createPasswordReset,
+  lockoutBackoffSec,
 } = require('../services/shared/passwordReset');
 
 const live = (at) => (date) => Boolean(date) && new Date(date) >= at;
@@ -57,6 +60,10 @@ function makeAccountCodeWorld({ users } = {}) {
     async findAccountCode(userId) {
       return copy(state.codes.filter((r) => r.userId === Number(userId)).sort((a, b) => a.id - b.id)[0]);
     },
+    async findAccountStatus(userId) {
+      const u = state.users.get(Number(userId));
+      return u && !u.deletedAt ? { id: u.id, verifiedAt: u.verifiedAt || null } : null;
+    },
     async findAccount(userId, types) {
       const u = state.users.get(Number(userId));
       return u && !u.deletedAt && types.includes(u.userTypeId) ? { id: u.id } : null;
@@ -69,24 +76,26 @@ function makeAccountCodeWorld({ users } = {}) {
         return { otpId: row.id, created: true };
       }
       Object.assign(rows[0], columns);
-      rows.slice(1).forEach((r) => Object.assign(r, { OTP: null, verifiedAtForgetCase: false, resetExpiresAt: null }));
+      rows.slice(1).forEach((r) => Object.assign(r, {
+        OTP: null, codePurpose: null, verifiedAtForgetCase: false, resetExpiresAt: null,
+      }));
       return { otpId: rows[0].id, created: false };
     },
-    async reserveAttempt(otpId, at, max) {
+    async reserveAttempt(otpId, purpose, at, max) {
       const r = byId(otpId);
-      if (!r || !r.OTP || r.failedAttempts >= max || !live(at)(r.expirtAt)) return false;
+      if (!r || r.codePurpose !== purpose || !r.OTP || r.failedAttempts >= max || !live(at)(r.expirtAt)) return false;
       r.failedAttempts += 1;
       return true;
     },
-    async consumeCode(otpId, code, at, outcome) {
+    async consumeCode(otpId, code, purpose, at, outcome) {
       const r = byId(otpId);
-      if (!code || !r || r.OTP !== code || !live(at)(r.expirtAt)) return false;
+      if (!code || !r || r.codePurpose !== purpose || r.OTP !== code || !live(at)(r.expirtAt)) return false;
       Object.assign(r, { OTP: null, failedAttempts: 0, ...outcome });
       return true;
     },
-    async consumeWithoutCheck(otpId, outcome) {
+    async consumeWithoutCheck(otpId, purpose, outcome) {
       const r = byId(otpId);
-      if (!r) return false;
+      if (!r || r.codePurpose !== purpose) return false;
       Object.assign(r, { OTP: null, failedAttempts: 0, ...outcome });
       return true;
     },
@@ -116,18 +125,11 @@ function makeAccountCodeWorld({ users } = {}) {
     },
   };
 
-  const issued = new Map();
-  const limiter = {
-    async assertAllowed(userId) {
-      const n = (issued.get(userId) || 0) + 1;
-      issued.set(userId, n);
-      if (n > CODE_ISSUE_LIMIT.max) throw new PasswordResetError('throttled', { retryAfterSeconds: 60 });
-    },
-  };
+  const limiter = memoryCodeLimiter();
 
   const reset = createPasswordReset({
     store,
-    issueLimiter: limiter,
+    codeLimiter: limiter,
     hashPassword: async (p) => `hash(${p})`,
     endAllSessions: async (userId, { transaction }) => {
       assert.ok(transaction && transaction.pending, 'sessions end inside the reset transaction');
@@ -140,7 +142,60 @@ function makeAccountCodeWorld({ users } = {}) {
   const advance = (ms) => { state.clock = new Date(state.clock.getTime() + ms); };
   const row = (otpId) => byId(otpId);
   const codeOf = (otpId) => byId(otpId).OTP;
-  return { state, store, reset, advance, row, codeOf, issued };
+  return { state, store, reset, advance, row, codeOf, limiter };
+}
+
+/**
+ * The per-account limits of services/shared/passwordReset.js redisCodeLimiter, in memory, with
+ * the same rules as its Redis script (tests/accountCodeLimits.redis.test.js checks the script
+ * against it on a real Redis): refused while an issue window is full or the failed-guess backoff
+ * runs, refusals not counted, each window starting with its first code.
+ */
+function memoryCodeLimiter({
+  limits = CODE_ISSUE_LIMITS,
+  backoff = FAILED_GUESS_BACKOFF,
+  maxFailedAttempts = MAX_FAILED_ATTEMPTS,
+} = {}) {
+  const windows = new Map();
+  const tallies = new Map();
+  const windowOf = (name, userId, t) => {
+    const w = windows.get(`${name}:${userId}`);
+    return w && w.until > t ? w : null;
+  };
+  const tallyOf = (userId, t) => {
+    const tally = tallies.get(userId);
+    return tally && tally.forgetAt > t ? tally : null;
+  };
+  return {
+    async assertIssueAllowed(userId, now) {
+      const t = now.getTime();
+      let waitMs = 0;
+      for (const [name, limit] of Object.entries(limits)) {
+        const w = windowOf(name, userId, t);
+        if (w && w.count >= limit.max) waitMs = Math.max(waitMs, w.until - t);
+      }
+      const tally = tallyOf(userId, t);
+      const lockouts = tally ? Math.floor(tally.n / maxFailedAttempts) : 0;
+      if (lockouts > 0) waitMs = Math.max(waitMs, tally.at + lockoutBackoffSec(lockouts, backoff) * 1000 - t);
+      if (waitMs > 0) throw new PasswordResetError('throttled', { retryAfterSeconds: Math.ceil(waitMs / 1000) });
+      for (const [name, limit] of Object.entries(limits)) {
+        const w = windowOf(name, userId, t);
+        if (w) w.count += 1;
+        else windows.set(`${name}:${userId}`, { count: 1, until: t + limit.windowSec * 1000 });
+      }
+    },
+    async recordFailedGuess(userId, now) {
+      const t = now.getTime();
+      const tally = tallyOf(userId, t) || { n: 0 };
+      tallies.set(userId, { n: tally.n + 1, at: t, forgetAt: t + backoff.memorySec * 1000 });
+    },
+    async clearFailedGuesses(userId) {
+      tallies.delete(userId);
+    },
+    failedGuesses(userId) {
+      return tallies.has(userId) ? tallies.get(userId).n : 0;
+    },
+  };
 }
 
 /** A different 4-digit code (never the test code). */
@@ -151,4 +206,4 @@ function wrongCode(code) {
   return wrong;
 }
 
-module.exports = { makeAccountCodeWorld, wrongCode };
+module.exports = { makeAccountCodeWorld, memoryCodeLimiter, wrongCode };

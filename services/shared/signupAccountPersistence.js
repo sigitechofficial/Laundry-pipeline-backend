@@ -11,11 +11,14 @@
  * Dependencies are injected so the flow is unit-testable (tests/signupAccountPersistence.test.js).
  */
 
-const { freshCodeColumns } = require('./otpCode');
+const { CODE_PURPOSES, freshCodeColumns } = require('./otpCode');
 
-/** A new code starts a fresh code lifecycle on the account's row (services/shared/otpCode.js). */
+/**
+ * A new sign-up code starts a fresh code lifecycle on the account's row
+ * (services/shared/otpCode.js); it verifies the sign-up only.
+ */
 function otpValues(otp) {
-  return freshCodeColumns(otp);
+  return freshCodeColumns(otp, CODE_PURPOSES.SIGNUP);
 }
 
 /**

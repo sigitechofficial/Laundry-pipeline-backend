@@ -9,6 +9,8 @@
  * FORMAT — the apps' code fields take OTP_CODE_LENGTH digits only, so a code is digits only
  * (otp-generator with specialChars left on produced codes such as "4#1!" nobody could type).
  * Every value 0000-9999 is possible; a code with a leading zero is a string ("0421").
+ *
+ * PURPOSE — every code is issued for one purpose (CODE_PURPOSES) and verifies only for it.
  */
 
 const crypto = require('crypto');
@@ -18,6 +20,19 @@ const OTP_CODE_LENGTH = 4;
 
 /** How long a newly issued code can be entered: the platform's existing 1 minute. */
 const OTP_TTL_MS = 1 * 60 * 1000;
+
+/**
+ * What a code was issued for (otpVerifications.codePurpose). A code verifies only through the
+ * flow of its own purpose: a password-reset code never verifies a sign-up (which would sign the
+ * account in without the owner noticing a password change), and a sign-up code never opens a
+ * reset. A row with no purpose (issued before purposes were recorded) verifies nothing.
+ */
+const CODE_PURPOSES = Object.freeze({
+  SIGNUP: 'signup',
+  PASSWORD_RESET: 'password_reset',
+});
+
+const isCodePurpose = (value) => Object.values(CODE_PURPOSES).includes(value);
 
 /** A uniformly random code of OTP_CODE_LENGTH digits, from the CSPRNG. */
 function generateOtpCode() {
@@ -36,10 +51,14 @@ function newOtpCode(now = new Date()) {
 /**
  * Columns of the account's otpVerifications row for a newly issued code: the code replaces
  * any earlier one, and the earlier code's lifecycle (wrong guesses, a verified reset) ends.
+ * @param {object} otp       newOtpCode()
+ * @param {string} purpose   one of CODE_PURPOSES
  */
-function freshCodeColumns(otp) {
+function freshCodeColumns(otp, purpose) {
+  if (!isCodePurpose(purpose)) throw new Error(`freshCodeColumns: unknown code purpose ${purpose}`);
   return {
     OTP: otp.code,
+    codePurpose: purpose,
     reqAt: otp.requestedAt,
     expirtAt: otp.expiresAt,
     failedAttempts: 0,
@@ -63,6 +82,8 @@ function normalizeSubmittedCode(code) {
 module.exports = {
   OTP_CODE_LENGTH,
   OTP_TTL_MS,
+  CODE_PURPOSES,
+  isCodePurpose,
   generateOtpCode,
   newOtpCode,
   freshCodeColumns,

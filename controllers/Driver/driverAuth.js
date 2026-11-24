@@ -19,6 +19,7 @@ const {
     toId,
     toHttpError: passwordResetHttpError,
 } = require('../../services/shared/passwordReset')
+const { CODE_PURPOSES } = require('../../services/shared/otpCode')
 
 /** Accounts the driver sign-up, code and password reset endpoints serve: drivers (userTypes.id 3). */
 const DRIVER_USER_TYPES = [3]
@@ -89,7 +90,7 @@ async function driverregisterStep1(req, res) {
         const DT = new Date();
         let issued
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: userExist.id })
+            issued = await defaultPasswordReset().issueCode({ userId: userExist.id, purpose: CODE_PURPOSES.SIGNUP })
         } catch (err) {
             throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
         }
@@ -161,7 +162,7 @@ async function driverregisterStep1(req, res) {
         let DT = new Date();
         let issued
         try {
-            issued = await defaultPasswordReset().issueCode({ userId: newUser.id })
+            issued = await defaultPasswordReset().issueCode({ userId: newUser.id, purpose: CODE_PURPOSES.SIGNUP })
         } catch (err) {
             throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
         }
@@ -533,7 +534,7 @@ async function forgetPasswordRequest(req, res) {
     // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
     let issued
     try {
-        issued = await defaultPasswordReset().issueCode({ userId: userData.id })
+        issued = await defaultPasswordReset().issueCode({ userId: userData.id, purpose: CODE_PURPOSES.PASSWORD_RESET })
     } catch (err) {
         throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
     }
@@ -642,10 +643,11 @@ async function resendOTP(req, res) {
     }
 
     // A new code for the account (services/shared/passwordReset.js): it also serves a password
-    // reset in progress, so it goes through the same lifecycle and limits.
+    // reset in progress, so it goes through the same lifecycle and limits, and the new code
+    // keeps the purpose of the one it replaces (sign-up or password reset).
     let issued
     try {
-        issued = await defaultPasswordReset().issueCode({ userId: userExist.id })
+        issued = await defaultPasswordReset().issueResendCode({ userId: userExist.id })
     } catch (err) {
         throw passwordResetHttpError(err, DRIVER_RESET_STATUS)
     }
