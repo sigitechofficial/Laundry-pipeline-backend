@@ -40,7 +40,18 @@ unregistered/invalid. Server-side errors (quota, auth, APNs) never delete tokens
   project's RTDB (Admin SDK listeners). An old driver build (legacy) and an updated customer
   app / the website (primary) — or the reverse — therefore see the same trip with no gap.
   Bridges stop when the session closes or is reassigned and are reconciled from RTDB at boot
-  and every `LIVE_TRACKING_BRIDGE_RECONCILE_MS` (default 2 min).
+  and every `LIVE_TRACKING_BRIDGE_RECONCILE_MS` (default 2 min). Reconcile reads only session
+  `meta` (shallow key listing over REST, then each meta), from every readable project; where
+  projects disagree the most recent meta wins, and a bridge the readable projects know nothing
+  about is kept while another project is unreadable.
+- Every RTDB call is bounded (`LIVE_TRACKING_RTDB_TIMEOUT_MS`, default 5s) and circuit-broken
+  per project (`utils/rtdbAccess.js`): after `LIVE_TRACKING_RTDB_BREAKER_THRESHOLD` (2)
+  consecutive failures that project is skipped for `LIVE_TRACKING_RTDB_COOLDOWN_MS` (30s), so a
+  missing or down RTDB costs at most a couple of timeouts, not one per request.
+  `GET /health/firebase` probes each project's RTDB and fails (`degraded` in `/health/ready`)
+  when one is missing or unreachable.
+- A customer request naming a project the server does not hold is rejected (503
+  `FIREBASE_PROJECT_NOT_CONFIGURED`) before any RTDB read or write.
 
 Auth model: custom token claims `{ role: "customer"|"agent", appUserId }`, UID
 `customer_{id}` / `agent_{id}`. Rules: `firebase/database.rules.json` (deploy to every project).
@@ -59,9 +70,18 @@ API when the credential may), deploys the rules and prints the URL to set as
 
 ## Servers
 
-`deploy-api.yml` writes the primary key from the environment's `FIREBASE_SERVICE_ACCOUNT_JSON`
-secret and takes its RTDB URL from the `FIREBASE_DATABASE_URL` variable (optional
-`FIREBASE_LEGACY_DATABASE_URL` variable). `scripts/firebase-server-credentials.sh` stores keys
-in `$DEPLOY_ROOT/secrets/firebase/` (700/600), keeps the server's `./firebase.json` as the
-legacy credential (copied once, never moved, so rollbacks keep working) and updates `.env`.
-`GET /health/firebase` reports every project.
+`deploy-api.yml` takes the primary key from the environment's `FIREBASE_SERVICE_ACCOUNT_JSON`
+secret and its RTDB URL from the `FIREBASE_DATABASE_URL` variable (optional
+`FIREBASE_LEGACY_DATABASE_URL` variable).
+
+- The key never travels through step outputs or remote environment variables (those leak into
+  process argv, `/proc/<pid>/environ` and `~/.pm2/dump.pm2`). The runner writes it to a 600
+  file, scp copies it into the 700 drop dir `$DEPLOY_ROOT/secrets/firebase/incoming/`, and the
+  deploy only gets its path (`FIREBASE_SERVICE_ACCOUNT_FILE`). The drop file is shredded after
+  install and on every failure/rollback path.
+- The workflow refuses to deploy when `FIREBASE_DATABASE_URL` names an RTDB that does not
+  exist (HTTP 404 on a shallow read). Set the variable and secret only after provisioning.
+- `scripts/firebase-server-credentials.sh` stores keys in `$DEPLOY_ROOT/secrets/firebase/`
+  (700/600), keeps the server's `./firebase.json` as the legacy credential (copied once, never
+  moved, so rollbacks keep working) and updates `.env`.
+- `GET /health/firebase` reports every project, including a bounded probe of its RTDB.

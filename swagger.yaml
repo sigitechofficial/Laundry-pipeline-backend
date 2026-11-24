@@ -111,6 +111,12 @@ paths:
       description: |
         Run one probe only. Path values:
         `mysql` | `redis` | `firebase` | `stripe` | `zeptomail`
+
+        `firebase` reports each configured Firebase project (`data.projects[]`: role, projectId,
+        status, databaseURL) and, for each ready project, `rtdb` — a bounded authenticated probe
+        of its Realtime Database (`status`: ok | missing | denied | unreachable | error,
+        `httpStatus`, `latencyMs`, `error`, `circuit`). It fails when any project's RTDB does
+        not answer (e.g. FIREBASE_DATABASE_URL set before the instance exists).
       tags:
         - Health
       parameters:

@@ -10,6 +10,7 @@ const axios = require('axios');
 const db = require('../models');
 const redisClient = require('../redis/redis');
 const { getFirebaseDiagnostics } = require('../utils/notification');
+const rtdbAccess = require('../utils/rtdbAccess');
 const { validateTokenConfig } = require('../helper/zeptomailApi');
 
 const ZEPTOMAIL_API_URL = 'https://api.zeptomail.com/v1.1/email';
@@ -231,7 +232,10 @@ async function checkRedis() {
 
 /**
  * Firebase Admin, per configured project (primary + optional legacy, utils/firebaseProjects.js).
- * ok only when every configured project is ready; `projects` reports each one.
+ * Each ready project's Realtime Database is probed too (bounded, authenticated shallow read,
+ * utils/rtdbAccess.js): Admin initialises fine against an RTDB URL whose instance does not
+ * exist, and then every live-tracking call to it times out.
+ * ok only when every configured project is ready and its RTDB answers; `projects` reports each.
  */
 async function checkFirebase() {
   const started = nowMs();
@@ -250,7 +254,15 @@ async function checkFirebase() {
       databaseUrlSource: p.databaseUrlSource || null,
     }));
     const allReady = projects.length > 0 && projects.every((p) => p.status === 'ok');
-    const ok = !!(allReady && !diagnostics.nodeTooOld);
+    await Promise.all(
+      projects.map(async (p) => {
+        if (p.status !== 'ok' || !p.projectId) return;
+        const probe = await rtdbAccess.probe(p.projectId);
+        p.rtdb = { ...probe, circuit: rtdbAccess.breakerState(p.projectId) };
+      })
+    );
+    const rtdbDown = projects.filter((p) => p.rtdb && p.rtdb.status !== 'ok');
+    const ok = !!(allReady && !diagnostics.nodeTooOld && rtdbDown.length === 0);
     let hint = diagnostics.hint || null;
     if (!diagnostics.fileExists) {
       hint =
@@ -265,12 +277,16 @@ async function checkFirebase() {
         .join('; ')}`;
     } else if (diagnostics.nodeTooOld) {
       hint = 'Upgrade Node to >=22 for Firebase Admin 14.';
+    } else if (rtdbDown.length > 0) {
+      hint = `Realtime Database not usable: ${rtdbDown
+        .map((p) => `${p.role} ${p.projectId} ${p.rtdb.status} (${p.databaseURL}: ${p.rtdb.error})`)
+        .join('; ')}. Live tracking on that project is skipped until it answers; provision it with scripts/provisionLiveTrackingRtdb.js or fix its FIREBASE_*DATABASE_URL.`;
     }
 
     return result(
       ok ? 'ok' : 'fail',
       ok
-        ? `Firebase Admin ready (${projects.map((p) => `${p.role}=${p.projectId}`).join(', ')})`
+        ? `Firebase Admin + RTDB ready (${projects.map((p) => `${p.role}=${p.projectId}`).join(', ')})`
         : hint || 'Firebase Admin not ready',
       {
         latencyMs: nowMs() - started,
