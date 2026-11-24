@@ -17,6 +17,7 @@ const {
     countries,
     cities
 } = require('../../models');
+const { shopAddressFields } = require('../../utils/shopAddressInput');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
@@ -574,16 +575,19 @@ class AgentRegistrationService {
             throw new NotFoundError("No zone found for these coordinates");
         }
 
+        // Same field rules as the shop app's address (utils/shopAddressInput.js):
+        // district = post town, province = county, UK postcode as "EC1A 1BB".
+        const fields = shopAddressFields(
+            { streetAddress, district, province, postalcode },
+            fetchZones[0].city.country
+        );
         const registerShop = await addressDb.create({
-            streetAddress,
-            district,
+            ...fields,
             cityId: fetchZones[0].city.id,
-            province,
             countryId: fetchZones[0].city.country.id,
             lat,
             lng,
             status: true,
-            postalcode,
             coordinates: polygon,
             userId: userId,
             zoneId: fetchZones[0].id,
