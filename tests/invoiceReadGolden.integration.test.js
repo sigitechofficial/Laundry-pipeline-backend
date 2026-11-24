@@ -178,6 +178,12 @@ function normalise(node) {
         for (const [k, v] of Object.entries(node)) {
             // Development error bodies carry a stack trace (file paths, line numbers).
             if (k === 'stack') continue;
+            // Repair options come from an include with no ORDER BY: main itself returns them
+            // in either order from one run to the next, so they are compared by id.
+            if (k === 'options' && Array.isArray(v)) {
+                out[k] = normalise([...v].sort((x, y) => Number(x?.id) - Number(y?.id)));
+                continue;
+            }
             out[k] = k === 'timestamp' ? '<timestamp>' : normalise(v);
         }
         return out;
