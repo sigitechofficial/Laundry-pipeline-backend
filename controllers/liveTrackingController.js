@@ -112,6 +112,15 @@ exports.getCustomerLiveTracking = async (req, res) => {
   }
 
   const { requestedProjectId, project } = requestProject(req);
+  // A project this server does not hold can never get a token: reject before any RTDB read
+  // or write (a client-reported value must not trigger session writes or timeouts).
+  if (requestedProjectId && !project) {
+    throw new UniversalHttpError(
+      `Firebase project ${requestedProjectId} is not configured on this server`,
+      StatusCodes.SERVICE_UNAVAILABLE,
+      { code: firebaseProjects.FIREBASE_PROJECT_ERROR.NOT_CONFIGURED }
+    );
+  }
   const readProjectId = project?.projectId || null;
 
   const statusId = Number(bookingRow.bookingStatusId);
