@@ -250,16 +250,46 @@ function applyItemPrice(plain, maps, overlaysOn) {
   return { ...plain, price: money(plain.price), priceInherited: true };
 }
 
-async function applyToServiceCategoriesData(tree, zoneId, serviceId) {
+/**
+ * Everything applyToServiceCategoriesData reads for one zone: the overlay switch, the
+ * zone's override maps, the active discount rules and the zone's currency symbol. Load it
+ * once per request and pass it to applyToServiceCategoriesData for every service of that
+ * zone, instead of re-reading the same ~12 rows-sets per service.
+ * @param {number|string|null} zoneId
+ */
+async function loadServiceCategoriesOverlay(zoneId) {
   const hasZone = Number(zoneId) > 0;
-  const overlaysOn = hasZone ? await overlaysEnabled() : false;
-  const maps = hasZone ? await loadMaps(zoneId) : null;
+  const [overlaysOn, maps, discountRules] = await Promise.all([
+    hasZone ? overlaysEnabled() : false,
+    hasZone ? loadMaps(zoneId) : null,
+    loadActiveDiscountRules(),
+  ]);
+  const currencySymbol = discountRules.length ? await catalogCurrencySymbol(zoneId) : '';
+  return { zoneId: hasZone ? Number(zoneId) : null, hasZone, overlaysOn, maps, discountRules, currencySymbol };
+}
+
+/**
+ * @param {Array} tree service category rows (serviceManagementService.getServiceCategoriesDataForService)
+ * @param {number|string|null} zoneId
+ * @param {number|string|null} serviceId
+ * @param {object} [overlay] loadServiceCategoriesOverlay(zoneId), when the caller applies
+ *   several services of the same zone; loaded here when omitted.
+ */
+async function applyToServiceCategoriesData(tree, zoneId, serviceId, overlay) {
+  if (overlay) {
+    const expected = Number(zoneId) > 0 ? Number(zoneId) : null;
+    if (overlay.zoneId !== expected) {
+      throw new Error(
+        `applyToServiceCategoriesData: overlay of zone ${overlay.zoneId} used for zone ${expected}`
+      );
+    }
+  }
+  const { hasZone, overlaysOn, maps, discountRules, currencySymbol } =
+    overlay || (await loadServiceCategoriesOverlay(zoneId));
   if (hasZone && serviceId && !enabledOf(maps.service.get(Number(serviceId)))) {
     return [];
   }
 
-  const discountRules = await loadActiveDiscountRules();
-  const currencySymbol = discountRules.length ? await catalogCurrencySymbol(zoneId) : '';
   const sid = serviceId != null ? Number(serviceId) : null;
 
   const out = [];
@@ -1221,6 +1251,7 @@ module.exports = {
   resolveCatalogZoneId,
   filterEnabledServices,
   resolvePrice,
+  loadServiceCategoriesOverlay,
   applyToServiceCategoriesData,
   applyToServicePreferencesData,
   applyToAddOnRows,

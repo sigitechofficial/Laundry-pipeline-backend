@@ -48,6 +48,79 @@ function sortBySortOrder(rows = []) {
     });
 }
 
+function groupByServiceId(rows) {
+    const byService = new Map();
+    for (const row of rows) {
+        const id = Number(row.serviceId);
+        if (!byService.has(id)) byService.set(id, []);
+        byService.get(id).push(row);
+    }
+    return byService;
+}
+
+/**
+ * One service's serviceCategoriesData from its direct categories (categories.serviceId)
+ * and its junction rows (serviceCategories), both in query order.
+ */
+function buildServiceCategoriesTree(numericServiceId, directCategories, junctionRows) {
+    const seenCategoryIds = new Set();
+    const result = [];
+
+    for (const row of directCategories) {
+        const cat = row.toJSON();
+        seenCategoryIds.add(cat.id);
+        result.push({
+            id: `svc-cat-${cat.id}`,
+            serviceId: numericServiceId,
+            categoryId: cat.id,
+            status: true,
+            category: {
+                id: cat.id,
+                name: cat.name,
+                description: cat.description,
+                sortOrder: cat.sortOrder ?? 0,
+                subCategories: sortBySortOrder(cat.subCategories || []),
+            },
+        });
+    }
+
+    for (const junction of junctionRows) {
+        const cat = junction.category?.toJSON
+            ? junction.category.toJSON()
+            : junction.category;
+        if (!cat || seenCategoryIds.has(cat.id)) continue;
+        if (
+            cat.serviceId != null &&
+            Number(cat.serviceId) !== numericServiceId
+        ) {
+            continue;
+        }
+        seenCategoryIds.add(cat.id);
+        result.push({
+            id: junction.id,
+            serviceId: numericServiceId,
+            categoryId: cat.id,
+            status: junction.status,
+            category: {
+                id: cat.id,
+                name: cat.name,
+                description: cat.description,
+                sortOrder: cat.sortOrder ?? 0,
+                subCategories: sortBySortOrder(cat.subCategories || []),
+            },
+        });
+    }
+
+    result.sort((a, b) => {
+        const ao = Number(a.category?.sortOrder ?? 0);
+        const bo = Number(b.category?.sortOrder ?? 0);
+        if (ao !== bo) return ao - bo;
+        return Number(a.categoryId) - Number(b.categoryId);
+    });
+
+    return result;
+}
+
 function parseServiceBoolean(value) {
     if (value === undefined || value === null || value === '') return undefined;
     return value === true || value === 'true' || value === 1 || value === '1';
@@ -160,109 +233,85 @@ class ServiceManagementService {
         if (!numericServiceId || Number.isNaN(numericServiceId)) {
             throw new ValidationError('Valid serviceId is required');
         }
+        const trees = await this.getServiceCategoriesDataForServices([numericServiceId]);
+        return trees.get(numericServiceId);
+    }
 
-        const directCategories = await categories.findAll({
-            where: {
-                serviceId: numericServiceId,
-                status: true,
-            },
-            attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
-            include: [
-                {
-                    model: subCategories,
-                    attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
-                    where: { status: true },
-                    required: false,
-                },
-            ],
-            order: [
-                ['sortOrder', 'ASC'],
-                ['id', 'ASC'],
-                [subCategories, 'sortOrder', 'ASC'],
-                [subCategories, 'id', 'ASC'],
-            ],
-        });
-
-        const junctionRows = await serviceCategories.findAll({
-            where: { serviceId: numericServiceId, status: true },
-            include: [
-                {
-                    model: categories,
-                    where: { status: true },
-                    required: true,
-                    attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
-                    include: [
-                        {
-                            model: subCategories,
-                            attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
-                            where: { status: true },
-                            required: false,
-                        },
-                    ],
-                },
-            ],
-            order: [
-                [{ model: categories }, 'sortOrder', 'ASC'],
-                [{ model: categories }, 'id', 'ASC'],
-            ],
-        });
-
-        const seenCategoryIds = new Set();
-        const result = [];
-
-        for (const row of directCategories) {
-            const cat = row.toJSON();
-            seenCategoryIds.add(cat.id);
-            result.push({
-                id: `svc-cat-${cat.id}`,
-                serviceId: numericServiceId,
-                categoryId: cat.id,
-                status: true,
-                category: {
-                    id: cat.id,
-                    name: cat.name,
-                    description: cat.description,
-                    sortOrder: cat.sortOrder ?? 0,
-                    subCategories: sortBySortOrder(cat.subCategories || []),
-                },
-            });
+    /**
+     * serviceCategoriesData for several services in two queries (direct categories and
+     * junction categories of all of them), instead of two queries per service.
+     * @param {Array<number|string>} serviceIds
+     * @returns {Promise<Map<number, Array>>} serviceId → the same rows
+     *   getServiceCategoriesDataForService returns for it ([] when it has none)
+     */
+    async getServiceCategoriesDataForServices(serviceIds) {
+        const ids = [...new Set((serviceIds || []).map(Number))];
+        if (!ids.length) return new Map();
+        if (ids.some((id) => !id || Number.isNaN(id))) {
+            throw new ValidationError('Valid serviceId is required');
         }
 
-        for (const junction of junctionRows) {
-            const cat = junction.category?.toJSON
-                ? junction.category.toJSON()
-                : junction.category;
-            if (!cat || seenCategoryIds.has(cat.id)) continue;
-            if (
-                cat.serviceId != null &&
-                Number(cat.serviceId) !== numericServiceId
-            ) {
-                continue;
-            }
-            seenCategoryIds.add(cat.id);
-            result.push({
-                id: junction.id,
-                serviceId: numericServiceId,
-                categoryId: cat.id,
-                status: junction.status,
-                category: {
-                    id: cat.id,
-                    name: cat.name,
-                    description: cat.description,
-                    sortOrder: cat.sortOrder ?? 0,
-                    subCategories: sortBySortOrder(cat.subCategories || []),
+        const [directCategories, junctionRows] = await Promise.all([
+            categories.findAll({
+                where: {
+                    serviceId: ids,
+                    status: true,
                 },
-            });
+                attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
+                include: [
+                    {
+                        model: subCategories,
+                        attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
+                        where: { status: true },
+                        required: false,
+                    },
+                ],
+                order: [
+                    ['sortOrder', 'ASC'],
+                    ['id', 'ASC'],
+                    [subCategories, 'sortOrder', 'ASC'],
+                    [subCategories, 'id', 'ASC'],
+                ],
+            }),
+            serviceCategories.findAll({
+                where: { serviceId: ids, status: true },
+                include: [
+                    {
+                        model: categories,
+                        where: { status: true },
+                        required: true,
+                        attributes: ['id', 'name', 'description', 'serviceId', 'sortOrder'],
+                        include: [
+                            {
+                                model: subCategories,
+                                attributes: ['id', 'name', 'price', 'status', 'description', 'unitCount', 'sortOrder'],
+                                where: { status: true },
+                                required: false,
+                            },
+                        ],
+                    },
+                ],
+                order: [
+                    [{ model: categories }, 'sortOrder', 'ASC'],
+                    [{ model: categories }, 'id', 'ASC'],
+                ],
+            }),
+        ]);
+
+        const directByService = groupByServiceId(directCategories);
+        const junctionByService = groupByServiceId(junctionRows);
+        const trees = new Map();
+        for (const id of ids) {
+            trees.set(
+                id,
+                buildServiceCategoriesTree(
+                    id,
+                    directByService.get(id) || [],
+                    junctionByService.get(id) || []
+                )
+            );
         }
-
-        result.sort((a, b) => {
-            const ao = Number(a.category?.sortOrder ?? 0);
-            const bo = Number(b.category?.sortOrder ?? 0);
-            if (ao !== bo) return ao - bo;
-            return Number(a.categoryId) - Number(b.categoryId);
-        });
-
-        return result;
+        return trees;
     }
 
     /**

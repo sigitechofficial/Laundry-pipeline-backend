@@ -5562,17 +5562,32 @@ exports.serviceDetail = async (req, res) => {
 
     const { zoneId: catalogZoneId } = await resolveAgentCatalogZoneId(req);
 
+    // One read each of the shop's services, their category trees and the zone overlay for
+    // the whole catalog (they were re-read once per service: ~13 queries per service).
+    const [serviceRows, treesByService, overlay] = await Promise.all([
+        serviceIds.length
+            ? service.findAll({
+                where: { id: serviceIds },
+                attributes: ["id", "name", "image", "badgeText", "status"],
+            })
+            : [],
+        serviceManagementService.getServiceCategoriesDataForServices(
+            serviceIds.filter((sid) => Number(sid) > 0)
+        ),
+        zoneCatalogService.loadServiceCategoriesOverlay(catalogZoneId),
+    ]);
+    const serviceById = new Map(serviceRows.map((row) => [Number(row.id), row]));
+
     const grouped = {};
     for (const sid of serviceIds) {
-        const svc = await service.findByPk(sid, {
-            attributes: ["id", "name", "image", "badgeText", "status"],
-        });
+        const svc = serviceById.get(Number(sid));
         if (!svc || svc.status === false) continue;
-        let tree = await serviceManagementService.getServiceCategoriesDataForService(sid);
+        let tree = treesByService.get(Number(sid)) || [];
         tree = await zoneCatalogService.applyToServiceCategoriesData(
             tree,
             catalogZoneId,
-            sid
+            sid,
+            overlay
         );
         if (!tree.length) continue;
         grouped[sid] = {
