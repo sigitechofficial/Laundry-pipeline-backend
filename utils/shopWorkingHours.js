@@ -101,6 +101,22 @@ async function findTodayWorkingHoursRow(shopUserId, dayOfWeek) {
     return hoursRow;
 }
 
+/**
+ * findTodayWorkingHoursRow of one shop, read once per weekday: for checking many bookings
+ * of the same shop (the New list), where the answer only depends on the pickup weekday.
+ * @param {number} shopUserId
+ * @returns {(dayOfWeek: string) => Promise<object|null>}
+ */
+function workingHoursByDayLookup(shopUserId) {
+    const byDay = new Map();
+    return (dayOfWeek) => {
+        if (!byDay.has(dayOfWeek)) {
+            byDay.set(dayOfWeek, findTodayWorkingHoursRow(shopUserId, dayOfWeek));
+        }
+        return byDay.get(dayOfWeek);
+    };
+}
+
 async function findTodayPlatformHoursRow(dayOfWeek, countryId) {
     return platformOperationalHours.findOne({
         where: { dayOfWeek, countryId },
@@ -175,13 +191,16 @@ function resolvePickupDayContext(collectionDate, timeZone) {
  *
  * @param {string} timeZone the booking's operational IANA zone (its slot times
  *   are wall clock there)
+ * @param {(dayOfWeek: string) => Promise<object|null>} [hoursForDay] this shop's
+ *   workingHoursByDayLookup, when checking several bookings of the shop
  */
 async function isPickupWithinShopWorkingHours(
     shopUserId,
     collectionDate,
     collectionTimeFrom,
     collectionTimeTo,
-    timeZone
+    timeZone,
+    hoursForDay = null
 ) {
     if (!shopUserId || collectionDate == null || !collectionTimeFrom || !collectionTimeTo) {
         return false;
@@ -192,7 +211,9 @@ async function isPickupWithinShopWorkingHours(
         timeZone
     );
 
-    const hoursRow = await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
+    const hoursRow = hoursForDay
+        ? await hoursForDay(dayOfWeek)
+        : await findTodayWorkingHoursRow(shopUserId, dayOfWeek);
     if (!hoursRow || !hoursRow.status) {
         return false;
     }
@@ -406,5 +427,6 @@ module.exports = {
     getWallClockContext,
     getWallClockContextForCountry,
     findTodayWorkingHoursRow,
+    workingHoursByDayLookup,
     findTodayPlatformHoursRow,
 };

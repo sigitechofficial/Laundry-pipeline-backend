@@ -5,6 +5,9 @@ const Module = require('module');
 
 const rows = [];
 const broadcasts = [];
+// isAnyShopOpenInZone calls (it scans every shop of the zone: once per zone per pass).
+const zoneOpenChecks = [];
+let zoneOpenAnswer = true;
 let notifyCount = 1;
 let throwOnBroadcast = false;
 
@@ -91,8 +94,10 @@ const stubs = {
         },
     },
     '../utils/shopWorkingHours': {
-        async isAnyShopOpenInZone() {
-            return true;
+        async isAnyShopOpenInZone(zoneId) {
+            zoneOpenChecks.push(zoneId);
+            if (zoneOpenAnswer instanceof Error) throw zoneOpenAnswer;
+            return zoneOpenAnswer;
         },
     },
     '../utils/bookingTimeZone': {
@@ -171,6 +176,29 @@ async function run() {
     assert.ok(rows.slice(0, 3).every((row) => row.agentBroadcastHeld === false));
     assert.ok(rows.slice(0, 3).every((row) => row.agentVisibleAt instanceof Date));
     assert.ok(rows.slice(0, 3).every((row) => row.orderExpireTime === '12:30:00'));
+    assert.deepEqual(zoneOpenChecks, [25, 25], 'one zone check per pass, not per held booking');
+
+    // Zone closed: no booking of it is released, and the zone is still checked only once.
+    rows.length = 0;
+    broadcasts.length = 0;
+    zoneOpenChecks.length = 0;
+    zoneOpenAnswer = false;
+    rows.push(baseRow(111), baseRow(112), baseRow(113));
+    const closed = await prepareNewBookingVisibilityForZone(25);
+    assert.equal(closed.released, 0);
+    assert.deepEqual(zoneOpenChecks, [25]);
+    assert.ok(rows.every((row) => row.agentBroadcastHeld === true));
+
+    // Zone check fails: every booking of the zone stays held (each reports it), one check.
+    zoneOpenChecks.length = 0;
+    zoneOpenAnswer = new Error('country has no time zone');
+    const failed = await prepareNewBookingVisibilityForZone(25);
+    assert.equal(failed.released, 0);
+    assert.deepEqual(zoneOpenChecks, [25]);
+    assert.ok(rows.every((row) => row.agentBroadcastHeld === true));
+    assert.deepEqual(broadcasts, []);
+    zoneOpenAnswer = true;
+    zoneOpenChecks.length = 0;
 
     rows.length = 0;
     broadcasts.length = 0;

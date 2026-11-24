@@ -91,7 +91,9 @@ const dbModels = require("../../models");
 const {
     buildRepairItemsInclude,
     hydrateRepairItemsForBooking,
+    hydrateRepairItemsForBookings,
 } = require("../../utils/repairBookingInclude");
+const { bookingFitsAgentSlot } = require("../../utils/agentSlotWindow");
 const {
     wallClockNow,
     BOOKING_ACCEPT_WINDOW_MINUTES,
@@ -111,6 +113,7 @@ const {
     findTodayWorkingHoursRow,
     getWallClockContext,
     isPickupWithinShopWorkingHours,
+    workingHoursByDayLookup,
 } = require("../../utils/shopWorkingHours");
 const {
     bookingWallClockNow,
@@ -698,6 +701,10 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
         return slotRoomCache.get(key);
     }
 
+    // The shop's hours row per pickup weekday, read once for all candidates (it was read
+    // for every candidate booking: 1-4 queries each).
+    const shopHoursForDay = workingHoursByDayLookup(agentId);
+
     const out = [];
     const excluded = {
         noExpiry: 0,
@@ -749,7 +756,8 @@ async function fetchVisibleNewBookings(agentId, opts = {}) {
             plain.collectionDate,
             plain.collectionTimeFrom,
             plain.collectionTimeTo,
-            bookingTz
+            bookingTz,
+            shopHoursForDay
         );
         if (!pickupOk) {
             excluded.pickupHours += 1;
@@ -1603,26 +1611,28 @@ exports.agentBookingFilters = async (req, res) => {
     const hideFinance = req.isShopEmployee && !req.canAccessInvoice;
     const decorateBoardBookings = async (rows) => {
         const plains = addDisplayStatus(rows);
-        await Promise.all(
-            plains.map(async (plain) => {
-                if (plain?.id == null) return;
-                plain.customerSelectedServices = await hydrateRepairItemsForBooking(
-                    dbModels,
-                    plain.id,
-                    Array.isArray(plain.customerSelectedServices)
-                        ? plain.customerSelectedServices
-                        : []
-                );
-                if (plain.customer) {
-                    plain.customer = hideFinance
-                        ? redactCustomerForFieldStaff(plain.customer)
-                        : redactCustomerPhone(plain.customer);
-                }
-                if (hideFinance) {
-                    hideShopFinanceOnBooking(plain, { keepLiveServices: true });
-                }
-            })
+        const withId = plains.filter((plain) => plain?.id != null);
+        // One repair-items query for the whole board (it was one per booking).
+        const hydrated = await hydrateRepairItemsForBookings(
+            dbModels,
+            withId.map((plain) => ({
+                bookingId: plain.id,
+                selectedServices: Array.isArray(plain.customerSelectedServices)
+                    ? plain.customerSelectedServices
+                    : [],
+            }))
         );
+        withId.forEach((plain, i) => {
+            plain.customerSelectedServices = hydrated[i];
+            if (plain.customer) {
+                plain.customer = hideFinance
+                    ? redactCustomerForFieldStaff(plain.customer)
+                    : redactCustomerPhone(plain.customer);
+            }
+            if (hideFinance) {
+                hideShopFinanceOnBooking(plain, { keepLiveServices: true });
+            }
+        });
         await attachCollectionImages(plains, 'agentBookingFilters');
         return plains;
     };
@@ -5562,17 +5572,32 @@ exports.serviceDetail = async (req, res) => {
 
     const { zoneId: catalogZoneId } = await resolveAgentCatalogZoneId(req);
 
+    // One read each of the shop's services, their category trees and the zone overlay for
+    // the whole catalog (they were re-read once per service: ~13 queries per service).
+    const [serviceRows, treesByService, overlay] = await Promise.all([
+        serviceIds.length
+            ? service.findAll({
+                where: { id: serviceIds },
+                attributes: ["id", "name", "image", "badgeText", "status"],
+            })
+            : [],
+        serviceManagementService.getServiceCategoriesDataForServices(
+            serviceIds.filter((sid) => Number(sid) > 0)
+        ),
+        zoneCatalogService.loadServiceCategoriesOverlay(catalogZoneId),
+    ]);
+    const serviceById = new Map(serviceRows.map((row) => [Number(row.id), row]));
+
     const grouped = {};
     for (const sid of serviceIds) {
-        const svc = await service.findByPk(sid, {
-            attributes: ["id", "name", "image", "badgeText", "status"],
-        });
+        const svc = serviceById.get(Number(sid));
         if (!svc || svc.status === false) continue;
-        let tree = await serviceManagementService.getServiceCategoriesDataForService(sid);
+        let tree = treesByService.get(Number(sid)) || [];
         tree = await zoneCatalogService.applyToServiceCategoriesData(
             tree,
             catalogZoneId,
-            sid
+            sid,
+            overlay
         );
         if (!tree.length) continue;
         grouped[sid] = {
@@ -6419,140 +6444,151 @@ const getSlotBookings = async (laundryShopId, filterDate, staffScope = null) => 
         dayEnd = moment(filterDate, "YYYY-MM-DD").add(1, "day").format("YYYY-MM-DD");
     }
 
-    const slotBookings = await Promise.all(
-        slots.map(async (slot) => {
-            const slotFrom = slot;
-            const slotTo = getNextHourTime(slot);
-            const baseWhere = agentSlotWhere(laundryShopId, slotFrom, slotTo, dayStart, dayEnd);
-            const where = staffScope
-                ? { [Op.and]: [baseWhere, staffScope] }
-                : baseWhere;
+    // One query for the whole day (it was one per hour slot): the union of the slot
+    // filters, then each row is placed in the slot(s) whose time window it fits — the
+    // same comparison agentSlotWhere makes in SQL. The date/phase part of every slot
+    // filter is identical, so a returned row already satisfies it.
+    const slotRanges = slots.map((slot) => ({ from: slot, to: getNextHourTime(slot) }));
+    const unionWhere = {
+        [Op.or]: slotRanges.map(({ from, to }) =>
+            agentSlotWhere(laundryShopId, from, to, dayStart, dayEnd)
+        ),
+    };
+    const where = staffScope ? { [Op.and]: [unionWhere, staffScope] } : unionWhere;
 
-            const bookings = await booking.findAll({
-                where,
-                attributes: [
-                    "id",
-                    "ordertrackId",
-                    "collectionTimeFrom",
-                    "collectiontimeTo",
-                    "collectionDate",
-                    "deliveryTimeFrom",
-                    "deliveryTimeTo",
-                    "deliveryDate",
-                    "driverInstructionOptions",
-                    "driverInstructionOptions1",
-                    "bookingStatusId",
-                    "pickupAttemptCount",
-                    "pickupRescheduleRequired",
-                    "deliveryAttemptCount",
-                    "driverId",
-                    "deliveryDriverId",
-                    "createdAt",
-                ],
+    const bookings = await booking.findAll({
+        where,
+        attributes: [
+            "id",
+            "ordertrackId",
+            "collectionTimeFrom",
+            "collectiontimeTo",
+            "collectionDate",
+            "deliveryTimeFrom",
+            "deliveryTimeTo",
+            "deliveryDate",
+            "driverInstructionOptions",
+            "driverInstructionOptions1",
+            "bookingStatusId",
+            "pickupAttemptCount",
+            "pickupRescheduleRequired",
+            "deliveryAttemptCount",
+            "driverId",
+            "deliveryDriverId",
+            "createdAt",
+        ],
+        include: [
+            {
+                model: bookingStatus,
+                attributes: ['id', 'title', 'description']
+            },
+            {
+                model: addressDb,
+                as: "laundryShop",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
                 include: [
                     {
-                        model: bookingStatus,
-                        attributes: ['id', 'title', 'description']
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model: addressDb,
-                        as: "laundryShop",
-                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
-                        include: [
-                            {
-                                model: countries,
-                                attributes: ['id', 'name', 'shortName']
-                            },
-                            {
-                                model: cities,
-                                attributes: ['id', 'name']
-                            }
-                        ]
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "pickupAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model: addressDb,
-                        as: "pickupAddress",
-                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
-                        include: [
-                            {
-                                model: countries,
-                                attributes: ['id', 'name', 'shortName']
-                            },
-                            {
-                                model: cities,
-                                attributes: ['id', 'name']
-                            }
-                        ]
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: addressDb,
+                as: "dropOffAddress",
+                attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
+                include: [
+                    {
+                        model: countries,
+                        attributes: ['id', 'name', 'shortName']
                     },
                     {
-                        model: addressDb,
-                        as: "dropOffAddress",
-                        attributes: ["streetAddress", "district", "province", "addressType", "lat", "lng", 'postalcode'],
-                        include: [
-                            {
-                                model: countries,
-                                attributes: ['id', 'name', 'shortName']
-                            },
-                            {
-                                model: cities,
-                                attributes: ['id', 'name']
-                            }
-                        ]
-                    },
-                    {
-                        model: users,
-                        as: "customer",
-                        attributes: ["firstName", "lastName", "email", "phoneNum"],
-                    },
-                    {
-                        model: users,
-                        as: "driver",
-                        required: false,
-                        attributes: ["id", "firstName", "lastName", "image"],
-                    },
-                    {
-                        model: users,
-                        as: "deliveryDriver",
-                        required: false,
-                        attributes: ["id", "firstName", "lastName", "image"],
-                    },
-                ],
-            });
+                        model: cities,
+                        attributes: ['id', 'name']
+                    }
+                ]
+            },
+            {
+                model: users,
+                as: "customer",
+                attributes: ["firstName", "lastName", "email", "phoneNum"],
+            },
+            {
+                model: users,
+                as: "driver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
+            {
+                model: users,
+                as: "deliveryDriver",
+                required: false,
+                attributes: ["id", "firstName", "lastName", "image"],
+            },
+        ],
+        order: [["id", "ASC"]],
+    });
 
-            const enrichedBookings = bookings.map((b) => {
-                const plain = b.toJSON ? b.toJSON() : b;
-                const isPickupFailed =
-                    plain.bookingStatusId === 3 &&
-                    Boolean(plain.pickupRescheduleRequired);
-                const isDeliveryFailed = plain.bookingStatusId === 15;
-                const failedAttemptType = isDeliveryFailed
-                    ? 'delivery'
-                    : isPickupFailed
-                        ? 'pickup'
-                        : null;
-                plain.displayStatus = isPickupFailed
-                    ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
-                    : plain.bookingStatus || null;
-                plain.attemptFlags = {
-                    hasFailedAttempt: Boolean(failedAttemptType),
-                    failedAttemptType,
-                    pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
-                    pickupRescheduleRequired: Boolean(
-                        plain.pickupRescheduleRequired
-                    ),
-                    deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
-                };
-                return plain;
-            });
-            await attachCollectionImages(enrichedBookings, 'getSlotBookings');
+    const enrichedBookings = bookings.map((b) => {
+        const plain = b.toJSON ? b.toJSON() : b;
+        const isPickupFailed =
+            plain.bookingStatusId === 3 &&
+            Boolean(plain.pickupRescheduleRequired);
+        const isDeliveryFailed = plain.bookingStatusId === 15;
+        const failedAttemptType = isDeliveryFailed
+            ? 'delivery'
+            : isPickupFailed
+                ? 'pickup'
+                : null;
+        plain.displayStatus = isPickupFailed
+            ? { id: 3, title: 'Pickup Failed', description: 'A pickup attempt was unsuccessful' }
+            : plain.bookingStatus || null;
+        plain.attemptFlags = {
+            hasFailedAttempt: Boolean(failedAttemptType),
+            failedAttemptType,
+            pickupAttemptCount: Number(plain.pickupAttemptCount) || 0,
+            pickupRescheduleRequired: Boolean(
+                plain.pickupRescheduleRequired
+            ),
+            deliveryAttemptCount: Number(plain.deliveryAttemptCount) || 0,
+        };
+        return plain;
+    });
+    await attachCollectionImages(enrichedBookings, 'getSlotBookings');
 
-            return {
-                slot: `${slotFrom} - ${slotTo}`,
-                bookingCount: enrichedBookings.length,
-                bookings: enrichedBookings,
-            };
-        })
-    );
+    const slotBookings = slotRanges.map(({ from, to }) => {
+        const inSlot = enrichedBookings.filter((plain) =>
+            bookingFitsAgentSlot(plain, from, to, {
+                withDay: Boolean(dayStart && dayEnd),
+                pickupStatuses: AGENT_PICKUP_STATUSES,
+                postPickupStatuses: AGENT_POST_PICKUP_STATUSES,
+            })
+        );
+        return {
+            slot: `${from} - ${to}`,
+            bookingCount: inSlot.length,
+            bookings: inSlot,
+        };
+    });
 
     return slotBookings;
 }

@@ -127,6 +127,11 @@ const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || '1mb').trim() || '
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 
+// Gzip JSON responses (middlewares/compressJsonResponses.js): the apps reach this API
+// through Apache at ~250 ms RTT and large board/catalog bodies otherwise cost seconds.
+const { compressJsonResponses } = require('./middlewares/compressJsonResponses');
+app.use(compressJsonResponses());
+
 // AutoSSL / Let's Encrypt HTTP-01 + cPanel pki-validation (stage/prod safe)
 const path = require('path');
 const fs = require('fs');

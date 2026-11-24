@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 
-const { hydrateRepairItemsForBooking } = require('./repairBookingInclude');
+const { hydrateRepairItemsForBooking, hydrateRepairItemsForBookings } = require('./repairBookingInclude');
 
 function fakeModels(rows) {
     return {
@@ -90,6 +90,52 @@ async function runTests() {
     ]);
     assert.strictEqual(wash[0].items, 2);
     assert.deepStrictEqual(wash[0].repairItems, []);
+
+    // Board of several bookings: ONE repair-items query (bookingId IN …), and each booking
+    // gets exactly what the single-booking hydrate gives it.
+    const boardRows = [
+        ...garments,
+        { id: 90, bookingId: 2468, customerSelectedServiceId: 700, serviceId: 2, garmentName: 'Dress', quantity: 2 },
+    ];
+    const queries = [];
+    const batchModels = {
+        customerSelectedRepairItem: {
+            findAll: async (opts) => {
+                queries.push(opts.where.bookingId);
+                const ids = [].concat(opts.where.bookingId).map(Number);
+                return boardRows.filter((r) => ids.includes(Number(r.bookingId)));
+            },
+        },
+        customerSelectedRepairItemOption: {},
+        customerSelectedRepairItemImage: {},
+    };
+    const entries = [
+        { bookingId: 1357, selectedServices: [{ id: 950, serviceId: 2, items: 1, status: true }] },
+        { bookingId: 2468, selectedServices: [{ id: 700, serviceId: 2, items: 1, status: true }] },
+        { bookingId: 9999, selectedServices: [{ id: 1, serviceId: 1, items: 3, status: true }] },
+        { bookingId: 1111, selectedServices: [] },
+    ];
+    const board = await hydrateRepairItemsForBookings(batchModels, entries);
+    assert.deepStrictEqual(queries, [[1357, 2468, 9999]], 'one query for the board');
+    for (let i = 0; i < entries.length; i += 1) {
+        const single = await hydrateRepairItemsForBooking(
+            fakeModels(boardRows.filter((r) => Number(r.bookingId) === Number(entries[i].bookingId))),
+            entries[i].bookingId,
+            entries[i].selectedServices
+        );
+        assert.deepStrictEqual(board[i], single, `booking ${entries[i].bookingId} same as single hydrate`);
+    }
+    assert.strictEqual(board[1][0].items, 2);
+    assert.deepStrictEqual(board[3], []);
+
+    // A failed query degrades every booking the same way the single hydrate does.
+    const failing = {
+        ...batchModels,
+        customerSelectedRepairItem: { findAll: async () => { throw new Error('table missing'); } },
+    };
+    const degraded = await hydrateRepairItemsForBookings(failing, entries.slice(0, 2));
+    assert.deepStrictEqual(degraded[0][0].repairItems, []);
+    assert.strictEqual(degraded[0][0].items, 1);
 
     console.log('repairBookingInclude.test.js: all assertions passed');
 }
