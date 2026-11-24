@@ -58,6 +58,17 @@ const GOLDEN_ZONE_ID = 900;
 const GOLDEN_COUPON_ID = 900001;
 const GOLDEN_PROMOTION_NAME = 'GOLDEN invoice-read 10% off';
 const BOOKING_MIN = 900000;
+/**
+ * Most queries a re-open (the steady state the app hits on every visit) may issue, per
+ * promotions flag and endpoint, over all fixtures (auth middleware included). Main before
+ * the read refactor: 38 / 34 with promotions off, 68 / 60 with promotions on.
+ */
+const QUERY_BUDGET = {
+    'promotions=false invoiceCreation again': 26,
+    'promotions=false draft again': 24,
+    'promotions=true invoiceCreation again': 48,
+    'promotions=true draft again': 47,
+};
 const BOOKING_MAX = 999999;
 
 /**
@@ -450,6 +461,16 @@ function firstDifference(a, b, at = '') {
                 console.log(`WRITES ${key}\n   golden: ${JSON.stringify(was.writes)}\n   now:    ${JSON.stringify(now.writes)}`);
             }
             console.log(`queries ${key}: ${was.queries} → ${now.queries}`);
+            if (now.queries > was.queries) {
+                failures += 1;
+                console.log(`FAIL ${key} issues more queries than the golden run (${now.queries} > ${was.queries})`);
+            }
+            const [flag, , , endpoint, open] = key.split(' ');
+            const budget = QUERY_BUDGET[`${flag} ${endpoint} ${open}`];
+            if (budget != null && now.queries > budget) {
+                failures += 1;
+                console.log(`FAIL ${key} issues ${now.queries} queries, over the budget of ${budget}`);
+            }
         }
         const calls = Object.keys(results).length;
         console.log(`\n${calls} calls; queries ${queriesBefore} → ${queriesAfter}; DB time ${dbBefore.toFixed(1)} → ${dbAfter.toFixed(1)} ms`);
