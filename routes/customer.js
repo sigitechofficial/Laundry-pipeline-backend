@@ -16,6 +16,8 @@ const customerPromotionController = require('../controllers/Customer/promotionCo
 const { promoCodeRateLimit, promoEvaluateRateLimit } = require('../middlewares/promotionRateLimit')
 const validateGuestAccessToken=require('../middlewares/guestAccessToken')
 const validateAccessTokenOrGuest=require('../middlewares/accessTokenOrGuest')
+// A route that names a booking answers only for the signed-in customer's own (404 otherwise).
+const ownBooking=require('../middlewares/requireOwnBooking').requireOwnBooking()
 const {
     postcodeAutocompleteRateLimit,
     postcodeValidateRateLimit,
@@ -140,18 +142,18 @@ router.post('/createBooking',validateAccessToken,asyncMiddleware(customerOtherCo
 //Customer All Bookings
 router.get('/allBookings',validateAccessToken,asyncMiddleware(customerOtherController.allBookings))
 //Customer Specific Booking
-router.get('/bookingDetailsById',validateAccessToken,asyncMiddleware(customerOtherController.bookingDetailsById))
+router.get('/bookingDetailsById',validateAccessToken,ownBooking,asyncMiddleware(customerOtherController.bookingDetailsById))
 //Customer detailed track order timeline
-router.get('/trackOrder',validateAccessToken,asyncMiddleware(customerOtherController.trackOrder))
+router.get('/trackOrder',validateAccessToken,ownBooking,asyncMiddleware(customerOtherController.trackOrder))
 // Live map tracking bootstrap (Firebase RTDB custom token)
 const liveTrackingController = require('../controllers/liveTrackingController')
-router.get('/live-tracking/:bookingId',validateAccessToken,asyncMiddleware(liveTrackingController.getCustomerLiveTracking))
+router.get('/live-tracking/:bookingId',validateAccessToken,ownBooking,asyncMiddleware(liveTrackingController.getCustomerLiveTracking))
 //Custome Response Update and Evemt Sent To Agent
-router.patch('/customerResponseUpdate',validateAccessToken,asyncMiddleware(customerOtherController.customerResponseUpdate))
+router.patch('/customerResponseUpdate',validateAccessToken,ownBooking,asyncMiddleware(customerOtherController.customerResponseUpdate))
 
 //!------------------------------ Customer OnHold Show--------------------------//
 //on Hold Customer Reason Show
-router.get('/onHoldCustomerShow',validateAccessToken,asyncMiddleware(customerOtherController.onHoldCustomerShow))
+router.get('/onHoldCustomerShow',validateAccessToken,ownBooking,asyncMiddleware(customerOtherController.onHoldCustomerShow))
 //on Hold Customer Update
 router.patch('/customerUpdateResponse',validateAccessToken,asyncMiddleware(customerOtherController.customerUpdateResponse))
 //!----------------------------Customer Services---------------------//
@@ -169,16 +171,16 @@ router.get('/accountDeletionReasons', asyncMiddleware(customerOtherController.ge
 //!----------------------------Shop Reviews---------------------//
 router.get('/reviewReasonCodes', asyncMiddleware(shopReviewController.getReviewReasonCodes))
 router.get('/pendingShopReviews', validateAccessToken, asyncMiddleware(shopReviewController.getPendingShopReviews))
-router.get('/bookings/:bookingId/reviewEligibility', validateAccessToken, asyncMiddleware(shopReviewController.getReviewEligibility))
-router.get('/bookings/:bookingId/extra-tip', validateAccessToken, asyncMiddleware(extraTipController.getExtraTipEligibility))
-router.post('/bookings/:bookingId/extra-tip', validateAccessToken, asyncMiddleware(extraTipController.addExtraTip))
+router.get('/bookings/:bookingId/reviewEligibility', validateAccessToken, ownBooking, asyncMiddleware(shopReviewController.getReviewEligibility))
+router.get('/bookings/:bookingId/extra-tip', validateAccessToken, ownBooking, asyncMiddleware(extraTipController.getExtraTipEligibility))
+router.post('/bookings/:bookingId/extra-tip', validateAccessToken, ownBooking, asyncMiddleware(extraTipController.addExtraTip))
 router.post('/shopReviews', validateAccessToken, asyncMiddleware(shopReviewController.createShopReview))
 router.get('/shops/:businessInfoId/reviews', asyncMiddleware(shopReviewController.getShopReviews))
 
 //Get Preferences
 router.get('/getPrefrencesValues',validateAccessToken,asyncMiddleware(customerOtherController.getAllServiceWithPreferenceDetails))
 //Get Intent 
-router.get('/updateBookingUpfrontAmount',validateAccessToken,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
+router.get('/updateBookingUpfrontAmount',validateAccessToken,ownBooking,asyncMiddleware(customerOtherController.updateBookingUpfrontAmount))
 //fetch Zone and Charges (registered or guest)
 router.get('/fetchZoneAndCharges',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.fetchZoneAndCharges))
 router.get('/bookingSlots',validateAccessTokenOrGuest,asyncMiddleware(customerOtherController.getBookingSlots))
@@ -217,9 +219,9 @@ router.delete(
     asyncMiddleware(customerPaymentMethodsController.removePaymentMethod)
 );
 // Route to get all on-hold bookings for a given booking ID
-router.get('/getOnHoldBookings/:bookingId', validateAccessToken,asyncMiddleware(customerOtherController.getOnHoldBookings));
+router.get('/getOnHoldBookings/:bookingId', validateAccessToken, ownBooking,asyncMiddleware(customerOtherController.getOnHoldBookings));
 // Route to update customer response for on-hold booking
-router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken,asyncMiddleware(customerOtherController.updateCustomerResponseForOnHoldBooking));
+router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken, ownBooking,asyncMiddleware(customerOtherController.updateCustomerResponseForOnHoldBooking));
 // Route to get all bookings with on-hold status for a specific customer
 router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware(customerOtherController.getOnHoldBookingsForCustomer));
 // Route to test sending notifications
@@ -249,7 +251,7 @@ router.post(
 //Get All Order Status
 router.get('/getAllOrderStatus', validateAccessToken, asyncMiddleware(customerOtherController.getAllOrderStatus));
 //Cancel Customer Booking with Policy Enforcement
-router.post('/cancelBooking', validateAccessToken, asyncMiddleware(customerOtherController.cancelCustomerBooking));
+router.post('/cancelBooking', validateAccessToken, ownBooking, asyncMiddleware(customerOtherController.cancelCustomerBooking));
 // Pause / resume / cancel recurring frequency plan (series, not single booking)
 router.post(
     '/recurringPlan',
@@ -266,13 +268,14 @@ router.get('/cancellationHistory', validateAccessToken, asyncMiddleware(customer
 //Get Active Policies (cancellation, reschedule, no-show)
 router.get('/getActivePolicies', validateAccessToken, asyncMiddleware(customerOtherController.getActivePolicies));
 //Reschedule Customer Booking with Policy Enforcement
-router.post('/rescheduleBooking', validateAccessToken, asyncMiddleware(customerOtherController.rescheduleCustomerBooking));
+router.post('/rescheduleBooking', validateAccessToken, ownBooking, asyncMiddleware(customerOtherController.rescheduleCustomerBooking));
 //Get Customer Reschedule History
 router.get('/rescheduleHistory', validateAccessToken, asyncMiddleware(customerOtherController.getCustomerRescheduleHistory));
 
 //!----------------------------Home Screen Config---------------------//
-//Get home screen config (delivery, min order, service fee, no-show fee)
-router.get('/getHomeConfig', validateAccessToken, asyncMiddleware(customerOtherController.getHomeConfig))
+//Get home screen config (delivery, min order, service fee, no-show fee).
+//The fees depend only on the zone of the given coordinates, so a guest session reads them too.
+router.get('/getHomeConfig', validateAccessTokenOrGuest, asyncMiddleware(customerOtherController.getHomeConfig))
 
 //!----------------------------Coupon---------------------//
 //Validate and apply a coupon code (returns discount amount and final total)
