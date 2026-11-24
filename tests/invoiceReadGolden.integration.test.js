@@ -458,6 +458,10 @@ function firstDifference(a, b, at = '') {
             queriesAfter += now.queries;
             dbBefore += was.dbMs;
             dbAfter += now.dbMs;
+            if (now.response.status >= 500) {
+                failures += 1;
+                console.log(`FAIL ${key} answered ${now.response.status}: ${JSON.stringify(now.response.body).slice(0, 200)}`);
+            }
             for (const part of ['response', 'state']) {
                 const d = firstDifference(was[part], now[part]);
                 if (d) {

@@ -28,8 +28,10 @@ module.exports = (sequelize, DataTypes) => {
       couponCodeId: { type: DataTypes.INTEGER, allowNull: true },
       couponCode: { type: DataTypes.STRING(50), allowNull: true },
 
+      // 'service': a line priced for a whole service with no item (lineItemId = service id),
+      // e.g. an un-itemised alteration (migrations/20261125120000-…-line-type-service.js).
       lineType: {
-        type: DataTypes.ENUM('subCategory', 'addon', 'delivery', 'basket'),
+        type: DataTypes.ENUM('subCategory', 'addon', 'delivery', 'basket', 'service'),
         allowNull: false,
         defaultValue: 'basket',
       },
