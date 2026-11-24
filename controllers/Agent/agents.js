@@ -295,7 +295,9 @@ async function shopZoneAt(lat, lng) {
     if (lat === undefined || lat === null || lat === '' || lng === undefined || lng === null || lng === '') {
         throw new ValidationError('Pick the shop location on the map');
     }
-    const zones = await findZones(lat, lng);
+    // The shared resolver (not findZones, which throws a technical 404 for an empty result)
+    // so a place outside every zone reaches the owner as the plain message below.
+    const zones = await resolveZonesShared(lat, lng);
     if (!zones || !zones.length || !zones[0]?.city?.country) {
         throw new UnprocessableEntityError("We don't serve this area yet");
     }
