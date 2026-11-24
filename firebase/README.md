@@ -56,6 +56,38 @@ unregistered/invalid. Server-side errors (quota, auth, APNs) never delete tokens
 Auth model: custom token claims `{ role: "customer"|"agent", appUserId }`, UID
 `customer_{id}` / `agent_{id}`. Rules: `firebase/database.rules.json` (deploy to every project).
 
+## Customer social sign-in (`POST /customer/loginUser`)
+
+Google / Apple / Facebook sign-in is proven with a **Firebase ID token**, never with the email
+the client sends (`services/shared/firebaseSocialIdentity.js`):
+
+- The app / website signs in with Firebase Auth first and sends `firebaseIdToken`
+  (`currentUser.getIdToken()`, fresh) with `signedFrom` and `firebaseProjectId`, on **every**
+  social call, including the second call after an `Information Missing` answer.
+- The server picks the project from the token's audience; it must be one of the projects above
+  (primary or legacy), and a reported `firebaseProjectId` must be that same project. A token of
+  any other project is refused before Firebase is asked.
+- `verifyIdToken(token, true)` on that project's Admin app: signature, expiry, issuer, audience,
+  revocation, disabled user.
+- `firebase.sign_in_provider` must match `signedFrom`: google → `google.com`, apple →
+  `apple.com`, facebook → `facebook.com`.
+- The account is the token's `email`; `email_verified` must be true (Apple private-relay
+  addresses count when Firebase marks them verified). The body's `email` is ignored.
+- Failures are 401 with `code`: `SOCIAL_TOKEN_REQUIRED` (no token: app builds from before this
+  rule — they are refused, there is no token-less path), `SOCIAL_TOKEN_INVALID`,
+  `SOCIAL_TOKEN_PROJECT_UNKNOWN`, `SOCIAL_PROVIDER_MISMATCH`, `SOCIAL_EMAIL_UNVERIFIED`.
+  Firebase unreachable is a 503 (`SOCIAL_TOKEN_VERIFY_UNAVAILABLE`), never a pass.
+- An address held by a shop, driver or staff account, or by a deleted account, is a 409
+  `EMAIL_IN_USE` (`users.email` is unique across every account type;
+  `services/shared/accountEmail.js`). No customer row is created.
+
+Email + password sign-in is unchanged and needs no token. Shop accounts (agent app) have no
+social sign-in at all.
+
+Facebook: Firebase usually reports Facebook emails as **not verified**, so Facebook sign-in is
+refused (`SOCIAL_EMAIL_UNVERIFIED`) unless Firebase marks the email verified. That is
+deliberate: an unverified provider email does not prove the address.
+
 ## Provision an RTDB + deploy rules
 
 ```bash
