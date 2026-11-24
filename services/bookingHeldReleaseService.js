@@ -174,17 +174,32 @@ async function broadcastExpiredPreferredBookings(options = {}) {
 }
 
 
-async function canReleaseHeldBooking(row) {
-    return isAnyShopOpenInZone(row.zoneId);
+/**
+ * isAnyShopOpenInZone for one release pass, evaluated once per zone. It scans every shop of
+ * the zone (Redis presence + hours queries per shop) and its answer is the same for every
+ * held booking of that zone, so a pass over N held bookings must not repeat it N times. A
+ * failure is shared too: every booking of that zone reports it and stays held, as before.
+ */
+function zoneOpennessForPass() {
+    const byZone = new Map();
+    return (zoneId) => {
+        const key = String(zoneId);
+        if (!byZone.has(key)) byZone.set(key, isAnyShopOpenInZone(zoneId));
+        return byZone.get(key);
+    };
+}
+
+async function canReleaseHeldBooking(row, isZoneOpen) {
+    return isZoneOpen(row.zoneId);
 }
 
 /**
  * One booking whose zone data is broken (e.g. its country has no time zone: 422) is
  * reported and stays held; it must not stop the release of every other booking.
  */
-async function releaseOneSafely(row) {
+async function releaseOneSafely(row, isZoneOpen) {
     try {
-        return await releaseSingleHeldBooking(row);
+        return await releaseSingleHeldBooking(row, isZoneOpen);
     } catch (err) {
         console.error(
             `[releaseHeldBookings] booking=${row.id} zone=${row.zoneId} not released: ${err.message}`
@@ -193,8 +208,8 @@ async function releaseOneSafely(row) {
     }
 }
 
-async function releaseSingleHeldBooking(row) {
-    const canRelease = await canReleaseHeldBooking(row);
+async function releaseSingleHeldBooking(row, isZoneOpen) {
+    const canRelease = await canReleaseHeldBooking(row, isZoneOpen);
     if (!canRelease) return false;
 
     const visibleAt = new Date();
@@ -313,9 +328,10 @@ async function releaseHeldBookings() {
 
     if (!heldBookings.length) return { released: 0 };
 
+    const isZoneOpen = zoneOpennessForPass();
     let released = 0;
     for (const row of heldBookings) {
-        if (await releaseOneSafely(row)) released += 1;
+        if (await releaseOneSafely(row, isZoneOpen)) released += 1;
     }
 
     return { released };
@@ -340,9 +356,10 @@ async function releaseHeldBookingsForZone(zoneId) {
 
     if (!heldBookings.length) return { released: 0 };
 
+    const isZoneOpen = zoneOpennessForPass();
     let released = 0;
     for (const row of heldBookings) {
-        if (await releaseOneSafely(row)) released += 1;
+        if (await releaseOneSafely(row, isZoneOpen)) released += 1;
     }
 
     if (released > 0) {
