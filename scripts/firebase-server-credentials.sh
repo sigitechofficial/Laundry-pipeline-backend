@@ -3,9 +3,12 @@
 #
 #   firebase-server-credentials.sh install
 #     Called by remote-deploy-api.sh on every deploy. Idempotent.
-#     - FIREBASE_SERVICE_ACCOUNT_B64 (base64 of the PRIMARY project's service-account JSON,
-#       from the GitHub secret FIREBASE_SERVICE_ACCOUNT_JSON) is validated and written to
-#       $DEPLOY_ROOT/secrets/firebase/primary.json (dir 700, file 600, atomic replace).
+#     - FIREBASE_SERVICE_ACCOUNT_FILE: path of the PRIMARY project's service-account JSON
+#       (GitHub secret FIREBASE_SERVICE_ACCOUNT_JSON, scp'd by deploy-api.yml as a 600 file into
+#       the 700 drop dir $DEPLOY_ROOT/secrets/firebase/incoming). Validated, written to
+#       $DEPLOY_ROOT/secrets/firebase/primary.json (dir 700, file 600, atomic replace) and the
+#       drop file is shredded, whether or not it was valid. The key itself never travels
+#       through environment variables (they end up in process listings and PM2 dumps).
 #       Not set: nothing changes (the server keeps whatever Firebase config it has).
 #     - The server's existing ./firebase.json (the project the apps used before the move)
 #       becomes the LEGACY credential: copied once to secrets/firebase/legacy.json when its
@@ -15,6 +18,10 @@
 #       FIREBASE_LEGACY_CREDENTIALS_PATH and FIREBASE_LEGACY_DATABASE_URL (the RTDB URL the
 #       server used before the move, preserved the first time; or
 #       FIREBASE_LEGACY_DATABASE_URL_VALUE when given).
+#
+#   firebase-server-credentials.sh discard
+#     Shreds the credential drop file (FIREBASE_SERVICE_ACCOUNT_FILE, if any). Called by
+#     remote-deploy-api.sh on every exit path, so a failed deploy never leaves it behind.
 #
 #   firebase-server-credentials.sh downgrade <release-dir>
 #     Called by rollbacks after restoring <release-dir> into LIVE_PATH. A release without
@@ -30,6 +37,7 @@ DEPLOY_ROOT="${DEPLOY_ROOT:?DEPLOY_ROOT required}"
 ENV_FILE="$LIVE_PATH/.env"
 SECRETS_DIR="$DEPLOY_ROOT/secrets/firebase"
 PRIMARY="$SECRETS_DIR/primary.json"
+DROP_DIR="$SECRETS_DIR/incoming"
 LEGACY="$SECRETS_DIR/legacy.json"
 
 # project_id of a service-account file ('' when unreadable). The path goes through env, never argv.
@@ -40,6 +48,22 @@ project_of() {
       process.stdout.write(typeof j.project_id === "string" ? j.project_id : "");
     } catch (e) { process.stdout.write(""); }
   '
+}
+
+# Removes the credential drop file. Only files inside the drop dir are touched.
+discard_drop() {
+  local f="${FIREBASE_SERVICE_ACCOUNT_FILE:-}"
+  [ -n "$f" ] || return 0
+  case "$f" in
+    "$DROP_DIR"/*) ;;
+    *) echo "[firebase] refusing to remove $f (outside $DROP_DIR)"; return 0 ;;
+  esac
+  [ -f "$f" ] || return 0
+  if command -v shred >/dev/null 2>&1; then
+    shred -u "$f" 2>/dev/null || rm -f "$f"
+  else
+    rm -f "$f"
+  fi
 }
 
 env_get() {
@@ -54,12 +78,12 @@ env_set() {
     ( umask 077; printf '%s=%s\n' "$key" "$val" > "$ENV_FILE" )
     return 0
   fi
-  awk -v k="$key" -v v="$val" '
+  ( umask 077; awk -v k="$key" -v v="$val" '
     BEGIN { done = 0 }
     index($0, k "=") == 1 { if (!done) print k "=" v; done = 1; next }
     { print }
     END { if (!done) print k "=" v }
-  ' "$ENV_FILE" > "$ENV_FILE.fb-tmp"
+  ' "$ENV_FILE" > "$ENV_FILE.fb-tmp" )
   cat "$ENV_FILE.fb-tmp" > "$ENV_FILE"
   rm -f "$ENV_FILE.fb-tmp"
 }
@@ -67,19 +91,21 @@ env_set() {
 env_unset() {
   local key="$1"
   [ -f "$ENV_FILE" ] || return 0
-  awk -v k="$key" 'index($0, k "=") != 1 { print }' "$ENV_FILE" > "$ENV_FILE.fb-tmp"
+  ( umask 077; awk -v k="$key" 'index($0, k "=") != 1 { print }' "$ENV_FILE" > "$ENV_FILE.fb-tmp" )
   cat "$ENV_FILE.fb-tmp" > "$ENV_FILE"
   rm -f "$ENV_FILE.fb-tmp"
 }
 
-install_primary_from_secret() {
+install_primary_from_file() {
   ( umask 077; mkdir -p "$SECRETS_DIR" )
   chmod 700 "$DEPLOY_ROOT/secrets" "$SECRETS_DIR"
+  [ -d "$DROP_DIR" ] && chmod 700 "$DROP_DIR"
   local tmp="$SECRETS_DIR/.primary.json.tmp"
   rm -f "$tmp"
-  # Decode + validate in node, reading the secret from the environment (never argv/stdout).
-  ( umask 077; OUT="$tmp" node -e '
-      const raw = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64 || "", "base64").toString("utf8");
+  # Validate in node; only the file paths go through env (never the key, never argv/stdout).
+  ( umask 077; IN="$FIREBASE_SERVICE_ACCOUNT_FILE" OUT="$tmp" node -e '
+      let raw = "";
+      try { raw = require("fs").readFileSync(process.env.IN, "utf8"); } catch (e) { console.error("credential drop file unreadable"); process.exit(2); }
       let j;
       try { j = JSON.parse(raw); } catch (e) { console.error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON"); process.exit(2); }
       for (const k of ["project_id", "client_email", "private_key"]) {
@@ -93,8 +119,14 @@ install_primary_from_secret() {
 }
 
 cmd_install() {
-  if [ -n "${FIREBASE_SERVICE_ACCOUNT_B64:-}" ]; then
-    install_primary_from_secret
+  if [ -n "${FIREBASE_SERVICE_ACCOUNT_FILE:-}" ]; then
+    trap discard_drop EXIT
+    if [ ! -f "$FIREBASE_SERVICE_ACCOUNT_FILE" ]; then
+      echo "[firebase] ERROR: credential file $FIREBASE_SERVICE_ACCOUNT_FILE missing"
+      return 1
+    fi
+    install_primary_from_file
+    discard_drop
   elif [ ! -f "$PRIMARY" ]; then
     echo "[firebase] FIREBASE_SERVICE_ACCOUNT_JSON not provided and no primary credential installed — Firebase config unchanged"
     return 0
@@ -181,6 +213,7 @@ cmd_downgrade() {
 
 case "${1:-}" in
   install) cmd_install ;;
+  discard) discard_drop ;;
   downgrade) shift; cmd_downgrade "$@" ;;
-  *) echo "usage: $0 install | downgrade <release-dir>"; exit 2 ;;
+  *) echo "usage: $0 install | discard | downgrade <release-dir>"; exit 2 ;;
 esac

@@ -4,7 +4,8 @@
 #   RELEASE_ID, LIVE_PATH, APP_URL, PM2_APP_NAME, DEPLOY_ROOT, APP_NAME
 #   GITHUB_RUN_NUMBER, GITHUB_RUN_ID, GITHUB_ACTOR, GITHUB_REF_NAME (optional)
 # Optional env (Firebase, see scripts/firebase-server-credentials.sh):
-#   FIREBASE_SERVICE_ACCOUNT_B64, FIREBASE_DATABASE_URL_VALUE, FIREBASE_LEGACY_DATABASE_URL_VALUE
+#   FIREBASE_SERVICE_ACCOUNT_FILE (path of the primary key, scp'd into a 700 drop dir; shredded
+#   on every exit path), FIREBASE_DATABASE_URL_VALUE, FIREBASE_LEGACY_DATABASE_URL_VALUE
 set -euo pipefail
 
 export HOME="${HOME:-/home/sigisolutions}"
@@ -71,8 +72,22 @@ process.exit(2);
 JS
 }
 
+# The Firebase key drop file must never outlive this deploy, whatever path it exits by.
+# Inline (not via firebase-server-credentials.sh) so it works even when the release is broken.
+discard_firebase_drop() {
+  local f="${FIREBASE_SERVICE_ACCOUNT_FILE:-}"
+  case "$f" in
+    "$DEPLOY_ROOT"/secrets/firebase/incoming/*) ;;
+    *) return 0 ;;
+  esac
+  [ -f "$f" ] || return 0
+  shred -u "$f" 2>/dev/null || rm -f "$f"
+}
+trap discard_firebase_drop EXIT
+
 rollback_files() {
   echo "Deployment failed — rolling back application files..."
+  discard_firebase_drop
   if [ ! -f "$BACKUP_FILE" ]; then
     echo "No file backup available."
     return 0
@@ -430,7 +445,7 @@ fi
 echo "Installing Firebase credentials (primary from deploy secret, legacy = server's firebase.json)..."
 LIVE_PATH="$LIVE_PATH" DEPLOY_ROOT="$DEPLOY_ROOT" \
   bash "$LIVE_PATH/scripts/firebase-server-credentials.sh" install
-unset FIREBASE_SERVICE_ACCOUNT_B64
+discard_firebase_drop
 
 echo "Reloading PM2..."
 if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
