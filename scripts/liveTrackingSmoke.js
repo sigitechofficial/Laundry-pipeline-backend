@@ -4,6 +4,16 @@
  */
 
 const assert = require('assert');
+const path = require('path');
+
+// Wiring only: the models need config/config.json and a database, which CI
+// does not have. Stand-ins keep the check independent of any database, the
+// same way the tests in tests/ load modules that import ../models.
+function inject(relPath, exports) {
+  const p = require.resolve(path.join(__dirname, '..', relPath));
+  require.cache[p] = { id: p, filename: p, loaded: true, exports };
+}
+inject('models', { addressDb: {}, users: {}, booking: {} });
 
 function run() {
   const rtdb = require('../utils/liveTrackingRtdb');
