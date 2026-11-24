@@ -10,6 +10,7 @@ const acceptCapacityController = require("../controllers/Agent/acceptCapacityCon
 const shopBusinessInfoController = require("../controllers/Agent/shopBusinessInfoController");
 const adminController = require("../controllers/Admin/admin");
 const asyncMiddleware = require("../middlewares/asyncHandler");
+const { otpIssueIpLimit, otpVerifyIpLimit, passwordResetIpLimit } = require("../middlewares/otpRateLimit");
 const checkPermissions = require("../middlewares/checkPermission");
 const multer = require("multer");
 const path = require("path");
@@ -112,11 +113,12 @@ router.post(
 //verify otp for registration
 router.post(
     "/verifyOTpSignUp",
+    otpVerifyIpLimit,
     asyncMiddleware(agentAuthController.verifyOTpSignUp)
 );
 
 //Resend OTP
-router.post("/resendotp", asyncMiddleware(agentAuthController.resendOTP));
+router.post("/resendotp", otpIssueIpLimit, asyncMiddleware(agentAuthController.resendOTP));
 //User login
 router.post("/loginUser", asyncMiddleware(agentAuthController.loginUser));
 //Agent Employee login
@@ -126,16 +128,19 @@ router.get("/employeeLogout", validateAccessToken, asyncMiddleware(agentAuthCont
 //forgot password request through otp send to mail
 router.post(
     "/forgetPasswordRequest",
+    otpIssueIpLimit,
     asyncMiddleware(agentAuthController.forgetPasswordRequest)
 );
 //Verify OTP to change password
 router.post(
     "/verifyOTPforPassword",
+    otpVerifyIpLimit,
     asyncMiddleware(agentAuthController.verifyOTPforPassword)
 );
 //Change Password
 router.post(
     "/changePasswordOTP",
+    passwordResetIpLimit,
     asyncMiddleware(agentAuthController.changePasswordOTP)
 );
 //logout user and destroy the Token in redis

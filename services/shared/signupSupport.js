@@ -2,10 +2,8 @@
 
 /** Shared pieces of the email + OTP sign-up flow (customer and agent). */
 
-const otpGenerator = require('otp-generator');
 const otpMail = require('../../helper/otpMail');
-
-const SIGNUP_OTP_TTL_MS = 1 * 60 * 1000;
+const { newOtpCode } = require('./otpCode');
 
 /** Real dependencies for services/shared/signupAccountPersistence.js. */
 function signupPersistenceDeps() {
@@ -18,13 +16,9 @@ function signupPersistenceDeps() {
   };
 }
 
-/** 4-digit OTP valid for 1 minute. */
+/** The sign-up code: an account code (services/shared/otpCode.js). */
 function newSignupOtp(now = new Date()) {
-  return {
-    code: otpGenerator.generate(4, { lowerCaseAlphabets: false, upperCaseAlphabets: false, specialChars: false }),
-    requestedAt: now,
-    expiresAt: new Date(now.getTime() + SIGNUP_OTP_TTL_MS),
-  };
+  return newOtpCode(now);
 }
 
 /** Call only after the sign-up transaction committed; a mail failure must not undo the sign-up. */

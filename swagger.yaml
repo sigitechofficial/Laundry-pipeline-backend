@@ -238,16 +238,19 @@ paths:
   /customer/verifyOTpSignUp:
     post:
       summary: Verify customer's OTP after signup
-      description: Verifies the OTP sent to a newly registered customer. Marks the user as verified if OTP is correct.
+      description: >-
+        Verifies the code emailed at sign-up (or resend), marks the customer verified and signs the
+        app install in. The account verified is always the owner of the code row
+        (otpVerifications.userId); a userId that is sent is checked against it (401 when it names
+        another account) and never picks the account. The code must be the account's current code:
+        issued, not used, not expired (1 minute), compared exactly. It is single use. Every guess
+        counts; the 5th wrong guess invalidates the code (429) and a new code must be requested
+        (resend). Limited per client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Customer > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie (not required for this endpoint)
       requestBody:
         required: true
         content:
@@ -257,55 +260,86 @@ paths:
               required:
                 - otpId
                 - OTP
-                - userId
+                - deviceId
               properties:
                 otpId:
                   type: integer
                   example: 1234
-                  description: OTP record ID returned during signup
+                  description: The otpId returned by sign-up or resend (names the code row)
                 OTP:
                   type: string
-                  example: "5678"
-                  description: OTP code entered by the user
+                  example: "0421"
+                  description: The 4-digit code from the email (digits only; keep leading zeros)
                 userId:
                   type: integer
                   example: 7890
-                  description: User ID of the registered customer
+                  description: >-
+                    Optional (sent by released apps): must be the code's owner (401
+                    otherwise); never used to pick the account.
+                deviceId:
+                  type: string
+                  format: uuid
+                  description: App install id (the session identity)
       responses:
         '200':
-          description: OTP verified successfully
+          description: Code accepted; the account is verified
           content:
             application/json:
               example:
                 status: "1"
-                message: "OTP Verified"
+                message: "OTP Verified successfully"
                 data:
                   userId: 7890
+                  accessToken: "<jwt>"
         '400':
-          description: Invalid OTP or OTP record not found
+          description: Wrong, expired or no longer valid (used, replaced) code
           content:
             application/json:
               examples:
-                otpNotFound:
-                  summary: OTP record not found
-                  value:
-                    status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    data: {}
-                incorrectOtp:
-                  summary: Incorrect OTP
+                incorrect:
                   value:
                     status: "0"
                     message: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    error: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    data:
+                      attemptsRemaining: 3
+                expired:
+                  value:
+                    status: "0"
+                    message: "OTP has expired. Please request a new OTP to continue"
+                    error: "OTP has expired. Please request a new OTP to continue"
                     data: {}
-        '500':
-          description: Internal server error
+                invalidated:
+                  value:
+                    status: "0"
+                    message: "This OTP is no longer valid. Please request a new OTP to continue"
+                    error: "This OTP is no longer valid. Please request a new OTP to continue"
+                    data: {}
+        '401':
+          description: userId is not the owner of the code
           content:
             application/json:
-              example:
-                status: "0"
-                message: "Something went wrong"
-                data: {}
+              examples:
+                userMismatch:
+                  value:
+                    status: "0"
+                    message: "This OTP was not issued for this account"
+                    error: "This OTP was not issued for this account"
+                    data: {}
+        '404':
+          description: No customer code with this otpId
+          content:
+            application/json:
+              examples:
+                notFound:
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    error: "Sorry, we could not fetch the data"
+                    data:
+                      message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /customer/loginUser:
     post:
       summary: Customer login (Email or Social)
@@ -432,18 +466,26 @@ paths:
                 message: "Internal server error"
                 data: {}
   /customer/forgetPasswordRequest:
-     post:
-      summary: Request OTP for password reset
-      description: Sends an OTP to the user's email for password reset. Updates existing OTP if already present.
+    post:
+      summary: Request a password reset code
+      description: >-
+        Emails a 4-digit code to the customer account with this email. Password reset lifecycle (services/shared/passwordReset.js), the same for customers,
+        shop agents and drivers: a new code (4 digits, valid 1 minute) replaces any earlier
+        code and ends an earlier verified reset. The code is a password-reset code: it verifies
+        only through verifyOTPforPassword, never through sign-up verification. Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        After verification the new password must be set within 10 minutes.
+        The response's otpId and userId are passed to verifyOTPforPassword and changePasswordOTP.
+        Limited per client IP (429).
       tags:
         - Customer > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie (not required for this endpoint)
       requestBody:
         required: true
         content:
@@ -457,59 +499,42 @@ paths:
                   type: string
                   format: email
                   example: customer@example.com
-                  description: Email address of the customer requesting password reset
       responses:
         '200':
-          description: OTP sent or updated successfully
+          description: Code issued and emailed
           content:
             application/json:
-              examples:
-                otpUpdated:
-                  summary: OTP updated
-                  value:
-                    status: "1"
-                    message: "OTP Updated Sucessfully"
-                    data:
-                      otpid: 234
-                      userId: 567
-                otpSent:
-                  summary: OTP sent
-                  value:
-                    status: "1"
-                    message: "OTP sent Sucessfully for Password Reset"
-                    data:
-                      otpId: 123
-                      userId: 567
-        '400':
-          description: Invalid email or user not found
+              example:
+                status: "1"
+                message: "OTP sent Successfully for Password Reset"
+                data:
+                  otpId: 123
+                  userId: 567
+        '404':
+          description: No customer account with this email
           content:
             application/json:
               example:
                 status: "0"
-                message: "Invalid information"
-                detail: "No user exists against this email"
+                message: "No user exists against this email"
+                error: "No user exists against this email"
                 data: {}
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              example:
-                status: "0"
-                message: "Error in updating OTP"
-                data: {}
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /customer/verifyOTPforPassword:
     post:
-      summary: Verify OTP for password reset
-      description: Verifies the OTP sent to the user's email during the password reset process.
+      summary: Verify the password reset code
+      description: >-
+        The code must be the account's current, unexpired password-reset code (forgetPasswordRequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. It is single use: on success it
+        is used up and the reset is open for 10 minutes (changePasswordOTP), a window of its own
+        for typing and confirming the new password. A userId that is sent must be the code's
+        owner (401). Every guess counts;
+        the 5th wrong guess invalidates the code (429) and a new code must be requested.
+        Limited per client IP (429).
       tags:
         - Customer > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie (not required for OTP verification)
       requestBody:
         required: true
         content:
@@ -523,14 +548,14 @@ paths:
                 otpId:
                   type: integer
                   example: 123
-                  description: ID of the OTP record
+                  description: otpId from forgetPasswordRequest (or resend)
                 OTP:
                   type: string
-                  example: "5678"
-                  description: OTP sent to the user's email
+                  example: "0421"
+                  description: The 4-digit code from the email (digits only; keep leading zeros)
       responses:
         '200':
-          description: OTP verified successfully
+          description: Code verified; the reset is open
           content:
             application/json:
               example:
@@ -540,44 +565,55 @@ paths:
                   otpId: 123
                   userId: 456
         '400':
-          description: OTP is incorrect or OTP record not found
+          description: Wrong, expired or no longer valid code
           content:
             application/json:
               examples:
-                otpNotFound:
-                  summary: OTP record not found
-                  value:
-                    status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    detail: "Please rensend OTP to continue"
-                    data: {}
-                incorrectOtp:
-                  summary: Incorrect OTP
+                incorrect:
+                  summary: Wrong code (the code stays valid until 5 wrong guesses)
                   value:
                     status: "0"
                     message: "You entered incorrect OTP Please enter correct OTP to continue"
+                    error: "You entered incorrect OTP Please enter correct OTP to continue"
+                    data:
+                      attemptsRemaining: 3
+                expired:
+                  summary: The code's minute is over
+                  value:
+                    status: "0"
+                    message: "OTP has expired. Please request a new OTP to continue"
+                    error: "OTP has expired. Please request a new OTP to continue"
                     data: {}
-        '500':
-          description: Internal server error
+                invalidated:
+                  summary: The code was already used or replaced
+                  value:
+                    status: "0"
+                    message: "This OTP is no longer valid. Please request a new OTP to continue"
+                    error: "This OTP is no longer valid. Please request a new OTP to continue"
+                    data: {}
+        '404':
+          description: No code with this otpId for this kind of account
           content:
             application/json:
               example:
                 status: "0"
-                message: "Internal server error"
-                data: {}
+                message: "Sorry, we could not fetch the data"
+                error: "Sorry, we could not fetch the data"
+                data:
+                  message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /customer/changePasswordOTP:
-     post:
-      summary: Change password using OTP
-      description: Allows the user to reset their password after verifying an OTP. OTP must be verified before calling this.
+    post:
+      summary: Set a new password with a verified reset code
+      description: >-
+        Sets the password of the account that owns the verified code (never another account),
+        within 10 minutes of verification, once. Every session of the account then ends on all
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
+        Limited per client IP (429).
       tags:
         - Customer > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie (not required for password change via OTP)
       requestBody:
         required: true
         content:
@@ -585,26 +621,26 @@ paths:
             schema:
               type: object
               required:
-                - userId
                 - otpId
                 - password
               properties:
-                userId:
-                  type: integer
-                  example: 456
-                  description: ID of the user who is resetting the password
                 otpId:
                   type: integer
                   example: 123
-                  description: ID of the OTP that was verified
+                  description: The verified otpId
+                userId:
+                  type: integer
+                  example: 456
+                  description: >-
+                    Optional (sent by released apps). The password changed is always the code's
+                    owner; a userId that is sent must be that owner (401 otherwise).
                 password:
                   type: string
                   format: password
-                  example: NewPassword@123
-                  description: New password to set for the user
+                  example: "NewPassword@123"
       responses:
         '200':
-          description: Password changed successfully
+          description: Password changed; all sessions of the account ended
           content:
             application/json:
               example:
@@ -612,32 +648,52 @@ paths:
                 message: "Password updated successfully. Please login to continue"
                 data: {}
         '400':
-          description: OTP verification missing or invalid data
+          description: The reset expired, or no password was sent
           content:
             application/json:
               examples:
-                otpNotVerified:
-                  summary: OTP not verified
+                resetExpired:
+                  value:
+                    status: "0"
+                    message: "Your password reset has expired. Please request a new OTP to continue"
+                    error: "Your password reset has expired. Please request a new OTP to continue"
+                    data: {}
+                passwordRequired:
+                  value:
+                    status: "0"
+                    message: "Password is required"
+                    error: "Password is required"
+                    data: {}
+        '401':
+          description: Code not verified (or the reset was already used), or userId is not the code's owner
+          content:
+            application/json:
+              examples:
+                notVerified:
                   value:
                     status: "0"
                     message: "OTP not verified yet"
-                    detail: "Please verify OTP first"
-                    data: {}
-                otpNotFound:
-                  summary: OTP record not found
+                    error: "OTP not verified yet"
+                    data:
+                      message: "Please verify OTP first"
+                userMismatch:
                   value:
                     status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    detail: "Please rensend OTP to continue"
+                    message: "This OTP was not issued for this account"
+                    error: "This OTP was not issued for this account"
                     data: {}
-        '500':
-          description: Internal server error
+        '404':
+          description: No code with this otpId for this kind of account
           content:
             application/json:
               example:
                 status: "0"
-                message: "Internal server error"
-                data: {}
+                message: "Sorry, we could not fetch the data"
+                error: "Sorry, we could not fetch the data"
+                data:
+                  message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /customer/logout:
     get:
       summary: Logout user
@@ -4000,80 +4056,138 @@ paths:
                 error: ''
   /driver/verifyotp:
     post:
+      summary: OTP Verification
+      description: >-
+        Verifies the code emailed at registration step 1 (or resend) and marks the driver verified.
+        The driver app sends the account's userId and the code; the code must be that driver
+        account's current code. An otpId, if sent, names the code row and the userId must be its
+        owner. The account verified is always the owner of the code row (otpVerifications.userId); a
+        userId that is sent is checked against it (401 when it names another account) and never
+        picks the account. The code must be the account's current code: issued, not used, not
+        expired (1 minute), compared exactly. It is single use. Every guess counts; the 5th wrong
+        guess invalidates the code (429) and a new code must be requested (resend). Limited per
+        client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Driver > Driver Auth
-      summary: OTP Verification
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                userId: 6
-                OTP: '5678'
+              required:
+                - userId
+                - OTP
+              properties:
+                userId:
+                  type: integer
+                  example: 6
+                  description: The driver account being verified
+                OTP:
+                  type: string
+                  example: "0421"
+                  description: The 4-digit code from the email (digits only; keep leading zeros)
+                otpId:
+                  type: integer
+                  description: Optional; when sent, userId must be the owner of this code row
       responses:
         '200':
-          description: OK
-          headers:
-            Date:
-              schema:
-                type: string
-                example: Tue, 07 Nov 2023 11:00:49 GMT
-            Server:
-              schema:
-                type: string
-                example: Apache
-            X-Powered-By:
-              schema:
-                type: string
-                example: Express
-            Access-Control-Allow-Origin:
-              schema:
-                type: string
-                example: '*'
-            Content-Type:
-              schema:
-                type: string
-                example: application/json; charset=utf-8
-            Content-Length:
-              schema:
-                type: integer
-                example: '85'
-            ETag:
-              schema:
-                type: string
-                example: W/"55-Rwh2CD90LJSpI9LL97VEXoRMpYw"
-            Keep-Alive:
-              schema:
-                type: string
-                example: timeout=5, max=100
-            Connection:
-              schema:
-                type: string
-                example: Keep-Alive
+          description: Code accepted; the account is verified
           content:
             application/json:
-              schema:
-                type: object
               example:
                 status: '1'
-                message: OTP verified successfully
+                messsage: OTP verified Sucessfully
                 data:
                   userId: 103
                 error: ''
+        '400':
+          description: No code for this driver account, or a wrong, expired or no longer valid code
+          content:
+            application/json:
+              examples:
+                notFound:
+                  value:
+                    status: "0"
+                    message: "OTP Data not available"
+                    error: "OTP Data not available"
+                    data:
+                      message: "Please resend OTP to continue"
+                incorrect:
+                  value:
+                    status: "0"
+                    message: "Invalid OTP"
+                    error: "Invalid OTP"
+                    data:
+                      attemptsRemaining: 3
+                expired:
+                  value:
+                    status: "0"
+                    message: "OTP has expired. Please request a new OTP to continue"
+                    error: "OTP has expired. Please request a new OTP to continue"
+                    data: {}
+                invalidated:
+                  value:
+                    status: "0"
+                    message: "This OTP is no longer valid. Please request a new OTP to continue"
+                    error: "This OTP is no longer valid. Please request a new OTP to continue"
+                    data: {}
+        '401':
+          description: otpId was sent and userId is not its owner
+          content:
+            application/json:
+              examples:
+                userMismatch:
+                  value:
+                    status: "0"
+                    message: "This OTP was not issued for this account"
+                    error: "This OTP was not issued for this account"
+                    data: {}
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /driver/resendotp:
     post:
+      summary: Resend the emailed code
+      description: >-
+        Emails a new code for the driver account with this userId (sign-up verification or a
+        password reset in progress). Only that kind of account is served (other accounts: not
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Driver > Driver Auth
-      summary: ReSend OTP
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
-              example:
-                userId: 3
+              required:
+                - userId
+              properties:
+                userId:
+                  type: integer
+                  example: 3
+                  description: The driver account (from sign-up or forget-password)
       responses:
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
         '200':
           description: OK
           headers:
@@ -4128,6 +4242,19 @@ paths:
       tags:
         - Driver > Driver Auth
       summary: forget password request
+      description: >-
+        Emails a 4-digit password-reset code (valid 1 minute) to the driver account with this
+        email; it replaces any earlier code and ends an earlier verified reset. It verifies only
+        through verifyotpforpass, never through sign-up verification (verifyotp). Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing. Lifecycle:
+        services/shared/passwordReset.js.
       requestBody:
         content:
           application/json:
@@ -4136,6 +4263,17 @@ paths:
               example:
                 email: xyyz@gmail.com
       responses:
+        '400':
+          description: No driver account with this email
+          content:
+            application/json:
+              example:
+                status: '0'
+                message: Invalid information
+                data:
+                  details: No user exists against this email
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
         '200':
           description: OK
           headers:
@@ -4473,6 +4611,10 @@ paths:
       tags:
         - Driver > Driver Auth
       summary: verify OTP forgetpassword
+      description: >-
+        The code must be the account's current, unexpired password-reset code (forgetpasswordrequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. Lifecycle: services/shared/passwordReset.js.
       requestBody:
         content:
           application/json:
@@ -4482,6 +4624,27 @@ paths:
                 otpId: 58
                 OTP: '09936'
       responses:
+        '400':
+          description: >-
+            Unknown otpId, wrong code (5 wrong guesses invalidate it: 429), expired or no longer
+            valid code. The code is single use; on success the reset is open for 10 minutes. A userId
+            that is sent must be the code's owner (401).
+          content:
+            application/json:
+              examples:
+                incorrect:
+                  value:
+                    status: '0'
+                    message: You entered incorrect OTP Please enter correct OTP to continue
+                    data:
+                      attemptsRemaining: 3
+                expired:
+                  value:
+                    status: '0'
+                    message: OTP has expired. Please request a new OTP to continue
+                    data: {}
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
         '200':
           description: OK
           headers:
@@ -4532,6 +4695,87 @@ paths:
                   otpId: 58
                   userId: 103
                 error: ''
+  /driver/changepasswordotp:
+    post:
+      summary: Set a new password with a verified reset code
+      description: >-
+        Sets the password of the account that owns the verified code (never another account),
+        within 10 minutes of verification, once. Every session of the account then ends on all
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
+        Limited per client IP (429).
+      tags:
+        - Driver > Driver Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - otpId
+                - password
+              properties:
+                otpId:
+                  type: integer
+                  example: 123
+                  description: The verified otpId
+                userId:
+                  type: integer
+                  example: 456
+                  description: >-
+                    Optional (sent by released apps). The password changed is always the code's
+                    owner; a userId that is sent must be that owner (401 otherwise).
+                password:
+                  type: string
+                  format: password
+                  example: "NewPassword@123"
+      responses:
+        '200':
+          description: Password changed; all sessions of the account ended
+          content:
+            application/json:
+              example:
+                status: "1"
+                message: "Password updated successfully. Please login to continue"
+                data: {}
+        '400':
+          description: Unknown otpId, code not verified, reset expired or no password
+          content:
+            application/json:
+              examples:
+                notFound:
+                  value:
+                    status: "0"
+                    message: "Sorry, we could not fetch the data"
+                    data:
+                      message: "Please resend OTP to continue"
+                notVerified:
+                  value:
+                    status: "0"
+                    message: "OTP not verified yet"
+                    data:
+                      message: "Please verify OTP first"
+                resetExpired:
+                  value:
+                    status: "0"
+                    message: "Your password reset has expired. Please request a new OTP to continue"
+                    data: {}
+                passwordRequired:
+                  value:
+                    status: "0"
+                    message: "Password is required"
+                    data: {}
+        '401':
+          description: userId does not name the code's owner
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "This OTP was not issued for this account"
+                data: {}
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /driver/changepassword:
     post:
       tags:
@@ -4778,16 +5022,19 @@ paths:
   /agent/verifyOTpSignUp:
     post:
       summary: Verify OTP for agent signup
-      description: Verifies the OTP for agent registration and sets up default business working hours.
+      description: >-
+        Verifies the code emailed at sign-up (or resend), marks the shop owner verified and sets up
+        default business working hours. The account verified is always the owner of the code row
+        (otpVerifications.userId); a userId that is sent is checked against it (401 when it names
+        another account) and never picks the account. The code must be the account's current code:
+        issued, not used, not expired (1 minute), compared exactly. It is single use. Every guess
+        counts; the 5th wrong guess invalidates the code (429) and a new code must be requested
+        (resend). Limited per client IP (429).
+        Only a sign-up code verifies here: a password-reset code (forgetPasswordRequest, or a
+        resend during a reset) is refused as no longer valid (400), the 5678 test code included,
+        and its attempts are not used. Lifecycle: services/shared/passwordReset.js.
       tags:
         - Agent > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie (not required for OTP verification)
       requestBody:
         required: true
         content:
@@ -4797,23 +5044,24 @@ paths:
               required:
                 - otpId
                 - OTP
-                - userId
               properties:
                 otpId:
                   type: integer
                   example: 1234
-                  description: ID of the OTP record
+                  description: The otpId returned by sign-up or resend (names the code row)
                 OTP:
                   type: string
-                  example: "5678"
-                  description: OTP received via email
+                  example: "0421"
+                  description: The 4-digit code from the email (digits only; keep leading zeros)
                 userId:
                   type: integer
-                  example: 456
-                  description: ID of the agent being verified
+                  example: 7890
+                  description: >-
+                    Optional (sent by released apps): must be the code's owner (401
+                    otherwise); never used to pick the account.
       responses:
         '200':
-          description: OTP verified successfully and working hours created
+          description: Code accepted; the account is verified
           content:
             application/json:
               example:
@@ -4821,34 +5069,58 @@ paths:
                 message: "OTP verified"
                 data:
                   userId: 456
+                  ianaTimeZone: "Europe/London"
+                  currencyUnit: "£"
                 error: ""
         '400':
-          description: Incorrect or missing OTP
+          description: The code was already used or replaced
+          content:
+            application/json:
+              examples:
+                invalidated:
+                  value:
+                    status: "0"
+                    message: "This OTP is no longer valid. Please request a new OTP to continue"
+                    error: "This OTP is no longer valid. Please request a new OTP to continue"
+                    data: {}
+        '401':
+          description: Wrong or expired code, or userId is not the owner of the code
+          content:
+            application/json:
+              examples:
+                incorrect:
+                  value:
+                    status: "0"
+                    message: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    error: "Entered Incorrect OTP. Please enter correct OTP to continue"
+                    data:
+                      attemptsRemaining: 3
+                expired:
+                  value:
+                    status: "0"
+                    message: "OTP has expired. Please request a new OTP to continue"
+                    error: "OTP has expired. Please request a new OTP to continue"
+                    data: {}
+                userMismatch:
+                  value:
+                    status: "0"
+                    message: "This OTP was not issued for this account"
+                    error: "This OTP was not issued for this account"
+                    data: {}
+        '404':
+          description: No shop owner code with this otpId
           content:
             application/json:
               examples:
                 notFound:
-                  summary: OTP not found
                   value:
                     status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    detail: "Please rensend OTP to continue"
-                    data: {}
-                incorrect:
-                  summary: OTP incorrect
-                  value:
-                    status: "0"
-                    message: "Entered Incorrect OTP. Please enter correct OTP to continue"
-                    data: {}
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              example:
-                status: "0"
-                message: "Internal server error"
-                data: {}
-                error: "Something went wrong"
+                    message: "Sorry, we could not fetch the data or You Entered Incorrect OTP"
+                    error: "Sorry, we could not fetch the data or You Entered Incorrect OTP"
+                    data:
+                      message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /agent/addBusinessInfor:
     post:
       summary: Add agent business information
@@ -5068,17 +5340,25 @@ paths:
                 error: "Something went wrong during login"
   /agent/forgetPasswordRequest:
     post:
-      summary: Request OTP for agent password reset
-      description: Sends or updates an OTP to the agent's email for password recovery.
+      summary: Request a password reset code
+      description: >-
+        Emails a 4-digit code to the shop owner account with this email. Password reset lifecycle (services/shared/passwordReset.js), the same for customers,
+        shop agents and drivers: a new code (4 digits, valid 1 minute) replaces any earlier
+        code and ends an earlier verified reset. The code is a password-reset code: it verifies
+        only through verifyOTPforPassword, never through sign-up verification. Counting resends
+        and sign-up re-issues, per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        After verification the new password must be set within 10 minutes.
+        The response's otpId and userId are passed to verifyOTPforPassword and changePasswordOTP.
+        Limited per client IP (429).
       tags:
         - Agent > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token (not required for password reset)
       requestBody:
         required: true
         content:
@@ -5092,63 +5372,42 @@ paths:
                   type: string
                   format: email
                   example: agent@example.com
-                  description: Email address of the agent requesting password reset
       responses:
         '200':
-          description: OTP sent or updated successfully
+          description: Code issued and emailed
           content:
             application/json:
-              examples:
-                otpUpdated:
-                  summary: OTP updated
-                  value:
-                    status: "1"
-                    message: "OTP Updated Sucessfully"
-                    data:
-                      otpid: 234
-                      userId: 567
-                    error: ""
-                otpSent:
-                  summary: OTP sent
-                  value:
-                    status: "1"
-                    message: "OTP sent Sucessfully for Password Reset"
-                    data:
-                      otpId: 123
-                      userId: 567
-                    error: ""
-        '400':
-          description: Invalid email or user not found
+              example:
+                status: "1"
+                message: "Password reset OTP sent to your email"
+                data:
+                  otpId: 123
+                  userId: 567
+        '404':
+          description: No shop owner account with this email
           content:
             application/json:
               example:
                 status: "0"
-                message: "Invalid information"
-                detail: "No user exists against this email"
+                message: "No user exists against this email"
+                error: "No user exists against this email"
                 data: {}
-                error: ""
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              example:
-                status: "0"
-                message: "Internal server error"
-                data: {}
-                error: "Error in updating OTP"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /agent/verifyOTPforPassword:
     post:
-      summary: Verify OTP for agent password reset
-      description: Verifies the OTP sent to the agent’s email for resetting their password.
+      summary: Verify the password reset code
+      description: >-
+        The code must be the account's current, unexpired password-reset code (forgetPasswordRequest,
+        or a resend during a reset); a sign-up code is refused as no longer valid (400) and its
+        attempts are not used. It is single use: on success it
+        is used up and the reset is open for 10 minutes (changePasswordOTP), a window of its own
+        for typing and confirming the new password. A userId that is sent must be the code's
+        owner (401). Every guess counts;
+        the 5th wrong guess invalidates the code (429) and a new code must be requested.
+        Limited per client IP (429).
       tags:
         - Agent > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token (not required for OTP verification)
       requestBody:
         required: true
         content:
@@ -5162,65 +5421,74 @@ paths:
                 otpId:
                   type: integer
                   example: 123
-                  description: ID of the OTP record
+                  description: otpId from forgetPasswordRequest (or resend)
                 OTP:
                   type: string
-                  example: "5678"
-                  description: The OTP code received via email
+                  example: "0421"
+                  description: The 4-digit code from the email (digits only; keep leading zeros)
       responses:
         '200':
-          description: OTP verified successfully
+          description: Code verified; the reset is open
           content:
             application/json:
               example:
                 status: "1"
-                message: "OTP verified"
+                message: "OTP verified successfully"
                 data:
                   otpId: 123
                   userId: 456
-                error: ""
-        '400':
-          description: OTP record not found or incorrect OTP
-          content:
-            application/json:
-              examples:
-                otpNotFound:
-                  summary: OTP record not found
-                  value:
-                    status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    detail: "Please rensend OTP to continue"
-                    data: {}
-                    error: ""
-                incorrectOtp:
-                  summary: Incorrect OTP
-                  value:
-                    status: "0"
-                    message: "You entered incorrect OTP Please enter correct OTP to continue"
-                    data: {}
-                    error: ""
-        '500':
-          description: Internal server error
+        '401':
+          description: Wrong code. The code stays valid until 5 wrong guesses.
           content:
             application/json:
               example:
                 status: "0"
-                message: "Internal server error"
-                data: {}
-                error: "Unexpected error"
+                message: "You entered incorrect OTP Please enter correct OTP to continue"
+                error: "You entered incorrect OTP Please enter correct OTP to continue"
+                data:
+                  attemptsRemaining: 3
+        '400':
+          description: Expired or no longer valid code
+          content:
+            application/json:
+              examples:
+                expired:
+                  summary: The code's minute is over
+                  value:
+                    status: "0"
+                    message: "OTP has expired. Please request a new OTP to continue"
+                    error: "OTP has expired. Please request a new OTP to continue"
+                    data: {}
+                invalidated:
+                  summary: The code was already used or replaced
+                  value:
+                    status: "0"
+                    message: "This OTP is no longer valid. Please request a new OTP to continue"
+                    error: "This OTP is no longer valid. Please request a new OTP to continue"
+                    data: {}
+        '404':
+          description: No code with this otpId for this kind of account
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Sorry, we could not fetch the data"
+                error: "Sorry, we could not fetch the data"
+                data:
+                  message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /agent/changePasswordOTP:
     post:
-      summary: Change password using verified OTP (Agent)
-      description: Resets the agent's password after verifying the OTP. OTP must be verified before calling this.
+      summary: Set a new password with a verified reset code
+      description: >-
+        Sets the password of the account that owns the verified code (never another account),
+        within 10 minutes of verification, once. Every session of the account then ends on all
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
+        Limited per client IP (429).
       tags:
         - Agent > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token (not required for password reset)
       requestBody:
         required: true
         content:
@@ -5228,63 +5496,79 @@ paths:
             schema:
               type: object
               required:
-                - userId
                 - otpId
                 - password
               properties:
-                userId:
-                  type: integer
-                  example: 456
-                  description: ID of the agent resetting the password
                 otpId:
                   type: integer
                   example: 123
-                  description: OTP ID previously verified
+                  description: The verified otpId
+                userId:
+                  type: integer
+                  example: 456
+                  description: >-
+                    Optional (sent by released apps). The password changed is always the code's
+                    owner; a userId that is sent must be that owner (401 otherwise).
                 password:
                   type: string
                   format: password
                   example: "NewPassword@123"
-                  description: New password to be set
       responses:
         '200':
-          description: Password reset successful
+          description: Password changed; all sessions of the account ended
           content:
             application/json:
               example:
                 status: "1"
-                message: "Password updated successfully. Please login to continue"
+                message: "Password changed successfully"
                 data: {}
-                error: ""
         '400':
-          description: OTP not verified or OTP record not found
+          description: The reset expired, or no password was sent
           content:
             application/json:
               examples:
-                otpNotVerified:
-                  summary: OTP not verified yet
+                resetExpired:
+                  value:
+                    status: "0"
+                    message: "Your password reset has expired. Please request a new OTP to continue"
+                    error: "Your password reset has expired. Please request a new OTP to continue"
+                    data: {}
+                passwordRequired:
+                  value:
+                    status: "0"
+                    message: "Password is required"
+                    error: "Password is required"
+                    data: {}
+        '401':
+          description: Code not verified (or the reset was already used), or userId is not the code's owner
+          content:
+            application/json:
+              examples:
+                notVerified:
                   value:
                     status: "0"
                     message: "OTP not verified yet"
-                    detail: "Please verify OTP first"
-                    data: {}
-                    error: ""
-                otpNotFound:
-                  summary: OTP not found
+                    error: "OTP not verified yet"
+                    data:
+                      message: "Please verify OTP first"
+                userMismatch:
                   value:
                     status: "0"
-                    message: "Sorry, we could not fetch the data"
-                    detail: "Please rensend OTP to continue"
+                    message: "This OTP was not issued for this account"
+                    error: "This OTP was not issued for this account"
                     data: {}
-                    error: ""
-        '500':
-          description: Internal server error
+        '404':
+          description: No code with this otpId for this kind of account
           content:
             application/json:
               example:
                 status: "0"
-                message: "Internal server error"
-                data: {}
-                error: "Something went wrong during password update"
+                message: "Sorry, we could not fetch the data"
+                error: "Sorry, we could not fetch the data"
+                data:
+                  message: "Please resend OTP to continue"
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
   /agent/logout:
     get:
       summary: Agent logout
@@ -6605,17 +6889,28 @@ paths:
 # Missing Customer APIs
   /customer/resendOTP:
     post:
-      summary: Resend OTP to customer
-      description: Resends OTP to customer's email or phone for verification
+      summary: Resend the emailed code
+      description: >-
+        Emails a new code for the customer account with this userId (sign-up verification or a
+        password reset in progress). Only that kind of account is served (other accounts: not
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Customer > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie
       requestBody:
         required: true
         content:
@@ -6623,14 +6918,15 @@ paths:
             schema:
               type: object
               required:
-                - email
+                - userId
               properties:
-                email:
-                  type: string
-                  format: email
-                  example: john.doe@example.com
-                  description: Customer's email address
+                userId:
+                  type: integer
+                  example: 3
+                  description: The customer account (from sign-up or forget-password)
       responses:
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
         '200':
           description: OTP resent successfully
           content:
@@ -6638,15 +6934,18 @@ paths:
               example:
                 status: "1"
                 message: "OTP sent successfully"
-                data: {}
-        '400':
-          description: Bad request
+                data:
+                  otpId: 123
+        '404':
+          description: No customer account with this userId
           content:
             application/json:
               example:
                 status: "0"
-                message: "Invalid email"
-                data: {}
+                message: "Sorry, we could not fetch the associated data"
+                error: "Sorry, we could not fetch the associated data"
+                data:
+                  message: "Please try sending again"
 
   /customer/customerAddresses:
     get:
@@ -7023,17 +7322,28 @@ paths:
 # Missing Agent APIs
   /agent/resendotp:
     post:
-      summary: Resend OTP to agent
-      description: Resends OTP to agent's email or phone for verification
+      summary: Resend the emailed code
+      description: >-
+        Emails a new code for the shop owner account with this userId (sign-up verification or a
+        password reset in progress). Only that kind of account is served (other accounts: not
+        found). A new code replaces the earlier one and ends a reset in progress. It is issued for
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        per account at most 5 codes an hour and 10 a day (429 with
+        retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
+        locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
+        doubling with each further lockout up to 24 hours; a correct code clears this, and wrong
+        guesses are forgotten 30 days after the last. Guessing at one account so stays under 2% of
+        the 4-digit codes over 30 days. Trade-off: these requests need no sign-in, so anyone who
+        knows the account can use the allowance up, or run up the wait, and delay its reset for up
+        to a day; without these limits, the 5-guess limit per code would not bound guessing.
+        Limited per client IP (429).
       tags:
         - Agent > Auth
-      parameters:
-        - in: cookie
-          name: accessToken
-          required: false
-          schema:
-            type: string
-          description: Optional access token cookie
       requestBody:
         required: true
         content:
@@ -7041,14 +7351,15 @@ paths:
             schema:
               type: object
               required:
-                - email
+                - userId
               properties:
-                email:
-                  type: string
-                  format: email
-                  example: agent@example.com
-                  description: Agent's email address
+                userId:
+                  type: integer
+                  example: 3
+                  description: The shop owner account (from sign-up or forget-password)
       responses:
+        '429':
+          $ref: '#/components/responses/OtpTooManyRequests'
         '200':
           description: OTP resent successfully
           content:
@@ -7056,14 +7367,16 @@ paths:
               example:
                 status: "1"
                 message: "OTP sent successfully"
-                data: {}
-        '400':
-          description: Bad request
+                data:
+                  otpId: 123
+        '404':
+          description: No shop owner account with this userId
           content:
             application/json:
               example:
                 status: "0"
-                message: "Invalid email"
+                message: "Sorry, we could not fetch the associated data or You Entered Incorrect OTP"
+                error: "Sorry, we could not fetch the associated data or You Entered Incorrect OTP"
                 data: {}
 
   /agent/session:
@@ -9499,6 +9812,30 @@ paths:
 
 
 components:
+  responses:
+    OtpTooManyRequests:
+      description: >-
+        Too many requests: codes issued for this account this hour (5) or day (10), the wait
+        before a new code after repeated wrong guesses at this account (15 minutes after the
+        second locked code, doubling up to 24 hours), wrong guesses at this code (5; the code is
+        invalidated), or requests from this client IP in 15 minutes. retryAfterSeconds: when a
+        new code can be requested.
+      content:
+        application/json:
+          examples:
+            locked:
+              value:
+                status: "0"
+                message: "Too many incorrect attempts. Please request a new OTP to continue"
+                error: "Too many incorrect attempts. Please request a new OTP to continue"
+                data: {}
+            throttled:
+              value:
+                status: "0"
+                message: "Too many OTP requests. Please wait and try again"
+                error: "Too many OTP requests. Please wait and try again"
+                data:
+                  retryAfterSeconds: 1800
   schemas:
     HealthReadyResponse:
       type: object

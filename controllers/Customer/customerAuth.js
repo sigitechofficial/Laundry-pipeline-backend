@@ -179,12 +179,13 @@ async function forgetPasswordRequest(req, res) {
    *       Verify OTP for changing password
 */
 async function verifyOTPforPassword(req, res) {
-    const { otpId, OTP } = req.body;
+    const { otpId, OTP, userId } = req.body;
 
-    // Call service to handle business logic
+    // Call service to handle business logic (a userId that is sent must be the code's owner)
     const result = await customerAuthService.verifyOTPforPassword({
         otpId,
-        OTP
+        OTP,
+        userId
     });
 
     // Return response using ResponseHelper success method

@@ -7,7 +7,12 @@ const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const redisCli = require('../../redis/redis');
-const otpGenerator = require('otp-generator');
+const {
+    defaultPasswordReset,
+    toId,
+    toHttpError: passwordResetHttpError,
+} = require('../shared/passwordReset');
+const { CODE_PURPOSES } = require('../shared/otpCode');
 const {
     UnauthorizedError, 
     NotFoundError, 
@@ -46,6 +51,16 @@ const {
     SHOP_ADDRESS_TYPE,
     openAgentOwnerBookingWhere,
 } = require('../../utils/openBookingGuard');
+
+/** Accounts the agent sign-up, code and password reset endpoints serve: shop owners (userTypes.id 4, Agent). */
+const AGENT_USER_TYPES = [4];
+
+/** Sign-up verification keeps the statuses and wording the agent app was built against. */
+const AGENT_SIGNUP_STATUS = { expired: 401 };
+const AGENT_SIGNUP_MESSAGES = {
+    not_found: 'Sorry, we could not fetch the data or You Entered Incorrect OTP',
+    incorrect: 'Entered Incorrect OTP. Please enter correct OTP to continue',
+};
 
 /**
  * Agent Authentication Service
@@ -215,7 +230,7 @@ class AgentAuthService {
             include: [{
                 model: otpVerification,
                 required: false,
-                attributes: ['id', 'OTP']
+                attributes: ['id']
             }, {
                 model: deviceToken,
                 required: false,
@@ -283,6 +298,14 @@ class AgentAuthService {
             // User exists but NOT verified - Allow updating details and resending OTP
             console.log("🔄 User exists but not verified. Updating details and resending OTP...");
             
+            // A new code counts against the account's code limit like a resend
+            // (services/shared/passwordReset.js), so wrong-guess limits cannot be reset at will.
+            try {
+                await defaultPasswordReset().reserveIssue({ userId: userfindByEmail.id });
+            } catch (err) {
+                throw passwordResetHttpError(err);
+            }
+
             // Details and OTP refreshed atomically; OTP email only after commit.
             // Shop accounts never pay as customers, so no Stripe customer is created
             // (previously a new one was created every time the first name changed).
@@ -361,74 +384,52 @@ class AgentAuthService {
 
     /**
      * Verify OTP SignUp
-     * @param {Object} data - OTP verification data
+     * @param {Object} data - OTP verification data: otpId (the code row the sign-up or resend
+     *   returned), OTP, and userId (checked against the code's account, never used to pick it)
      * @returns {Object} Verification result
      */
     async verifyOTpSignUp(data) {
-        if (data.OTP === '5678') {
-            const userData = await users.findByPk(data.userId);
-            const userUpdate = await users.update({
-                verifiedAt: new Date(),
-            }, {
-                where: {
-                    id: data.userId
-                }
-            });
-
-            const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-            const dataMap = daysArray.map((day) => ({
-                dayOfWeek: day,
-                status: true,
-                userId: data.userId
-            }));
-            let output = await bussinessWorkingHours.bulkCreate(dataMap);
-
-            const ianaTimeZone = await this._getUserIanaTimeZone(data.userId);
-
-            return {
+        // The account is the code's owner; the code must be its live code, and is used up
+        // (single use, limited wrong guesses: services/shared/passwordReset.js).
+        let verified;
+        try {
+            verified = await defaultPasswordReset().verifySignupCode({
+                otpId: data.otpId,
                 userId: data.userId,
-                ianaTimeZone,
-                currencyUnit: await this._shopCurrencySymbol(data.userId),
-            };
-        } else {
-            const otpData = await otpVerification.findByPk(data.otpId);
-            if (!otpData) {
-                throw new NotFoundError("Sorry, we could not fetch the data or You Entered Incorrect OTP");
-            }
-
-            // Check if OTP has expired
-            const now = new Date();
-            if (otpData.expirtAt && new Date(otpData.expirtAt) < now) {
-                throw new UnauthorizedError("OTP has expired. Please request a new OTP to continue");
-            }
-
-            if (otpData.OTP != data.OTP) {
-                throw new UnauthorizedError("Entered Incorrect OTP. Please enter correct OTP to continue");
-            }
-            const userUpdate = await users.update({
-                verifiedAt: new Date(),
-            }, {
-                where: {
-                    id: data.userId
-                }
+                code: data.OTP,
+                userTypeIds: AGENT_USER_TYPES,
+                // Special test OTP - bypass normal verification
+                skipCodeCheck: data.OTP === '5678',
             });
-
-            const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-            const dataMap = daysArray.map((day) => ({
-                dayOfWeek: day,
-                status: true,
-                userId: data.userId
-            }));
-            let output = await bussinessWorkingHours.bulkCreate(dataMap);
-
-            const ianaTimeZone = await this._getUserIanaTimeZone(data.userId);
-
-            return {
-                userId: data.userId,
-                ianaTimeZone,
-                currencyUnit: await this._shopCurrencySymbol(data.userId),
-            };
+        } catch (err) {
+            throw passwordResetHttpError(err, AGENT_SIGNUP_STATUS, AGENT_SIGNUP_MESSAGES);
         }
+        const userId = verified.userId;
+
+        await users.update({
+            verifiedAt: new Date(),
+        }, {
+            where: {
+                id: userId
+            }
+        });
+
+        const daysArray = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        const dataMap = daysArray.map((day) => ({
+            dayOfWeek: day,
+            status: true,
+            userId
+        }));
+        await bussinessWorkingHours.bulkCreate(dataMap);
+
+        const ianaTimeZone = await this._getUserIanaTimeZone(userId);
+
+        return {
+            // The app's own value when it sent one (it names the same account).
+            userId: data.userId ?? userId,
+            ianaTimeZone,
+            currencyUnit: await this._shopCurrencySymbol(userId),
+        };
     }
 
     /**
@@ -437,59 +438,45 @@ class AgentAuthService {
      * @returns {Object} Resend OTP result
      */
     async resendOTP(data) {
-        const userExist = await users.findByPk(data.userId);
+        // Only shop owner accounts: the other apps resend through their own endpoints.
+        const accountId = toId(data.userId);
+        const userExist = accountId && await users.findOne({
+            where: {
+                id: accountId,
+                userTypeId: { [Op.in]: AGENT_USER_TYPES },
+                deletedAt: { [Op.is]: null },
+            },
+            attributes: ['id', 'email', 'firstName'],
+        });
 
         if (!userExist) {
             throw new NotFoundError("Sorry, we could not fetch the associated data or You Entered Incorrect OTP");
         }
 
-        let otpData = await otpVerification.findOne({ where: { userId: data.userId } });
-        let OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: false,
-        });
+        // A new code for the account (services/shared/passwordReset.js): it also serves a
+        // password reset in progress, so it goes through the same lifecycle and limits, and the
+        // new code keeps the purpose of the one it replaces (sign-up or password reset).
+        let issued;
+        try {
+            issued = await defaultPasswordReset().issueResendCode({ userId: userExist.id });
+        } catch (err) {
+            throw passwordResetHttpError(err);
+        }
 
         try {
             await otpMail({
                 type: 'RegisterOTP',
                 email: userExist.email,
-                OTP: OTP,
+                OTP: issued.code,
                 userName: userExist.firstName || 'Agent'
             });
         } catch (mailError) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        let DT = new Date();
-        // Set OTP expiration to 1 minute from now
-        let expirationTime = new Date(DT.getTime() + 1 * 60 * 1000); // 1 minute
-
-        if (!otpData) {
-            const newOtpData = await otpVerification.create({
-                OTP,
-                reqAt: DT,
-                expirtAt: expirationTime,
-                verifiedInForgetCase: false,
-                userId: data.userId,
-            });
-            return {
-                otpId: newOtpData.id
-            };
-        } else {
-            await otpVerification.update(
-                {
-                    OTP,
-                    reqAt: DT,
-                    expirtAt: expirationTime,
-                    verifiedInForgetCase: false,
-                },
-                { where: { userId: data.userId } }
-            );
-            return {
-                otpId: otpData.id
-            };
-        }
+        return {
+            otpId: issued.otpId
+        };
     }
 
     /**
@@ -981,10 +968,11 @@ class AgentAuthService {
         if (!userFind.status) {
             throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
-            const otpData = await otpVerification.findOne(
-                { where: { userId: userFind.id } },
-                { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
-            );
+            const otpData = await otpVerification.findOne({
+                where: { userId: userFind.id },
+                attributes: ["id"],
+                order: [["id", "ASC"]],
+            });
             if (!otpData && userFind.classifiedAsId === null && !userFind.verifiedAt) {
                 throw new UnauthorizedError("User Not Verified", { 
                     message: "User not verified by OTP" 
@@ -1235,64 +1223,41 @@ class AgentAuthService {
             where: {
                 email: data.email,
                 deletedAt: { [Op.is]: null },
-                userTypeId: { [Op.or]: [4] }, // Agent type
+                userTypeId: { [Op.in]: AGENT_USER_TYPES },
             },
-            include: { model: otpVerification, attributes: ["id"] },
-            attributes: ["id"],
+            attributes: ["id", "email", "firstName"],
         });
 
         if (!userData) {
             throw new NotFoundError("No user exists against this email");
         }
 
-        let OTP = otpGenerator.generate(4, {
-            lowerCaseAlphabets: false,
-            upperCaseAlphabets: false,
-            specialChars: true,
-        });
+        // A new code ends any earlier code and verified reset (services/shared/passwordReset.js).
+        let issued;
+        try {
+            issued = await defaultPasswordReset().issueCode({
+                userId: userData.id,
+                purpose: CODE_PURPOSES.PASSWORD_RESET,
+            });
+        } catch (err) {
+            throw passwordResetHttpError(err);
+        }
 
         try {
             await otpMail({
                 type: 'ForgetPassword',
-                email: data.email,
-                OTP: OTP,
+                email: userData.email,
+                OTP: issued.code,
                 userName: userData.firstName || 'Agent'
             });
         } catch (mailError) {
             console.error('⚠️ OTP email failed (non-blocking):', mailError.message || mailError);
         }
 
-        let dt = new Date();
-        // Set OTP expiration to 1 minute from now
-        let expirationTime = new Date(dt.getTime() + 1 * 60 * 1000); // 1 minute
-
-        if (userData.otpVerification != null) {
-            await otpVerification.update(
-                {
-                    OTP: OTP,
-                    reqAt: dt,
-                    expirtAt: expirationTime,
-                }, 
-                { where: { userId: userData.id } }
-            );
-
-            return {
-                otpId: userData.otpVerification.id,
-                userId: userData.id,
-            };
-        } else {
-            const otpSend = await otpVerification.create({
-                OTP: OTP,
-                reqAt: dt,
-                expirtAt: expirationTime,
-                userId: userData.id
-            });
-
-            return {
-                otpId: otpSend.id,
-                userId: userData.id,
-            };
-        }
+        return {
+            otpId: issued.otpId,
+            userId: userData.id,
+        };
     }
 
     /**
@@ -1301,26 +1266,24 @@ class AgentAuthService {
      * @returns {Object} Verification result
      */
     async verifyOTPforPassword(data) {
-        const otpData = await otpVerification.findByPk(data.otpId, {
-            attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"],
-        });
-
-        if (!otpData) {
-            throw new NotFoundError("Sorry, we could not fetch the data", { 
-                message: "Please resend OTP to continue" 
+        // The code must be the account's live, unexpired code; it is used up here
+        // (single use, limited wrong guesses) and opens the reset (services/shared/passwordReset.js).
+        // The userId the app sends with it must name the code's account.
+        let verified;
+        try {
+            verified = await defaultPasswordReset().verifyResetCode({
+                otpId: data.otpId,
+                userId: data.userId,
+                code: data.OTP,
+                userTypeIds: AGENT_USER_TYPES,
             });
+        } catch (err) {
+            throw passwordResetHttpError(err);
         }
-
-        if (data.OTP != otpData.OTP) {
-            throw new UnauthorizedError("You entered incorrect OTP Please enter correct OTP to continue");
-        }
-
-        otpData.verifiedAtForgetCase = true;
-        await otpData.save();
 
         return {
             otpId: data.otpId,
-            userId: otpData.userId,
+            userId: verified.userId,
         };
     }
 
@@ -1330,32 +1293,18 @@ class AgentAuthService {
      * @returns {Object} Change password result
      */
     async changePasswordOTP(data) {
-        const otpData = await otpVerification.findByPk(data.otpId, {
-            attributes: ["id", "OTP", "verifiedAtForgetCase"],
-        });
-
-        const userData = await users.findByPk(data.userId, {
-            attributes: ["id", "password"],
-        });
-
-        if (!otpData) {
-            throw new NotFoundError("Sorry, we could not fetch the data", { 
-                message: "Please resend OTP to continue" 
+        // The password changed is the verified code's owner's; a userId the app sends must name
+        // that owner. Every session of the account ends (services/shared/passwordReset.js).
+        try {
+            await defaultPasswordReset().resetPassword({
+                otpId: data.otpId,
+                userId: data.userId,
+                password: data.password,
+                userTypeIds: AGENT_USER_TYPES,
             });
+        } catch (err) {
+            throw passwordResetHttpError(err);
         }
-
-        if (otpData.verifiedAtForgetCase === false) {
-            throw new UnauthorizedError("OTP not verified yet", { 
-                message: "Please verify OTP first" 
-            });
-        }
-
-        let hashedPassword = await bcrypt.hash(data.password, 8);
-        userData.password = hashedPassword;
-        await userData.save();
-
-        otpData.verifiedAtForgetCase = false;
-        await otpData.save();
 
         return {
         };
@@ -1584,10 +1533,11 @@ class AgentAuthService {
         if (!userData.status) {
             throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
         } else {
-            const otpData = await otpVerification.findOne(
-                { where: { userId: userData.id } },
-                { attributes: ["id", "OTP", "verifiedAtForgetCase", "userId"] }
-            );
+            const otpData = await otpVerification.findOne({
+                where: { userId: userData.id },
+                attributes: ["id"],
+                order: [["id", "ASC"]],
+            });
             if (!otpData && userData.classifiedAsId === null && !userData.verifiedAt) {
                 throw new UnauthorizedError("User Not Verified", { 
                     message: "User not verified by OTP" 

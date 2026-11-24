@@ -91,6 +91,7 @@ async function run() {
     assert.equal(state.users[0].stripeCustomerId, undefined, 'sign-up never creates a Stripe customer');
     assert.equal(state.otps[0].userId, user.id);
     assert.equal(state.otps[0].OTP, '1234');
+    assert.equal(state.otps[0].codePurpose, 'signup', 'a sign-up code verifies the sign-up only');
     assert.equal(otpRow.id, state.otps[0].id);
     assert.equal(state.tokens.length, 1);
     assert.equal(state.tokens[0].tokenId, 'push-token-1');
@@ -132,6 +133,7 @@ async function run() {
     assert.equal(state.users[0].password, 'new-hash');
     assert.equal(state.otps.length, 1, 'existing OTP row reused');
     assert.equal(state.otps[0].OTP, '1234');
+    assert.equal(state.otps[0].codePurpose, 'signup', 'a sign-up code verifies the sign-up only');
     assert.equal(otpRow.id, 50);
   }
 

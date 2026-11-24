@@ -26,7 +26,7 @@
 const jwt = require('jsonwebtoken');
 const redisCli = require('../redis/redis');
 const { appSessionKey } = require('./sessionKeys');
-const { replaceUserToken, removeUserTokens, removeInstallTokens } = require('./deviceTokenStore');
+const { replaceUserToken, removeUserTokens, removeInstallTokens, removeAllUserTokens } = require('./deviceTokenStore');
 const {
     DEVICE_ID_ERROR,
     normalizeDeviceId,
@@ -83,6 +83,18 @@ async function endAppSession(user, { currentPushToken } = {}) {
     await redisCli.hDel(appSessionKey(userId), field);
 }
 
+/**
+ * Sign out everywhere (password reset): revoke every session of the account and stop pushes to
+ * all of its installs. With `transaction`, the push tokens are removed in it, so a caller that
+ * rolls back keeps them; the sessions are revoked at once (Redis has no transaction here), and
+ * a failure throws so the caller does not commit.
+ */
+async function endAllAppSessions(userId, { transaction } = {}) {
+    if (!userId) throw new Error('endAllAppSessions: userId is required');
+    await removeAllUserTokens(userId, { transaction });
+    await redisCli.del(appSessionKey(userId));
+}
+
 module.exports = {
     DEVICE_ID_ERROR,
     normalizeDeviceId,
@@ -91,4 +103,5 @@ module.exports = {
     sessionFieldOf,
     openAppSession,
     endAppSession,
+    endAllAppSessions,
 };
