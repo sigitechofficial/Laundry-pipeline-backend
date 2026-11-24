@@ -609,7 +609,8 @@ paths:
       description: >-
         Sets the password of the account that owns the verified code (never another account),
         within 10 minutes of verification, once. Every session of the account then ends on all
-        devices (and their push registrations), so the user signs in again.
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
         Limited per client IP (429).
       tags:
         - Customer > Auth
@@ -4154,10 +4155,12 @@ paths:
         Emails a new code for the driver account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
         found). A new code replaces the earlier one and ends a reset in progress. It is issued for
-        the purpose of the code it replaces: a password-reset code for a verified account (it can
-        only be resetting its password); for an account not verified yet, a password-reset code
-        when its current code is one, otherwise a sign-up code. A code verifies only through the
-        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
         per account at most 5 codes an hour and 10 a day (429 with
         retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
         locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
@@ -4698,7 +4701,8 @@ paths:
       description: >-
         Sets the password of the account that owns the verified code (never another account),
         within 10 minutes of verification, once. Every session of the account then ends on all
-        devices (and their push registrations), so the user signs in again.
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
         Limited per client IP (429).
       tags:
         - Driver > Driver Auth
@@ -5480,7 +5484,8 @@ paths:
       description: >-
         Sets the password of the account that owns the verified code (never another account),
         within 10 minutes of verification, once. Every session of the account then ends on all
-        devices (and their push registrations), so the user signs in again.
+        devices (and their push registrations), so the user signs in again. The reset ends here:
+        for an account not verified yet, the next resend is a sign-up code.
         Limited per client IP (429).
       tags:
         - Agent > Auth
@@ -6889,10 +6894,12 @@ paths:
         Emails a new code for the customer account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
         found). A new code replaces the earlier one and ends a reset in progress. It is issued for
-        the purpose of the code it replaces: a password-reset code for a verified account (it can
-        only be resetting its password); for an account not verified yet, a password-reset code
-        when its current code is one, otherwise a sign-up code. A code verifies only through the
-        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
         per account at most 5 codes an hour and 10 a day (429 with
         retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
         locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
@@ -7320,10 +7327,12 @@ paths:
         Emails a new code for the shop owner account with this userId (sign-up verification or a
         password reset in progress). Only that kind of account is served (other accounts: not
         found). A new code replaces the earlier one and ends a reset in progress. It is issued for
-        the purpose of the code it replaces: a password-reset code for a verified account (it can
-        only be resetting its password); for an account not verified yet, a password-reset code
-        when its current code is one, otherwise a sign-up code. A code verifies only through the
-        flow of its purpose. Counting forget-password requests and sign-up re-issues,
+        what the account is doing: a password-reset code for a verified account (it can only be
+        resetting its password); for an account not verified yet, a password-reset code only
+        while its reset is in progress (a reset code requested in the last 10 minutes, or a
+        verified reset still open), otherwise a sign-up code (so after a completed or abandoned
+        reset, the email-verification screen's resend gives a code that verifies the sign-up). A
+        code verifies only through the flow of its purpose. Counting forget-password requests and sign-up re-issues,
         per account at most 5 codes an hour and 10 a day (429 with
         retryAfterSeconds). Wrong guesses also add up per account across codes: after the second
         locked code (or as many wrong guesses spread over codes) the next code waits 15 minutes,
