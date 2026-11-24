@@ -346,7 +346,7 @@ exports.agentAddressAdd = async (req, res) => {
     const revenueRampService = require("../../services/Admin/revenueRampService");
     await revenueRampService.markNewShopIfCovered(registerShop);
 
-    return ResponseHelper.success(res, "Laundary Shhop Address Added", { registerShop });
+    return ResponseHelper.success(res, "Shop address added", { registerShop });
 }
 
 //!----------------------------------Agent Shop Address Edit-----------------------------//
