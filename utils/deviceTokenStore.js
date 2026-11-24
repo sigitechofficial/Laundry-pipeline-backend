@@ -67,10 +67,17 @@ async function removeUserTokens(userId, tokenIds) {
   return deviceToken.destroy({ where: { userId, tokenId: ids } });
 }
 
+/** Every session of the account ended (password reset): forget all of its push tokens. */
+async function removeAllUserTokens(userId, { transaction } = {}) {
+  if (!userId) return 0;
+  return deviceToken.destroy({ where: { userId }, transaction });
+}
+
 module.exports = {
   detachFromOtherUsers,
   saveCurrentToken,
   replaceUserToken,
   removeInstallTokens,
   removeUserTokens,
+  removeAllUserTokens,
 };
