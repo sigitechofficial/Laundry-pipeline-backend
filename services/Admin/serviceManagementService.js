@@ -450,25 +450,19 @@ class ServiceManagementService {
                 ]
             });
 
-            // Create an object with service names as keys and counts as values
-            const servicesCount = {};
-            
-            // Count usage for each service in parallel for better performance
-            const countPromises = getServices.map(async (serviceItem) => {
-                const count = await customerSelectedService.count({
-                    where: {
-                        serviceId: serviceItem.id
-                    }
-                });
-                return { name: serviceItem.name, count };
+            // Usage count per service: one GROUP BY (it was one COUNT per service).
+            const usageRows = await customerSelectedService.count({
+                group: ['serviceId'],
             });
+            const usageByServiceId = new Map(
+                usageRows.map((row) => [Number(row.serviceId), Number(row.count)])
+            );
 
-            const countResults = await Promise.all(countPromises);
-            
-            // Build the servicesCount object
-            countResults.forEach(({ name, count }) => {
-                servicesCount[name] = count;
-            });
+            // Service name → count (a later service with the same name wins, as before).
+            const servicesCount = {};
+            for (const serviceItem of getServices) {
+                servicesCount[serviceItem.name] = usageByServiceId.get(Number(serviceItem.id)) || 0;
+            }
 
             return { 
                 services: getServices,

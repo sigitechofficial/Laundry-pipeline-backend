@@ -52,6 +52,18 @@ const fakeModels = new Proxy(
                 category: instance(j.category),
             }))),
         serviceDiscount: model('serviceDiscount'),
+        service: model('service', () => [
+            { id: 1, name: 'Wash' },
+            { id: 2, name: 'Dry clean' },
+            { id: 3, name: 'Alterations' },
+        ]),
+        customerSelectedService: {
+            count: async (opts = {}) => {
+                calls.push('customerSelectedService.count');
+                assert.deepStrictEqual(opts.group, ['serviceId']);
+                return [{ serviceId: 1, count: 4 }, { serviceId: 3, count: 1 }];
+            },
+        },
     },
     {
         get(target, prop) {
@@ -105,6 +117,12 @@ const zoneCatalogService = require('../services/Admin/zoneCatalogService');
     calls.length = 0;
     assert.strictEqual((await serviceManagementService.getServiceCategoriesDataForServices([])).size, 0);
     assert.strictEqual(calls.length, 0, 'no query for no services');
+
+    // ── getAllServices: usage counts in one GROUP BY ─────────────────────────
+    calls.length = 0;
+    const all = await serviceManagementService.getAllServices();
+    assert.deepStrictEqual(calls, ['service', 'customerSelectedService.count']);
+    assert.deepStrictEqual(all.servicesCount, { Wash: 4, 'Dry clean': 0, Alterations: 1 });
 
     // ── Zone overlay loaded once per request ──────────────────────────────────
     calls.length = 0;
