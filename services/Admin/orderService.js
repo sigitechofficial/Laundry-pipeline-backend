@@ -165,6 +165,18 @@ class OrderService {
                 { "$customer.lastName$": { [Op.like]: like } },
                 { "$customer.email$": { [Op.like]: like } },
                 { "$customer.phoneNum$": { [Op.like]: like } },
+                // Service name ("Eco" finds every Eco Dry Clean order). A
+                // subquery, so the list's paging and counts are not affected.
+                {
+                    id: {
+                        [Op.in]: sequelize.literal(
+                            `(SELECT css.bookingId FROM customerSelectedServices css
+                               JOIN services s ON s.id = css.serviceId
+                              WHERE css.status = 1 AND css.bookingId IS NOT NULL
+                                AND s.name LIKE ${booking.sequelize.escape(like)})`
+                        ),
+                    },
+                },
             ],
         };
 
@@ -191,7 +203,7 @@ class OrderService {
                 include: [
                     {
                         model: service,
-                        attributes: ['id', 'name'],
+                        attributes: ['id', 'name', 'badgeText'],
                     },
                 ],
             },
@@ -729,7 +741,7 @@ class OrderService {
                     required: false,
                     where: { status: true },
                     include: [
-                        { model: service, attributes: ['id', 'name', 'image'] },
+                        { model: service, attributes: ['id', 'name', 'image', 'badgeText'] },
                         { model: categories, attributes: ['id', 'name', 'image'] },
                         {
                             model: subCategories,

@@ -69,6 +69,7 @@ const SERVICE_WRITABLE_FIELDS = [
     'name',
     'description',
     'image',
+    'badgeText',
     'timeRequired',
     'pricingBasis',
     'numberOfBags',
@@ -88,6 +89,22 @@ function pickServiceWritableFields(serviceData) {
     return normalizeServicePayload(data);
 }
 
+/** Max length of services.badgeText. */
+const SERVICE_BADGE_MAX_LENGTH = 30;
+
+/** Badge label: trimmed, empty -> null (no badge), longer than the column -> error. */
+function normalizeBadgeText(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).replace(/\s+/g, ' ').trim();
+    if (!text || text.toLowerCase() === 'null') return null;
+    if (text.length > SERVICE_BADGE_MAX_LENGTH) {
+        throw new ValidationError(
+            `Badge must be ${SERVICE_BADGE_MAX_LENGTH} characters or fewer`
+        );
+    }
+    return text;
+}
+
 function normalizeServicePayload(serviceData) {
     const data = { ...serviceData };
     if (data.numberOfBags !== undefined) {
@@ -103,6 +120,9 @@ function normalizeServicePayload(serviceData) {
     }
     if (data.status !== undefined) {
         data.status = parseOptionalBoolean(data.status);
+    }
+    if (data.badgeText !== undefined) {
+        data.badgeText = normalizeBadgeText(data.badgeText);
     }
     return data;
 }

@@ -61,6 +61,11 @@ module.exports = (sequelize, DataTypes) => {
       type:DataTypes.STRING,
       allowNull:true
     },
+    badgeText: {
+      type: DataTypes.STRING(30),
+      allowNull: true,
+      comment: 'Short label shown on the service in the apps, e.g. "Premium · Eco". Empty = no badge.'
+    },
     timeRequired: {
       type: DataTypes.STRING(50),
       allowNull: true

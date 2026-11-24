@@ -118,6 +118,7 @@ const {
     findZoneByPostcode,
 } = require('../../utils/findZones');
 const zoneCatalogService = require('../Admin/zoneCatalogService');
+const { hidePremiumServicesWithoutShop } = require('./premiumServiceAvailability');
 
 // Import coupon service
 const couponService = require('./couponService');
@@ -3311,6 +3312,8 @@ class CustomerOrderService {
                 serviceData,
                 catalogZoneId
             );
+            // Premium (badge) services only where a shop in the zone offers them.
+            serviceData = await hidePremiumServicesWithoutShop(serviceData, catalogZoneId);
         }
 
         return {
@@ -3333,6 +3336,7 @@ class CustomerOrderService {
                 'name',
                 'status',
                 'image',
+                'badgeText',
                 'description',
                 'timeRequired',
                 'pricingBasis',
@@ -3354,7 +3358,13 @@ class CustomerOrderService {
             zoneId: requestedZoneId,
         });
 
-        for (const svc of activeServices) {
+        // Premium (badge) services only where a shop in the zone offers them.
+        const visibleServices = await hidePremiumServicesWithoutShop(
+            activeServices,
+            catalogZoneId
+        );
+
+        for (const svc of visibleServices) {
             let serviceCategoriesData =
                 await serviceManagementService.getServiceCategoriesDataForService(
                     svc.id
@@ -3377,6 +3387,7 @@ class CustomerOrderService {
                     name: svc.name || '',
                     status: svc.status,
                     image: svc.image || null,
+                    badgeText: svc.badgeText || null,
                     description: svc.description || null,
                     turnAroundTime: svc.timeRequired || null,
                     pricingBasis: svc.pricingBasis || null,

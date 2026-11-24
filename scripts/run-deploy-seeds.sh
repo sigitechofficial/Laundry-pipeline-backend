@@ -75,13 +75,11 @@ run_one "20260924113000-recurring-test-interval-per-frequency.js"
 run_one "20260817151000-attempt-fail-instruction-defaults.js"
 run_one "20260818141000-attempt-fail-reason-defaults.js"
 run_one "20260813171000-repair-catalog-defaults.js"
-run_one "20260813190000-dry-clean-catalog-batch-1.js"
-run_one "20260813191000-dry-clean-catalog-batch-2.js"
-run_one "20260813192000-dry-clean-catalog-batch-3.js"
-run_one "20260813193000-dry-clean-catalog-batch-4.js"
-run_one "20260813194000-dry-clean-catalog-batch-5.js"
-run_one "20260813195000-dry-clean-catalog-batch-6.js"
-run_one "20260813196000-restore-dry-clean-legacy-categories.js"
+# Dry Clean catalog seeders (20260813190000..20260813196000) are NOT run on
+# deploy any more: the catalog is managed in admin / reviewed SQL now, and these
+# seeders reset every Dry Clean price and brought back items and categories that
+# had been removed (e.g. Ski Wear, Jewish / Religious Items). They stay in
+# seeders/ for setting up an empty database by hand.
 
 # Optional ensure-* scripts (no-op if already applied)
 for s in \

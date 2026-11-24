@@ -22,6 +22,7 @@ const SERVICE_LIST_ATTRIBUTES = [
     'id',
     'name',
     'image',
+    'badgeText',
     'description',
     'timeRequired',
     'pricingBasis',

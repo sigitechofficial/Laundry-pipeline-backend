@@ -5586,7 +5586,7 @@ exports.serviceDetail = async (req, res) => {
     const grouped = {};
     for (const sid of serviceIds) {
         const svc = await service.findByPk(sid, {
-            attributes: ["id", "name", "image", "status"],
+            attributes: ["id", "name", "image", "badgeText", "status"],
         });
         if (!svc || svc.status === false) continue;
         let tree = await serviceManagementService.getServiceCategoriesDataForService(sid);
@@ -5600,6 +5600,7 @@ exports.serviceDetail = async (req, res) => {
             serviceId: sid,
             serviceName: svc.name,
             image: svc.image,
+            badgeText: svc.badgeText || null,
             categories: tree.map((row) => ({
                 id: row.category.id,
                 name: row.category.name,
