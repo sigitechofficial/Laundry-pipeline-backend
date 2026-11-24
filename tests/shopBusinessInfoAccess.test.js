@@ -123,11 +123,30 @@ const serviceNames = (body) => body.data.agentServices.map((s) => s.service.name
     assert.deepStrictEqual(serviceNames(res.body), ['Dry Cleaning'], 'owner 3 asking for :userId=2 gets its own shop');
   }
   {
-    // A handler reached without a session fails closed (the route also requires one).
-    const { res, err } = await call(agentController.getBusinessInformation, { params: { userId: '2' }, query: {} });
-    assert.ok(err, 'no session → error');
-    assert.strictEqual(err.statusCode, 401);
-    assert.strictEqual(res.body, null, 'nothing is sent for an anonymous caller');
+    // PENDING onboarding session: no session (registration in installed builds) →
+    // the shop named by :userId, as before. Remove with anonymousLegacyShopId.
+    const { res, err } = await call(agentController.getBusinessInformation, { params: { userId: '3' }, query: {} });
+    assert.strictEqual(err, null);
+    assert.deepStrictEqual(serviceNames(res.body), ['Dry Cleaning'], 'no session: :userId=3 reads shop 3');
+  }
+  for (const handler of [agentController.getBusinessInformation, agentController.getWorkingHours]) {
+    for (const bad of [undefined, 'abc', '0', '-2', '2.5']) {
+      const { res, err } = await call(handler, { params: { userId: bad }, query: {} });
+      assert.strictEqual(err && err.statusCode, 400, `no session, userId ${bad} → 400`);
+      assert.strictEqual(res.body, null);
+    }
+  }
+  {
+    // Any session reads its own (here empty) shop and never falls back to :userId.
+    const { res, err } = await call(agentController.getBusinessInformation, signedIn({ id: 40 }, { userId: '2' }));
+    assert.strictEqual(err, null);
+    assert.deepStrictEqual(serviceNames(res.body), [], 'customer session asking for :userId=2 does not get shop 2');
+  }
+  {
+    // platformOperationalHours always needs a session.
+    const { res, err } = await call(agentController.getPlatformOperationalHours, { params: {}, query: {} });
+    assert.strictEqual(err && err.statusCode, 401);
+    assert.strictEqual(res.body, null);
   }
 
   // ─── Agent app: working hours + platform hours (strict time-zone resolution) ──
@@ -137,6 +156,13 @@ const serviceNames = (body) => body.data.agentServices.map((s) => s.service.name
     assert.strictEqual(err, null, `employee working hours: ${err && err.message}`);
     assert.strictEqual(res.body.data.platformOperationalHours.countryId, 1, "shop 2's country bounds");
     assert.deepStrictEqual(res.body.data.bussinesWorkingHours, HOURS_BY_SHOP[2]);
+  }
+  {
+    // PENDING onboarding session: no session → hours of the shop named by :userId.
+    const { res, err } = await call(agentController.getWorkingHours, { params: { userId: '2' }, query: {} });
+    assert.strictEqual(err, null, `anonymous hours: ${err && err.message}`);
+    assert.deepStrictEqual(res.body.data.bussinesWorkingHours, HOURS_BY_SHOP[2]);
+    assert.strictEqual(res.body.data.platformOperationalHours.countryId, 1);
   }
   {
     const { res } = await call(agentController.getWorkingHours, signedIn(OWNER_3, { userId: '2' }));

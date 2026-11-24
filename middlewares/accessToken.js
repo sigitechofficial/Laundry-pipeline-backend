@@ -5,15 +5,12 @@ const { verify } = require('jsonwebtoken')
 const redisCli = require('../redis/redis')
 const { attachShopAgentContext } = require('../utils/shopAgentContext')
 const { sendIfAccountBlocked } = require('./rejectBlockedAccount')
+const { sessionTokenOf } = require('../utils/sessionToken')
 
 module.exports = async function validateAccessToken(req, res, next) {
     try {
-        let accessToken = req.cookies.accessToken
+        const accessToken = sessionTokenOf(req)
         console.log("URL---------------------------->>", req.url);
-
-        if (!accessToken) {
-            accessToken = req.headers['accesstoken'] || req.headers['x-access-token'];
-        }
 
         if (!accessToken) {
             throw new Error();

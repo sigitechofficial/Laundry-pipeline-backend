@@ -14,6 +14,7 @@ const checkPermissions = require("../middlewares/checkPermission");
 const multer = require("multer");
 const path = require("path");
 const validateAccessToken = require("../middlewares/accessToken");
+const accessTokenIfPresent = require("../middlewares/accessTokenIfPresent");
 const {
     requireShopOwner,
     requireShopManagerOrOwner,
@@ -763,18 +764,20 @@ router.get("/getCountries", asyncMiddleware(agentController.getCountries));
 router.get("/getCities", asyncMiddleware(agentController.getCities));
 
 //!----------------------------------------------------------Bussiness Information----------------------------------------------//
-// The signed-in caller's own shop (an employee reads the shop they work for).
-// `:userId` is kept only so installed app builds still match the route; it is
-// ignored and never selects the shop (see controllers/Agent/shopBusinessInfoController.js).
+// Signed in: the caller's own shop (an employee reads the shop they work for) and
+// `:userId` is ignored. No session: installed builds read these during shop
+// registration, where the backend issues none yet, so the legacy `:userId` still
+// selects the shop until the onboarding session ships (see
+// controllers/Agent/shopBusinessInfoController.js and tests/agentRouteAuth.test.js).
 // Admins: GET /admin/agents/:agentId/business-information.
 router.get(
     "/getBussinessInforMation/:userId",
-    validateAccessToken,
+    accessTokenIfPresent,
     asyncMiddleware(shopBusinessInfoController.getBusinessInformation)
 );
 router.get(
     "/getBussinessWrkinghours/:userId",
-    validateAccessToken,
+    accessTokenIfPresent,
     asyncMiddleware(shopBusinessInfoController.getWorkingHours)
 );
 //Bussiness services info Add

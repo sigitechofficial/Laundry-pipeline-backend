@@ -14,6 +14,7 @@ const assert = require('assert');
 const Module = require('module');
 
 function validateAccessToken(req, res, next) { return next(); }
+function accessTokenIfPresent(req, res, next) { return next(); }
 function requireShopOwner(req, res, next) { return next(); }
 const passThrough = (req, res, next) => next();
 
@@ -22,6 +23,7 @@ const controllerStub = new Proxy({}, { get: () => async () => {} });
 
 const STUBS = {
   '../middlewares/accessToken': validateAccessToken,
+  '../middlewares/accessTokenIfPresent': accessTokenIfPresent,
   '../middlewares/checkPermission': passThrough,
   '../middlewares/requireShopOwner': {
     requireShopOwner,
@@ -75,7 +77,19 @@ const PUBLIC_ROUTES = {
   'POST /agentAddressAdd': 'PENDING: registration write, trusts body userId',
   'POST /businesInfoAdded/:userId': 'PENDING: registration write, trusts :userId',
   'PATCH /workingHoursUpdate/:userId': 'PENDING: registration + profile write, trusts :userId',
+  // PENDING DECISION — registration-time reads (same onboarding-session work). They
+  // run accessTokenIfPresent: a signed-in caller reads only its own shop; a request
+  // without a session still reads the shop named by :userId, as installed builds
+  // need during registration.
+  'GET /getBussinessInforMation/:userId': 'PENDING: registration read, session optional',
+  'GET /getBussinessWrkinghours/:userId': 'PENDING: registration read, session optional',
 };
+
+/** Public routes that still honour a session when one is sent (checked first). */
+const OPTIONAL_SESSION_ROUTES = [
+  'GET /getBussinessInforMation/:userId',
+  'GET /getBussinessWrkinghours/:userId',
+];
 
 function routeTable(app) {
   const stack = (app._router || app.router).stack;
@@ -88,6 +102,7 @@ function routeTable(app) {
         key: `${method.toUpperCase()} ${layer.route.path}`,
         authenticated: handles.includes(validateAccessToken),
         authFirst: handles[0] === validateAccessToken,
+        optionalSessionFirst: handles[0] === accessTokenIfPresent,
         ownerOnly: handles.includes(requireShopOwner),
       });
     }
@@ -101,8 +116,6 @@ assert.ok(routes.length > 100, `route table loaded (${routes.length} routes)`);
 
 // Shop routes that used to be open: session required, checked before anything else.
 for (const key of [
-  'GET /getBussinessInforMation/:userId',
-  'GET /getBussinessWrkinghours/:userId',
   'GET /platformOperationalHours',
   'GET /generateStripeOnboardingLink',
   'GET /getPermissions',
@@ -111,6 +124,18 @@ for (const key of [
   assert.ok(route, `${key} exists (installed app builds call it)`);
   assert.ok(route.authenticated && route.authFirst, `${key} requires a session first`);
 }
+
+// Registration-time reads: a session, when sent, is verified before anything else.
+for (const key of OPTIONAL_SESSION_ROUTES) {
+  const route = byKey.get(key);
+  assert.ok(route, `${key} exists (installed app builds call it)`);
+  assert.ok(!route.authenticated && route.optionalSessionFirst, `${key}: accessTokenIfPresent runs first`);
+}
+assert.deepStrictEqual(
+  routes.filter((r) => r.optionalSessionFirst).map((r) => r.key).sort(),
+  [...OPTIONAL_SESSION_ROUTES].sort(),
+  'only the documented registration reads use accessTokenIfPresent'
+);
 
 // Stripe Connect onboarding is the owner's payout account: owner only.
 assert.ok(byKey.get('GET /generateStripeOnboardingLink').ownerOnly, 'Stripe onboarding link: owner only');
