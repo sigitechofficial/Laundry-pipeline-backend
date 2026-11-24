@@ -199,6 +199,19 @@ async function run() {
     { userId: 7, tokenId: FOREIGN, firebaseProjectId: null, status: true },
     { userId: 7, tokenId: 'no-fcm-token', firebaseProjectId: null, status: true },
   );
+  // A dryRun (validate_only) send reports what it would change but leaves the rows alone.
+  t.calls.sends.length = 0;
+  const rowsBefore = JSON.stringify(deviceRows);
+  const dry = await t.notification.sendNotification(7, 'T', 'B', {}, { dryRun: true });
+  assert.ok(t.calls.sends.length > 0 && t.calls.sends.every((s) => s.dryRun === true));
+  assert.strictEqual(dry.dryRun, true);
+  assert.strictEqual(dry.successCount, 2);
+  assert.strictEqual(dry.reclassifiedTokens, 0);
+  assert.strictEqual(dry.removedTokens, 0);
+  assert.strictEqual(dry.wouldReclassifyTokens, 2);
+  assert.strictEqual(dry.wouldRemoveTokens, 2, 'the dead token and the placeholder');
+  assert.strictEqual(JSON.stringify(deviceRows), rowsBefore, 'dryRun must not touch deviceToken rows');
+
   t.calls.sends.length = 0;
   const res = await t.notification.sendNotification(7, 'T', 'B', {});
   assert.strictEqual(res.sent, true);

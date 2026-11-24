@@ -257,18 +257,22 @@ async function sendNotificationToTokens(tokens, title, body, data = {}, options 
 /**
  * Apply what a send learned about the user's tokens: record each token's real project
  * (self-healing unclassified / mis-recorded rows) and delete tokens no project accepts.
+ * `dryRun`: a validate-only send changes nothing; the counts say what a real send would do.
  */
-async function applyDeliveryOutcomes(userId, outcomes) {
+async function applyDeliveryOutcomes(userId, outcomes, { dryRun = false } = {}) {
   const learned = outcomes.filter(
     (o) => o.verdict === 'delivered' && o.deliveredProjectId !== o.recordedProjectId
   );
+  const dead = outcomes.filter((o) => o.verdict === 'dead').map((o) => o.token);
+  if (dryRun) {
+    return { reclassified: 0, removed: 0, wouldReclassify: learned.length, wouldRemove: dead.length };
+  }
   for (const o of learned) {
     await deviceToken.update(
       { firebaseProjectId: o.deliveredProjectId },
       { where: { userId, tokenId: o.token } }
     );
   }
-  const dead = outcomes.filter((o) => o.verdict === 'dead').map((o) => o.token);
   if (dead.length > 0) {
     await deviceToken.destroy({ where: { userId, tokenId: { [Op.in]: dead } } });
   }
@@ -281,7 +285,8 @@ async function applyDeliveryOutcomes(userId, outcomes) {
  * @param {string} title - The title of the notification
  * @param {string} body - The body of the notification
  * @param {object} data - Additional data to send with the notification
- * @param {{ throwOnFailure?: boolean, dryRun?: boolean }} [options]
+ * @param {{ throwOnFailure?: boolean, dryRun?: boolean }} [options] dryRun: FCM validate_only,
+ *   and the deviceToken table is left untouched (no reclassification, no cleanup).
  */
 async function sendNotification(userId, title, body, data = {}, options = {}) {
   try {
@@ -317,7 +322,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       .map((t) => t.tokenId)
       .filter((id) => !isValidFcmRegistrationToken(id));
 
-    if (invalidTokenIds.length > 0) {
+    if (invalidTokenIds.length > 0 && !options.dryRun) {
       await deviceToken.destroy({
         where: {
           userId,
@@ -359,7 +364,7 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       dryRun: options.dryRun
     });
     const summary = summarize(outcomes);
-    const applied = await applyDeliveryOutcomes(userId, outcomes);
+    const applied = await applyDeliveryOutcomes(userId, outcomes, { dryRun: Boolean(options.dryRun) });
 
     const keptFailures = summary.failedTokens.filter((f) => f.verdict === 'kept');
     if (keptFailures.length > 0) {
@@ -384,8 +389,12 @@ async function sendNotification(userId, title, body, data = {}, options = {}) {
       successCount: summary.successCount,
       failureCount: summary.failureCount,
       deliveredByProject: summary.deliveredByProject,
+      dryRun: Boolean(options.dryRun),
       reclassifiedTokens: applied.reclassified,
       removedTokens: applied.removed,
+      ...(options.dryRun
+        ? { wouldReclassifyTokens: applied.wouldReclassify, wouldRemoveTokens: applied.wouldRemove + invalidTokenIds.length }
+        : {}),
       failedTokens: summary.failedTokens
     };
 
