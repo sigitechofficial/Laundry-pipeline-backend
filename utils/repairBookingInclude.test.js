@@ -2,7 +2,12 @@
 
 const assert = require('assert');
 
-const { hydrateRepairItemsForBooking, hydrateRepairItemsForBookings } = require('./repairBookingInclude');
+const {
+    hydrateRepairItemsForBooking,
+    hydrateRepairItemsForBookings,
+    normalizeRepairItem,
+    repairItemsOrder,
+} = require('./repairBookingInclude');
 
 function fakeModels(rows) {
     return {
@@ -136,6 +141,31 @@ async function runTests() {
     const degraded = await hydrateRepairItemsForBookings(failing, entries.slice(0, 2));
     assert.deepStrictEqual(degraded[0][0].repairItems, []);
     assert.strictEqual(degraded[0][0].items, 1);
+
+    // Options and images come out in a fixed order whatever order the join returned.
+    const shuffled = normalizeRepairItem({
+        id: 1,
+        serviceId: 9,
+        options: [{ id: 12, optionName: 'Taper' }, { id: 3, optionName: 'Shorten' }, { id: 7, optionName: 'Hem' }],
+        images: [
+            { id: 9, imageUrl: 'b.jpg', sortOrder: 1 },
+            { id: 4, imageUrl: 'c.jpg', sortOrder: 1 },
+            { id: 8, imageUrl: 'a.jpg', sortOrder: 0 },
+        ],
+    });
+    assert.deepStrictEqual(shuffled.options.map((o) => o.id), [3, 7, 12]);
+    assert.deepStrictEqual(shuffled.images.map((i) => i.id), [8, 4, 9]);
+    const Option = { name: 'option' };
+    const Image = { name: 'image' };
+    assert.deepStrictEqual(
+        repairItemsOrder({ customerSelectedRepairItemOption: Option, customerSelectedRepairItemImage: Image }),
+        [
+            ['id', 'ASC'],
+            [{ model: Option, as: 'options' }, 'id', 'ASC'],
+            [{ model: Image, as: 'images' }, 'sortOrder', 'ASC'],
+            [{ model: Image, as: 'images' }, 'id', 'ASC'],
+        ]
+    );
 
     console.log('repairBookingInclude.test.js: all assertions passed');
 }

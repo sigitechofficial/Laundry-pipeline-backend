@@ -26,6 +26,7 @@ const dbModels = require('../../models');
 const {
     hydrateRepairItemsForBooking,
     normalizeRepairItems,
+    repairItemsOrder,
 } = require('../../utils/repairBookingInclude');
 
 function uniqueFirstByServiceId(rows) {
@@ -773,7 +774,7 @@ async function getAgentAddedServicesForCustomer(
 async function loadBookingRepairRows(bookingId) {
     return customerSelectedRepairItem.findAll({
         where: { bookingId },
-        order: [['id', 'ASC']],
+        order: repairItemsOrder(dbModels),
         include: [
             {
                 model: dbModels.customerSelectedRepairItemOption,

@@ -53,8 +53,21 @@ function buildRepairItemsInclude(models, { separate = false } = {}) {
         attributes: ['id', 'imageUrl', 'sortOrder'],
       },
     ],
-    order: [['id', 'ASC']],
+    // Garments, then each garment's options and images, in a fixed order. (Sequelize honours
+    // an include's own `order` only when it runs separately; nested in a parent query the
+    // order comes from normalizeRepairItem.)
+    order: repairItemsOrder(models),
   };
+}
+
+/** Garments by id, their options by id, their images by sortOrder then id. */
+function repairItemsOrder(models) {
+  return [
+    ['id', 'ASC'],
+    [{ model: models.customerSelectedRepairItemOption, as: 'options' }, 'id', 'ASC'],
+    [{ model: models.customerSelectedRepairItemImage, as: 'images' }, 'sortOrder', 'ASC'],
+    [{ model: models.customerSelectedRepairItemImage, as: 'images' }, 'id', 'ASC'],
+  ];
 }
 
 function buildBookingLevelRepairItemsInclude(models) {
@@ -76,16 +89,19 @@ function normalizeRepairItem(raw) {
     garmentName: row.garmentName || '',
     quantity: Number(row.quantity) || 1,
     instruction: row.instruction || null,
+    // By id: the same order whatever query (or join plan) loaded them.
     options: Array.isArray(row.options)
-      ? row.options.map((opt) => {
-          const o = opt.toJSON ? opt.toJSON() : opt;
-          return {
-            id: o.id,
-            repairOptionId: o.repairOptionId,
-            optionName: o.optionName || '',
-            price: Number(o.price) || 0,
-          };
-        })
+      ? row.options
+          .map((opt) => {
+            const o = opt.toJSON ? opt.toJSON() : opt;
+            return {
+              id: o.id,
+              repairOptionId: o.repairOptionId,
+              optionName: o.optionName || '',
+              price: Number(o.price) || 0,
+            };
+          })
+          .sort((a, b) => Number(a.id) - Number(b.id))
       : [],
     images: Array.isArray(row.images)
       ? row.images
@@ -98,7 +114,7 @@ function normalizeRepairItem(raw) {
             };
           })
           .filter((i) => i.imageUrl)
-          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .sort((a, b) => a.sortOrder - b.sortOrder || Number(a.id) - Number(b.id))
       : [],
   };
 }
@@ -176,7 +192,7 @@ function repairItemRowsQuery(models, bookingId) {
         attributes: ['id', 'imageUrl', 'sortOrder'],
       },
     ],
-    order: [['id', 'ASC']],
+    order: repairItemsOrder(models),
   };
 }
 
@@ -377,6 +393,7 @@ async function hydrateRepairItemsForBookings(models, entries, options = {}) {
 module.exports = {
   buildRepairItemsInclude,
   buildBookingLevelRepairItemsInclude,
+  repairItemsOrder,
   normalizeRepairItem,
   normalizeRepairItems,
   attachNormalizedRepairItems,
