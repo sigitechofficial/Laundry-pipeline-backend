@@ -42,6 +42,13 @@ module.exports = (sequelize, DataTypes) => {
     resetExpiresAt: {
       type: DataTypes.DATE,
       allowNull: true,
+  },
+    // What the current code was issued for: 'signup' or 'password_reset'
+    // (services/shared/otpCode.js CODE_PURPOSES); NULL verifies nothing.
+    codePurpose: {
+      type: DataTypes.STRING(32),
+      allowNull: true,
+      validate: { isIn: [['signup', 'password_reset']] },
   }
   }, {
     sequelize,
