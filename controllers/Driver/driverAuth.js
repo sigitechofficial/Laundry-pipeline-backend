@@ -32,6 +32,7 @@ const DRIVER_SIGNUP_STATUS = { not_found: 400, incorrect: 400 }
 const DRIVER_SIGNUP_MESSAGES = { not_found: 'OTP Data not available', incorrect: 'Invalid OTP' }
 const customError = require('../../middlewares/customError')
 const { ACCOUNT_BLOCKED_MESSAGE } = require('../../utils/accountBlocked')
+const { USER_TYPE, ACCOUNT_KIND, ownAccountForEmail } = require('../../services/shared/accountEmail')
 const otpMail = require('../../helper/otpMail')
 const error = require('../../middlewares/error')
 const path = require('path')
@@ -50,12 +51,16 @@ const axios = require('axios')
 async function driverregisterStep1(req, res) {
     const { firstName, lastName, email, phoneNum, password, countryId, cityId, driverType, laundaryShopId, zoneId } = req.body
 
-    const userExist = await users.findOne({
+    // users.email is unique across every account type. An address of a customer, shop or staff
+    // account (or of a deleted account) is a 409: this flow only ever continues a driver's own
+    // unverified sign-up, never another account's (services/shared/accountEmail.js). Before, a
+    // phone or email match on any account type mailed a sign-up code for that account.
+    await ownAccountForEmail(users, email, USER_TYPE.DRIVER, ACCOUNT_KIND.DRIVER)
+
+    const driverByEmail = await users.findOne({
         where: {
-            [Op.or]: [
-                { email: email },
-                { [Op.and]: [{ phoneNum: phoneNum }] }
-            ],
+            email: email,
+            userTypeId: USER_TYPE.DRIVER,
             deletedAt: { [Op.is]: null }
         },
         include: [
@@ -65,24 +70,29 @@ async function driverregisterStep1(req, res) {
             }
         ]
     });
+    const driverByPhone = phoneNum ? await users.findOne({
+        where: {
+            phoneNum: phoneNum,
+            userTypeId: USER_TYPE.DRIVER,
+            deletedAt: { [Op.is]: null }
+        },
+        attributes: ['id', 'verifiedAt']
+    }) : null;
 
-    if (userExist && userExist.userTypeId === 2) {
+    // A phone number another driver account holds is never taken over from a different email.
+    if (driverByPhone && (!driverByEmail || driverByPhone.id !== driverByEmail.id)) {
         throw new customError(
-            "Try to login",
-            "A Customer with the follwoing email exists ")
+            "Users exists",
+            "The phone number you entered is already taken")
     }
 
+    const userExist = driverByEmail;
     if (userExist) {
-        if (email === userExist.email && userExist.verifiedAt !== null) {
+        if (userExist.verifiedAt) {
             throw new customError(
                 "Users exists",
                 "The email you entered is already taken"
             )
-        }
-        else if (phoneNum === userExist.phoneNum && userExist.verifiedAt !== null) {
-            throw new customError(
-                "Users exists",
-                "The phone number you entered is already taken")
         }
 
         // A new code on the account's row (services/shared/passwordReset.js): digits only, one
@@ -442,7 +452,15 @@ async function driverLogin(req, res) {
             "Try to login on Customer App"
         )
     }
-    let match = await bcrypt.compare(password, userData.password)
+    // The driver app serves driver accounts (userTypeId 3) only. A shop, team member or staff
+    // account has no driver profile: it used to fail further down with a 500.
+    else if (Number(userData.userTypeId) !== USER_TYPE.DRIVER) {
+        throw new customError(
+            "This email does not belong to a driver account",
+            "Please sign in with the app for your account"
+        )
+    }
+    let match = Boolean(userData.password) && await bcrypt.compare(String(password || ''), userData.password)
     if (!match) {
         throw new customError(
             "Bad credentials",
@@ -461,9 +479,9 @@ async function driverLogin(req, res) {
     }
 
     let checkId;
-    console.log("checkId", userData.driverDetails[0].licIssueDate);
-    if (userData.driverDetails) {
-        if (userData.driverDetails[0].licIssueDate) {
+    const driverProfile = Array.isArray(userData.driverDetails) ? userData.driverDetails[0] : null;
+    if (driverProfile) {
+        if (driverProfile.licIssueDate) {
             checkId = true;
         } else {
             checkId = false;
@@ -484,7 +502,7 @@ async function driverLogin(req, res) {
         );
     //  checking the status
     if (!userData.status)
-        throw new CustomException(
+        throw new customError(
             ACCOUNT_BLOCKED_MESSAGE,
             "Please contact the support team"
         );

@@ -2,6 +2,7 @@ const { users, booking, driverInZones, proofOfDeliveries, addressDb, bussinessIn
 const { Op } = require('sequelize');
 const { UNBOUNDED_LIST_SAFETY_MAX } = require('../../utils/listLimit');
 const bcrypt = require('bcryptjs');
+const { ACCOUNT_KIND, assertEmailFree } = require('../shared/accountEmail');
 const {
     ConflictError,
     NotFoundError,
@@ -453,6 +454,9 @@ class DriverService {
         if (userFind) {
             throw new ConflictError('Driver already exists with this information');
         }
+        // Any other holder of the address (any account type, deleted included) is a 409, never a
+        // unique-index 500 (services/shared/accountEmail.js).
+        await assertEmailFree(users, email, ACCOUNT_KIND.SHOP_STAFF);
 
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);

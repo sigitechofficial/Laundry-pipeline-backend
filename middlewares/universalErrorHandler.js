@@ -81,6 +81,26 @@ class TooManyRequestsError extends UniversalHttpError {
     }
 }
 
+/** Index names MySQL reports for users.email ("email", "users.email", "email_2", ...). */
+const EMAIL_UNIQUE_KEY = /(^|\.)email(_\d+)?$/i;
+
+/**
+ * The 409 for a SequelizeUniqueConstraintError: worded for an email clash when the email
+ * index fired, generic otherwise.
+ */
+function uniqueConstraintConflict(err) {
+    const fields = err && err.fields && typeof err.fields === 'object' ? Object.keys(err.fields) : [];
+    const paths = Array.isArray(err && err.errors) ? err.errors.map((e) => e && e.path).filter(Boolean) : [];
+    const emailClash = [...fields, ...paths].some((name) => EMAIL_UNIQUE_KEY.test(String(name)));
+    if (emailClash) {
+        return new ConflictError(
+            'This email is already used by another account. Please use a different email.',
+            { code: 'EMAIL_IN_USE' }
+        );
+    }
+    return new ConflictError('This record already exists.', { code: 'DUPLICATE_RECORD' });
+}
+
 /**
  * Universal error handler middleware
  */
@@ -165,6 +185,13 @@ const universalErrorHandler = (err, req, res, next) => {
 
     if (err.code === 11000) {
         error = new ConflictError('Duplicate field value entered');
+    }
+
+    // Safety net: a write that hits a unique index is a conflict, not a server fault. The flows
+    // check ownership before they write (services/shared/accountEmail.js); this covers races and
+    // paths that do not. The duplicated value is never echoed back.
+    if (err.name === 'SequelizeUniqueConstraintError') {
+        error = uniqueConstraintConflict(err);
     }
 
     if (err.name === 'JsonWebTokenError') {
@@ -270,6 +297,7 @@ module.exports = {
     universalErrorHandler,
     universalNotFoundHandler,
     universalAsyncHandler,
+    uniqueConstraintConflict,
     
     // Status Codes
     StatusCodes

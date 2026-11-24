@@ -92,12 +92,32 @@ const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
 } = require('../../utils/accountBlocked');
+const {
+    createSocialIdentityVerifier,
+    isSocialSignIn,
+} = require('../shared/firebaseSocialIdentity');
+const {
+    USER_TYPE,
+    ACCOUNT_KIND,
+    ownAccountForEmail,
+} = require('../shared/accountEmail');
 
 /**
  * Customer Authentication Service
  * Handles all customer authentication related business logic
  */
 class CustomerAuthService {
+    /**
+     * Verifies social sign-ins (services/shared/firebaseSocialIdentity.js). Created on first use;
+     * tests replace `socialIdentity` with one over stub Firebase projects.
+     */
+    _socialIdentityVerifier() {
+        if (!this.socialIdentity) {
+            this.socialIdentity = createSocialIdentityVerifier();
+        }
+        return this.socialIdentity;
+    }
+
     _socialSignInRequiredMessage(signedFrom) {
         const labels = {
             google: 'Google',
@@ -139,9 +159,14 @@ class CustomerAuthService {
             countryCode
         } = data;
 
+        // An address of a shop, driver or staff account (or of a deleted account) is a 409:
+        // this flow only ever updates a customer's own unverified row (services/shared/accountEmail.js).
+        await ownAccountForEmail(users, email, USER_TYPE.CUSTOMER, ACCOUNT_KIND.CUSTOMER);
+
         const userfindByEmail = await users.findOne({
             where: {
                 email,
+                userTypeId: USER_TYPE.CUSTOMER,
                 deletedAt: { [Op.is]: null }
             },
             include: [{
@@ -189,11 +214,7 @@ class CustomerAuthService {
             );
         }
 
-        if (userfindByEmail && userfindByEmail.email === email) {
-            if (userfindByEmail.userTypeId !== 2) {
-                throw new ConflictError('User with this email already exists');
-            }
-
+        if (userfindByEmail) {
             const socialSignInMessage = this._socialSignInRequiredMessage(
                 userfindByEmail.signedFrom
             );
@@ -390,7 +411,6 @@ class CustomerAuthService {
         }
 
         const {
-            email,
             password,
             signedFrom,
             firstName,
@@ -399,8 +419,24 @@ class CustomerAuthService {
             lat,
             lng,
         } = data;
+        let { email } = data;
         const identity = resolveSessionIdentity(data);
-        const socialProviders = ['google', 'facebook', 'apple'];
+        const socialSignIn = isSocialSignIn(signedFrom);
+
+        if (socialSignIn) {
+            // Social sign-in proves who the customer is with the Firebase ID token of that
+            // sign-in; the email comes from the verified token, never from the body. No token,
+            // an invalid one or a provider mismatch is a 401 (older app builds send no token).
+            const verified = await this._socialIdentityVerifier().verifySocialSignIn({
+                signedFrom,
+                firebaseIdToken: data.firebaseIdToken,
+                firebaseProjectId: data.firebaseProjectId,
+            });
+            email = verified.email;
+            // users.email is unique across every account type: an address of a shop, driver or
+            // staff account (or of a deleted account) is a 409, never a new row or a 500.
+            await ownAccountForEmail(users, email, USER_TYPE.CUSTOMER, ACCOUNT_KIND.CUSTOMER);
+        }
         const requiredProfileFields = ['firstName', 'lastName', 'phoneNum'];
 
         const normalizePayload = (payload) => {
@@ -473,14 +509,14 @@ class CustomerAuthService {
 
         // Handle case where user doesn't exist and no social login
         // Check for any falsy value or 'null' string
-        if (!userFind && !socialProviders.includes(signedFrom)) {
+        if (!userFind && !socialSignIn) {
             console.log("🚀 ~ Throwing NotFoundError for user not found");
             console.log("signedFrom value:", signedFrom);
             throw new NotFoundError('User not found with this email. Please check your email or sign up.');
         }
 
         // Handle social login - user doesn't exist
-        if (!userFind && socialProviders.includes(signedFrom)) {
+        if (!userFind && socialSignIn) {
             console.log("Going into this condition ----------------->>>");
 
             const missingFields = collectMissingFields({ firstName, lastName, phoneNum });
@@ -573,7 +609,7 @@ class CustomerAuthService {
         }
 
         // Handle social login for existing user
-        if (socialProviders.includes(signedFrom)) {
+        if (socialSignIn) {
             const socialUserFind = await users.findOne({
                 where: {
                     email: email,

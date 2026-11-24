@@ -356,6 +356,16 @@ paths:
       description: |
         Logs in a customer using email/password or social platforms (Google, Facebook, Apple). Returns access token in cookies.
         For a guest (no DB user), send `guestUser: true` or `isGuest: true` with optional `lat` / `lng` for zone; omit credentials.
+
+        **Social sign-in** (`signedFrom` google / apple / facebook) requires `firebaseIdToken`: the Firebase ID token of
+        the client's Firebase Auth sign-in with that provider (`FirebaseAuth.instance.currentUser.getIdToken()` /
+        `user.getIdToken()`), sent on every call including the second "Information Missing" call. The server verifies it
+        with the Firebase project named by the token's audience (one of the projects it holds; `firebaseProjectId`, when
+        sent, must be that project), checks revocation, requires `firebase.sign_in_provider` to match `signedFrom`
+        (google.com / apple.com / facebook.com) and a verified email. The account is the token's email; `email` in the body
+        is ignored for social sign-in. No token, an invalid or expired token, a provider mismatch or an unverified email is a
+        401 with a `code`; older app builds that send no token are refused. Email + password login needs no token.
+        See firebase/README.md "Customer social sign-in".
       tags:
         - Customer > Auth
       parameters:
@@ -384,7 +394,7 @@ paths:
                   type: string
                   format: email
                   example: johndoe@example.com
-                  description: User's email address (not required for guest)
+                  description: User's email address (email/password login). Ignored for social sign-in, where the email comes from the verified firebaseIdToken.
                 password:
                   type: string
                   example: MySecret123!
@@ -393,7 +403,20 @@ paths:
                   type: string
                   example: google
                   enum: [google, facebook, apple]
-                  description: Indicates if login is via a social provider
+                  description: Indicates if login is via a social provider. Requires firebaseIdToken.
+                firebaseIdToken:
+                  type: string
+                  example: eyJhbGciOiJSUzI1NiIsImtpZCI6Ij...
+                  description: Required when signedFrom is google, apple or facebook. The Firebase ID token of the client's Firebase Auth sign-in with that provider (fresh from getIdToken()). Verified server-side; its email is the account's.
+                firstName:
+                  type: string
+                  description: Social sign-up only — sent on the second call after an "Information Missing" answer (with the token again).
+                lastName:
+                  type: string
+                  description: Social sign-up only — see firstName.
+                phoneNum:
+                  type: string
+                  description: Social sign-up only — see firstName.
                 dvToken:
                   type: string
                   example: device-token-xyz
@@ -401,7 +424,7 @@ paths:
                 firebaseProjectId:
                   type: string
                   example: justdrycleansltd
-                  description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
+                  description: Firebase project that issued dvToken and firebaseIdToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first). For social sign-in, when sent it must equal the ID token's project.
                 lat:
                   type: number
                   description: Optional; with `lng`, zone is included in login response
@@ -471,6 +494,35 @@ paths:
                     status: "0"
                     message: "Blocked by admin Please contact admin to continue"
                     data: {}
+        '401':
+          description: |
+            Social sign-in could not be verified (`code` in the body): SOCIAL_TOKEN_REQUIRED (no firebaseIdToken — older
+            app builds), SOCIAL_TOKEN_INVALID (not a valid / expired / revoked token, or firebaseProjectId is not the
+            token's project), SOCIAL_TOKEN_PROJECT_UNKNOWN (token of a Firebase project this server does not hold),
+            SOCIAL_PROVIDER_MISMATCH (token not from the signedFrom provider), SOCIAL_EMAIL_UNVERIFIED. Also wrong password,
+            unverified or blocked account for email/password login.
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "Google sign-in could not be verified. Please update the app to the latest version and sign in again."
+                statusCode: 401
+                code: SOCIAL_TOKEN_REQUIRED
+                data:
+                  code: SOCIAL_TOKEN_REQUIRED
+        '409':
+          description: The social sign-in email belongs to a shop, driver or staff account, or to a deleted account (code EMAIL_IN_USE). No customer account is created.
+          content:
+            application/json:
+              example:
+                status: "0"
+                message: "This email is already used by a shop account. Please use a different email for your customer account."
+                statusCode: 409
+                code: EMAIL_IN_USE
+                data:
+                  code: EMAIL_IN_USE
+        '503':
+          description: Firebase could not be reached to verify a social sign-in (code SOCIAL_TOKEN_VERIFY_UNAVAILABLE). Retry.
         '500':
           description: Internal server error
           content:

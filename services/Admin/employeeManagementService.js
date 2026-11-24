@@ -1,6 +1,7 @@
 const { users, zone, addressDb, bussinessInformation, driverInZones, roles } = require('../../models');
 const { UniqueConstraintError, ValidationError: SequelizeValidationError, Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { ACCOUNT_KIND, assertEmailFree } = require('../shared/accountEmail');
 const { ValidationError, NotFoundError, ConflictError } = require('../../middlewares/universalErrorHandler');
 const {
     CLASSIFIED_AS,
@@ -107,11 +108,9 @@ class EmployeeManagementService {
             throw new ValidationError('Zone is required for Zone Manager roles');
         }
 
-        // Check email is not already taken anywhere in the system
-        const existingUser = await users.findOne({ where: { email } });
-        if (existingUser) {
-            throw new ConflictError('An account with this email already exists. Please use a different email.');
-        }
+        // Check email is not already taken anywhere in the system (deleted accounts included:
+        // the unique index still holds their address)
+        await assertEmailFree(users, email, ACCOUNT_KIND.STAFF);
 
         // Zone is only assigned to zone-scoped staff. Platform Admin Manager never
         // writes zone.zoneAdminId.
@@ -441,6 +440,9 @@ class EmployeeManagementService {
             if (userFind) {
                 throw new ValidationError('Employee Already Exists');
             }
+            // Any other holder of the address (any account type, deleted included) is a 409,
+            // never a unique-index 500 (services/shared/accountEmail.js).
+            await assertEmailFree(users, employeeData.email, ACCOUNT_KIND.SHOP_STAFF);
 
             // Hash password if provided
             const createData = { ...employeeData };

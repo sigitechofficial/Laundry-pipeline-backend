@@ -21,6 +21,7 @@ const { shopAddressFields } = require('../../utils/shopAddressInput');
 const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { USER_TYPE, ACCOUNT_KIND, findEmailOwner, emailInUseError } = require('../shared/accountEmail');
 const jwt = require('jsonwebtoken');
 const redisCli = require('../../redis/redis');
 const {
@@ -71,18 +72,14 @@ class AgentRegistrationService {
 
         const agentApprovalStatus = resolveAdminRegistrationApproval(registrationStatus);
 
-        // Check if user already exists
-        const existingUser = await users.findOne({
-            where: {
-                email: email,
-                deletedAt: {
-                    [Op.is]: null
-                }
-            }
-        });
-
-        if (existingUser && existingUser.userTypeId === 4) {
+        // users.email is unique across every account type (deleted accounts included): any
+        // holder of the address is a 409, never a unique-index 500 (services/shared/accountEmail.js).
+        const existingUser = await findEmailOwner(users, email);
+        if (existingUser && !existingUser.deletedAt && Number(existingUser.userTypeId) === USER_TYPE.AGENT) {
             throw new ConflictError("Agent already exists with this email");
+        }
+        if (existingUser) {
+            throw emailInUseError(existingUser, ACCOUNT_KIND.SHOP);
         }
 
         // Hash password

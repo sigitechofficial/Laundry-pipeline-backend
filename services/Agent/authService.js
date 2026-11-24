@@ -24,6 +24,11 @@ const {
     ACCOUNT_BLOCKED_CODE,
     ACCOUNT_BLOCKED_MESSAGE,
 } = require('../../utils/accountBlocked');
+const {
+    USER_TYPE,
+    ACCOUNT_KIND,
+    ownAccountForEmail,
+} = require('../shared/accountEmail');
 const otpMail = require('../../helper/otpMail');
 const {
     createUnverifiedAccount,
@@ -222,10 +227,16 @@ class AgentAuthService {
         // Sign-up signs this app install in (utils/appSession.js); checked before any write.
         const identity = resolveSessionIdentity(data);
 
-        // Check for existing user by email
+        // users.email is unique across every account type. An address of a customer, driver or
+        // staff account (or of a deleted account) is a 409: this flow only ever updates a shop
+        // owner's own unverified row, never another account's (services/shared/accountEmail.js).
+        await ownAccountForEmail(users, data.email, USER_TYPE.AGENT, ACCOUNT_KIND.SHOP);
+
+        // The shop owner's own account with this email, if any
         const userfindByEmail = await users.findOne({
             where: {
                 email: data.email,
+                userTypeId: USER_TYPE.AGENT,
                 deletedAt: {
                     [Op.is]: null
                 }
@@ -282,16 +293,7 @@ class AgentAuthService {
         }
 
         // Check if user exists by email
-        if (userfindByEmail && userfindByEmail.email === data.email) {
-            // This email already belongs to a customer account (userTypeId 2).
-            // Do NOT let agent registration take over / overwrite a customer row.
-            // Shop accounts must use a separate email.
-            if (Number(userfindByEmail.userTypeId) === 2) {
-                throw new ConflictError(
-                    'This email is already registered as a customer account. Please use a different email for your shop account.'
-                );
-            }
-
+        if (userfindByEmail) {
             // User exists with userTypeId 4 (Agent)
             // If user is verified, don't allow re-registration
             if (userfindByEmail.verifiedAt) {
@@ -937,12 +939,6 @@ class AgentAuthService {
             );
         }
 
-        const tzUpdate = this._ianaTimeZoneUpdate(data);
-        if (Object.keys(tzUpdate).length) {
-            await users.update(tzUpdate, { where: { id: userFind.id } });
-            userFind.ianaTimeZone = tzUpdate.ianaTimeZone;
-        }
-
         // An account created through a social provider has no password to check.
         const userSignedFrom = (userFind?.signedFrom || '').toLowerCase();
         if (SOCIAL_SIGN_IN.includes(userSignedFrom)) {
@@ -973,6 +969,14 @@ class AgentAuthService {
                         "This is a team member account. Please sign in using Employee login.",
                 }
             );
+        }
+
+        // The device's time zone is saved only once the password proved the account, and only on
+        // a shop account: before, any caller naming an email rewrote that row (any account type).
+        const tzUpdate = this._ianaTimeZoneUpdate(data);
+        if (Object.keys(tzUpdate).length && Number(userFind.userTypeId) === USER_TYPE.AGENT) {
+            await users.update(tzUpdate, { where: { id: userFind.id, userTypeId: USER_TYPE.AGENT } });
+            userFind.ianaTimeZone = tzUpdate.ianaTimeZone;
         }
 
         // Check verification before anything else

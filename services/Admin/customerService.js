@@ -2,6 +2,7 @@ const { users, booking } = require('../../models');
 const sequelize = require('sequelize');
 const { Op, UniqueConstraintError, ValidationError: SequelizeValidationError } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { ACCOUNT_KIND, assertEmailFree } = require('../shared/accountEmail');
 const { enqueueEmail } = require('../email/emailOutbox');
 const {
     ValidationError,
@@ -309,15 +310,9 @@ class CustomerService {
             throw new ValidationError('Password must be at least 6 characters');
         }
 
-        const existingEmail = await users.findOne({
-            where: { email, deletedAt: { [Op.is]: null } },
-            attributes: ['id', 'userTypeId', 'verifiedAt'],
-        });
-        if (existingEmail) {
-            throw new ConflictError(
-                'An account with this email already exists. Please use a different email.'
-            );
-        }
+        // Any holder of the address (any account type, deleted included: the unique index still
+        // holds it) is a 409 (services/shared/accountEmail.js).
+        await assertEmailFree(users, email, ACCOUNT_KIND.CUSTOMER);
 
         const existingPhone = await users.findOne({
             where: {
