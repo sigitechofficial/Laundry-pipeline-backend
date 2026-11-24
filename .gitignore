@@ -43,3 +43,6 @@ Public/onHoldImages/*
 Public/repairImages/*
 Public/serviceImages/*
 !Public/**/.gitkeep
+
+# Deploy-time Firebase credential staging (CI only, never committed)
+/firebase-credential-upload/

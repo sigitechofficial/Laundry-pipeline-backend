@@ -156,9 +156,9 @@ jobs:
             exit 0
           fi
           umask 077
-          mkdir -p .firebase-deploy
-          chmod 700 .firebase-deploy
-          OUT=.firebase-deploy/firebase-primary.json node -e '
+          mkdir -p firebase-credential-upload
+          chmod 700 firebase-credential-upload
+          OUT=firebase-credential-upload/firebase-primary.json node -e '
             (async () => {
               let j;
               try { j = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON); } catch (e) { console.error("FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON"); process.exit(1); }
@@ -174,7 +174,7 @@ jobs:
               console.log("Firebase primary project: " + j.project_id + " rtdb=" + url + " (HTTP " + status + ")");
             })();
           '
-          chmod 600 .firebase-deploy/firebase-primary.json
+          chmod 600 firebase-credential-upload/firebase-primary.json
           echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload release + deploy script (SCP)
@@ -219,7 +219,7 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 60s
-          source: .firebase-deploy/firebase-primary.json
+          source: firebase-credential-upload/firebase-primary.json
           target: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
           tar_tmp_path: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
           overwrite: true
@@ -227,7 +227,7 @@ jobs:
 
       - name: Remove local Firebase credential copy
         if: always()
-        run: rm -rf .firebase-deploy
+        run: rm -rf firebase-credential-upload
 
       - name: Rename incoming package + run remote deploy
         uses: appleboy/ssh-action@v1.2.0
