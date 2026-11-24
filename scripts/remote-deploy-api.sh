@@ -3,6 +3,8 @@
 # Required env:
 #   RELEASE_ID, LIVE_PATH, APP_URL, PM2_APP_NAME, DEPLOY_ROOT, APP_NAME
 #   GITHUB_RUN_NUMBER, GITHUB_RUN_ID, GITHUB_ACTOR, GITHUB_REF_NAME (optional)
+# Optional env (Firebase, see scripts/firebase-server-credentials.sh):
+#   FIREBASE_SERVICE_ACCOUNT_B64, FIREBASE_DATABASE_URL_VALUE, FIREBASE_LEGACY_DATABASE_URL_VALUE
 set -euo pipefail
 
 export HOME="${HOME:-/home/sigisolutions}"
@@ -91,6 +93,11 @@ rollback_files() {
     --exclude="*.pem" \
     --exclude="*.key" \
     "$ROLLBACK_DIR/" "$LIVE_PATH/"
+  # A restored release from before multi-project Firebase reads only ./firebase.json.
+  if [ -f "$DEPLOY_ROOT/firebase-server-credentials.sh" ]; then
+    LIVE_PATH="$LIVE_PATH" DEPLOY_ROOT="$DEPLOY_ROOT" \
+      bash "$DEPLOY_ROOT/firebase-server-credentials.sh" downgrade "$ROLLBACK_DIR" || true
+  fi
   cd "$LIVE_PATH"
   ensure_node20
   npm ci --omit=dev || npm install --production
@@ -123,6 +130,11 @@ tar -xzf "$INCOMING_FILE" -C "$RELEASE_PATH"
 test -f "$RELEASE_PATH/laundary.js"
 test -f "$RELEASE_PATH/package.json"
 test -d "$RELEASE_PATH/migrations"
+# Kept outside the live tree so rollbacks (to any release) can call it.
+if [ -f "$RELEASE_PATH/scripts/firebase-server-credentials.sh" ]; then
+  cp -f "$RELEASE_PATH/scripts/firebase-server-credentials.sh" "$DEPLOY_ROOT/firebase-server-credentials.sh"
+  chmod 700 "$DEPLOY_ROOT/firebase-server-credentials.sh"
+fi
 
 cat > "$RELEASE_PATH/release-info.txt" <<EOF
 $RELEASE_NAME
@@ -414,6 +426,11 @@ if echo "$HOST_HINT" | grep -qiE 'stage|stagelaundry|prodlaundry|laundary-prod|l
 else
   echo "Unknown host ($HOST_HINT) — leaving PROMOTIONS_CHECKOUT_ENABLED unchanged"
 fi
+
+echo "Installing Firebase credentials (primary from deploy secret, legacy = server's firebase.json)..."
+LIVE_PATH="$LIVE_PATH" DEPLOY_ROOT="$DEPLOY_ROOT" \
+  bash "$LIVE_PATH/scripts/firebase-server-credentials.sh" install
+unset FIREBASE_SERVICE_ACCOUNT_B64
 
 echo "Reloading PM2..."
 if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
