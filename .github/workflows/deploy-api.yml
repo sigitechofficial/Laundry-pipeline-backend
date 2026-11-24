@@ -137,11 +137,12 @@ jobs:
       # Firebase Admin credential of the PRIMARY project (secret FIREBASE_SERVICE_ACCOUNT_JSON,
       # the service-account JSON) and its RTDB URL (variable FIREBASE_DATABASE_URL), per
       # environment. Both unset: the server's Firebase config is left as is.
-      # The key never travels through step outputs or remote environment variables (they leak
-      # into process argv / PM2 dumps): it is written to a 600 file here, copied by scp into a
-      # 700 drop directory on the server, consumed by scripts/firebase-server-credentials.sh
-      # (installed as secrets/firebase/primary.json, 600) and shredded. The deploy only receives
-      # the drop file's PATH. The RTDB URL must point at an existing instance: deploying before
+      # The key is validated here, then handed (as a masked value) only to the short SSH step
+      # "Install Firebase credential drop file", which writes it to a 600 file in a 700 drop
+      # directory on the server. scripts/firebase-server-credentials.sh installs it as
+      # secrets/firebase/primary.json (600) and shreds the drop file. The deploy session and PM2
+      # only ever receive the drop file's PATH, never the key. (scp-action could not read a
+      # runner file kept private to the job user, hence no file copy.) The RTDB URL must point at an existing instance: deploying before
       # the database exists would make every live-tracking request wait on RTDB timeouts.
       - name: Prepare Firebase credential
         id: firebase
@@ -174,7 +175,10 @@ jobs:
               console.log("Firebase primary project: " + j.project_id + " rtdb=" + url + " (HTTP " + status + ")");
             })();
           '
-          chmod 600 firebase-credential-upload/firebase-primary.json
+          B64="$(base64 -w0 firebase-credential-upload/firebase-primary.json)"
+          rm -rf firebase-credential-upload
+          echo "::add-mask::$B64"
+          echo "FIREBASE_PRIMARY_B64=$B64" >> "$GITHUB_ENV"
           echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload release + deploy script (SCP)
@@ -191,8 +195,10 @@ jobs:
           overwrite: true
           strip_components: 0
 
-      # Private (700) drop directory for the credential file, created before scp writes into it.
-      - name: Prepare Firebase credential drop directory
+      # The key is written on the server by this one short SSH session only: decoded from a
+      # masked value straight into a 600 file inside a 700 drop directory. No other step, and
+      # not the deploy session or PM2, ever has it in its environment.
+      - name: Install Firebase credential drop file
         if: steps.firebase.outputs.present == 'true'
         uses: appleboy/ssh-action@v1.2.0
         env:
@@ -203,31 +209,21 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 60s
-          envs: DEPLOY_ROOT
+          envs: DEPLOY_ROOT,FIREBASE_PRIMARY_B64
           script: |
             set -euo pipefail
             umask 077
             mkdir -p "$DEPLOY_ROOT/secrets/firebase/incoming"
             chmod 700 "$DEPLOY_ROOT/secrets" "$DEPLOY_ROOT/secrets/firebase" "$DEPLOY_ROOT/secrets/firebase/incoming"
+            printf '%s' "$FIREBASE_PRIMARY_B64" | base64 -d > "$DEPLOY_ROOT/secrets/firebase/incoming/firebase-primary.json.tmp"
+            unset FIREBASE_PRIMARY_B64
+            chmod 600 "$DEPLOY_ROOT/secrets/firebase/incoming/firebase-primary.json.tmp"
+            mv -f "$DEPLOY_ROOT/secrets/firebase/incoming/firebase-primary.json.tmp" "$DEPLOY_ROOT/secrets/firebase/incoming/firebase-primary.json"
+            echo "Firebase credential drop file installed"
 
-      - name: Upload Firebase credential (SCP, 600 file in 700 directory)
-        if: steps.firebase.outputs.present == 'true'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 60s
-          source: firebase-credential-upload/firebase-primary.json
-          target: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
-          tar_tmp_path: ${{ steps.target.outputs.deploy_root }}/secrets/firebase/incoming/
-          overwrite: true
-          strip_components: 1
-
-      - name: Remove local Firebase credential copy
+      - name: Forget the Firebase credential on the runner
         if: always()
-        run: rm -rf firebase-credential-upload
+        run: echo "FIREBASE_PRIMARY_B64=" >> "$GITHUB_ENV"
 
       - name: Rename incoming package + run remote deploy
         uses: appleboy/ssh-action@v1.2.0
