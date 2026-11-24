@@ -30,6 +30,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       allowNull: true,
       defaultValue: false,
+  },
+    // Wrong guesses at the current code (services/shared/passwordReset.js).
+    failedAttempts: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
   }
   }, {
     sequelize,
