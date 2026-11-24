@@ -32,13 +32,14 @@ function normalizeDeviceId(value) {
 /**
  * The Firebase project the body's push token belongs to (`firebaseProjectId`), or null when
  * the client does not say (builds from before projects were reported).
- * @throws {ValidationError} present but not a Firebase project id
+ * `valid: false` when present but not a Firebase project id: the token cannot be routed, so
+ * the caller drops it (the sign-in itself must not fail over a push detail).
  */
 function pushTokenProjectOf(body) {
     try {
-        return normalizeFirebaseProjectId(body && body.firebaseProjectId);
+        return { valid: true, projectId: normalizeFirebaseProjectId(body && body.firebaseProjectId) };
     } catch (err) {
-        throw new ValidationError(err.message, { code: err.code });
+        return { valid: false, projectId: null, code: err.code };
     }
 }
 
@@ -57,14 +58,25 @@ function pushTokenProjectOf(body) {
  *   firebaseProjectId: string|null, // project that issued pushToken; null = not reported
  *   legacy: boolean,
  * }}
- * @throws {ValidationError} deviceId present but not a UUID; or neither given when required;
- *   or firebaseProjectId present but malformed.
+ * A malformed firebaseProjectId never fails the sign-in: the push token is dropped (a token
+ * whose project is unknown cannot be routed) and the session opens without one; the app
+ * registers it again on its next token report.
+ * @throws {ValidationError} deviceId present but not a UUID; or neither given when required.
  */
 function resolveSessionIdentity(body, { required = true } = {}) {
     const rawDeviceId = trimmed(body && body.deviceId);
     const dvToken = trimmed(body && body.dvToken);
-    const pushToken = isValidFcmRegistrationToken(dvToken) ? dvToken : null;
-    const firebaseProjectId = pushToken ? pushTokenProjectOf(body) : null;
+    let pushToken = isValidFcmRegistrationToken(dvToken) ? dvToken : null;
+    let firebaseProjectId = null;
+    if (pushToken) {
+        const reported = pushTokenProjectOf(body);
+        if (reported.valid) {
+            firebaseProjectId = reported.projectId;
+        } else {
+            console.warn(`[session] push token dropped at sign-in: firebaseProjectId rejected (${reported.code})`);
+            pushToken = null;
+        }
+    }
 
     if (rawDeviceId) {
         const deviceId = normalizeDeviceId(rawDeviceId);

@@ -44,7 +44,16 @@ assert.equal(resolveSessionIdentity({ deviceId: DEVICE, dvToken: FCM, firebasePr
 assert.equal(resolveSessionIdentity({ deviceId: DEVICE, dvToken: FCM }).firebaseProjectId, null, 'older builds: unclassified');
 assert.equal(resolveSessionIdentity({ dvToken: FCM, firebaseProjectId: 'old-project' }).firebaseProjectId, 'old-project');
 assert.equal(resolveSessionIdentity({ deviceId: DEVICE, firebaseProjectId: 'new-project' }).firebaseProjectId, null, 'no push token: no project');
-assert.throws(() => resolveSessionIdentity({ deviceId: DEVICE, dvToken: FCM, firebaseProjectId: 'not valid!' }), (e) => e.statusCode === 400 || e.status === 400 || /valid Firebase project/.test(e.message));
+{
+  // A malformed project never fails the sign-in: the push token is dropped instead.
+  const warn = console.warn;
+  console.warn = () => {};
+  const bad = resolveSessionIdentity({ deviceId: DEVICE, dvToken: FCM, firebaseProjectId: 'not valid!' });
+  console.warn = warn;
+  assert.equal(bad.pushToken, null);
+  assert.equal(bad.firebaseProjectId, null);
+  assert.equal(bad.deviceId, DEVICE.toLowerCase());
+}
 assert.equal(identityOfSession({ deviceId: DEVICE }, { dvToken: FCM, firebaseProjectId: 'new-project' }).firebaseProjectId, 'new-project', '/agent/session refresh');
 
 // Push-token reports are checked against the configured projects.

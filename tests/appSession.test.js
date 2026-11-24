@@ -95,6 +95,19 @@ async function run() {
     assert.equal(idPhone.field, PHONE_ID, 'deviceId is canonical lower case');
     assert.equal(idPhone.pushToken, FCM('phone'));
 
+    // A malformed firebaseProjectId drops the push token; the sign-in itself still succeeds.
+    const warn = console.warn;
+    console.warn = () => {};
+    const idBadProject = resolveSessionIdentity({ deviceId: PHONE, dvToken: FCM('phone'), firebaseProjectId: 'Bad_ID!' });
+    console.warn = warn;
+    assert.equal(idBadProject.field, PHONE_ID);
+    assert.equal(idBadProject.pushToken, null);
+    assert.equal(idBadProject.firebaseProjectId, null);
+    assert.equal(
+        resolveSessionIdentity({ deviceId: PHONE, dvToken: FCM('phone'), firebaseProjectId: 'justdrycleansltd' }).firebaseProjectId,
+        'justdrycleansltd'
+    );
+
     // A placeholder push token is not a push address (and never the session id when a deviceId is sent).
     assert.equal(resolveSessionIdentity({ deviceId: IPAD, dvToken: 'no-fcm-token' }).pushToken, null);
 
