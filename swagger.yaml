@@ -5150,16 +5150,19 @@ paths:
   /agent/addBusinessInfor:
     post:
       summary: Add agent business information
-      description: Adds business profile data for an agent including shop name, profile match option, machine inventory, and service time settings.
+      description: >-
+        Adds business profile data for an agent including shop name, profile match option, machine inventory, and service time settings.
+        Shop registration write. Send the session (`accessToken` header or cookie) that sign-up (`/agent/registerAgent`) or a set-up-unfinished sign-in (`/agent/loginUser` 400 with addressMissing / addBusinessInformationMissing) returned: the shop is then the signed-in owner's own, a `userId` naming another account is 403 and staff sessions are 403. LEGACY builds send no session; such a request is served only for a verified, active shop owner account, and only while that shop's set-up is unfinished (it cannot sign in yet); every anonymous refusal is
+        401 "Sign in to continue setting up your shop". SHOP_REGISTRATION_ALLOW_ANONYMOUS=false refuses all anonymous requests.
       tags:
         - Agent > Auth
       parameters:
-        - in: cookie
+        - in: header
           name: accessToken
           required: false
           schema:
             type: string
-          description: Optional access token (sent in cookie)
+          description: The registration session (recommended; required when SHOP_REGISTRATION_ALLOW_ANONYMOUS=false)
       requestBody:
         required: true
         content:
@@ -5188,7 +5191,7 @@ paths:
                 userId:
                   type: integer
                   example: 456
-                  description: ID of the agent submitting business info
+                  description: LEGACY (no session) - the shop owner's account id. With a session it is optional and must be the signed-in owner's.
                 machineryCount:
                   type: array
                   description: List of machines and their total count
@@ -5250,7 +5253,12 @@ paths:
   /agent/loginUser:
     post:
       summary: Agent login
-      description: Authenticates an agent using email and password or social login. Returns access token, feature permissions, and profile information.
+      description: >-
+        Authenticates a shop owner with email and password (social sign-in is not available for shop accounts:
+        `signedFrom` google / facebook / apple is 400). The password is checked before anything about the
+        account's state is answered. When the shop's set-up is unfinished the 400 answer (addressMissing or
+        addBusinessInformationMissing) carries `userId` and an `accessToken` session for this install, which the
+        app sends on the registration writes (agentAddressAdd, addBusinessInfor, businesInfoAdded, workingHoursUpdate).
       tags:
         - Agent > Auth
       requestBody:
@@ -5282,9 +5290,8 @@ paths:
                   description: Firebase project that issued dvToken (the app's Firebase.app().options.projectId). Must be a project this server holds a credential for; omitted by older builds (token stored unclassified and routed legacy-first).
                 signedFrom:
                   type: string
-                  enum: [google, facebook, apple]
-                  example: google
-                  description: Optional social login provider
+                  example: ""
+                  description: Empty. google / facebook / apple are refused (400) - shop accounts sign in with a password.
       responses:
         '200':
           description: Login success, access token issued and returned in cookie
@@ -5311,15 +5318,27 @@ paths:
                     data: {}
                     error: "Please log in using google."
                 incompleteProfile:
-                  summary: Incomplete profile
+                  summary: Incomplete profile (400, after the password matched)
                   value:
-                    status: "4"
+                    status: "0"
                     message: "Please complete your information before logging in."
                     data:
                       userId: 123
                       services: []
                       agentInfo: []
                       userMachineInfo: []
+                      addBusinessInformationMissing: true
+                      accessToken: "jwt.registration.session"
+                addressMissing:
+                  summary: No shop address yet (400, after the password matched)
+                  value:
+                    status: "0"
+                    message: "Cannot login without adding an address"
+                    data:
+                      userId: 123
+                      message: "Please add your address to continue"
+                      addressMissing: true
+                      accessToken: "jwt.registration.session"
         '400':
           description: Invalid login attempt
           content:
@@ -5634,16 +5653,21 @@ paths:
   /agent/agentAddressAdd:
      post:
       summary: Add agent's shop address
-      description: Adds a laundry shop address for the agent. Only one address can be added per agent. Associates the location with a zone and city using geolocation.
+      description: >-
+        Adds the laundry shop address during registration. Only one address can be added per shop (409 / 400 "Already Added the
+        Shop Address"). The zone, city and country come from the location; a place no zone serves is refused.
+        Shop registration write. Send the session (`accessToken` header or cookie) that sign-up (`/agent/registerAgent`) or a set-up-unfinished sign-in (`/agent/loginUser` 400 with addressMissing / addBusinessInformationMissing) returned: the shop is then the signed-in owner's own, a `userId` naming another account is 403 and staff sessions are 403. LEGACY builds send no session; such a request is served only for a verified, active shop owner account, and only while the shop has no address; every anonymous refusal is 401 "Sign in to continue setting up your shop".
+        UK addresses: `streetAddress` is the building and street, `district` the post town, `province` the county (optional),
+        and `postalcode` must be a full UK postcode - it is stored uppercase with one space (EC1A 1BB).
       tags:
         - Agent > Agent Shop Address
       parameters:
-        - in: cookie
+        - in: header
           name: accessToken
           required: false
           schema:
             type: string
-          description: Optional access token for verification
+          description: The registration session (recommended; required when SHOP_REGISTRATION_ALLOW_ANONYMOUS=false)
       requestBody:
         required: true
         content:
@@ -5652,45 +5676,51 @@ paths:
               type: object
               required:
                 - streetAddress
-                - district
-                - province
+                - postalcode
                 - lat
                 - lng
                 - coordinates
                 - addressType
-                - userId
               properties:
                 streetAddress:
                   type: string
-                  example: "123 Main Street"
+                  example: "Royal Mail, Mount Pleasant Mail Centre, Farringdon Road"
+                  description: Building and street
                 district:
                   type: string
-                  example: "Downtown"
+                  example: "London"
+                  description: Post town / city
                 province:
                   type: string
-                  example: "Dubai"
+                  example: "Greater London"
+                  description: County / region (optional)
+                postalcode:
+                  type: string
+                  example: "EC1A 1BB"
+                  description: Postcode; a UK one is validated and stored as "EC1A 1BB"
                 lat:
                   type: number
-                  example: 25.276987
+                  example: 51.5246
                 lng:
                   type: number
-                  example: 55.296249
+                  example: -0.1098
                 coordinates:
                   type: array
-                  description: GeoJSON-compatible coordinates defining the address polygon
+                  description: GeoJSON-compatible coordinates defining the service-area polygon
                   items:
                     type: array
                     items:
                       type: number
-                    example: [[55.296249, 25.276987], [55.297000, 25.276987], [55.297000, 25.277500], [55.296249, 25.277500], [55.296249, 25.276987]]
                 addressType:
                   type: string
-                  example: "Shop"
-                  description: The type of address (e.g., Shop, Warehouse)
+                  example: "LaundaryShopAddress"
+                timeZone:
+                  type: string
+                  example: "Europe/London"
                 userId:
                   type: integer
                   example: 789
-                  description: ID of the agent user
+                  description: LEGACY (no session) - the shop owner's account id. With a session it is optional and must be the signed-in owner's.
       responses:
         '200':
           description: Shop address added successfully
@@ -6770,7 +6800,9 @@ paths:
   /agent/businesInfoAdded/{userId}:
     post:
       summary: Add business services to agent
-      description: Adds multiple services to the specified agent by userId.
+      description: >-
+        Adds services to the shop. Shop registration write. Send the session (`accessToken` header or cookie) that sign-up (`/agent/registerAgent`) or a set-up-unfinished sign-in (`/agent/loginUser` 400 with addressMissing / addBusinessInformationMissing) returned: the shop is then the signed-in owner's own, a `userId` naming another account is 403 and staff sessions are 403. LEGACY builds send no session; such a request is served only for a verified, active shop owner account, and only while that shop's set-up is unfinished. With a session the path userId must be the
+        signed-in owner's.
       tags:
         - Agent > Agent Business
       parameters:
@@ -6838,7 +6870,9 @@ paths:
   /agent/workingHoursUpdate/{userId}:
     patch:
       summary: Update agent's business working hours
-      description: Updates the business working hours for the specified agent using the provided working days data.
+      description: >-
+        Updates the shop's working hours (registration and Profile). Shop registration write. Send the session (`accessToken` header or cookie) that sign-up (`/agent/registerAgent`) or a set-up-unfinished sign-in (`/agent/loginUser` 400 with addressMissing / addBusinessInformationMissing) returned: the shop is then the signed-in owner's own, a `userId` naming another account is 403 and staff sessions are 403. LEGACY builds send no session; such a request is served only for a verified, active shop owner account (installed builds also save hours from Profile without
+        a session). With a session the path userId must be the signed-in owner's; staff are 403.
       tags:
         - Agent > Agent Business
       parameters:
@@ -7555,22 +7589,42 @@ paths:
             schema:
               type: object
               required:
-                - address
-                - cityId
-                - countryId
+                - streetAddress
+                - postalcode
+                - lat
+                - lng
               properties:
-                address:
+                streetAddress:
                   type: string
-                  example: "456 Business Ave"
-                  description: Agent's business address
-                cityId:
-                  type: integer
-                  example: 1
-                  description: City ID
-                countryId:
-                  type: integer
-                  example: 1
-                  description: Country ID
+                  example: "Royal Mail, Mount Pleasant Mail Centre, Farringdon Road"
+                  description: Building and street
+                district:
+                  type: string
+                  example: "London"
+                  description: Post town / city
+                province:
+                  type: string
+                  example: "Greater London"
+                  description: County / region (optional)
+                postalcode:
+                  type: string
+                  example: "EC1A 1BB"
+                  description: Postcode; a UK one is validated and stored as "EC1A 1BB"
+                lat:
+                  type: number
+                  example: 51.5246
+                lng:
+                  type: number
+                  example: -0.1098
+                coordinates:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: number
+                addressType:
+                  type: string
+                  example: "LaundaryShopAddress"
       responses:
         '200':
           description: Address updated successfully
@@ -8963,7 +9017,7 @@ paths:
   /agent/businesInfoAdded/{userId}:
     post:
       summary: Business info added
-      description: Adds business information for a specific user
+      description: Same endpoint as above (services). Session optional; see the first /agent/businesInfoAdded/{userId} entry.
       tags:
         - Agent > Agent Business
       parameters:

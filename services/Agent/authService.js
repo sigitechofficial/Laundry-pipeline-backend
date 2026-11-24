@@ -52,6 +52,9 @@ const {
     openAgentOwnerBookingWhere,
 } = require('../../utils/openBookingGuard');
 
+/** Sign-in methods shop accounts do not have (loginUser refuses them). */
+const SOCIAL_SIGN_IN = ['google', 'facebook', 'apple'];
+
 /** Accounts the agent sign-up, code and password reset endpoints serve: shop owners (userTypes.id 4, Agent). */
 const AGENT_USER_TYPES = [4];
 
@@ -835,8 +838,13 @@ class AgentAuthService {
 
         const identity = resolveSessionIdentity(data);
 
-        // Validate password for non-social login
-        if (!data.signedFrom && !data.password) {
+        // Shop accounts sign in with email and password only. A "social" sign-in here
+        // carried no proof from the provider (no ID token was checked), so naming an
+        // email with signedFrom google/apple/facebook opened that shop's session.
+        if (SOCIAL_SIGN_IN.includes(String(data.signedFrom || '').trim().toLowerCase())) {
+            throw new ValidationError('Sign in with your email and password');
+        }
+        if (!data.password) {
             throw new ValidationError('Password is required');
         }
 
@@ -935,23 +943,27 @@ class AgentAuthService {
             userFind.ianaTimeZone = tzUpdate.ianaTimeZone;
         }
 
-        if (userFind?.classifiedAsId === 2) {
-            const passwordMatch = await bcrypt.compare(data.password, userFind.password);
-            if (!passwordMatch) {
-                throw new UnauthorizedError("Bad credentials", { 
-                    message: "Please enter correct password to continue" 
-                });
-            }
+        // An account created through a social provider has no password to check.
+        const userSignedFrom = (userFind?.signedFrom || '').toLowerCase();
+        if (SOCIAL_SIGN_IN.includes(userSignedFrom)) {
+            throw new ValidationError(
+                `You have signed up with this email using ${userFind.signedFrom}. Please continue with ${userFind.signedFrom}.`
+            );
+        }
+
+        // The password comes before anything about the account's state (blocked,
+        // unverified, set-up unfinished): those answers carry the account id and, for an
+        // unfinished set-up, a session, so they are for the account holder only.
+        const passwordMatch = Boolean(userFind.password) &&
+            await bcrypt.compare(String(data.password), userFind.password);
+        if (!passwordMatch) {
+            throw new UnauthorizedError("Bad credentials", {
+                message: "Please enter correct password to continue"
+            });
         }
 
         // Shop staff must use employeeLogin — they have no personal shop address/business profile.
         if (Number(userFind.classifiedAsId) === CLASSIFIED_AS.LAUNDRY_SHOP_EMPLOYEE) {
-            const passwordMatch = await bcrypt.compare(data.password, userFind.password);
-            if (!passwordMatch) {
-                throw new UnauthorizedError("Bad credentials", {
-                    message: "Please enter correct password to continue",
-                });
-            }
             throw new ValidationError(
                 "This is a team member account. Please sign in using Employee login.",
                 {
@@ -990,12 +1002,28 @@ class AgentAuthService {
             });
         }
 
+        // Set-up unfinished: the owner continues it signed in. The session lets the app
+        // prove the account on the registration writes (address, business information,
+        // services, hours: services/Agent/shopRegistrationAccess.js), as sign-up's does.
+        // Shop OWNER accounts only: no other kind of account gets a shop session here.
+        const setupSession = async () => {
+            const shopOwner = Number(userFind.userTypeId) === AGENT_USER_TYPES[0] &&
+                (userFind.classifiedAsId === null || userFind.classifiedAsId === undefined);
+            if (!shopOwner) return undefined;
+            return openAppSession({
+                userId: userFind.id,
+                claims: { id: userFind.id, email: userFind.email },
+                identity,
+            });
+        };
+
         // Address check AFTER verification
         if (!userFind.addressDb || userFind.addressDb.length === 0) {
-            throw new ValidationError("Cannot login without adding an address", { 
+            throw new ValidationError("Cannot login without adding an address", {
                 userId: userFind.id,
                 message: "Please add your address to continue",
-                addressMissing: true
+                addressMissing: true,
+                accessToken: await setupSession(),
             });
         }
 
@@ -1017,111 +1045,17 @@ class AgentAuthService {
             !agentInfo[0]?.shopName ||
             !agentInfo[0]?.matchProfileOptions
         ) {
-            throw new ValidationError("Please complete your information before logging in.", { 
+            throw new ValidationError("Please complete your information before logging in.", {
                 userId: userFind.id,
                 services: services,
                 agentInfo: agentInfo,
                 userMachineInfo: userMachineInfo,
                 addBusinessInformationMissing: true,
+                accessToken: await setupSession(),
             });
         }
 
         this._assertAgentApprovalForLogin(userFind);
-
-        // Social login: Create if not found
-        if ((!userFind && data.signedFrom === 'google') || (!userFind && data.signedFrom === 'facebook') || (!userFind && data.signedFrom === 'apple')) {
-            // Shop accounts never pay as customers: no Stripe customer is created for them
-            // (previously this also passed the email as the customer's name).
-            const createUser = await users.create({
-                email: data.email,
-                userTypeId: 4,
-                verifiedAt: Date.now(),
-            });
-
-            return {
-                data: { userId: createUser.id }
-            };
-        }
-
-        // Block email/password login if account was created via social auth
-        const userSignedFrom = (userFind?.signedFrom || '').toLowerCase();
-        if (userFind && ["google", "apple", "facebook"].includes(userSignedFrom) && !data.signedFrom) {
-            throw new ValidationError(
-                `You have signed up with this email using ${userFind.signedFrom}. Please continue with ${userFind.signedFrom}.`
-            );
-        }
-
-        // Handle social login flow
-        if (["google", "facebook", "apple"].includes(data.signedFrom)) {
-            const socialUser = await users.findOne({
-                where: {
-                    email: data.email,
-                    userTypeId: 4,
-                    deletedAt: { [Op.is]: null }
-                },
-                include: [
-                    { model: deviceToken, attributes: ['tokenId'] },
-                    {
-                        model: bussinessInformation,
-                        as: 'agentInfo',
-                        attributes: ['id', 'shopName', 'matchProfileOptions', 'isConnectAccountConnected', 'connectAccountId'],
-                        required: false
-                    }
-                ],
-                attributes: [
-                    "id", "firstName", "lastName", "email", "password",
-                    "status", "userTypeId", "verifiedAt", "phoneNum",
-                    [sequelize.fn("date_format", sequelize.col("createdAt"), "%Y"), "joinedOn"]
-                ]
-            });
-
-            if (!socialUser) {
-                throw new NotFoundError('User not found with this email');
-            }
-
-            if (!socialUser.status) {
-                throw new UnauthorizedError(ACCOUNT_BLOCKED_MESSAGE, { code: ACCOUNT_BLOCKED_CODE });
-            }
-
-            const accessToken = await openAppSession({
-                userId: socialUser.id,
-                claims: { id: socialUser.id, email: socialUser.email },
-                identity,
-            });
-
-            const featureData = await features.findAll({
-                where: { 
-                    status: true,
-                    deletedAt: { [Op.is]: null }
-                },
-                attributes: ['id', 'title', 'key', 'featureOf']
-            });
-
-            const socialAgentInfo = socialUser?.agentInfo ?? [];
-
-            return {
-                userId: String(socialUser.id),
-                firstName: socialUser.firstName,
-                lastName: socialUser.lastName,
-                email: socialUser.email,
-                accessToken,
-                userTypeId: String(socialUser.userTypeId),
-                addressId: null,
-                currencyUnit: await this._shopCurrencySymbol(socialUser.id),
-                isGuest: false,
-                joinedOn: socialUser.dataValues.joinedOn,
-                phoneNum: socialUser.phoneNum,
-                features: featureData,
-                isConnectAccountConnected: socialAgentInfo?.[0]?.isConnectAccountConnected || false
-            };
-        }
-
-        const passwordMatch = await bcrypt.compare(data.password, userFind.password);
-        if (!passwordMatch) {
-            throw new UnauthorizedError("Bad credentials", { 
-                message: "Please enter correct password to continue" 
-            });
-        }
 
         const accessToken = await openAppSession({
             userId: userFind.id,

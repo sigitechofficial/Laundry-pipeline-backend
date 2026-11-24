@@ -5,6 +5,7 @@ const { reportedPushProject } = require('../../utils/pushTokenProject');
 const { identityOfSession, normalizeDeviceId } = require('../../utils/appSession');
 const { isValidFcmRegistrationToken } = require('../../utils/fcmToken');
 const { shopAgentIdFromReq } = require('../../utils/shopAgentContext');
+const { shopRegistrationAccess } = require('../../services/Agent/shopRegistrationAccess');
 
 // Register agent with OTP
 const registerAgentWithOTP = async (req, res) => {
@@ -43,7 +44,14 @@ const resendOTP = async (req, res) => {
 
 // Agent business info
 const agentBusinessInfo = async (req, res) => {
-    const data = { ...req.body };
+    const data = {
+        ...req.body,
+        // Anonymous (LEGACY builds): only while the shop's set-up is unfinished.
+        userId: await shopRegistrationAccess().registrationShopId(req, {
+            legacyUserId: req.body.userId,
+            incompleteSetupOnly: true,
+        }),
+    };
 
     const result = await authService.agentBusinessInfo(data);
 
@@ -63,10 +71,13 @@ const agentBusinessInfo = async (req, res) => {
 
 // Business info added
 const businesInfoAdded = async (req, res) => {
-    const { userId } = req.params;
-    const data = { 
-        userId: userId,
-        ...req.body 
+    const data = {
+        ...req.body,
+        // Anonymous (LEGACY builds): only while the shop's set-up is unfinished.
+        userId: await shopRegistrationAccess().registrationShopId(req, {
+            legacyUserId: req.params.userId,
+            incompleteSetupOnly: true,
+        }),
     };
     const result = await authService.businesInfoAdded(data);
     return ResponseHelper.success(res, "Service added successfully", result);
@@ -74,10 +85,12 @@ const businesInfoAdded = async (req, res) => {
 
 // Working hours update
 const workingHoursUpdate = async (req, res) => {
-    const { userId } = req.params;
-    const data = { 
-        userId: userId,
-        ...req.body 
+    const data = {
+        ...req.body,
+        // Anonymous (LEGACY builds) also save hours from Profile: any verified owner.
+        userId: await shopRegistrationAccess().registrationShopId(req, {
+            legacyUserId: req.params.userId,
+        }),
     };
     const result = await authService.workingHoursUpdate(data);
     return ResponseHelper.success(res, "Working hours updated successfully", result);

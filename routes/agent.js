@@ -171,9 +171,14 @@ router.post(
     asyncMiddleware(agentAuthController.session)
 );
 
-//Agent Bussiness Information
+// Shop registration writes (business information here; address, services and
+// working hours below). A session, when sent, is verified first and decides the shop
+// (the owner's own). LEGACY builds send none: services/Agent/shopRegistrationAccess.js
+// says what such a request may still do, and SHOP_REGISTRATION_ALLOW_ANONYMOUS=false
+// turns that off once every supported build sends the session.
 router.post(
     "/addBusinessInfor",
+    accessTokenIfPresent,
     asyncMiddleware(agentAuthController.agentBusinessInfo)
 );
 
@@ -203,8 +208,10 @@ router.patch(
 );
 
 //!-------------------------------------------------------------Agent Address Module---------------------------------------------------//
+// Shop registration: the first shop address (session optional, see /addBusinessInfor).
 router.post(
     "/agentAddressAdd",
+    accessTokenIfPresent,
     asyncMiddleware(agentController.agentAddressAdd)
 );
 router.patch(
@@ -785,14 +792,16 @@ router.get(
     accessTokenIfPresent,
     asyncMiddleware(shopBusinessInfoController.getWorkingHours)
 );
-//Bussiness services info Add
+//Bussiness services info Add (shop registration; session optional, see /addBusinessInfor)
 router.post(
     "/businesInfoAdded/:userId",
+    accessTokenIfPresent,
     asyncMiddleware(agentAuthController.businesInfoAdded)
 );
-//Update Working Hours
+//Update Working Hours (registration and Profile; session optional, see /addBusinessInfor)
 router.patch(
     "/workingHoursUpdate/:userId",
+    accessTokenIfPresent,
     asyncMiddleware(agentAuthController.workingHoursUpdate)
 );
 // Platform operational hours bounds for agent's shop country (read-only)
