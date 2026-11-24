@@ -590,12 +590,16 @@ class AgentInvoiceManagementService {
         const creditSpent = await customerCreditService.spentOnBooking(bookingId);
         const previousCredit = creditSpent.amount;
         const nonPromotion = Math.max(0, parseFloat(((parseFloat(storedDiscount) || 0) - previousPromotion - previousCredit).toFixed(2)));
+        // The bill's currency (the booking zone's) was resolved by the caller: the pricing
+        // helpers use it instead of looking the booking's zone up again.
+        const known = { currency: summaryInput.currency, currencySymbol: summaryInput.currencySymbol };
         const legacyDiscount = await couponService.resolveBookingDiscount(
             bookingId,
             servicesSubtotal,
             nonPromotion,
             null,
-            zoneId
+            zoneId,
+            known
         );
         if (!previousPromotion && !previousCredit && !isPromotionsCheckoutEnabled(zoneId)) {
             // Nothing re-priced the credit: `creditSpent` is still what the booking has spent.
@@ -605,10 +609,12 @@ class AgentInvoiceManagementService {
         const promo = await bookingPromotionService.priceAtInvoice({
             bookingId,
             allowance: Math.max(0, dueBeforeDiscount - legacyDiscount),
+            currency: known.currency,
         });
         const creditPriced = await bookingPromotionService.priceCreditAtInvoice({
             bookingId,
             allowance: Math.max(0, parseFloat((dueBeforeDiscount - legacyDiscount - promo.amount).toFixed(2))),
+            currency: known.currency,
         });
         return {
             discount: parseFloat((legacyDiscount + promo.amount + creditPriced.amount).toFixed(2)),
