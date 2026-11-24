@@ -113,6 +113,7 @@ router.post(
 //verify otp for registration
 router.post(
     "/verifyOTpSignUp",
+    otpVerifyIpLimit,
     asyncMiddleware(agentAuthController.verifyOTpSignUp)
 );
 

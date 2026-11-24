@@ -104,7 +104,7 @@ const uploadCollectionImages = multer({
 //complete registration of customer
 router.post('/registerCustomer',uploadProfile.single('profileImage'),asyncMiddleware(customerAuthControllers.registerCustomerWithOTP))
 //verify otp for registration
-router.post('/verifyOTpSignUp',asyncMiddleware(customerAuthControllers.verifyOTpSignUp))
+router.post('/verifyOTpSignUp',otpVerifyIpLimit,asyncMiddleware(customerAuthControllers.verifyOTpSignUp))
 //User login
 router.post('/loginUser',asyncMiddleware(customerAuthControllers.loginUser))
 //forgot password request through otp send to mail

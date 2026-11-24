@@ -58,7 +58,7 @@ router.post('/driverRegisterStep1',uploadProfile.fields([{name:'profileImage',ma
 //Driver Registration 2nd Step
 router.post('/driverRegisterStep2', uploadVeh.array('vehImages', 10), asyncMiddleware(driverController.driverRegisterStep2))
 //Verify OTP
-router.post('/verifyotp',asyncMiddleware(driverController.verifyOTP))
+router.post('/verifyotp',otpVerifyIpLimit,asyncMiddleware(driverController.verifyOTP))
 //Upload Driver Vehicle Images
 router.post('/uploadVehImages', validateAccessToken, uploadVeh.array('vehImages', 10), asyncMiddleware(driverController.uploadVehicleImages))
 //Driver registration Step 3

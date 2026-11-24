@@ -2,7 +2,8 @@
 
 /**
  * Per-IP limits on the unauthenticated emailed-code endpoints (customer, agent, driver):
- * requesting a code (forget password, resend), verifying one, and setting the new password.
+ * requesting a code (forget password, resend), verifying one (sign-up or password reset), and
+ * setting the new password.
  *
  * They complement the per-account limits of services/shared/passwordReset.js (codes issued per
  * account, wrong guesses per code): those bound guessing at one account, these bound one client
