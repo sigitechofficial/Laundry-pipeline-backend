@@ -82,6 +82,9 @@ const FIXTURES = [
     { id: 910011, source: 169, label: 'other-shops-booking', set: { laundryShopId: 18 } },
     { id: 910012, source: 176, label: 'cash-out-for-delivery-with-tip', tip: 4.5 },
     { id: 910013, source: 169, label: 'draft-promotion-coupon-credit-repair', promotion: true, coupon: true, credit: { held: 1, lot: 6 }, repair: true },
+    // Unpaid cash invoices: the promotion is priced on the lines (order adjustments written).
+    { id: 910014, source: 169, label: 'cash-draft-with-promotion', promotion: true, set: { paymentType: 'cash' } },
+    { id: 910015, source: 170, label: 'cash-processing-with-promotion-and-coupon', promotion: true, coupon: true },
 ];
 
 /** Child tables cloned with the booking (`refs` columns are offset like ids). */
