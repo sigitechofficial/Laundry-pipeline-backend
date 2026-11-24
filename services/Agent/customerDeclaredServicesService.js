@@ -134,6 +134,11 @@ const snapshotInclude = [
  */
 async function ensureCustomerDeclaredSnapshot(bookingId, { transaction } = {}) {
     if (transaction) return freezeCustomerSelections(bookingId, transaction);
+    // Frozen once, never re-frozen: once a snapshot exists every later call is a no-op, so
+    // reads (every invoice open) check that first and take the transaction and the booking
+    // row lock only while there is none yet. The check under the lock below still decides.
+    const frozen = await customerOriginalServiceSnapshot.count({ where: { bookingId } });
+    if (frozen > 0) return;
     return dbModels.sequelize.transaction((t) => freezeCustomerSelections(bookingId, t));
 }
 
