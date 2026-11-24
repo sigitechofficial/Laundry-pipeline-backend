@@ -39,6 +39,21 @@ function legForStatus(statusId) {
   return isDeliveryTrackableStatus(statusId) ? 'delivery' : 'pickup';
 }
 
+/**
+ * RTDB calls never settle when an instance is missing or unreachable (the SDK keeps retrying),
+ * so every per-project call is bounded: one project's RTDB being down must not hang the
+ * endpoint or block the other project.
+ */
+const RTDB_TIMEOUT_MS = Math.max(500, Number(process.env.LIVE_TRACKING_RTDB_TIMEOUT_MS) || 5000);
+
+function withTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${RTDB_TIMEOUT_MS}ms`)), RTDB_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** RTDB handle of one project, or null when it is not configured / not reachable. */
 function getDb(projectId) {
   if (!projectId) return null;
@@ -64,16 +79,15 @@ function trackingRefIn(db, bookingId) {
 
 /** Run `fn(ref, projectId)` on the booking in every project; collect per-project results. */
 async function forEachProject(bookingId, fn) {
-  const results = [];
-  for (const { projectId, db } of trackingDbs()) {
+  return Promise.all(trackingDbs().map(async ({ projectId, db }) => {
     try {
-      results.push({ projectId, ok: true, value: await fn(trackingRefIn(db, bookingId), projectId) });
+      const value = await withTimeout(fn(trackingRefIn(db, bookingId), projectId), `RTDB ${projectId}`);
+      return { projectId, ok: true, value };
     } catch (err) {
       console.warn(`[liveTracking] booking=${bookingId} project=${projectId}:`, err.message);
-      results.push({ projectId, ok: false, error: err.message });
+      return { projectId, ok: false, error: err.message };
     }
-  }
-  return results;
+  }));
 }
 
 function maskPhone(phone) {
@@ -350,7 +364,7 @@ async function cleanupStaleLiveTrackingSessions({ maxAgeMs = 6 * 60 * 60 * 1000 
   let deleted = 0;
   for (const { projectId, db } of dbs) {
     try {
-      deleted += await cleanupProject(db, maxAgeMs);
+      deleted += await withTimeout(cleanupProject(db, maxAgeMs), `RTDB cleanup ${projectId}`);
     } catch (err) {
       console.warn(`[liveTracking] cleanup project=${projectId} failed:`, err.message);
     }
@@ -399,11 +413,17 @@ async function getLiveTrackingSnapshot(bookingId, projectId = null) {
   const target = projectId || (firebaseProjects.readyProjects()[0] || {}).projectId;
   const db = getDb(target);
   if (!db) return null;
-  const snap = await trackingRefIn(db, bookingId).once('value');
-  return snap.exists() ? snap.val() : null;
+  try {
+    const snap = await withTimeout(trackingRefIn(db, bookingId).once('value'), `RTDB ${target}`);
+    return snap.exists() ? snap.val() : null;
+  } catch (err) {
+    console.warn(`[liveTracking] snapshot booking=${bookingId} project=${target}:`, err.message);
+    return null;
+  }
 }
 
 module.exports = {
+  withTimeout,
   LIVE_TRACKING_ROOT,
   PRE_TRIP_STATUS_PICKUP,
   PRE_TRIP_STATUS_DELIVERY,

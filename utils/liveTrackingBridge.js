@@ -26,6 +26,16 @@
 const firebaseProjects = require('./firebaseProjects');
 
 const LIVE_TRACKING_ROOT = 'liveTracking';
+const RTDB_TIMEOUT_MS = Math.max(500, Number(process.env.LIVE_TRACKING_RTDB_TIMEOUT_MS) || 5000);
+
+/** RTDB calls to a missing/unreachable instance never settle: bound them. */
+function withTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${RTDB_TIMEOUT_MS}ms`)), RTDB_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 const RELAYED_CHILDREN = Object.freeze(['location', 'route']);
 
 /** bookingId -> { sourceProjectId, detach } */
@@ -47,7 +57,7 @@ async function relay(bookingId, child, value, targetProjectIds) {
   await Promise.all(
     targetProjectIds.map(async (projectId) => {
       try {
-        await firebaseProjects.databaseFor(projectId).ref(path).set(value);
+        await withTimeout(firebaseProjects.databaseFor(projectId).ref(path).set(value), `relay to ${projectId}`);
       } catch (err) {
         console.warn(`[liveTrackingBridge] relay ${path} -> ${projectId} failed:`, err.message);
       }
@@ -130,7 +140,10 @@ async function reconcileBridges() {
     for (const id of [...bridges.keys()]) stopBridge(id);
     return { ok: true, active: 0, reason: 'SINGLE_PROJECT' };
   }
-  const snap = await firebaseProjects.databaseFor(projects[0].projectId).ref(LIVE_TRACKING_ROOT).once('value');
+  const snap = await withTimeout(
+    firebaseProjects.databaseFor(projects[0].projectId).ref(LIVE_TRACKING_ROOT).once('value'),
+    `reconcile read ${projects[0].projectId}`
+  );
   const wanted = new Map();
   snap.forEach((child) => {
     const meta = child.child('meta').val() || {};
