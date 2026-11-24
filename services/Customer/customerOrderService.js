@@ -3366,16 +3366,22 @@ class CustomerOrderService {
             catalogZoneId
         );
 
+        // Every service's categories in two queries, and the zone's pricing data once
+        // (it used to be loaded for each service: about 12 queries per service).
+        const [categoryTrees, overlay] = await Promise.all([
+            serviceManagementService.getServiceCategoriesDataForServices(
+                visibleServices.map((svc) => svc.id)
+            ),
+            zoneCatalogService.loadServiceCategoriesOverlay(catalogZoneId),
+        ]);
+
         for (const svc of visibleServices) {
-            let serviceCategoriesData =
-                await serviceManagementService.getServiceCategoriesDataForService(
-                    svc.id
-                );
-            serviceCategoriesData =
+            const serviceCategoriesData =
                 await zoneCatalogService.applyToServiceCategoriesData(
-                    serviceCategoriesData,
+                    categoryTrees.get(Number(svc.id)) || [],
                     catalogZoneId,
-                    svc.id
+                    svc.id,
+                    overlay
                 );
 
             if (!serviceCategoriesData.length) {
