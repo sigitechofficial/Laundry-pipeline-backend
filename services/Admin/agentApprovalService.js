@@ -284,6 +284,25 @@ class AgentApprovalService {
             };
         }
 
+        if (action === 'reopen') {
+            // Send a rejected shop back to the review queue. It stays unable to
+            // log in (pending) until someone approves it; the old reason is kept
+            // so the reviewer can see why it was rejected before.
+            if (agent.agentApprovalStatus !== 'rejected') {
+                throw new ValidationError('Only a rejected registration can be moved back to review');
+            }
+            await users.update(
+                { agentApprovalStatus: 'pending' },
+                { where: { id: agentId } }
+            );
+            return {
+                id: Number(agentId),
+                agentApprovalStatus: 'pending',
+                reopened: true,
+                previousRejectionReason: agent.rejectionReason || null,
+            };
+        }
+
         if (action === 'reject') {
             const parsed = parseRejection(reasons, note, reason);
             const rejectionReason = composeRejection(parsed.reasons, parsed.note);
@@ -323,7 +342,7 @@ class AgentApprovalService {
             };
         }
 
-        throw new ValidationError('action must be "approve" or "reject"');
+        throw new ValidationError('action must be "approve", "reject" or "reopen"');
     }
 }
 

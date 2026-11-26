@@ -928,7 +928,7 @@ async function updateAgentApproval(req, res) {
     const { action, reason, reasons, note } = req.body;
 
     if (!action) {
-        throw new ValidationError('action is required (approve or reject)');
+        throw new ValidationError('action is required (approve, reject or reopen)');
     }
 
     const result = await agentApprovalService.updateAgentApproval(
@@ -943,7 +943,9 @@ async function updateAgentApproval(req, res) {
             ? result.restored
                 ? 'Agent restored and approved successfully'
                 : 'Agent approved successfully'
-            : 'Agent rejected successfully';
+            : action === 'reopen'
+                ? 'Moved back to review'
+                : 'Agent rejected successfully';
 
     return ResponseHelper.success(res, message, result);
 }
