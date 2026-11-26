@@ -46,6 +46,7 @@ const {
 } = require('../../models');
 const { zoneCurrency, bookingCurrency } = require('../../utils/zoneCurrency');
 const { onHoldCustomerState } = require('../../utils/onHoldCustomerState');
+const { summarizeOnHold } = require('../../utils/onHoldSummary');
 const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -3941,6 +3942,10 @@ class CustomerOrderService {
                     required: true,
                     attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems',
                         'responseConformation', 'deleted', 'createdAt', 'respondedAt', 'resolvedAt'],
+                    include: [
+                        { model: service, attributes: ['id', 'name'], paranoid: false, required: false },
+                        { model: subCategories, attributes: ['id', 'name'], paranoid: false, required: false },
+                    ],
                 },
             ],
             attributes: ["id", "zoneId", "bookingStatusId", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
@@ -3969,6 +3974,9 @@ class CustomerOrderService {
                 OnHoldConfirmations: shown,
                 resolved: state.resolved,
                 waitingItems: state.waitingItems,
+                // "Dry Clean · Trousers: Colour may run (+2 more)"
+                // Resolved orders count the items the shop took off too.
+                itemsSummary: summarizeOnHold((state.waiting ? shown : items).map((c) => ({ ...c, deleted: false }))),
                 lastHeldAt: lastHeldAt ? new Date(lastHeldAt).toISOString() : null,
                 currency: { code: currencyCode, symbol: currencySymbol },
             };
