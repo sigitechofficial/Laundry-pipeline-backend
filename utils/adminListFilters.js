@@ -61,8 +61,9 @@ const ACTION_REQUIRED_LIST_OPTIONS = Object.freeze({
         'zoneName',
     ],
     sortable: {
-        // Default: priority ASC. Input is pre-sorted (priority, updatedAt DESC) and
-        // Array.prototype.sort is stable, so ties keep the updatedAt order.
+        // Default: newest order first (createdAt DESC). Input is pre-sorted the
+        // same way (then id DESC) and Array.prototype.sort is stable, so ties
+        // keep that order. "priority" stays available as a sort option.
         priority: (row) => Number(row.priority ?? 99),
         updatedAt: (row) => toDate(row.updatedAt),
         createdAt: (row) => toDate(row.createdAt),
@@ -71,7 +72,7 @@ const ACTION_REQUIRED_LIST_OPTIONS = Object.freeze({
         orderAmount: (row) => Number(row.orderAmount || 0),
         lastPaymentFailureAt: (row) => toDate(row.lastPaymentFailureAt),
     },
-    defaultSort: { sortBy: 'priority', sortDir: 'ASC' },
+    defaultSort: { sortBy: 'createdAt', sortDir: 'DESC' },
     defaultLimit: ACTION_REQUIRED_DEFAULT_LIMIT,
 });
 

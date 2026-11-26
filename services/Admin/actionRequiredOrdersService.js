@@ -410,11 +410,12 @@ async function listActionRequiredOrders({
             }
             return mapped;
         })
+        // Newest order first (then id DESC), like every other order list.
         .sort((a, b) => {
-            if (a.priority !== b.priority) return a.priority - b.priority;
-            const at = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-            const bt = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-            return bt - at;
+            const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            if (bt !== at) return bt - at;
+            return Number(b.id || 0) - Number(a.id || 0);
         });
 
     const scoped = reasonFilter

@@ -37,26 +37,28 @@ assert.equal(
 
 const feed = [
     {
-        id: 10, orderTrackId: '10-AB', priority: 3, updatedAt: new Date('2026-01-03'),
+        id: 10, orderTrackId: '10-AB', priority: 3, updatedAt: new Date('2026-01-03'), createdAt: new Date('2026-01-01'),
         customer: { name: 'Jane Doe', email: 'jane@x.io', phoneNum: '07700' },
         laundryShop: { bussinessInformations: [{ shopName: 'Bubbles' }] }, zoneName: 'North',
     },
     {
-        id: 11, orderTrackId: '11-CD', priority: 1, updatedAt: new Date('2026-01-02'),
+        id: 11, orderTrackId: '11-CD', priority: 1, updatedAt: new Date('2026-01-02'), createdAt: new Date('2026-01-04'),
         customer: { name: 'Bob Ray', email: 'bob@x.io', phoneNum: '07711' },
         laundryShop: null, zoneName: 'South',
     },
     {
-        id: 12, orderTrackId: '12-EF', priority: 1, updatedAt: new Date('2026-01-05'),
+        id: 12, orderTrackId: '12-EF', priority: 1, updatedAt: new Date('2026-01-05'), createdAt: new Date('2026-01-02'),
         customer: { name: 'Amy Lee', email: 'amy@x.io', phoneNum: '07722' },
         laundryShop: { bussinessInformations: [{ shopName: 'Suds' }] }, zoneName: 'North',
     },
 ];
-// service pre-sorts by (priority ASC, updatedAt DESC)
-const preSorted = [feed[2], feed[1], feed[0]];
+// input order on purpose not newest-first
+const preSorted = [feed[2], feed[0], feed[1]];
 
 let out = applyActionRequiredListQuery(preSorted, {});
-assert.deepEqual(out.rows.map((r) => r.id), [12, 11, 10], 'default keeps priority/updatedAt order');
+assert.deepEqual(out.rows.map((r) => r.id), [11, 12, 10], 'default: newest order placed first');
+out = applyActionRequiredListQuery(preSorted, { sortBy: 'priority', sortDir: 'asc' });
+assert.deepEqual(out.rows.map((r) => r.id), [12, 11, 10], 'priority still available (stable on ties)');
 assert.equal(out.pagination.recordsPerPage, 25);
 assert.equal(out.pagination.totalRecords, 3);
 assert.equal(out.pagination.exportMode, false);
@@ -75,7 +77,7 @@ assert.deepEqual(out.rows.map((r) => r.id), [11], 'search hits zone name');
 out = applyActionRequiredListQuery(preSorted, { sortBy: 'updatedAt', sortDir: 'asc' });
 assert.deepEqual(out.rows.map((r) => r.id), [11, 10, 12]);
 out = applyActionRequiredListQuery(preSorted, { sortBy: 'password', sortDir: 'asc' });
-assert.deepEqual(out.rows.map((r) => r.id), [12, 11, 10], 'unknown sortBy falls back');
+assert.deepEqual(out.rows.map((r) => r.id), [10, 12, 11], 'unknown sortBy falls back to createdAt (asked direction kept)');
 
 out = applyActionRequiredListQuery(preSorted, { page: '2', limit: '2' });
 assert.deepEqual(out.rows.map((r) => r.id), [10]);
