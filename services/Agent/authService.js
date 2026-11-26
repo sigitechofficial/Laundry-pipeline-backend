@@ -202,6 +202,32 @@ class AgentAuthService {
         return meta;
     }
 
+    /**
+     * Create the shop's Stripe Connect account and store it on its business
+     * information. Never throws: a Stripe failure is logged and the shop carries on
+     * without an account (null), so registration is never blocked by Stripe.
+     * @returns {Promise<string|null>} the account id, or null when it could not be made
+     */
+    async _createConnectAccountSafely({ businessInfoId, shopId, email, countryCode }) {
+        const raw = String(countryCode || 'GB').trim().toUpperCase();
+        const country = raw === 'UK' ? 'GB' : (/^[A-Z]{2}$/.test(raw) ? raw : 'GB');
+        try {
+            const connectAccountId = await stripe.createStripeConnectAccount(email, country);
+            if (!connectAccountId) throw new Error('Stripe returned no account id');
+            await bussinessInformation.update(
+                { connectAccountId, isConnectAccountConnected: false },
+                { where: { id: businessInfoId } }
+            );
+            return connectAccountId;
+        } catch (error) {
+            console.error(
+                `[stripe-connect] shop ${shopId}: account not created, registration continues without it:`,
+                error && error.message ? error.message : error
+            );
+            return null;
+        }
+    }
+
     async _revokeAllAgentSessions(userId) {
         if (!userId) return;
         try {
@@ -547,45 +573,16 @@ class AgentAuthService {
             agentApprovalStatus: 'pending',
         }, { where: { id: data.userId } });
 
-        // Create Stripe Connect Account
-        let onboardingUrl = null;
-        let connectAccountId = null;
-        try {
-            // Convert country code to uppercase and use 'GB' for UK/London
-            const countryCode = (data.countryCode || 'GB').toUpperCase();
-            // Map common variations to correct ISO code
-            const normalizedCountry = countryCode === 'UK' ? 'GB' : countryCode;
-            
-            console.log('🔧 Creating Stripe Connect Account...');
-            console.log('   Email:', userData.email);
-            console.log('   Country:', normalizedCountry);
-            
-            connectAccountId = await stripe.createStripeConnectAccount(
-                userData.email,
-                normalizedCountry
-            );
-
-            console.log('✅ Stripe Connect Account Created:', connectAccountId);
-
-            // Verify account was created
-            if (!connectAccountId) {
-                throw new Error('Failed to create Stripe Connect account - no account ID returned');
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            await bussinessInformation.update({
-                connectAccountId: connectAccountId,
-                isConnectAccountConnected: false
-            }, {
-                where: { id: agentInfo.id }
-            });
-        } catch (error) {
-            console.error('❌ Stripe Connect Account creation failed:', error);
-            console.error('   Error message:', error.message);
-            console.error('   Error stack:', error.stack);
-            throw new Error(`Stripe Connect Account creation failed: ${error.message}`);
-        }
+        // Stripe Connect account for payouts. Registration never depends on Stripe:
+        // if Stripe refuses or is unreachable the shop is still registered and reaches
+        // admin approval; the account is created later, when the owner connects Stripe
+        // (generateStripeOnboardingLink) or admin sends the payout onboarding link.
+        const connectAccountId = await this._createConnectAccountSafely({
+            businessInfoId: agentInfo.id,
+            shopId: data.userId,
+            email: userData.email,
+            countryCode: data.countryCode,
+        });
 
         await this._revokeAllAgentSessions(data.userId);
 
@@ -626,15 +623,26 @@ class AgentAuthService {
         if (!businessInfo) {
             throw new NotFoundError('Business information not found for this shop. Please contact support.');
         }
-        const { connectAccountId } = businessInfo;
-        if (!connectAccountId) {
-            throw new ValidationError('This shop has no Stripe Connect account yet. Please contact support.');
-        }
-
         const agentUser = await users.findByPk(businessInfo.agentId, {
-            attributes: ['id', 'userTypeId', 'agentApprovalStatus', 'rejectionReason'],
+            attributes: ['id', 'userTypeId', 'agentApprovalStatus', 'rejectionReason', 'email', 'countryCode'],
         });
         this._assertAgentApprovalForLogin(agentUser);
+
+        // A shop whose account could not be made at registration gets it now.
+        let { connectAccountId } = businessInfo;
+        if (!connectAccountId) {
+            connectAccountId = await this._createConnectAccountSafely({
+                businessInfoId: businessInfo.id,
+                shopId: businessInfo.agentId,
+                email: agentUser?.email,
+                countryCode: 'GB',
+            });
+            if (!connectAccountId) {
+                throw new UnprocessableEntityError(
+                    'We could not set up payouts with Stripe right now. Please try again in a few minutes.'
+                );
+            }
+        }
 
         try {
             // Check account status first
