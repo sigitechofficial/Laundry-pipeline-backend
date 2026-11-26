@@ -889,7 +889,12 @@ class OrderService {
                 {
                     model: addressDb,
                     as: 'pickupAddress',
-                    attributes: ['id', 'title', 'streetAddress', 'district', 'province']
+                    // postcode, city and country: the receipt prints them (as the shop app does)
+                    attributes: ['id', 'title', 'streetAddress', 'district', 'province', 'postalcode'],
+                    include: [
+                        { model: cities, attributes: ['id', 'name'], required: false },
+                        { model: countries, attributes: ['id', 'name'], required: false },
+                    ],
                 },
                 {
                     model: addressDb,
