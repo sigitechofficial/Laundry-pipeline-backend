@@ -1385,8 +1385,8 @@ class OrderService {
             const held = await OnHoldConfirmation.findAll({
                 where: { bookingId: orderId },
                 include: [
-                    { model: service, attributes: ['id', 'name'] },
-                    { model: subCategories, attributes: ['id', 'name'] },
+                    { model: service, attributes: ['id', 'name'], paranoid: false },
+                    { model: subCategories, attributes: ['id', 'name'], paranoid: false },
                 ],
                 order: [['id', 'ASC']],
             });
@@ -2121,8 +2121,8 @@ class OrderService {
                 attributes: ['id', 'bookingId', 'description', 'noOfItems', 'deleted',
                     'customerResponse', 'responseConformation'],
                 include: [
-                    { model: service, attributes: ['id', 'name'] },
-                    { model: subCategories, attributes: ['id', 'name'] },
+                    { model: service, attributes: ['id', 'name'], paranoid: false },
+                    { model: subCategories, attributes: ['id', 'name'], paranoid: false },
                 ],
                 order: [['id', 'ASC']],
             });

@@ -5001,8 +5001,8 @@ exports.onHoldConformation = async (req, res) => {
         heldRows = await OnHoldConfirmation.findAll({
             where: { id: createdIds },
             include: [
-                { model: service, attributes: ['id', 'name'] },
-                { model: subCategories, attributes: ['id', 'name'] },
+                { model: service, attributes: ['id', 'name'], paranoid: false },
+                { model: subCategories, attributes: ['id', 'name'], paranoid: false },
             ],
             order: [['id', 'ASC']],
         });

@@ -285,8 +285,8 @@ async function getOnHoldReport(rawFilters = {}) {
             where: { bookingId: heldIds },
             attributes: ['id', 'bookingId', 'description', 'noOfItems', 'deleted'],
             include: [
-                { model: service, attributes: ['id', 'name'] },
-                { model: subCategories, attributes: ['id', 'name'] },
+                { model: service, attributes: ['id', 'name'], paranoid: false },
+                { model: subCategories, attributes: ['id', 'name'], paranoid: false },
             ],
             order: [['id', 'ASC']],
         })
