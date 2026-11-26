@@ -882,6 +882,14 @@ async function getPendingAgents(req, res) {
     return ResponseHelper.success(res, "Pending agents fetched", { agents });
 }
 
+/*
+ * Everything a shop gave when it registered (admin review screen)
+ */
+async function getAgentRegistration(req, res) {
+    const registration = await agentApprovalService.getAgentRegistration(req.params.agentId);
+    return ResponseHelper.success(res, "Agent registration fetched", registration);
+}
+
 async function getRejectedAgents(req, res) {
     const agents = await agentApprovalService.getRejectedAgents();
     return ResponseHelper.success(res, "Rejected agents fetched", { agents });
@@ -892,7 +900,7 @@ async function getRejectedAgents(req, res) {
  */
 async function updateAgentApproval(req, res) {
     const { agentId } = req.params;
-    const { action, reason } = req.body;
+    const { action, reason, reasons, note } = req.body;
 
     if (!action) {
         throw new ValidationError('action is required (approve or reject)');
@@ -901,7 +909,8 @@ async function updateAgentApproval(req, res) {
     const result = await agentApprovalService.updateAgentApproval(
         agentId,
         action,
-        reason
+        reason,
+        { reasons, note }
     );
 
     const message =
@@ -3226,6 +3235,7 @@ module.exports = {
     deleteAgentEmployee,
     //!----------Agent Registration Management---------//
     getPendingAgents,
+    getAgentRegistration,
     getRejectedAgents,
     updateAgentApproval,
     registerAgent,

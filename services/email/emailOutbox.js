@@ -22,6 +22,7 @@ const TEMPLATES = Object.freeze({
   bookingConfirmation: (p) => require('../../helper/bookingConfirmationMail')(p),
   signupWelcome: (p) => require('../../helper/signupWelcomeMail')(p),
   onHold: (p) => require('../../helper/onHoldMail')(p),
+  agentRejected: (p) => require('../../helper/agentRejectedMail')(p),
 });
 
 const INTERVAL_MS = Math.max(1000, Number(process.env.EMAIL_OUTBOX_INTERVAL_MS) || 15 * 1000);
