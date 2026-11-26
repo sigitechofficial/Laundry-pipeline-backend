@@ -369,7 +369,8 @@ async function getOnHoldBookings(req, res) {
     // Call service to handle business logic
     const result = await customerOrderService.getOnHoldBookings({
         bookingId,
-        customerId: req.user.id
+        customerId: req.user.id,
+        includeAnswered: req.query.include === 'all',
     });
 
     // Return response using ResponseHelper success method
@@ -404,7 +405,8 @@ async function getOnHoldBookingsForCustomer(req, res) {
 
     // Call service to handle business logic
     const result = await customerOrderService.getOnHoldBookingsForCustomer({
-        customerId
+        customerId,
+        includeResolved: req.query.include === 'resolved',
     });
 
     // Return response using ResponseHelper success method

@@ -45,6 +45,7 @@ const {
     repairOption,
 } = require('../../models');
 const { zoneCurrency, bookingCurrency } = require('../../utils/zoneCurrency');
+const { onHoldCustomerState } = require('../../utils/onHoldCustomerState');
 const { resolveDisplayCurrency } = require('../../utils/resolveDisplayCurrency');
 const { Op } = require('sequelize');
 const sequelize = require('sequelize');
@@ -3229,6 +3230,20 @@ class CustomerOrderService {
         delete resultData.noShowPolicyBookings;
         delete resultData.attempts;
 
+        // On-hold items on this order, so the app can link to the On-Hold
+        // screen (waiting -> On-Hold tab, otherwise Resolved). null when none.
+        try {
+            const held = await OnHoldConfirmation.findAll({
+                where: { bookingId: bookingPlain.id },
+                attributes: ['id', 'responseConformation', 'deleted'],
+            });
+            const state = onHoldCustomerState(bookingPlain.bookingStatusId, held.map((h) => h.toJSON()));
+            resultData.onHold = state.total ? state : null;
+        } catch (err) {
+            console.warn('[bookingDetailsById] onHold skipped:', err?.message || err);
+            resultData.onHold = null;
+        }
+
         try {
             const recurringBookingService = require('./recurringBookingService');
             const recurringSummary =
@@ -3646,7 +3661,7 @@ class CustomerOrderService {
      * @returns {Object} - Result object with on-hold bookings data
      */
     async getOnHoldBookings(data) {
-        const { bookingId, customerId } = data;
+        const { bookingId, customerId, includeAnswered } = data;
 
         if (!bookingId) {
             throw new ValidationError("Booking ID is required");
@@ -3661,23 +3676,32 @@ class CustomerOrderService {
 
         // Only the items still waiting for the customer's answer (an earlier
         // hold on the same order is already answered or handled).
+        // With ?include=all (resolved orders) every item comes back, with the
+        // customer's answer, so the app can show what was decided.
         const onHoldBookings = await OnHoldConfirmation.findAll({
-            where: {
-                bookingId: bookingId,
-                responseConformation: false,
-                deleted: false,
-            },
+            where: includeAnswered
+                ? { bookingId: bookingId }
+                : {
+                    bookingId: bookingId,
+                    responseConformation: false,
+                    deleted: false,
+                },
             include: [
                 {
                     model: service,
-                    attributes: ['id', 'name']
+                    attributes: ['id', 'name'],
+                    paranoid: false,
                 },
                 {
                     model: subCategories,
-                    attributes: ['id', 'name', 'price', 'unitCount']
+                    attributes: ['id', 'name', 'price', 'unitCount'],
+                    paranoid: false,
                 }
             ],
-            attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems', 'serviceId', 'subCategoryId']
+            attributes: includeAnswered
+                ? ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems', 'serviceId', 'subCategoryId',
+                    'responseConformation', 'deleted', 'customerNote', 'createdAt', 'respondedAt', 'resolvedAt']
+                : ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems', 'serviceId', 'subCategoryId'],
         });
 
         if (!onHoldBookings || onHoldBookings.length === 0) {
@@ -3861,10 +3885,14 @@ class CustomerOrderService {
      * @returns {Object} - Result object with on-hold bookings data
      */
     async getOnHoldBookingsForCustomer(data) {
-        const { customerId } = data;
+        const { customerId, includeResolved } = data;
 
         if (!customerId) {
             throw new ValidationError("Customer ID is required");
+        }
+
+        if (includeResolved) {
+            return this._onHoldBookingsWithResolved(customerId);
         }
 
         const onHoldBookings = await booking.findAll({
@@ -3895,6 +3923,60 @@ class CustomerOrderService {
         return {
             message: "On-hold bookings retrieved successfully",
             data: { onHoldBookings: rows }
+        };
+    }
+
+    /**
+     * Every order of this customer that ever had an item put on hold: the ones
+     * still waiting for an answer and the resolved ones (answered, taken off by
+     * the shop, or the order has moved on). Newest hold first. Apps that ask
+     * for ?include=resolved get this; older apps keep the waiting-only list.
+     */
+    async _onHoldBookingsWithResolved(customerId) {
+        const rows = await booking.findAll({
+            where: { customerId },
+            include: [
+                {
+                    model: OnHoldConfirmation,
+                    required: true,
+                    attributes: ['id', 'onHoldImg', 'description', 'customerResponse', 'noOfItems',
+                        'responseConformation', 'deleted', 'createdAt', 'respondedAt', 'resolvedAt'],
+                },
+            ],
+            attributes: ["id", "zoneId", "bookingStatusId", "orderAmount", "orderTrackId", "collectionDate", "collectionTimeFrom", "collectionTimeTo", "deliveryDate", "deliveryTimeFrom", "deliveryTimeTo", "driverInstructionOptions", "driverInstructionOptions1"],
+        });
+
+        if (!rows || rows.length === 0) {
+            throw new NotFoundError("No on-hold bookings found for this customer");
+        }
+
+        const out = await Promise.all(rows.map(async (b) => {
+            const json = b.toJSON();
+            const items = json.OnHoldConfirmations || [];
+            const state = onHoldCustomerState(json.bookingStatusId, items);
+            const lastHeldAt = items.reduce((max, c) => {
+                const t = c.createdAt ? new Date(c.createdAt).getTime() : 0;
+                return t > max ? t : max;
+            }, 0);
+            // Waiting orders list only the items still needing an answer, as before.
+            const shown = state.waiting
+                ? items.filter((c) => !(c.responseConformation === true || c.responseConformation === 1)
+                    && !(c.deleted === true || c.deleted === 1))
+                : items;
+            const { currencyCode, currencySymbol } = await zoneCurrency(json.zoneId);
+            return {
+                ...json,
+                OnHoldConfirmations: shown,
+                resolved: state.resolved,
+                waitingItems: state.waitingItems,
+                lastHeldAt: lastHeldAt ? new Date(lastHeldAt).toISOString() : null,
+                currency: { code: currencyCode, symbol: currencySymbol },
+            };
+        }));
+        out.sort((a, b) => String(b.lastHeldAt || '').localeCompare(String(a.lastHeldAt || '')));
+        return {
+            message: "On-hold bookings retrieved successfully",
+            data: { onHoldBookings: out }
         };
     }
 
