@@ -37,6 +37,21 @@ module.exports = (sequelize, DataTypes) => {
     responseConformation:{
       type:DataTypes.BOOLEAN,
       defaultValue:false,
+    },
+    customerNote: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: "What the customer wrote when answering (kept apart from the shop's description)"
+    },
+    respondedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'When the customer answered this item'
+    },
+    resolvedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'When the shop finished the hold and the order went back to processing'
     }
   }, {
     sequelize,

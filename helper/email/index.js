@@ -10,6 +10,7 @@ const generateBookingConfirmationTemplate = require('./templates/bookingConfirma
 const generateDriverArrivedTemplate = require('./templates/driverArrived');
 const generateInvoiceReadyTemplate = require('./templates/invoiceReady');
 const generateAgentOrderInvoiceTemplate = require('./templates/agentOrderInvoice');
+const generateOnHoldTemplate = require('./templates/onHold');
 const generateFooter = require('./partials/footer');
 
 module.exports = {
@@ -20,5 +21,6 @@ module.exports = {
   generateDriverArrivedTemplate,
   generateInvoiceReadyTemplate,
   generateAgentOrderInvoiceTemplate,
+  generateOnHoldTemplate,
   generateFooter,
 };

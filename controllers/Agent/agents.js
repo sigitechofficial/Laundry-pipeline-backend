@@ -220,6 +220,7 @@ const {
 const customerPostcodeService = require('../../services/Customer/customerPostcodeService');
 const { getPostcodeActorId } = require('../../utils/postcodeActor');
 const { enqueueEmail } = require('../../services/email/emailOutbox');
+const { onHoldPushBody, parseOnHoldDescription } = require('../../utils/onHoldSummary');
 const activePoliciesService = require('../../services/Admin/activePoliciesService');
 const addOnServicesService = require('../../services/Admin/addOnServicesService');
 const agentRolePermissionService = require('../../services/Agent/rolePermissionService');
@@ -4992,15 +4993,55 @@ exports.onHoldConformation = async (req, res) => {
         bookingStatusId: 18,
     });
 
-    // Tell the customer there is something to answer (the app opens the
-    // on-hold review sheet from `type`).
-    const piecesOnHold = cleanRecords.reduce((sum, r) => sum + r.noOfItems, 0);
+    // Tell the customer there is something to answer, naming the item and the
+    // issue (the app opens the on-hold review sheet from `type`).
+    const createdIds = responseData.map((r) => r.record.id);
+    let heldRows = [];
+    try {
+        heldRows = await OnHoldConfirmation.findAll({
+            where: { id: createdIds },
+            include: [
+                { model: service, attributes: ['id', 'name'] },
+                { model: subCategories, attributes: ['id', 'name'] },
+            ],
+            order: [['id', 'ASC']],
+        });
+    } catch (err) {
+        console.warn('[onHold] could not load item names for the message:', err?.message || err);
+    }
     sendNotification(
         bookingRow.customerId,
-        "Items on hold",
-        `${piecesOnHold} item(s) in your order${bookingRow.orderTrackId ? ` #${bookingRow.orderTrackId}` : ""} are on hold. Please review and tell us what to do.`,
+        "Items on hold: your answer needed",
+        onHoldPushBody(heldRows, bookingRow.orderTrackId),
         { bookingId: bookingId, driverId: bookingRow.driverId, type: "ORDER_ON_HOLD" }
     );
+
+    // Same detail by email, so a customer without app notifications still knows.
+    try {
+        const customerData = await users.findOne({
+            where: { id: bookingRow.customerId },
+            attributes: ['firstName', 'email'],
+        });
+        await enqueueEmail('onHold', {
+            email: customerData?.email,
+            userName: customerData?.firstName || 'Customer',
+            orderNumber: bookingRow.orderTrackId || String(bookingId),
+            items: heldRows.map((row) => {
+                const r = row.get ? row.get({ plain: true }) : row;
+                const { risk, shopNote } = parseOnHoldDescription(r.description);
+                return {
+                    serviceName: r.service?.name || null,
+                    itemName: r.subCategory?.name || null,
+                    pieces: Number(r.noOfItems) || 0,
+                    risk,
+                    shopNote,
+                    photo: r.onHoldImg || null,
+                };
+            }),
+        });
+    } catch (emailError) {
+        console.error('⚠️ Failed to queue on-hold email:', emailError.message);
+    }
 
     return ResponseHelper.success(res, "Hold Confirmation Submitted for All Records", { responseData });
 }
@@ -5026,10 +5067,21 @@ exports.rejectedServiceItems = async (req, res) => {
                 attributes: ['id', 'name', 'price', 'unitCount']
             }
         ],
-        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'responseConformation', 'deleted']
+        attributes: ['id', 'noOfItems', 'description', 'serviceId', 'subCategoryId', 'customerResponse', 'responseConformation', 'deleted', 'customerNote', 'respondedAt']
     })
 
-    return ResponseHelper.success(res, "Rejected Services Items", { rejectedItems })
+    // Shop app builds before customerNote read the customer's note from the
+    // end of description ("Customer: …"); keep showing it there too.
+    const withNotes = rejectedItems.map((row) => {
+        const r = row.get ? row.get({ plain: true }) : row;
+        const note = typeof r.customerNote === 'string' ? r.customerNote.trim() : '';
+        if (note && !(r.description || '').includes(`Customer: ${note}`)) {
+            r.description = r.description ? `${r.description}\nCustomer: ${note}` : `Customer: ${note}`;
+        }
+        return r;
+    });
+
+    return ResponseHelper.success(res, "Rejected Services Items", { rejectedItems: withNotes })
 
 }
 
@@ -5065,6 +5117,12 @@ exports.agentIssueResolved = async (req, res) => {
             bookingStatusId: 11,
         },
         { where: { id: bookingId } }
+    );
+
+    // When the hold was finished, for the admin timeline.
+    await OnHoldConfirmation.update(
+        { resolvedAt: new Date() },
+        { where: { bookingId, resolvedAt: null } }
     );
 
     const { date, time } = await bookingWallClockNow(bookingId);

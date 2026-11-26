@@ -15,7 +15,10 @@ const {
     bookingStatus,
     invoicePaymentAttempt,
     cancelBooking,
+    OnHoldConfirmation,
+    subCategories,
 } = require('../../models');
+const { summarizeOnHold, issueText } = require('../../utils/onHoldSummary');
 const { formatPaymentFailureReason } = require('../../utils/paymentFailureLabels');
 const {
     parseFilters,
@@ -222,9 +225,20 @@ async function getOnHoldReport(rawFilters = {}) {
     });
 
     if (filters.search) {
+        const like = sequelize.escape(`%${filters.search}%`);
         bookingWhere[Op.or] = [
             { orderTrackId: { [Op.like]: `%${filters.search}%` } },
             { onHoldReason: { [Op.like]: `%${filters.search}%` } },
+            // The shop's on-hold items: issue text, service or item name.
+            {
+                id: {
+                    [Op.in]: literal(`(SELECT h.bookingId FROM OnHoldConfirmations h
+                        LEFT JOIN services s ON s.id = h.serviceId
+                        LEFT JOIN subCategories sc ON sc.id = h.subCategoryId
+                        WHERE h.bookingId IS NOT NULL
+                          AND (h.description LIKE ${like} OR s.name LIKE ${like} OR sc.name LIKE ${like}))`),
+                },
+            },
         ];
     }
 
@@ -258,15 +272,41 @@ async function getOnHoldReport(rawFilters = {}) {
         distinct: true,
     });
 
-    const reasonRows = await booking.findAll({
+    // Reasons come from the shop's on-hold items (the booking's own
+    // onHoldReason column is not filled by the shop app).
+    const heldBookings = await booking.findAll({
         where: buildBookingWhere(filters, { bookingStatusId: { [Op.in]: ON_HOLD } }),
-        attributes: [
-            'onHoldReason',
-            [fn('COUNT', col('booking.id')), 'count'],
-        ],
-        group: ['onHoldReason'],
+        attributes: ['id', 'onHoldReason', 'OnHoldOtherReason'],
         raw: true,
     });
+    const heldIds = heldBookings.map((b) => b.id);
+    const heldItems = heldIds.length
+        ? await OnHoldConfirmation.findAll({
+            where: { bookingId: heldIds },
+            attributes: ['id', 'bookingId', 'description', 'noOfItems', 'deleted'],
+            include: [
+                { model: service, attributes: ['id', 'name'] },
+                { model: subCategories, attributes: ['id', 'name'] },
+            ],
+            order: [['id', 'ASC']],
+        })
+        : [];
+    const itemsByBooking = new Map();
+    for (const item of heldItems) {
+        const key = Number(item.bookingId);
+        if (!itemsByBooking.has(key)) itemsByBooking.set(key, []);
+        itemsByBooking.get(key).push(item);
+    }
+    const reasonCounts = new Map();
+    for (const b of heldBookings) {
+        const items = (itemsByBooking.get(Number(b.id)) || []).filter((i) => !i.deleted);
+        const reasons = new Set(items.map((i) => issueText(i)).filter(Boolean));
+        if (!reasons.size) reasons.add(b.onHoldReason || b.OnHoldOtherReason || 'Unspecified');
+        for (const r of reasons) reasonCounts.set(r, (reasonCounts.get(r) || 0) + 1);
+    }
+    const reasonRows = [...reasonCounts.entries()]
+        .sort((a, c) => c[1] - a[1])
+        .map(([onHoldReason, count]) => ({ onHoldReason, count }));
 
     const data = rows.map((b, idx) => ({
         sl: offset + idx + 1,
@@ -279,7 +319,8 @@ async function getOnHoldReport(rawFilters = {}) {
             ? `${b.customer.countryCode || ''}${b.customer.phoneNum || ''}`
             : '—',
         items: b.totalItems,
-        onHoldReason: b.onHoldReason || b.OnHoldOtherReason || '—',
+        onHoldReason: b.onHoldReason || b.OnHoldOtherReason
+            || summarizeOnHold(itemsByBooking.get(Number(b.id)) || []) || '—',
         status: b.bookingStatus?.title || String(b.bookingStatusId),
         resolution: b.updatedAt ? new Date(b.updatedAt).toISOString().slice(0, 10) : '—',
     }));

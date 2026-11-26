@@ -3783,14 +3783,13 @@ class CustomerOrderService {
 
             onHoldBooking.customerResponse = customerResponse;   // true = keep, false = remove
             onHoldBooking.responseConformation = true;
+            onHoldBooking.respondedAt = new Date();
 
-            const trimmedNote = typeof note === "string" ? note.trim() : "";
+            // The customer's note has its own column, so the shop's issue text
+            // (description, 255 chars) is never cut or overwritten.
+            const trimmedNote = typeof note === "string" ? note.trim().slice(0, 2000) : "";
             if (trimmedNote) {
-                const customerNote = `Customer: ${trimmedNote}`;
-                // description is a VARCHAR(255)
-                onHoldBooking.description = (onHoldBooking.description
-                    ? `${onHoldBooking.description}\n${customerNote}`
-                    : customerNote).slice(0, 255);
+                onHoldBooking.customerNote = trimmedNote;
             }
 
             await onHoldBooking.save();

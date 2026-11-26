@@ -29,6 +29,7 @@ const {
     attemptFailReason,
     bookingHistory,
 } = require('../../models');
+const { summarizeOnHold, toAdminOnHoldItem } = require('../../utils/onHoldSummary');
 const { Op } = require('sequelize');
 const adminBookingAssignService = require('./adminBookingAssignService');
 const invoiceManagementService = require('../Agent/invoiceManagementService');
@@ -1375,6 +1376,26 @@ class OrderService {
             enriched.isRecurring = false;
         }
 
+        try {
+            const held = await OnHoldConfirmation.findAll({
+                where: { bookingId: orderId },
+                include: [
+                    { model: service, attributes: ['id', 'name'] },
+                    { model: subCategories, attributes: ['id', 'name'] },
+                ],
+                order: [['id', 'ASC']],
+            });
+            enriched.onHoldItems = held.map(toAdminOnHoldItem);
+            enriched.onHoldSummary = summarizeOnHold(held);
+        } catch (err) {
+            console.warn(
+                `[getOrderForEdit] onHoldItems skipped for booking ${orderId}:`,
+                err?.message || err
+            );
+            enriched.onHoldItems = [];
+            enriched.onHoldSummary = null;
+        }
+
         return enriched;
     }
 
@@ -2080,6 +2101,48 @@ class OrderService {
      * @param {number} limit
      * @returns {Object}
      */
+    /**
+     * The shop's on-hold items, in words, as each booking's onHoldReason
+     * ("Dry Clean · Silk Dress: Colour may run (+1 more)"). The booking column
+     * itself is never filled by the shop app, so it is only kept when set.
+     */
+    async _attachOnHoldSummaries(bookingRows) {
+        const rows = Array.isArray(bookingRows) ? bookingRows : [];
+        const ids = rows.map((b) => Number(b?.id)).filter((id) => id > 0);
+        if (!ids.length) return;
+        try {
+            const items = await OnHoldConfirmation.findAll({
+                where: { bookingId: ids },
+                attributes: ['id', 'bookingId', 'description', 'noOfItems', 'deleted',
+                    'customerResponse', 'responseConformation'],
+                include: [
+                    { model: service, attributes: ['id', 'name'] },
+                    { model: subCategories, attributes: ['id', 'name'] },
+                ],
+                order: [['id', 'ASC']],
+            });
+            const byBooking = new Map();
+            for (const item of items) {
+                const key = Number(item.bookingId);
+                if (!byBooking.has(key)) byBooking.set(key, []);
+                byBooking.get(key).push(item);
+            }
+            for (const row of rows) {
+                const list = byBooking.get(Number(row.id)) || [];
+                const summary = summarizeOnHold(list);
+                const waiting = list.filter((i) => !i.deleted && !i.responseConformation).length;
+                row.onHoldSummary = summary;
+                row.onHoldItemCount = list.filter((i) => !i.deleted).length;
+                row.onHoldWaitingCount = waiting;
+                if (!row.onHoldReason && !row.OnHoldOtherReason && summary) {
+                    row.onHoldReason = summary;
+                }
+            }
+        } catch (err) {
+            console.warn('[onHold] summaries skipped:', err?.message || err);
+        }
+    }
+
     async getOnHoldBookings(page = 1, limit = 25, filters = {}) {
         const whereClause = {
             bookingStatusId: {
@@ -2103,6 +2166,8 @@ class OrderService {
                   ([list, counts]) => ({ ...list, counts })
               )
             : await bookingsPromise;
+
+        await this._attachOnHoldSummaries(result.bookings);
 
         return {
             onHoldBookings: result.bookings,
