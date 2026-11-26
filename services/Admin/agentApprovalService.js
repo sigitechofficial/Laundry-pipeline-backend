@@ -251,6 +251,7 @@ class AgentApprovalService {
                 count: m.total != null && String(m.total).trim() ? String(m.total).trim() : null,
             })),
             rejectionReasons: AGENT_REJECTION_REASONS,
+            visits: await require('./shopVisitService').latestFor(agentId),
         };
     }
 

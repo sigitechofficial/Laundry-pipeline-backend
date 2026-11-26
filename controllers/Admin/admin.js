@@ -100,6 +100,7 @@ const {
     addOnServicesService,
     addOnCategoryService
 } = require('../../services/Admin');
+const shopVisitService = require('../../services/Admin/shopVisitService');
 
 // Import FAQ and Blog services
 const faqService = require('../../services/Admin/faqService');
@@ -888,6 +889,30 @@ async function getPendingAgents(req, res) {
 async function getAgentRegistration(req, res) {
     const registration = await agentApprovalService.getAgentRegistration(req.params.agentId);
     return ResponseHelper.success(res, "Agent registration fetched", registration);
+}
+
+/*
+ * Physical shop visits (optional in-person check of a shop)
+ */
+async function getShopVisits(req, res) {
+    const result = await shopVisitService.listVisits(req.params.agentId);
+    return ResponseHelper.success(res, "Shop visits fetched", result);
+}
+
+async function getShopVisit(req, res) {
+    const visit = await shopVisitService.getVisit(req.params.agentId, req.params.visitId);
+    return ResponseHelper.success(res, "Shop visit fetched", { visit });
+}
+
+async function createShopVisit(req, res) {
+    const adminId = req.user?.id || null;
+    let name = null;
+    if (adminId) {
+        const admin = await users.findByPk(adminId, { attributes: ['firstName', 'lastName', 'email'] });
+        name = admin ? [admin.firstName, admin.lastName].filter(Boolean).join(' ').trim() || admin.email : null;
+    }
+    const visit = await shopVisitService.createVisit(req.params.agentId, req.body, { id: adminId, name });
+    return ResponseHelper.success(res, "Shop visit saved", { visit });
 }
 
 async function getRejectedAgents(req, res) {
@@ -3236,6 +3261,9 @@ module.exports = {
     //!----------Agent Registration Management---------//
     getPendingAgents,
     getAgentRegistration,
+    getShopVisits,
+    getShopVisit,
+    createShopVisit,
     getRejectedAgents,
     updateAgentApproval,
     registerAgent,
