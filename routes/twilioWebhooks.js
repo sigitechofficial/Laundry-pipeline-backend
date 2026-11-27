@@ -3,6 +3,7 @@ const router = express.Router();
 const asyncMiddleware = require("../middlewares/asyncHandler");
 const twilioVoiceWebhook = require("../controllers/twilioVoiceWebhook");
 const twilioSmsWebhook = require("../controllers/twilioSmsWebhook");
+const twilioWhatsAppWebhook = require("../controllers/twilioWhatsAppWebhook");
 
 /**
  * Public Twilio webhooks — signature validated inside controller.
@@ -20,6 +21,11 @@ router.post(
 router.post(
     "/sms/status",
     asyncMiddleware(twilioSmsWebhook.smsStatus)
+);
+
+router.post(
+    "/whatsapp/status",
+    asyncMiddleware(twilioWhatsAppWebhook.whatsappStatus)
 );
 
 module.exports = router;

@@ -29,8 +29,25 @@ async function getShopCapacityOverrides(req, res) {
   });
 }
 
+/** GET /admin/runtimeSettings/whatsapp — what is set up, and the latest messages. */
+async function getWhatsAppStatus(req, res) {
+  const whatsappService = require("../../services/whatsappService");
+  let recent = [];
+  try {
+    recent = await whatsappService.recentMessages(req.query?.limit || 25);
+  } catch (err) {
+    // Table missing until the migration has run.
+    console.warn("[whatsapp] recent messages unavailable:", err.message);
+  }
+  return ResponseHelper.success(res, "WhatsApp messages", {
+    ...whatsappService.configurationStatus(),
+    recent,
+  });
+}
+
 module.exports = {
   getRuntimeSettings,
   updateRuntimeSettings,
   getShopCapacityOverrides,
+  getWhatsAppStatus,
 };

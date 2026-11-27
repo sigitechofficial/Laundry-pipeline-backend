@@ -223,6 +223,10 @@ router.get('/getOnHoldBookings/:bookingId', validateAccessToken, ownBooking,asyn
 // Route to update customer response for on-hold booking
 router.patch('/updateCustomerResponseForOnHoldBooking', validateAccessToken, ownBooking,asyncMiddleware(customerOtherController.updateCustomerResponseForOnHoldBooking));
 // Route to get all bookings with on-hold status for a specific customer
+// Automatic WhatsApp order updates: on (default) or off for this customer
+const whatsappPreferenceController = require('../controllers/Customer/whatsappPreference');
+router.get('/whatsapp-preference', validateAccessToken, asyncMiddleware(whatsappPreferenceController.getWhatsAppPreference));
+router.put('/whatsapp-preference', validateAccessToken, asyncMiddleware(whatsappPreferenceController.updateWhatsAppPreference));
 router.get('/getOnHoldBookingsForCustomer', validateAccessToken, asyncMiddleware(customerOtherController.getOnHoldBookingsForCustomer));
 // Route to test sending notifications
 router.post('/testNotification', validateAccessToken, asyncMiddleware(customerOtherController.testNotification));

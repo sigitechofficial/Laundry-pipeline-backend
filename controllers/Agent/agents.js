@@ -41,6 +41,7 @@ const {
     preferenceValues
 } = require("../../models");
 const runtimeSettingsService = require('../../services/Admin/runtimeSettingsService');
+const { notifyWhatsApp } = require('../../services/whatsappService');
 const { paymentWindowEndsAt, remainingMinutes } = require('../../utils/invoicePaymentWindow');
 const sequelize = require("sequelize");
 const { redact } = require("../../utils/redact");
@@ -2112,6 +2113,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             "Your driver is on the way to the pickup location",
             { bookingId, driverId: bookingfind.driverId }
         );
+        notifyWhatsApp('pickup_on_the_way', bookingId);
 
         syncLiveTrackingSafe(bookingId, 4, {
             agentId: bookingfind.driverId,
@@ -2335,6 +2337,7 @@ exports.agentBookingStatusOnTheWay = async (req, res) => {
             driverId: bookingfind.driverId,
         }
     );
+    notifyWhatsApp('pickup_on_the_way', bookingId);
 
     syncLiveTrackingSafe(bookingId, 4, {
         agentId: bookingfind.driverId,
@@ -3548,6 +3551,7 @@ exports.laundryDeliverToCustomer = async (req, res) => {
             driverId: String(deliveryAssignee || actorId),
         }
     ).catch(() => {});
+    notifyWhatsApp('out_for_delivery', bookingId);
 
     syncLiveTrackingSafe(bookingId, 13, {
         agentId: deliveryAssignee || actorId,
@@ -3842,6 +3846,7 @@ exports.bookingDeliverToCustomer = async (req, res) => {
         driverId: bookingCheck.driverId,
     }
     sendNotification(customerId, title, body, data);
+    notifyWhatsApp('delivered', bookingId);
 
     await tryCreditAgentWallet(bookingId);
 
@@ -5015,6 +5020,11 @@ exports.onHoldConformation = async (req, res) => {
         onHoldPushBody(heldRows, bookingRow.orderTrackId),
         { bookingId: bookingId, driverId: bookingRow.driverId, type: "ORDER_ON_HOLD" }
     );
+    // One WhatsApp per round of holds (a later round on the same order is new).
+    notifyWhatsApp('on_hold', bookingId, {
+        dedupeKey: `hold-${createdIds[0] || Date.now()}`,
+        extra: { itemCount: createdIds.length },
+    });
 
     // Same detail by email, so a customer without app notifications still knows.
     try {

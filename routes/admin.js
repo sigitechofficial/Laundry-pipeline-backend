@@ -249,6 +249,10 @@ router.get(
     asyncMiddleware(runtimeSettingsController.getRuntimeSettings)
 )
 router.get(
+    '/runtimeSettings/whatsapp',
+    asyncMiddleware(runtimeSettingsController.getWhatsAppStatus)
+);
+router.get(
     '/runtimeSettings/shopCapacityOverrides',
     asyncMiddleware(runtimeSettingsController.getShopCapacityOverrides)
 )

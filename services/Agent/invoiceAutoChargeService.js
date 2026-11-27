@@ -703,6 +703,19 @@ async function persistFailure(bookingRow, failure, ctx) {
     if (ctx.notify && !shouldSoftRetry) {
         const fresh = await booking.findByPk(bookingRow.id);
         await notifyPaymentFailed(fresh || bookingRow, failure);
+        // WhatsApp too, at most once a day per order.
+        try {
+            const { notifyWhatsApp } = require("../whatsappService");
+            const { currencySymbolOf } = require("../../utils/currencySymbols");
+            const due = Number(ctx.amountDue);
+            const symbol = currencySymbolOf(ctx.currency) || "";
+            notifyWhatsApp("payment_failed", bookingRow.id, {
+                dedupeKey: new Date().toISOString().slice(0, 10),
+                extra: { amount: Number.isFinite(due) && due > 0 ? `${symbol}${due.toFixed(2)}` : null },
+            });
+        } catch (err) {
+            console.warn("[invoiceAutoCharge] WhatsApp notify skipped:", err.message);
+        }
     }
 }
 

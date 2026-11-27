@@ -222,6 +222,55 @@ const DEFINITIONS = {
     min: 1,
     max: 43200,
   },
+  whatsappEnabled: {
+    type: "boolean",
+    label: "WhatsApp messages to customers",
+    description:
+      "Master switch for automatic WhatsApp messages (Twilio, approved templates). Off = none are sent. Each message also has its own switch.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_ENABLED",
+    defaultValue: false,
+  },
+  whatsappPickupOnTheWayEnabled: {
+    type: "boolean",
+    label: "WhatsApp: driver on the way to collect",
+    description: "Sent when the driver taps On the way for pickup.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_PICKUP_ON_THE_WAY_ENABLED",
+    defaultValue: true,
+  },
+  whatsappOnHoldEnabled: {
+    type: "boolean",
+    label: "WhatsApp: items on hold",
+    description: "Sent when the shop puts items on hold and needs the customer's answer.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_ON_HOLD_ENABLED",
+    defaultValue: true,
+  },
+  whatsappPaymentFailedEnabled: {
+    type: "boolean",
+    label: "WhatsApp: payment failed",
+    description: "Sent when charging the card for an order fails (at most once a day per order).",
+    group: "whatsapp",
+    envKey: "WHATSAPP_PAYMENT_FAILED_ENABLED",
+    defaultValue: true,
+  },
+  whatsappOutForDeliveryEnabled: {
+    type: "boolean",
+    label: "WhatsApp: out for delivery",
+    description: "Sent when the order goes out for delivery.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_OUT_FOR_DELIVERY_ENABLED",
+    defaultValue: true,
+  },
+  whatsappDeliveredEnabled: {
+    type: "boolean",
+    label: "WhatsApp: delivered",
+    description: "Sent when the driver marks the order delivered.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_DELIVERED_ENABLED",
+    defaultValue: true,
+  },
 };
 
 let cache = { at: 0, byKey: null };
