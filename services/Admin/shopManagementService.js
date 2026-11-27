@@ -566,7 +566,7 @@ class ShopManagementService {
                             {
                                 model: billingDetails,
                                 as: 'billingDetail',
-                                attributes: ['id', 'upfrontAmount', 'discount', 'total', 'zoneAdminCommission', 'serviceCharge', 'categoryCharge', 'agentEarning', 'pickupDriverEarning', 'deliveryDriverEarning', 'paymentStatus'],
+                                attributes: ['id', 'upfrontAmount', 'prepaidTipAmount', 'discount', 'total', 'zoneAdminCommission', 'serviceCharge', 'categoryCharge', 'agentEarning', 'pickupDriverEarning', 'deliveryDriverEarning', 'paymentStatus'],
                                 required: false
                             }
                     ],

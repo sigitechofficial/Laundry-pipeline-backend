@@ -443,7 +443,7 @@ class CustomerService {
                             model: billingDetails,
                             as: 'billingDetail',
                             required: false,
-                            attributes: ['upfrontAmount', 'total', 'paymentStatus'],
+                            attributes: ['upfrontAmount', 'serviceCharge', 'prepaidTipAmount', 'total', 'paymentStatus'],
                         },
                         {
                             model: users,
