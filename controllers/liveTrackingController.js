@@ -9,7 +9,7 @@
  * relayed to the other projects' RTDBs (utils/liveTrackingBridge.js).
  */
 
-const { isLiveTrackingDemoEnabled } = require('../utils/liveTrackingDemo');
+const { isLiveTrackingDemoAllowed } = require('../utils/liveTrackingDemo');
 const { booking } = require('../models');
 const ResponseHelper = require('../utils/responseHelper');
 const {
@@ -258,13 +258,23 @@ exports.getAgentLiveTracking = async (req, res) => {
 };
 
 /**
+ * GET /agent/live-tracking-demo
+ * Whether the agent app may show "Start demo tracking". In production this follows
+ * the admin's "Bypass geofence distance check" switch (Policies → Runtime checks).
+ */
+exports.getLiveTrackingDemoAvailability = async (req, res) => {
+  const available = await isLiveTrackingDemoAllowed();
+  return ResponseHelper.success(res, 'Live tracking demo availability', { available });
+};
+
+/**
  * POST /agent/live-tracking/:bookingId/demo-stream
  * Body: { loop?: boolean, intervalMs?: number, steps?: number }
  * Starts an in-process fake GPS stream for customer Live map QA.
  */
 exports.startDemoLiveTrackingStream = async (req, res) => {
-  // QA tooling only — never lets a driver fake their position in production.
-  if (!isLiveTrackingDemoEnabled()) {
+  // QA tooling only — in production only while the admin testing switch is on.
+  if (!(await isLiveTrackingDemoAllowed())) {
     throw new NotFoundError('Live tracking demo is not available');
   }
   const bookingId = parseInt(req.params.bookingId, 10);

@@ -311,6 +311,12 @@ router.get(
     checkPermissions,
     asyncMiddleware(liveTrackingController.getAgentLiveTracking)
 );
+// Whether "Start demo tracking" is available (admin testing switch in production)
+router.get(
+    "/live-tracking-demo",
+    validateAccessToken,
+    asyncMiddleware(liveTrackingController.getLiveTrackingDemoAvailability)
+);
 router.post(
     "/live-tracking/:bookingId/demo-stream",
     validateAccessToken,
