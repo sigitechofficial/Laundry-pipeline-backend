@@ -18,6 +18,7 @@
 const { WHATSAPP_EVENTS, windowText, itemCountText, contentVariables } = require('../utils/whatsappTemplates');
 
 const LOG = '[whatsapp]';
+const AUTO_REPLY_SETTING = 'whatsappAutoReplyEnabled';
 
 function models() {
     return require('../models');
@@ -48,6 +49,11 @@ function configurationStatus(env = process.env) {
             templateConfigured: Boolean(templateSidFor(event, env)),
             text: def.text,
         })),
+        autoReply: {
+            settingKey: AUTO_REPLY_SETTING,
+            label: 'Auto-reply to customer messages',
+            webhookPath: '/webhooks/twilio/whatsapp/incoming',
+        },
     };
 }
 
@@ -199,6 +205,63 @@ function notifyWhatsApp(event, bookingId, opts = {}) {
     });
 }
 
+/** One auto-reply per customer number in this window, however many messages they send. */
+const AUTO_REPLY_EVERY_SECONDS = 12 * 60 * 60;
+
+/**
+ * The reply to a customer who writes to the WhatsApp number. It only sends
+ * order updates, so point them at the call centre (Support contact →
+ * customer phone) and the app.
+ */
+function autoReplyText({ phone = '', hours = '' } = {}) {
+    const p = String(phone || '').trim();
+    const h = String(hours || '').trim();
+    const call = p ? `please call us on ${p}${h ? ` (${h})` : ''} or ` : 'please ';
+    return `Thanks for your message. This WhatsApp number only sends Just Dry Cleans order updates, so replies here are not read. For help, ${call}use Help in the Just Dry Cleans app.`;
+}
+
+async function supportContactForReply(deps = {}) {
+    const svc = deps.supportContactService || require('./Admin/supportContactService');
+    const c = await svc.getResolvedSupportContact({ audience: 'customer' });
+    return { phone: c?.customerSupportPhone || c?.supportPhone || '', hours: c?.supportHours || '' };
+}
+
+/** True the first time a number writes in the window; Redis down → true. */
+async function claimAutoReplySlot(fromDigits, deps = {}) {
+    try {
+        const redis = deps.redis !== undefined ? deps.redis : require('../redis/redis');
+        if (!redis?.isReady) return true;
+        const first = await redis.set(`wa:autoreply:${fromDigits}`, '1', { NX: true, EX: AUTO_REPLY_EVERY_SECONDS });
+        return first === 'OK';
+    } catch (_) {
+        return true;
+    }
+}
+
+/**
+ * Text to send back to an incoming WhatsApp message, or null for no reply
+ * (switched off, not WhatsApp, or already replied to this number recently).
+ * Never throws.
+ */
+async function autoReplyFor(from, deps = {}) {
+    try {
+        const raw = String(from || '').trim();
+        if (!/^whatsapp:/i.test(raw)) return null;
+        const digits = raw.replace(/\D/g, '');
+        if (digits.length < 6) return null;
+
+        const getBoolean = deps.getBoolean || ((k) => require('./Admin/runtimeSettingsService').getBoolean(k));
+        const [master, own] = await Promise.all([getBoolean('whatsappEnabled'), getBoolean(AUTO_REPLY_SETTING)]);
+        if (!master || !own) return null;
+
+        if (!(await claimAutoReplySlot(digits, deps))) return null;
+        return autoReplyText(await supportContactForReply(deps));
+    } catch (err) {
+        console.error(`${LOG} auto-reply error:`, err?.message || err);
+        return null;
+    }
+}
+
 /** Customer's choice: WhatsApp messages on (optedOut=false) or off. */
 async function setCustomerOptOut(userId, optedOut) {
     const db = models();
@@ -249,4 +312,7 @@ module.exports = {
     setCustomerOptOut,
     isCustomerOptedOut,
     recentMessages,
+    autoReplyText,
+    autoReplyFor,
+    supportContactForReply,
 };

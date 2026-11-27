@@ -39,8 +39,22 @@ async function getWhatsAppStatus(req, res) {
     // Table missing until the migration has run.
     console.warn("[whatsapp] recent messages unavailable:", err.message);
   }
+  const status = whatsappService.configurationStatus();
+  let contact = { phone: "", hours: "" };
+  try {
+    contact = await whatsappService.supportContactForReply();
+  } catch (err) {
+    console.warn("[whatsapp] support contact unavailable:", err.message);
+  }
+  const base = require("../../services/twilioSmsService").getPublicBaseUrl();
   return ResponseHelper.success(res, "WhatsApp messages", {
-    ...whatsappService.configurationStatus(),
+    ...status,
+    autoReply: {
+      ...status.autoReply,
+      webhookUrl: base ? `${base}${status.autoReply.webhookPath}` : null,
+      supportPhone: contact.phone || "",
+      preview: whatsappService.autoReplyText(contact),
+    },
     recent,
   });
 }

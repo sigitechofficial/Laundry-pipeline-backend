@@ -3,7 +3,7 @@
 /** whatsappService with stubbed models / Twilio: no database or network. */
 const assert = require('assert/strict');
 require('./stubSequelizeModels').install();
-const { sendWhatsAppForBooking, configurationStatus } = require('../services/whatsappService');
+const { sendWhatsAppForBooking, configurationStatus, autoReplyFor, autoReplyText } = require('../services/whatsappService');
 
 function fakeDb({ optedOut = false, booking } = {}) {
     const rows = [];
@@ -113,5 +113,23 @@ function deps(db, sent, overrides = {}) {
     assert.equal(status.senderConfigured, true);
     assert.equal(status.events.find((e) => e.event === 'pickup_on_the_way').templateConfigured, true);
     assert.equal(status.events.find((e) => e.event === 'delivered').templateConfigured, false);
+    assert.equal(status.autoReply.settingKey, 'whatsappAutoReplyEnabled');
+
+    // auto-reply: call centre number + hours, once per number per window
+    const keys = new Set();
+    const redis = { isReady: true, set: async (k) => (keys.has(k) ? null : (keys.add(k), 'OK')) };
+    const support = { getResolvedSupportContact: async () => ({ customerSupportPhone: '020 3951 6293', supportHours: 'Mon-Fri 9:00-18:00' }) };
+    const on = { getBoolean: async () => true, redis, supportContactService: support };
+    let reply = await autoReplyFor('whatsapp:+447700900123', on);
+    assert.match(reply, /only sends Just Dry Cleans order updates/);
+    assert.match(reply, /call us on 020 3951 6293 \(Mon-Fri 9:00-18:00\)/);
+    assert.equal(await autoReplyFor('whatsapp:+447700900123', on), null, 'not again within 12 hours');
+    assert.ok(await autoReplyFor('whatsapp:+447700900999', on), 'another customer still gets one');
+    assert.equal(await autoReplyFor('whatsapp:+447700900555', { ...on, getBoolean: async (k) => k !== 'whatsappAutoReplyEnabled' }), null, 'auto-reply switched off');
+    assert.equal(await autoReplyFor('whatsapp:+447700900556', { ...on, getBoolean: async (k) => k !== 'whatsappEnabled' }), null, 'WhatsApp master off');
+    assert.equal(await autoReplyFor('+447700900557', on), null, 'SMS is not answered here');
+    assert.ok(await autoReplyFor('whatsapp:+447700900558', { ...on, redis: null }), 'no Redis: still replies');
+    assert.equal(await autoReplyFor('whatsapp:+447700900559', { ...on, supportContactService: { getResolvedSupportContact: async () => { throw new Error('db'); } } }), null, 'errors never throw');
+    assert.doesNotMatch(autoReplyText({}), /call us/, 'no number set: app only');
     console.log('whatsappService tests passed');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -271,6 +271,15 @@ const DEFINITIONS = {
     envKey: "WHATSAPP_DELIVERED_ENABLED",
     defaultValue: true,
   },
+  whatsappAutoReplyEnabled: {
+    type: "boolean",
+    label: "WhatsApp: auto-reply to customer messages",
+    description:
+      "When a customer writes to the WhatsApp number, reply once (at most every 12 hours) that the number only sends order updates, with the customer support phone from Support contact.",
+    group: "whatsapp",
+    envKey: "WHATSAPP_AUTO_REPLY_ENABLED",
+    defaultValue: true,
+  },
 };
 
 let cache = { at: 0, byKey: null };

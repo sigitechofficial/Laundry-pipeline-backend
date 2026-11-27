@@ -28,4 +28,9 @@ router.post(
     asyncMiddleware(twilioWhatsAppWebhook.whatsappStatus)
 );
 
+router.post(
+    "/whatsapp/incoming",
+    asyncMiddleware(twilioWhatsAppWebhook.whatsappIncoming)
+);
+
 module.exports = router;

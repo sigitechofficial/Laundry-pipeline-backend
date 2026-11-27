@@ -6,6 +6,46 @@
 
 const twilioCallService = require("../services/twilioCallService");
 const { whatsappMessage } = require("../models");
+const whatsappService = require("../services/whatsappService");
+
+function xmlEscape(text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
+
+function twiml(res, message) {
+    const body = message ? `<Message>${xmlEscape(message)}</Message>` : "";
+    return res.status(200).type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?><Response>${body}</Response>`);
+}
+
+/**
+ * Incoming WhatsApp message from a customer (the sender's "when a message comes
+ * in" webhook). The number only sends order updates, so answer with the
+ * auto-reply (call centre number + app), at most once per number every 12 hours.
+ */
+exports.whatsappIncoming = async (req, res) => {
+    const signature = req.get("X-Twilio-Signature");
+    const params = req.body || {};
+    const base = twilioCallService.getPublicBaseUrl();
+    const fullUrl = base ? `${base}${req.originalUrl}` : null;
+
+    try {
+        if (!twilioCallService.validateVoiceSignatureForUrl(signature, params, fullUrl)) {
+            console.warn("[twilioWhatsApp] incoming: invalid or missing signature");
+            return twiml(res, null);
+        }
+    } catch (err) {
+        console.error("[twilioWhatsApp] incoming signature error:", err.message);
+        return twiml(res, null);
+    }
+
+    const reply = await whatsappService.autoReplyFor(params.From);
+    return twiml(res, reply);
+};
 
 const FINAL_ORDER = ["queued", "accepted", "sending", "sent", "delivered", "read"];
 
